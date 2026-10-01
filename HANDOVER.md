@@ -30,6 +30,8 @@
 - Kubernetes output includes Envoy and collector ConfigMaps, a ServiceAccount, a Deployment, and one Service with HTTP, optional HTTPS, and metrics ports. HTTP and HTTPS target the same Envoy listener. Envoy runs as UID and GID 101. The Envoy image entrypoint fails when it runs as root.
 - The Deployment includes an OpenTelemetry Collector sidecar. It scrapes Envoy's loopback `/stats/prometheus` endpoint on port 9901 every 30 seconds and exposes Prometheus metrics on port 8889. The scrape path is fixed in the generated Collector config. The image is configurable with `kubernetes.otel_collector_image` and defaults to `otel/opentelemetry-collector-contrib:0.135.0`.
 - The local Kind e2e fixture uses the route-list format with separate HTTP and HTTPS hosts. The test checks existing request routing and metrics, host isolation between protocols, certificate trust, and cert-manager server-certificate renewal through Secret projection and Envoy SDS. It invokes `cmctl renew` (cmctl v2.6.1) to trigger immediate issuance and verifies Envoy serves the replacement certificate without a pod restart. It uses Envoy 1.39.1, HTTPBin 2.25.0, the OpenTelemetry Collector 0.135.0, and cert-manager 1.18.2. The test removes its namespace when it ends; cert-manager remains installed in the reusable Kind cluster.
+- The local e2e suite uses Ginkgo and Gomega. Suite hooks apply shared fixtures, manage cleanup, and collect failure diagnostics. Route cases, HTTPS host isolation, certificate rotation, and metrics run as named specs; Gomega `Eventually` handles readiness and rotation polling.
+- `e2e/internal/framework` uses client-go with the configured kubeconfig context for server-side manifest apply, namespace lifecycle, readiness checks, Secret and Pod reads, diagnostics, and loopback port forwarding. A small setup command applies the cert-manager release manifest and waits for its Deployments, so `kubectl` is not required by the e2e workflow. `cmctl renew` remains a subprocess because the test uses it to trigger certificate rotation. The Makefile writes a Ginkgo JSON report under `.state/reports`. `certificates.yaml` remains the cert-manager fixture applied during suite setup.
 - Config tests load the default and route-list YAML examples from `config/testdata`.
 - The PoC's JWT, mTLS, SPIFFE, tenant policy, and other gateway features were not ported.
 - The HTTP/HTTPS bootstrap and certificate-rotation implementation is committed as `898449f` on `rhobs-1783-bootstrap`.
@@ -53,9 +55,11 @@ For built-in Prometheus metrics, `gofmt`, `make test`, `go vet ./...`, `go test 
 
 For the HTTP/HTTPS listener bootstrap, `go test ./...`, `go vet ./...`, `go test -tags=e2e -run '^$' ./e2e`, `go mod tidy -diff`, `make -C e2e test`, and `git diff --check` pass. The Kind test uses `cmctl renew` to force certificate issuance, then verifies a new certificate and public key are served over HTTPS while the Envoy pod UID stays the same.
 
+For the Ginkgo and client-go e2e framework, `gofmt`, `go mod tidy -diff`, `go test ./...`, `go test -tags=e2e -run '^$' ./e2e ./e2e/cmd/setup-cert-manager`, `go test -tags=e2e ./e2e/internal/framework`, `go vet -tags=e2e ./e2e ./e2e/cmd/setup-cert-manager`, `go tool ginkgo --tags=e2e --dry-run --no-color ./e2e`, `make -C e2e test`, and `git diff --check` pass. The dry run confirms the seven registered specs without setting up Kind. The live Kind suite passed all seven specs. Client-go handles Kubernetes operations, manifest apply, and port forwarding, so `kubectl` is no longer required by the e2e workflow.
+
 RHOBS-1801 was created under RHOBS-1783 with status To Do. It describes the exact-host HTTP/HTTPS listener bootstrap, server-only TLS from a Kubernetes Secret, and the cmctl-driven certificate-rotation e2e test. The implementation is already committed and tested; the subtask records the scope for Jira tracking.
 
-The e2e test needs Docker, Kind, kubectl, and network access. It creates or reuses the `auth-gateway-e2e` Kind cluster and loads the pinned images. It deletes only the `auth-gateway-e2e` namespace.
+The e2e test needs Docker, Kind, Go, curl, and network access. It creates or reuses the `auth-gateway-e2e` Kind cluster and loads the pinned images. It downloads `cmctl` and the pinned cert-manager manifest, then deletes only the `auth-gateway-e2e` namespace.
 
 ## Next step
 

@@ -30,3 +30,4 @@ go.work.sum
 
 # Downloaded e2e tools
 /e2e/.bin/
+/e2e/.state/

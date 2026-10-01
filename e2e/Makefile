@@ -16,10 +16,12 @@ CMCTL_ARCH ?= $(shell go env GOARCH)
 CMCTL_SUFFIX = $(if $(filter windows,$(CMCTL_OS)),.exe,)
 CMCTL_BIN ?= $(CURDIR)/.bin/cmctl-$(CMCTL_VERSION)$(CMCTL_SUFFIX)
 CMCTL_ASSET = cmctl_$(CMCTL_OS)_$(CMCTL_ARCH)$(CMCTL_SUFFIX)
+CERT_MANAGER_MANIFEST_ARG = $(if $(filter http://% https://%,$(CERT_MANAGER_MANIFEST)),$(CERT_MANAGER_MANIFEST),$(abspath $(CERT_MANAGER_MANIFEST)))
+GINKGO_ARGS ?=
 
 check-tools:
 	@set -eu; \
-	for tool in docker kind kubectl go curl; do \
+	for tool in docker kind go curl; do \
 		command -v "$$tool" >/dev/null || { echo "$$tool is required" >&2; exit 1; }; \
 	done
 	@docker info >/dev/null
@@ -39,11 +41,7 @@ setup: check-tools
 	docker pull '$(CERT_MANAGER_CAINJECTOR_IMAGE)'
 	docker pull '$(CERT_MANAGER_WEBHOOK_IMAGE)'
 	kind load docker-image --name '$(CLUSTER_NAME)' '$(ENVOY_IMAGE)' '$(HTTPBIN_IMAGE)' '$(OTEL_COLLECTOR_IMAGE)' '$(CERT_MANAGER_CONTROLLER_IMAGE)' '$(CERT_MANAGER_CAINJECTOR_IMAGE)' '$(CERT_MANAGER_WEBHOOK_IMAGE)'
-	kubectl --context 'kind-$(CLUSTER_NAME)' apply --validate=false -f '$(CERT_MANAGER_MANIFEST)'
-	@set -eu; \
-	for cm_deployment in cert-manager cert-manager-cainjector cert-manager-webhook; do \
-		kubectl --context 'kind-$(CLUSTER_NAME)' --namespace cert-manager rollout status "deployment/$$cm_deployment" --timeout=240s; \
-	done
+	cd .. && AUTH_GATEWAY_E2E_CONTEXT='kind-$(CLUSTER_NAME)' go run -tags=e2e ./e2e/cmd/setup-cert-manager -manifest '$(CERT_MANAGER_MANIFEST_ARG)'
 
 cmctl:
 	@set -eu; \
@@ -54,4 +52,6 @@ cmctl:
 	fi
 
 test: setup cmctl
-	cd .. && AUTH_GATEWAY_E2E_CONTEXT='kind-$(CLUSTER_NAME)' AUTH_GATEWAY_E2E_CMCTL='$(abspath $(CMCTL_BIN))' go test -tags=e2e -count=1 -v ./e2e
+	@mkdir -p .state/reports
+	cd .. && go test -tags=e2e ./e2e/internal/framework
+	cd .. && AUTH_GATEWAY_E2E_CONTEXT='kind-$(CLUSTER_NAME)' AUTH_GATEWAY_E2E_CMCTL='$(abspath $(CMCTL_BIN))' go tool ginkgo --tags=e2e --timeout=30m --no-color --output-dir=e2e/.state/reports --json-report=auth-gateway.json $(GINKGO_ARGS) ./e2e
