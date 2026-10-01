@@ -73,7 +73,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	configMap := corev1.ConfigMap{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
 		ObjectMeta: metav1.ObjectMeta{Name: configName, Namespace: k.Namespace},
-		Data:       map[string]string{"envoy.yaml": string(files["envoy.yaml"])},
+		Data:       stringFiles(files),
 	}
 	otelConfigMap := corev1.ConfigMap{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
@@ -167,7 +167,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 						Name: "config",
 						VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
 							LocalObjectReference: corev1.LocalObjectReference{Name: configName},
-							Items:                []corev1.KeyToPath{{Key: "envoy.yaml", Path: "envoy.yaml"}},
+							Items:                configMapItems(files),
 						}},
 					}, {
 						Name: "metrics-config",
@@ -179,6 +179,51 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 			},
 		},
 	}
+	if len(c.Listener.HTTPSHosts) > 0 {
+		certificateFilename := path.Base(c.ServerTLS.Certificate)
+		privateKeyFilename := path.Base(c.ServerTLS.PrivateKey)
+		defaultMode := int32(0o444)
+		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
+			Name: "server-tls",
+			VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+				SecretName:  c.ServerTLS.Secret,
+				DefaultMode: &defaultMode,
+				Items: []corev1.KeyToPath{
+					{Key: "tls.crt", Path: certificateFilename},
+					{Key: "tls.key", Path: privateKeyFilename},
+				},
+			}},
+		})
+		envoy := &deployment.Spec.Template.Spec.Containers[0]
+		envoy.VolumeMounts = append(envoy.VolumeMounts, corev1.VolumeMount{
+			Name:      "server-tls",
+			MountPath: path.Dir(c.ServerTLS.Certificate),
+			ReadOnly:  true,
+		})
+	}
+	servicePorts := make([]corev1.ServicePort, 0, 3)
+	if c.listenerHasHTTP() {
+		servicePorts = append(servicePorts, corev1.ServicePort{
+			Name:       "http",
+			Port:       k.ServicePort,
+			TargetPort: intstr.FromString("http"),
+			Protocol:   corev1.ProtocolTCP,
+		})
+	}
+	if len(c.Listener.HTTPSHosts) > 0 {
+		servicePorts = append(servicePorts, corev1.ServicePort{
+			Name:       "https",
+			Port:       k.HTTPSServicePort,
+			TargetPort: intstr.FromString("http"),
+			Protocol:   corev1.ProtocolTCP,
+		})
+	}
+	servicePorts = append(servicePorts, corev1.ServicePort{
+		Name:       "metrics",
+		Port:       defaultOTelMetricsPort,
+		TargetPort: intstr.FromString("metrics"),
+		Protocol:   corev1.ProtocolTCP,
+	})
 	service := corev1.Service{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
 		ObjectMeta: metav1.ObjectMeta{
@@ -189,17 +234,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 		Spec: corev1.ServiceSpec{
 			Type:     corev1.ServiceTypeClusterIP,
 			Selector: labels(),
-			Ports: []corev1.ServicePort{{
-				Name:       "http",
-				Port:       k.ServicePort,
-				TargetPort: intstr.FromString("http"),
-				Protocol:   corev1.ProtocolTCP,
-			}, {
-				Name:       "metrics",
-				Port:       defaultOTelMetricsPort,
-				TargetPort: intstr.FromString("metrics"),
-				Protocol:   corev1.ProtocolTCP,
-			}},
+			Ports:    servicePorts,
 		},
 	}
 
@@ -210,6 +245,24 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 		Deployment:             deployment,
 		Service:                service,
 	}, nil
+}
+
+func stringFiles(files map[string][]byte) map[string]string {
+	data := make(map[string]string, len(files))
+	for filename, contents := range files {
+		data[filename] = string(contents)
+	}
+	return data
+}
+
+func configMapItems(files map[string][]byte) []corev1.KeyToPath {
+	items := make([]corev1.KeyToPath, 0, len(files))
+	for _, name := range []string{"envoy.yaml", serverTLSResourceFilename} {
+		if _, exists := files[name]; exists {
+			items = append(items, corev1.KeyToPath{Key: name, Path: name})
+		}
+	}
+	return items
 }
 
 func kubernetesResourceList(values map[string]string) corev1.ResourceList {

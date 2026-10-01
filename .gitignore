@@ -27,3 +27,6 @@ go.work.sum
 
 # Local handover notes
 /HANDOVER.md
+
+# Downloaded e2e tools
+/e2e/.bin/

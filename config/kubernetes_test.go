@@ -89,6 +89,92 @@ func TestGenerateKubernetesExposesMetricsWithoutAdminPort(t *testing.T) {
 	}
 }
 
+func TestGenerateKubernetesMountsServerTLSSecretAndSharesListenerPort(t *testing.T) {
+	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Listener.HTTPHosts = []string{"auth.example.com"}
+	config.Listener.HTTPSHosts = []string{"mts.auth.example.com"}
+	config.ServerTLS = &ServerTLS{
+		Secret:      "auth-gateway-tls",
+		Certificate: "/etc/gateway-certs/tls.crt",
+		PrivateKey:  "/etc/gateway-certs/tls.key",
+	}
+	resources, err := GenerateKubernetes(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ports := make(map[string]struct {
+		port       int32
+		targetPort string
+	}, len(resources.Service.Spec.Ports))
+	for _, port := range resources.Service.Spec.Ports {
+		ports[port.Name] = struct {
+			port       int32
+			targetPort string
+		}{port: port.Port, targetPort: port.TargetPort.String()}
+	}
+	if len(ports) != 3 {
+		t.Fatalf("Service ports = %#v, want HTTP, HTTPS, and metrics", ports)
+	}
+	if got := ports["http"]; got.port != defaultServicePort || got.targetPort != "http" {
+		t.Fatalf("HTTP Service port = %#v", got)
+	}
+	if got := ports["https"]; got.port != defaultHTTPSServicePort || got.targetPort != "http" {
+		t.Fatalf("HTTPS Service port = %#v, want port 443 targeting the same Envoy listener", got)
+	}
+	if got := resources.ConfigMap.Data[serverTLSResourceFilename]; got == "" {
+		t.Fatalf("config Map does not contain the server TLS SDS resource")
+	}
+
+	var tlsVolumeFound bool
+	for _, volume := range resources.Deployment.Spec.Template.Spec.Volumes {
+		if volume.Name == "server-tls" && volume.Secret != nil {
+			tlsVolumeFound = true
+			if volume.Secret.SecretName != config.ServerTLS.Secret {
+				t.Errorf("mounted Secret = %q, want %q", volume.Secret.SecretName, config.ServerTLS.Secret)
+			}
+			if got := volume.Secret.Items; len(got) != 2 || got[0].Key != "tls.crt" || got[0].Path != "tls.crt" || got[1].Key != "tls.key" || got[1].Path != "tls.key" {
+				t.Errorf("mounted TLS Secret items = %#v", got)
+			}
+		}
+	}
+	if !tlsVolumeFound {
+		t.Fatal("Deployment has no projected server TLS Secret volume")
+	}
+	var tlsMountFound bool
+	for _, mount := range resources.Deployment.Spec.Template.Spec.Containers[0].VolumeMounts {
+		if mount.Name == "server-tls" && mount.MountPath == "/etc/gateway-certs" && mount.ReadOnly {
+			tlsMountFound = true
+		}
+	}
+	if !tlsMountFound {
+		t.Fatal("Envoy does not mount the server TLS Secret directory read-only")
+	}
+}
+
+func TestGenerateKubernetesOmitsHTTPServicePortForHTTPSOnly(t *testing.T) {
+	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Listener.HTTPHosts = nil
+	config.Listener.HTTPSHosts = []string{"mts.auth.example.com"}
+	config.ServerTLS = &ServerTLS{Secret: "auth-gateway-tls"}
+	resources, err := GenerateKubernetes(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resources.Service.Spec.Ports) != 2 {
+		t.Fatalf("HTTPS-only Service ports = %#v, want HTTPS and metrics", resources.Service.Spec.Ports)
+	}
+	if resources.Service.Spec.Ports[0].Name != "https" || resources.Service.Spec.Ports[0].Port != defaultHTTPSServicePort {
+		t.Fatalf("HTTPS-only Service port = %#v", resources.Service.Spec.Ports[0])
+	}
+}
+
 func TestGenerateKubernetesRequiresSettings(t *testing.T) {
 	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
 	if err != nil {

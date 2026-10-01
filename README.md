@@ -86,9 +86,37 @@ regular expression rewrites when the upstream path differs. Routes are checked
 in the order listed, so put narrower matches first.
 
 Run `make test` for unit tests. Run `make e2e` for the local Kind test. The e2e
-test needs Docker, Kind, kubectl, and network access. It creates or reuses the
-`auth-gateway-e2e` cluster and deletes its test namespace when it ends. It uses
-Envoy 1.39.1 and HTTPBin 2.25.0.
+test needs Docker, Kind, kubectl, Go, curl, and network access. It downloads
+cmctl v2.6.1 on first use, creates or reuses the `auth-gateway-e2e` cluster, and
+deletes its test namespace when it ends. It uses Envoy 1.39.1, HTTPBin 2.25.0,
+and cert-manager 1.18.2. The setup installs cert-manager in the Kind cluster
+and leaves it available when the cluster is reused.
+
+## HTTP and HTTPS hosts
+
+`listener.http_hosts` and `listener.https_hosts` bind exact hostnames to
+plaintext HTTP and TLS HTTPS. If both are omitted, existing configurations keep
+the wildcard HTTP behavior. If either list is set, only the hosts listed for
+each protocol are served. Every host currently exposes the same API routes.
+
+HTTPS uses SNI to select a TLS filter chain on the same Envoy listener port as
+HTTP. Set `server_tls.secret` to a Kubernetes TLS Secret containing `tls.crt`
+and `tls.key`. The certificate and private key paths default to
+`/etc/auth-gateway-tls/tls.crt` and `/etc/auth-gateway-tls/tls.key`. The
+generated Deployment mounts the Secret directory read-only, and Envoy's
+file-based SDS watches that directory so projected Secret updates can be
+loaded without restarting Envoy. Server TLS does not request a client
+certificate.
+
+When HTTP and HTTPS hosts are both configured, the generated Service exposes
+ports 80 and 443, both targeting the same Envoy listener port (8080 by
+default). HTTPS-only configuration exposes port 443. Metrics stay on port
+8889.
+
+The e2e test creates a local CA and server certificate with cert-manager. It
+checks HTTP and HTTPS host isolation, then uses `cmctl renew` to request a new
+certificate. It verifies that a new TLS connection sees the renewed
+certificate and key without an Envoy pod restart.
 
 ## Access logging
 

@@ -23,6 +23,11 @@ const (
 	defaultListenerAddr                     = "0.0.0.0"
 	defaultListenerPort                     = 8080
 	defaultServicePort                      = 80
+	defaultHTTPSServicePort                 = 443
+	defaultServerTLSCertificate             = "/etc/auth-gateway-tls/tls.crt"
+	defaultServerTLSPrivateKey              = "/etc/auth-gateway-tls/tls.key"
+	serverTLSSecretName                     = "gateway_server"
+	serverTLSResourceFilename               = "server-certificate.yaml"
 	defaultOTelCollectorImage               = "otel/opentelemetry-collector-contrib:0.135.0"
 	defaultOTelMetricsPort                  = 8889
 	defaultKubernetesCPURequest             = "50m"
@@ -47,6 +52,7 @@ type Config struct {
 	Version    int         `yaml:"version"`
 	Node       EnvoyNode   `yaml:"node,omitempty"`
 	Listener   Listener    `yaml:"listener"`
+	ServerTLS  *ServerTLS  `yaml:"server_tls,omitempty"`
 	APIs       []API       `yaml:"apis"`
 	Kubernetes *Kubernetes `yaml:"kubernetes,omitempty"`
 }
@@ -57,10 +63,19 @@ type EnvoyNode struct {
 	Cluster string `yaml:"cluster,omitempty"`
 }
 
-// Listener describes the HTTP address used by Envoy.
+// Listener describes the address and hostnames served by Envoy.
 type Listener struct {
-	Address string `yaml:"address,omitempty"`
-	Port    uint32 `yaml:"port,omitempty"`
+	Address    string   `yaml:"address,omitempty"`
+	Port       uint32   `yaml:"port,omitempty"`
+	HTTPHosts  []string `yaml:"http_hosts,omitempty"`
+	HTTPSHosts []string `yaml:"https_hosts,omitempty"`
+}
+
+// ServerTLS describes the server certificate used for HTTPS listener hosts.
+type ServerTLS struct {
+	Secret      string `yaml:"secret,omitempty"`
+	Certificate string `yaml:"certificate,omitempty"`
+	PrivateKey  string `yaml:"private_key,omitempty"`
 }
 
 // API describes one upstream and its routes.
@@ -121,6 +136,7 @@ type Kubernetes struct {
 	OTelCollectorImage string                         `yaml:"otel_collector_image,omitempty"`
 	Replicas           *int32                         `yaml:"replicas,omitempty"`
 	ServicePort        int32                          `yaml:"service_port,omitempty"`
+	HTTPSServicePort   int32                          `yaml:"https_service_port,omitempty"`
 	Resources          KubernetesResourceRequirements `yaml:"resources,omitempty"`
 }
 
@@ -175,6 +191,19 @@ func (c Config) Validate() error {
 	}
 	if c.Listener.Port == 0 || c.Listener.Port > 65535 {
 		return fmt.Errorf("listener.port must be between 1 and 65535")
+	}
+	if err := validateListenerHosts(c.Listener); err != nil {
+		return err
+	}
+	if len(c.Listener.HTTPSHosts) > 0 {
+		if c.ServerTLS == nil {
+			return fmt.Errorf("server_tls is required when listener.https_hosts is configured")
+		}
+		if err := validateServerTLS(*c.ServerTLS); err != nil {
+			return err
+		}
+	} else if c.ServerTLS != nil {
+		return fmt.Errorf("server_tls requires listener.https_hosts")
 	}
 	if len(c.APIs) == 0 {
 		return fmt.Errorf("at least one API must be configured")
@@ -247,7 +276,28 @@ func (c Config) Validate() error {
 			return fmt.Errorf("kubernetes.replicas must not be negative")
 		}
 		if c.Kubernetes.ServicePort < 1 || c.Kubernetes.ServicePort > 65535 {
-			return fmt.Errorf("kubernetes.service_port must be between 1 and 65535")
+			if c.listenerHasHTTP() {
+				return fmt.Errorf("kubernetes.service_port must be between 1 and 65535")
+			}
+		}
+		if c.listenerHasHTTP() && c.Kubernetes.ServicePort == defaultOTelMetricsPort {
+			return fmt.Errorf("kubernetes.service_port must not conflict with the metrics port")
+		}
+		if len(c.Listener.HTTPSHosts) > 0 {
+			if problems := validation.IsDNS1123Subdomain(c.ServerTLS.Secret); len(problems) > 0 {
+				return fmt.Errorf("server_tls.secret must be a Kubernetes Secret name when generating Kubernetes resources")
+			}
+			if c.Kubernetes.HTTPSServicePort < 1 || c.Kubernetes.HTTPSServicePort > 65535 {
+				return fmt.Errorf("kubernetes.https_service_port must be between 1 and 65535")
+			}
+			if c.Kubernetes.HTTPSServicePort == defaultOTelMetricsPort {
+				return fmt.Errorf("kubernetes.https_service_port must not conflict with the metrics port")
+			}
+			if c.listenerHasHTTP() && c.Kubernetes.HTTPSServicePort == c.Kubernetes.ServicePort {
+				return fmt.Errorf("kubernetes.service_port and kubernetes.https_service_port must differ")
+			}
+		} else if c.Kubernetes.HTTPSServicePort != 0 {
+			return fmt.Errorf("kubernetes.https_service_port requires listener.https_hosts")
 		}
 		if err := validateKubernetesResourceRequirements(c.Kubernetes.Resources); err != nil {
 			return err
@@ -297,6 +347,22 @@ func (c Config) withDefaults() Config {
 	if c.Listener.Port == 0 {
 		c.Listener.Port = defaultListenerPort
 	}
+	if c.ServerTLS != nil {
+		serverTLS := *c.ServerTLS
+		if serverTLS.Certificate == "" {
+			serverTLS.Certificate = defaultServerTLSCertificate
+		}
+		if serverTLS.PrivateKey == "" {
+			serverTLS.PrivateKey = defaultServerTLSPrivateKey
+		}
+		c.ServerTLS = &serverTLS
+	}
+	if c.Listener.HTTPHosts != nil {
+		c.Listener.HTTPHosts = append([]string(nil), c.Listener.HTTPHosts...)
+	}
+	if c.Listener.HTTPSHosts != nil {
+		c.Listener.HTTPSHosts = append([]string(nil), c.Listener.HTTPSHosts...)
+	}
 	if c.APIs != nil {
 		apis := make([]API, len(c.APIs))
 		for i, api := range c.APIs {
@@ -343,6 +409,9 @@ func (c Config) withDefaults() Config {
 		}
 		if c.Kubernetes.ServicePort == 0 {
 			c.Kubernetes.ServicePort = defaultServicePort
+		}
+		if len(c.Listener.HTTPSHosts) > 0 && c.Kubernetes.HTTPSServicePort == 0 {
+			c.Kubernetes.HTTPSServicePort = defaultHTTPSServicePort
 		}
 		if c.Kubernetes.OTelCollectorImage == "" {
 			c.Kubernetes.OTelCollectorImage = defaultOTelCollectorImage
@@ -529,4 +598,76 @@ func validHost(value string) bool {
 		}
 	}
 	return true
+}
+
+func validateListenerHosts(listener Listener) error {
+	hosts := make(map[string]string, len(listener.HTTPHosts)+len(listener.HTTPSHosts))
+	for _, group := range []struct {
+		name  string
+		hosts []string
+	}{
+		{name: "http_hosts", hosts: listener.HTTPHosts},
+		{name: "https_hosts", hosts: listener.HTTPSHosts},
+	} {
+		for _, host := range group.hosts {
+			if !validDNSHost(host) {
+				return fmt.Errorf("listener.%s entries must be exact DNS hostnames", group.name)
+			}
+			if previous, exists := hosts[host]; exists {
+				return fmt.Errorf("listener.%s hostname %q is already listed in listener.%s", group.name, host, previous)
+			}
+			hosts[host] = group.name
+		}
+	}
+	return nil
+}
+
+func validateServerTLS(serverTLS ServerTLS) error {
+	for _, file := range []struct {
+		name  string
+		value string
+	}{
+		{name: "certificate", value: serverTLS.Certificate},
+		{name: "private_key", value: serverTLS.PrivateKey},
+	} {
+		if !path.IsAbs(file.value) || path.Clean(file.value) != file.value || file.value == "/" || strings.ContainsAny(file.value, "\r\n\x00") {
+			return fmt.Errorf("server_tls.%s must be a clean absolute file path", file.name)
+		}
+	}
+	if path.Dir(serverTLS.Certificate) != path.Dir(serverTLS.PrivateKey) {
+		return fmt.Errorf("server_tls.certificate and server_tls.private_key must be in the same directory")
+	}
+	if path.Base(serverTLS.Certificate) == path.Base(serverTLS.PrivateKey) {
+		return fmt.Errorf("server_tls.certificate and server_tls.private_key must have different file names")
+	}
+	if serverTLS.Secret != "" && len(validation.IsDNS1123Subdomain(serverTLS.Secret)) > 0 {
+		return fmt.Errorf("server_tls.secret must be a DNS subdomain")
+	}
+	return nil
+}
+
+func validDNSHost(value string) bool {
+	if value == "" || len(value) > 253 || !dnsNamePattern.MatchString(value) || net.ParseIP(value) != nil {
+		return false
+	}
+	for _, label := range strings.Split(value, ".") {
+		if len(label) > 63 {
+			return false
+		}
+	}
+	return true
+}
+
+func (c Config) listenerHasHTTP() bool {
+	if len(c.Listener.HTTPHosts) == 0 && len(c.Listener.HTTPSHosts) == 0 {
+		return true
+	}
+	return len(c.Listener.HTTPHosts) > 0
+}
+
+func (c Config) httpVirtualHostDomains() []string {
+	if len(c.Listener.HTTPHosts) == 0 && len(c.Listener.HTTPSHosts) == 0 {
+		return []string{"*"}
+	}
+	return append([]string(nil), c.Listener.HTTPHosts...)
 }

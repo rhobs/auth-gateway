@@ -9,8 +9,10 @@ import (
 	bootstrap "github.com/envoyproxy/go-control-plane/envoy/config/bootstrap/v3"
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	"go.yaml.in/yaml/v3"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 func TestGenerateBuildsNamedAPIClustersAndRoutes(t *testing.T) {
@@ -191,6 +193,88 @@ func TestGenerateBuildsRoutesFromRouteLists(t *testing.T) {
 	}
 }
 
+func TestGenerateBuildsHTTPAndSNISelectedHTTPSChains(t *testing.T) {
+	config, err := Load(strings.NewReader(readFixture(t, "route-list.yaml")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Listener.HTTPHosts = []string{"auth.example.com"}
+	config.Listener.HTTPSHosts = []string{"mts.auth.example.com"}
+	config.ServerTLS = &ServerTLS{
+		Certificate: "/etc/gateway-certs/tls.crt",
+		PrivateKey:  "/etc/gateway-certs/tls.key",
+	}
+
+	files, err := Generate(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("generated files = %v, want bootstrap and server certificate SDS resource", files)
+	}
+	bootstrapConfig := decodeBootstrap(t, files["envoy.yaml"])
+	generatedListener := bootstrapConfig.StaticResources.Listeners[0]
+	if len(generatedListener.ListenerFilters) != 1 || generatedListener.ListenerFilters[0].Name != "envoy.filters.listener.tls_inspector" {
+		t.Fatalf("listener filters = %#v, want TLS inspector", generatedListener.ListenerFilters)
+	}
+	if len(generatedListener.FilterChains) != 2 {
+		t.Fatalf("filter chain count = %d, want HTTP and HTTPS chains", len(generatedListener.FilterChains))
+	}
+
+	httpChain := generatedListener.FilterChains[0]
+	if got := httpChain.GetFilterChainMatch().GetTransportProtocol(); got != "raw_buffer" {
+		t.Fatalf("HTTP chain transport protocol = %q, want raw_buffer", got)
+	}
+	var httpManager hcm.HttpConnectionManager
+	if err := httpChain.Filters[0].GetTypedConfig().UnmarshalTo(&httpManager); err != nil {
+		t.Fatal(err)
+	}
+	if got := httpManager.GetRouteConfig().VirtualHosts[0].Domains; len(got) != 1 || got[0] != "auth.example.com" {
+		t.Fatalf("HTTP domains = %v", got)
+	}
+
+	httpsChain := generatedListener.FilterChains[1]
+	if match := httpsChain.GetFilterChainMatch(); match.GetTransportProtocol() != "tls" || len(match.ServerNames) != 1 || match.ServerNames[0] != "mts.auth.example.com" {
+		t.Fatalf("HTTPS filter chain match = %#v", match)
+	}
+	var httpsManager hcm.HttpConnectionManager
+	if err := httpsChain.Filters[0].GetTypedConfig().UnmarshalTo(&httpsManager); err != nil {
+		t.Fatal(err)
+	}
+	if got := httpsManager.GetRouteConfig().VirtualHosts[0].Domains; len(got) != 1 || got[0] != "mts.auth.example.com" {
+		t.Fatalf("HTTPS domains = %v", got)
+	}
+	var downstreamTLS tls.DownstreamTlsContext
+	if err := httpsChain.TransportSocket.GetTypedConfig().UnmarshalTo(&downstreamTLS); err != nil {
+		t.Fatal(err)
+	}
+	if required := downstreamTLS.GetRequireClientCertificate(); required != nil && required.GetValue() {
+		t.Fatal("server TLS unexpectedly requires client certificates")
+	}
+	certificates := downstreamTLS.GetCommonTlsContext().GetTlsCertificateSdsSecretConfigs()
+	if len(certificates) != 1 || certificates[0].GetName() != serverTLSSecretName {
+		t.Fatalf("server certificate SDS config = %#v", certificates)
+	}
+	if got := certificates[0].GetSdsConfig().GetPathConfigSource().GetPath(); got != "/etc/auth-gateway/"+serverTLSResourceFilename {
+		t.Fatalf("certificate SDS resource path = %q", got)
+	}
+
+	secret := decodeTLSSecret(t, files[serverTLSResourceFilename])
+	certificate := secret.GetTlsCertificate()
+	if secret.GetName() != serverTLSSecretName || certificate == nil {
+		t.Fatalf("generated SDS resource = %#v", secret)
+	}
+	if got := certificate.GetCertificateChain().GetFilename(); got != config.ServerTLS.Certificate {
+		t.Fatalf("certificate file = %q", got)
+	}
+	if got := certificate.GetPrivateKey().GetFilename(); got != config.ServerTLS.PrivateKey {
+		t.Fatalf("private key file = %q", got)
+	}
+	if got := certificate.GetWatchedDirectory().GetPath(); got != "/etc/gateway-certs" {
+		t.Fatalf("watched certificate directory = %q", got)
+	}
+}
+
 func TestGenerateRejectsInvalidConfiguration(t *testing.T) {
 	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
 	if err != nil {
@@ -217,4 +301,29 @@ func decodeBootstrap(t *testing.T, data []byte) *bootstrap.Bootstrap {
 		t.Fatalf("decode Envoy bootstrap: %v", err)
 	}
 	return &config
+}
+
+func decodeTLSSecret(t *testing.T, data []byte) *tls.Secret {
+	t.Helper()
+	var document map[string]any
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		t.Fatalf("decode TLS secret YAML: %v", err)
+	}
+	resources, ok := document["resources"].([]any)
+	if !ok || len(resources) != 1 {
+		t.Fatalf("TLS SDS resources = %#v, want one resource", document["resources"])
+	}
+	resourceData, err := json.Marshal(resources[0])
+	if err != nil {
+		t.Fatalf("encode TLS SDS resource JSON: %v", err)
+	}
+	var resource anypb.Any
+	if err := protojson.Unmarshal(resourceData, &resource); err != nil {
+		t.Fatalf("decode packed TLS SDS resource: %v", err)
+	}
+	var secret tls.Secret
+	if err := resource.UnmarshalTo(&secret); err != nil {
+		t.Fatalf("decode TLS secret: %v", err)
+	}
+	return &secret
 }

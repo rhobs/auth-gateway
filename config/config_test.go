@@ -170,6 +170,48 @@ func TestValidateRejectsInvalidRouteConfiguration(t *testing.T) {
 	}
 }
 
+func TestValidateHostScopedListener(t *testing.T) {
+	newConfig := func() Config {
+		config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		config.Kubernetes = nil
+		config.Listener.HTTPHosts = []string{"auth.example.com"}
+		config.Listener.HTTPSHosts = []string{"mts.auth.example.com"}
+		config.ServerTLS = &ServerTLS{}
+		return config
+	}
+
+	if err := newConfig().Validate(); err != nil {
+		t.Fatalf("valid HTTP and HTTPS hosts rejected: %v", err)
+	}
+	tests := map[string]func(*Config){
+		"invalid HTTP hostname": func(c *Config) { c.Listener.HTTPHosts = []string{"https://auth.example.com"} },
+		"duplicate host within one protocol": func(c *Config) {
+			c.Listener.HTTPHosts = []string{"auth.example.com", "auth.example.com"}
+		},
+		"host cannot use both protocols": func(c *Config) {
+			c.Listener.HTTPSHosts = []string{"auth.example.com"}
+		},
+		"HTTPS requires server TLS":       func(c *Config) { c.ServerTLS = nil },
+		"server TLS requires HTTPS hosts": func(c *Config) { c.Listener.HTTPSHosts = nil },
+		"certificate paths share a directory": func(c *Config) {
+			c.ServerTLS.Certificate = "/etc/certs/tls.crt"
+			c.ServerTLS.PrivateKey = "/etc/keys/tls.key"
+		},
+	}
+	for name, change := range tests {
+		t.Run(name, func(t *testing.T) {
+			config := newConfig()
+			change(&config)
+			if err := config.Validate(); err == nil {
+				t.Fatal("Validate accepted an invalid listener configuration")
+			}
+		})
+	}
+}
+
 func TestDefaultsDoNotMutateInput(t *testing.T) {
 	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
 	if err != nil {

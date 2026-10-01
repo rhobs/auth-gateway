@@ -2,6 +2,11 @@ version: 1
 
 listener:
   port: 8080
+  http_hosts: [auth.auth-gateway.test]
+  https_hosts: [tls.auth-gateway.test]
+
+server_tls:
+  secret: auth-gateway-tls
 
 apis:
   - name: metrics

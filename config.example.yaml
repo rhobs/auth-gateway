@@ -4,8 +4,20 @@ version: 1
 listener:
   # Envoy listener address. Kubernetes output requires a wildcard address.
   address: 0.0.0.0
-  # Envoy listener port. Defaults to 8080.
+  # One Envoy listener port handles all configured protocols. Defaults to 8080.
   port: 8080
+  # Optional exact hostnames for plaintext HTTP and TLS HTTPS.
+  # If both are omitted, the listener serves HTTP for any host for compatibility.
+  # If either is set, only the listed hosts are served by that protocol.
+  # http_hosts: [auth.example.com]
+  # https_hosts: [mts.auth.example.com]
+
+# Required with listener.https_hosts. In Kubernetes, secret must contain tls.crt and tls.key.
+# Certificate paths default to /etc/auth-gateway-tls/tls.crt and tls.key.
+# server_tls:
+#   secret: auth-gateway-tls
+#   # certificate: /etc/auth-gateway-tls/tls.crt
+#   # private_key: /etc/auth-gateway-tls/tls.key
 
 # Optional Envoy node metadata. Both values default to auth-gateway.
 node:
@@ -87,6 +99,8 @@ kubernetes:
   replicas: 2
   # Optional Service port. Defaults to 80.
   # service_port: 80
+  # Optional HTTPS Service port. Defaults to 443 when HTTPS hosts are configured.
+  # https_service_port: 443
   # Optional Envoy container resources. Omitted requests and limits use the defaults below.
   # Set a category to {} to omit its defaults.
   # resources:

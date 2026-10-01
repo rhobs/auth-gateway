@@ -1,0 +1,49 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: auth-gateway-selfsigned
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: auth-gateway-ca
+spec:
+  isCA: true
+  commonName: auth-gateway-e2e-ca
+  duration: 8760h
+  secretName: auth-gateway-e2e-ca
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: auth-gateway-selfsigned
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: auth-gateway-ca
+spec:
+  ca:
+    secretName: auth-gateway-e2e-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: auth-gateway-server
+spec:
+  commonName: tls.auth-gateway.test
+  dnsNames:
+    - tls.auth-gateway.test
+  secretName: auth-gateway-tls
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    name: auth-gateway-ca
+    kind: Issuer
+    group: cert-manager.io
