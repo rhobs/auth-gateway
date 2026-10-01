@@ -23,6 +23,8 @@ const (
 	defaultListenerAddr                     = "0.0.0.0"
 	defaultListenerPort                     = 8080
 	defaultServicePort                      = 80
+	defaultOTelCollectorImage               = "otel/opentelemetry-collector-contrib:0.135.0"
+	defaultOTelMetricsPort                  = 8889
 	defaultKubernetesCPURequest             = "50m"
 	defaultKubernetesMemoryRequest          = "64Mi"
 	defaultKubernetesCPULimit               = "1"
@@ -112,12 +114,14 @@ type Upstream struct {
 
 // Kubernetes contains the settings needed to generate a Deployment and Service.
 type Kubernetes struct {
-	Name        string                         `yaml:"name"`
-	Namespace   string                         `yaml:"namespace"`
-	Image       string                         `yaml:"image"`
-	Replicas    *int32                         `yaml:"replicas,omitempty"`
-	ServicePort int32                          `yaml:"service_port,omitempty"`
-	Resources   KubernetesResourceRequirements `yaml:"resources,omitempty"`
+	Name      string `yaml:"name"`
+	Namespace string `yaml:"namespace"`
+	Image     string `yaml:"image"`
+	// OTelCollectorImage defaults to the OpenTelemetry Collector Contrib image used by the PoC.
+	OTelCollectorImage string                         `yaml:"otel_collector_image,omitempty"`
+	Replicas           *int32                         `yaml:"replicas,omitempty"`
+	ServicePort        int32                          `yaml:"service_port,omitempty"`
+	Resources          KubernetesResourceRequirements `yaml:"resources,omitempty"`
 }
 
 // KubernetesResourceRequirements configures resources for the Envoy container.
@@ -236,6 +240,9 @@ func (c Config) Validate() error {
 		if strings.TrimSpace(c.Kubernetes.Image) == "" || strings.ContainsAny(c.Kubernetes.Image, " \t\r\n") {
 			return fmt.Errorf("kubernetes.image must be an image reference")
 		}
+		if strings.TrimSpace(c.Kubernetes.OTelCollectorImage) == "" || strings.ContainsAny(c.Kubernetes.OTelCollectorImage, " \t\r\n") {
+			return fmt.Errorf("kubernetes.otel_collector_image must be an image reference")
+		}
 		if c.Kubernetes.Replicas != nil && *c.Kubernetes.Replicas < 0 {
 			return fmt.Errorf("kubernetes.replicas must not be negative")
 		}
@@ -336,6 +343,9 @@ func (c Config) withDefaults() Config {
 		}
 		if c.Kubernetes.ServicePort == 0 {
 			c.Kubernetes.ServicePort = defaultServicePort
+		}
+		if c.Kubernetes.OTelCollectorImage == "" {
+			c.Kubernetes.OTelCollectorImage = defaultOTelCollectorImage
 		}
 		resources := kubernetes.Resources
 		resources.Requests = copyResourcesOrDefault(resources.Requests, map[string]string{

@@ -95,3 +95,15 @@ Envoy 1.39.1 and HTTPBin 2.25.0.
 Envoy writes structured JSON access logs to stdout for HTTP responses with a
 status code of 400 or higher. Entries include the route, method, status,
 duration, response details, and upstream information.
+
+## Prometheus metrics
+
+Generated Kubernetes resources include an OpenTelemetry Collector sidecar. It
+scrapes Envoy's loopback admin endpoint at `127.0.0.1:9901/stats/prometheus`
+every 30 seconds and exposes Prometheus metrics on the `metrics` port (`8889`)
+of the existing `<name>` Service at path `/metrics`. The Envoy admin endpoint
+stays bound to loopback and is not exposed by the Service.
+
+The collector image defaults to
+`otel/opentelemetry-collector-contrib:0.135.0`. Set
+`kubernetes.otel_collector_image` to use a mirrored or different image.

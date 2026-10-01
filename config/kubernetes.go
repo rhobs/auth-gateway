@@ -18,15 +18,16 @@ const configDirectory = "/etc/auth-gateway"
 
 // KubernetesResources contains native objects generated for a gateway.
 type KubernetesResources struct {
-	ConfigMap      corev1.ConfigMap
-	ServiceAccount corev1.ServiceAccount
-	Deployment     appsv1.Deployment
-	Service        corev1.Service
+	ConfigMap              corev1.ConfigMap
+	OTelCollectorConfigMap corev1.ConfigMap
+	ServiceAccount         corev1.ServiceAccount
+	Deployment             appsv1.Deployment
+	Service                corev1.Service
 }
 
 // Objects returns the resources in apply order.
 func (r *KubernetesResources) Objects() []runtime.Object {
-	return []runtime.Object{&r.ConfigMap, &r.ServiceAccount, &r.Deployment, &r.Service}
+	return []runtime.Object{&r.ConfigMap, &r.OTelCollectorConfigMap, &r.ServiceAccount, &r.Deployment, &r.Service}
 }
 
 // YAML serializes all resources as a Kubernetes manifest stream.
@@ -44,7 +45,7 @@ func (r *KubernetesResources) YAML() ([]byte, error) {
 	return output.Bytes(), nil
 }
 
-// GenerateKubernetes builds a Deployment, Service, ServiceAccount, and ConfigMap.
+// GenerateKubernetes builds Kubernetes resources for Envoy and its metrics sidecar.
 // It does not contact a cluster, read credentials, or write files.
 func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	c = c.withDefaults()
@@ -58,9 +59,11 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	if err != nil {
 		return nil, err
 	}
+	otelConfig := generateOTelCollectorConfig()
 
 	k := c.Kubernetes
 	configName := k.Name + "-config"
+	metricsName := metricsResourceName(k.Name)
 	labels := func() map[string]string {
 		return map[string]string{
 			"app.kubernetes.io/name":     "auth-gateway",
@@ -71,6 +74,11 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
 		ObjectMeta: metav1.ObjectMeta{Name: configName, Namespace: k.Namespace},
 		Data:       map[string]string{"envoy.yaml": string(files["envoy.yaml"])},
+	}
+	otelConfigMap := corev1.ConfigMap{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+		ObjectMeta: metav1.ObjectMeta{Name: metricsName, Namespace: k.Namespace},
+		Data:       map[string]string{"config.yaml": string(otelConfig)},
 	}
 	serviceAccount := corev1.ServiceAccount{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ServiceAccount"},
@@ -132,12 +140,39 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 							MountPath: configDirectory,
 							ReadOnly:  true,
 						}},
+					}, {
+						Name:            "metrics",
+						Image:           k.OTelCollectorImage,
+						ImagePullPolicy: corev1.PullIfNotPresent,
+						Args:            []string{"--config=/etc/collector/config.yaml"},
+						Ports: []corev1.ContainerPort{{
+							Name: "metrics", ContainerPort: defaultOTelMetricsPort, Protocol: corev1.ProtocolTCP,
+						}},
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("20m"),
+								corev1.ResourceMemory: resource.MustParse("64Mi"),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceMemory: resource.MustParse("256Mi"),
+							},
+						},
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      "metrics-config",
+							MountPath: "/etc/collector",
+							ReadOnly:  true,
+						}},
 					}},
 					Volumes: []corev1.Volume{{
 						Name: "config",
 						VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
 							LocalObjectReference: corev1.LocalObjectReference{Name: configName},
 							Items:                []corev1.KeyToPath{{Key: "envoy.yaml", Path: "envoy.yaml"}},
+						}},
+					}, {
+						Name: "metrics-config",
+						VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+							LocalObjectReference: corev1.LocalObjectReference{Name: metricsName},
 						}},
 					}},
 				},
@@ -159,15 +194,21 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 				Port:       k.ServicePort,
 				TargetPort: intstr.FromString("http"),
 				Protocol:   corev1.ProtocolTCP,
+			}, {
+				Name:       "metrics",
+				Port:       defaultOTelMetricsPort,
+				TargetPort: intstr.FromString("metrics"),
+				Protocol:   corev1.ProtocolTCP,
 			}},
 		},
 	}
 
 	return &KubernetesResources{
-		ConfigMap:      configMap,
-		ServiceAccount: serviceAccount,
-		Deployment:     deployment,
-		Service:        service,
+		ConfigMap:              configMap,
+		OTelCollectorConfigMap: otelConfigMap,
+		ServiceAccount:         serviceAccount,
+		Deployment:             deployment,
+		Service:                service,
 	}, nil
 }
 

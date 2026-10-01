@@ -151,6 +151,17 @@ func TestMetricsAPIForwardsRequests(t *testing.T) {
 			}
 		})
 	}
+
+	metricsAddress, stopMetrics, err := startPortForward(ctx, clusterContext, testNamespace, "service/auth-gateway", 8889)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stopMetrics)
+	metricsCtx, metricsCancel := context.WithTimeout(ctx, 70*time.Second)
+	defer metricsCancel()
+	if err := waitForPrometheusMetrics(metricsCtx, metricsAddress); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func waitForUpstream(ctx context.Context, address string) error {
@@ -180,6 +191,38 @@ func waitForUpstream(ctx context.Context, address string) error {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("upstream readiness check failed: %s: %w", lastResult, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func waitForPrometheusMetrics(ctx context.Context, address string) error {
+	client := &http.Client{Timeout: 2 * time.Second}
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	lastResult := "no response"
+	for {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+"/metrics", nil)
+		if err != nil {
+			return err
+		}
+		response, err := client.Do(request)
+		if err == nil {
+			body, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+			_ = response.Body.Close()
+			if readErr != nil {
+				lastResult = readErr.Error()
+			} else if response.StatusCode == http.StatusOK && bytes.Contains(body, []byte("envoy_server_live")) {
+				return nil
+			} else {
+				lastResult = fmt.Sprintf("HTTP %d did not include Envoy metrics", response.StatusCode)
+			}
+		} else {
+			lastResult = err.Error()
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("Prometheus metrics scrape failed: %s: %w", lastResult, ctx.Err())
 		case <-ticker.C:
 		}
 	}
@@ -221,6 +264,7 @@ func logTestState(t *testing.T, ctx context.Context, clusterContext string) {
 		{name: "endpoints", namespace: testNamespace, args: []string{"get", "endpoints", "httpbin", "-o", "wide"}},
 		{name: "events", namespace: testNamespace, args: []string{"get", "events", "--sort-by=.lastTimestamp"}},
 		{name: "envoy logs", namespace: testNamespace, args: []string{"logs", "deployment/auth-gateway", "-c", "envoy", "--tail=40"}},
+		{name: "collector logs", namespace: testNamespace, args: []string{"logs", "deployment/auth-gateway", "-c", "metrics", "--tail=40"}},
 	}
 	for _, check := range checks {
 		output, err := runKubectl(ctx, clusterContext, check.namespace, check.args...)

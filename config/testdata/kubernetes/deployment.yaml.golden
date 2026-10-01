@@ -61,6 +61,25 @@ spec:
         - mountPath: /etc/auth-gateway
           name: config
           readOnly: true
+      - args:
+        - --config=/etc/collector/config.yaml
+        image: otel/opentelemetry-collector-contrib:0.135.0
+        imagePullPolicy: IfNotPresent
+        name: metrics
+        ports:
+        - containerPort: 8889
+          name: metrics
+          protocol: TCP
+        resources:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 20m
+            memory: 64Mi
+        volumeMounts:
+        - mountPath: /etc/collector
+          name: metrics-config
+          readOnly: true
       serviceAccountName: auth-gateway
       terminationGracePeriodSeconds: 30
       volumes:
@@ -70,4 +89,7 @@ spec:
             path: envoy.yaml
           name: auth-gateway-config
         name: config
+      - configMap:
+          name: auth-gateway-metrics
+        name: metrics-config
 status: {}

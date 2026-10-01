@@ -27,6 +27,7 @@ func TestGenerateKubernetesMatchesGoldenManifest(t *testing.T) {
 
 	goldenFiles := []string{
 		"kubernetes/configmap.yaml.golden",
+		"kubernetes/otel-collector-configmap.yaml.golden",
 		"kubernetes/service-account.yaml.golden",
 		"kubernetes/deployment.yaml.golden",
 		"kubernetes/service.yaml.golden",
@@ -54,6 +55,37 @@ func TestGenerateKubernetesMatchesGoldenManifest(t *testing.T) {
 	}
 	if !bytes.Equal(manifest, want.Bytes()) {
 		t.Fatal("generated Kubernetes manifest does not match the golden files")
+	}
+}
+
+func TestGenerateKubernetesExposesMetricsWithoutAdminPort(t *testing.T) {
+	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resources, err := GenerateKubernetes(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ports := make(map[string]struct {
+		port       int32
+		targetPort string
+	}, len(resources.Service.Spec.Ports))
+	for _, port := range resources.Service.Spec.Ports {
+		ports[port.Name] = struct {
+			port       int32
+			targetPort string
+		}{port: port.Port, targetPort: port.TargetPort.String()}
+	}
+	if len(ports) != 2 {
+		t.Fatalf("Service ports = %#v, want only HTTP and metrics ports", ports)
+	}
+	if got := ports["http"]; got.port != defaultServicePort || got.targetPort != "http" {
+		t.Fatalf("HTTP Service port = %#v, want port %d targeting Envoy HTTP", got, defaultServicePort)
+	}
+	if got := ports["metrics"]; got.port != defaultOTelMetricsPort || got.targetPort != "metrics" {
+		t.Fatalf("metrics Service port = %#v, want port %d targeting the collector", got, defaultOTelMetricsPort)
 	}
 }
 

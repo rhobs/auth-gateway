@@ -30,7 +30,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if got := config.APIs[0].Routes[0].Rewrite.Path; got != "/api/v1/receive" {
 		t.Fatalf("rewrite path = %q", got)
 	}
-	if config.Kubernetes.ServicePort != defaultServicePort || config.Kubernetes.Replicas == nil || *config.Kubernetes.Replicas != 2 {
+	if config.Kubernetes.ServicePort != defaultServicePort ||
+		config.Kubernetes.Replicas == nil || *config.Kubernetes.Replicas != 2 ||
+		config.Kubernetes.OTelCollectorImage != defaultOTelCollectorImage {
 		t.Fatalf("Kubernetes defaults = %#v", config.Kubernetes)
 	}
 }
