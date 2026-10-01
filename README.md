@@ -78,6 +78,13 @@ The `config` package loads one strict YAML document, applies defaults, and
 validates it. It generates Envoy config and Kubernetes resources. See
 [config.example.yaml](config.example.yaml).
 
+Each API entry defines one upstream and must include one or more routes. A
+route accepts a list of HTTP methods (POST by default) and matches an exact
+path, a prefix, or an Envoy safe RE2 regular expression against the full path.
+Rewrites are optional; use path, prefix, or regular expression rewrites when
+the upstream path differs. Routes are checked in the order listed, so put
+narrower matches first.
+
 Run `make test` for unit tests. Run `make e2e` for the local Kind test. The e2e
 test needs Docker, Kind, kubectl, and network access. It creates or reuses the
 `auth-gateway-e2e` cluster and deletes its test namespace when it ends. It uses

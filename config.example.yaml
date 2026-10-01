@@ -1,17 +1,70 @@
+# Version of the gateway configuration format.
 version: 1
+
 listener:
+  # Envoy listener address. Kubernetes output requires a wildcard address.
   address: 0.0.0.0
+  # Envoy listener port. Defaults to 8080.
   port: 8080
+
+# Each API defines one upstream and one or more routes to it.
 apis:
-  - name: metrics
-    method: POST
-    path: /metrics/api/v1/receive
+  - name: metrics-write
     upstream:
       address: thanos-receive
       port: 19291
-      path: /api/v1/receive
+    routes:
+      - methods: [POST]
+        path:
+          exact: /metrics/api/v1/receive
+        rewrite:
+          # Replace the complete request path with the upstream path.
+          path: /api/v1/receive
+
+  - name: metrics-query
+    upstream:
+      address: thanos-query
+      port: 9090
+    routes:
+      # Routes are checked in declaration order. Put narrower matches first.
+      # One safe regex route covers both query endpoints and keeps the suffix.
+      - methods: [GET, POST]
+        path:
+          regex: '^/metrics/api/v1/(query|query_range)$'
+        rewrite:
+          regex:
+            pattern: '^/metrics/(.*)$'
+            substitution: '/\1'
+
+      # Prefix matching forwards label names below this path.
+      - methods: [GET]
+        path:
+          prefix: /metrics/api/v1/label/
+        rewrite:
+          prefix: /api/v1/label/
+
+      - methods: [GET]
+        path:
+          exact: /metrics/api/v1/labels
+        rewrite:
+          path: /api/v1/labels
+
+  - name: logs
+    upstream:
+      address: loki
+      port: 3100
+    routes:
+      - methods: [POST]
+        path:
+          prefix: /logs/otlp/
+        rewrite:
+          prefix: /otlp/
+
+# Optional. Required when generating Kubernetes resources.
 kubernetes:
   name: auth-gateway
   namespace: observability
   image: envoyproxy/envoy:v1.39.1
   replicas: 2
+  # Optional Service port. Defaults to 80.
+  # service_port: 80

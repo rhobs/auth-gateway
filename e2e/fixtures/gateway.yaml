@@ -1,20 +1,31 @@
 version: 1
+
 listener:
   port: 8080
+
 apis:
   - name: metrics
-    path: /metrics/api/v1/receive
     upstream:
       address: httpbin
       port: 8080
-      path: /anything/api/v1/receive
+    routes:
+      - methods: [POST]
+        path:
+          exact: /metrics/api/v1/receive
+        rewrite:
+          path: /anything/api/v1/receive
+
   - name: upstream-health
-    method: GET
-    path: /upstream-health
     upstream:
       address: httpbin
       port: 8080
-      path: /status/200
+    routes:
+      - methods: [GET]
+        path:
+          exact: /upstream-health
+        rewrite:
+          path: /status/200
+
 kubernetes:
   name: auth-gateway
   namespace: auth-gateway-e2e

@@ -8,15 +8,44 @@ import (
 const exampleConfig = `version: 1
 apis:
   - name: metrics
-    path: /metrics/api/v1/receive
     upstream:
       address: thanos-receive
       port: 19291
-      path: /api/v1/receive
+    routes:
+      - path:
+          exact: /metrics/api/v1/receive
+        rewrite:
+          path: /api/v1/receive
 kubernetes:
   name: auth-gateway
   namespace: observability
   image: envoyproxy/envoy:v1.39.1
+`
+
+const routeListConfig = `version: 1
+apis:
+  - name: metrics-query
+    upstream:
+      address: thanos-query
+      port: 9090
+    routes:
+      - methods: [GET, POST]
+        path:
+          regex: '^/metrics/api/v1/(query|query_range)$'
+        rewrite:
+          regex:
+            pattern: '^/metrics/(.*)$'
+            substitution: '/\1'
+      - methods: [GET]
+        path:
+          prefix: /metrics/api/v1/label/
+        rewrite:
+          prefix: /api/v1/label/
+      - methods: [GET]
+        path:
+          exact: /metrics/api/v1/labels
+        rewrite:
+          path: /api/v1/labels
 `
 
 func TestLoadAppliesDefaults(t *testing.T) {
@@ -27,23 +56,28 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if config.Listener.Address != defaultListenerAddr || config.Listener.Port != defaultListenerPort {
 		t.Fatalf("listener defaults = %s:%d", config.Listener.Address, config.Listener.Port)
 	}
-	if config.APIs[0].Method != "POST" {
-		t.Fatalf("API method default = %q, want POST", config.APIs[0].Method)
+	if got := strings.Join(config.APIs[0].Routes[0].Methods, ","); got != "POST" {
+		t.Fatalf("route method default = %q, want POST", got)
 	}
-	if got := config.APIs[0].Upstream.Path; got != "/api/v1/receive" {
-		t.Fatalf("upstream path = %q", got)
+	if got := config.APIs[0].Routes[0].Rewrite.Path; got != "/api/v1/receive" {
+		t.Fatalf("rewrite path = %q", got)
 	}
 	if config.Kubernetes.ServicePort != defaultServicePort || config.Kubernetes.Replicas == nil || *config.Kubernetes.Replicas != 2 {
 		t.Fatalf("Kubernetes defaults = %#v", config.Kubernetes)
 	}
+}
 
-	withoutUpstreamPath := strings.Replace(exampleConfig, "      path: /api/v1/receive\n", "", 1)
-	config, err = Load(strings.NewReader(withoutUpstreamPath))
+func TestLoadAppliesRouteDefaults(t *testing.T) {
+	input := strings.Replace(routeListConfig, "      - methods: [GET, POST]\n", "      - methods: []\n", 1)
+	config, err := Load(strings.NewReader(input))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := config.APIs[0].Upstream.Path; got != config.APIs[0].Path {
-		t.Fatalf("default upstream path = %q, want %q", got, config.APIs[0].Path)
+	if got := strings.Join(config.APIs[0].Routes[0].Methods, ","); got != "POST" {
+		t.Fatalf("default route methods = %q, want POST", got)
+	}
+	if got := strings.Join(config.APIs[0].Routes[1].Methods, ","); got != "GET" {
+		t.Fatalf("route methods = %q, want GET", got)
 	}
 }
 
@@ -53,6 +87,14 @@ func TestLoadRejectsInvalidYAML(t *testing.T) {
 		"duplicate field":    strings.Replace(exampleConfig, "version: 1", "version: 1\nversion: 1", 1),
 		"multiple documents": exampleConfig + "---\nversion: 1\n",
 		"invalid syntax":     "version: [\n",
+		"legacy API method":  strings.Replace(exampleConfig, "    routes:\n", "    method: POST\n    routes:\n", 1),
+		"legacy API path":    strings.Replace(exampleConfig, "    routes:\n", "    path: /metrics/api/v1/receive\n    routes:\n", 1),
+		"legacy upstream path": strings.Replace(
+			exampleConfig,
+			"      port: 19291\n",
+			"      port: 19291\n      path: /api/v1/receive\n",
+			1,
+		),
 	}
 	for name, input := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -78,21 +120,28 @@ func TestValidateRejectsInvalidConfiguration(t *testing.T) {
 		"invalid API name": func(c *Config) { c.APIs[0].Name = "Metrics" },
 		"duplicate API name": func(c *Config) {
 			c.APIs = append(c.APIs, c.APIs[0])
-			c.APIs[1].Path = "/another/path"
 		},
 		"duplicate route": func(c *Config) {
-			c.APIs = append(c.APIs, c.APIs[0])
-			c.APIs[1].Name = "metrics-copy"
+			api := c.APIs[0]
+			api.Name = "metrics-copy"
+			c.APIs = append(c.APIs, api)
 		},
-		"lowercase method": func(c *Config) { c.APIs[0].Method = "post" },
-		"invalid method":   func(c *Config) { c.APIs[0].Method = "POST /metrics" },
-		"relative path":    func(c *Config) { c.APIs[0].Path = "metrics/write" },
-		"path traversal":   func(c *Config) { c.APIs[0].Path = "/metrics/../admin" },
-		"path query":       func(c *Config) { c.APIs[0].Path = "/metrics?tenant=one" },
+		"no routes":        func(c *Config) { c.APIs[0].Routes = nil },
+		"lowercase method": func(c *Config) { c.APIs[0].Routes[0].Methods = []string{"post"} },
+		"invalid method":   func(c *Config) { c.APIs[0].Routes[0].Methods = []string{"POST /metrics"} },
+		"relative path": func(c *Config) {
+			c.APIs[0].Routes[0].Path.Exact = "metrics/write"
+		},
+		"path traversal": func(c *Config) {
+			c.APIs[0].Routes[0].Path.Exact = "/metrics/../admin"
+		},
+		"path query": func(c *Config) {
+			c.APIs[0].Routes[0].Path.Exact = "/metrics?tenant=one"
+		},
 		"invalid upstream": func(c *Config) { c.APIs[0].Upstream.Address = "bad_host" },
 		"invalid port":     func(c *Config) { c.APIs[0].Upstream.Port = 65536 },
-		"invalid upstream path": func(c *Config) {
-			c.APIs[0].Upstream.Path = "/api/%invalid"
+		"invalid rewrite path": func(c *Config) {
+			c.APIs[0].Routes[0].Rewrite.Path = "/api/%invalid"
 		},
 		"invalid Kube name": func(c *Config) { c.Kubernetes.Name = "bad_name" },
 		"long Kube name":    func(c *Config) { c.Kubernetes.Name = strings.Repeat("a", 57) },
@@ -120,19 +169,53 @@ func TestValidateRejectsInvalidConfiguration(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsInvalidRouteConfiguration(t *testing.T) {
+	tests := map[string]func(*Config){
+		"multiple path matchers": func(c *Config) {
+			c.APIs[0].Routes[0].Path.Prefix = "/metrics/"
+		},
+		"invalid path regex": func(c *Config) {
+			c.APIs[0].Routes[0].Path.Regex = "["
+		},
+		"duplicate method": func(c *Config) {
+			c.APIs[0].Routes[0].Methods = []string{"GET", "GET"}
+		},
+		"missing path matcher": func(c *Config) {
+			c.APIs[0].Routes[0].Path = PathMatch{}
+		},
+		"multiple rewrite types": func(c *Config) {
+			c.APIs[0].Routes[0].Rewrite = &PathRewrite{Path: "/query", Prefix: "/api/"}
+		},
+		"duplicate route": func(c *Config) {
+			c.APIs[0].Routes = append(c.APIs[0].Routes, c.APIs[0].Routes[0])
+		},
+	}
+	for name, change := range tests {
+		t.Run(name, func(t *testing.T) {
+			config, err := Load(strings.NewReader(routeListConfig))
+			if err != nil {
+				t.Fatal(err)
+			}
+			change(&config)
+			if err := config.Validate(); err == nil {
+				t.Fatal("Validate accepted invalid route configuration")
+			}
+		})
+	}
+}
+
 func TestDefaultsDoNotMutateInput(t *testing.T) {
 	config, err := Load(strings.NewReader(exampleConfig))
 	if err != nil {
 		t.Fatal(err)
 	}
-	config.APIs[0].Method = ""
-	config.APIs[0].Upstream.Path = ""
+	config.APIs[0].Routes[0].Methods = nil
 	config.Kubernetes.Replicas = nil
 	defaulted := config.withDefaults()
-	if config.APIs[0].Method != "" || config.APIs[0].Upstream.Path != "" || config.Kubernetes.Replicas != nil {
+	if config.APIs[0].Routes[0].Methods != nil || config.Kubernetes.Replicas != nil {
 		t.Fatal("applying defaults mutated the caller's configuration")
 	}
-	if defaulted.APIs[0].Method != "POST" || defaulted.APIs[0].Upstream.Path != defaulted.APIs[0].Path ||
+	if len(defaulted.APIs[0].Routes[0].Methods) != 1 || defaulted.APIs[0].Routes[0].Methods[0] != "POST" ||
 		defaulted.Kubernetes.Replicas == nil || *defaulted.Kubernetes.Replicas != 2 {
 		t.Fatal("defaults were not applied to the returned configuration")
 	}

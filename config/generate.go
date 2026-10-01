@@ -100,35 +100,44 @@ func httpManager(c Config) (*hcm.HttpConnectionManager, error) {
 
 func apiRoutes(apis []API) *route.RouteConfiguration {
 	var routes []*route.Route
-	methodsByPath := make(map[string][]string, len(apis))
-	for _, api := range apis {
-		methodsByPath[api.Path] = append(methodsByPath[api.Path], api.Method)
-		routes = append(routes, &route.Route{
-			Name: "api-" + api.Name,
-			Match: &route.RouteMatch{
-				PathSpecifier: &route.RouteMatch_Path{Path: api.Path},
-				Headers: []*route.HeaderMatcher{{
-					Name: ":method",
-					HeaderMatchSpecifier: &route.HeaderMatcher_StringMatch{
-						StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: api.Method}},
-					},
-				}},
-			},
-			Action: &route.Route_Route{Route: &route.RouteAction{
-				ClusterSpecifier: &route.RouteAction_Cluster{Cluster: "api-" + api.Name},
-				PrefixRewrite:    api.Upstream.Path,
-				Timeout:          durationpb.New(30 * time.Second),
-			}},
-		})
+	type methodFallback struct {
+		path    PathMatch
+		methods []string
+	}
+	fallbacks := make([]methodFallback, 0, len(apis))
+	fallbackIndexes := make(map[string]int, len(apis))
+
+	for apiIndex, api := range apis {
+		for routeIndex, apiRoute := range api.Routes {
+			key := pathMatchKey(apiRoute.Path)
+			fallbackIndex, ok := fallbackIndexes[key]
+			if !ok {
+				fallbackIndex = len(fallbacks)
+				fallbackIndexes[key] = fallbackIndex
+				fallbacks = append(fallbacks, methodFallback{path: apiRoute.Path})
+			}
+
+			for methodIndex, method := range apiRoute.Methods {
+				name := "api-" + strconv.Itoa(apiIndex) + "-" + api.Name + "-route-" + strconv.Itoa(routeIndex) + "-method-" + strconv.Itoa(methodIndex)
+				action := &route.RouteAction{
+					ClusterSpecifier: &route.RouteAction_Cluster{Cluster: "api-" + api.Name},
+					Timeout:          durationpb.New(30 * time.Second),
+				}
+				applyPathRewrite(action, apiRoute.Rewrite)
+				match := pathMatch(apiRoute.Path)
+				match.Headers = []*route.HeaderMatcher{methodHeader(method)}
+				routes = append(routes, &route.Route{
+					Name:   name,
+					Match:  match,
+					Action: &route.Route_Route{Route: action},
+				})
+				fallbacks[fallbackIndex].methods = append(fallbacks[fallbackIndex].methods, method)
+			}
+		}
 	}
 
-	paths := make([]string, 0, len(methodsByPath))
-	for apiPath := range methodsByPath {
-		paths = append(paths, apiPath)
-	}
-	sort.Strings(paths)
-	for i, apiPath := range paths {
-		methods := methodsByPath[apiPath]
+	for i, fallback := range fallbacks {
+		methods := fallback.methods
 		sort.Strings(methods)
 		allow := ""
 		for index, method := range methods {
@@ -139,7 +148,7 @@ func apiRoutes(apis []API) *route.RouteConfiguration {
 		}
 		routes = append(routes, &route.Route{
 			Name:  "method-not-allowed-" + strconv.Itoa(i),
-			Match: &route.RouteMatch{PathSpecifier: &route.RouteMatch_Path{Path: apiPath}},
+			Match: pathMatch(fallback.path),
 			Action: &route.Route_DirectResponse{DirectResponse: &route.DirectResponseAction{
 				Status: 405,
 			}},
@@ -161,6 +170,50 @@ func apiRoutes(apis []API) *route.RouteConfiguration {
 			Domains: []string{"*"},
 			Routes:  routes,
 		}},
+	}
+}
+
+func pathMatch(path PathMatch) *route.RouteMatch {
+	switch {
+	case path.Exact != "":
+		return &route.RouteMatch{PathSpecifier: &route.RouteMatch_Path{Path: path.Exact}}
+	case path.Prefix != "":
+		return &route.RouteMatch{PathSpecifier: &route.RouteMatch_Prefix{Prefix: path.Prefix}}
+	default:
+		return &route.RouteMatch{PathSpecifier: &route.RouteMatch_SafeRegex{SafeRegex: envoySafeRegex(path.Regex)}}
+	}
+}
+
+func methodHeader(method string) *route.HeaderMatcher {
+	return &route.HeaderMatcher{
+		Name: ":method",
+		HeaderMatchSpecifier: &route.HeaderMatcher_StringMatch{
+			StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: method}},
+		},
+	}
+}
+
+func envoySafeRegex(pattern string) *matcher.RegexMatcher {
+	return &matcher.RegexMatcher{
+		EngineType: &matcher.RegexMatcher_GoogleRe2{GoogleRe2: &matcher.RegexMatcher_GoogleRE2{}},
+		Regex:      pattern,
+	}
+}
+
+func applyPathRewrite(action *route.RouteAction, rewrite *PathRewrite) {
+	if rewrite == nil {
+		return
+	}
+	switch {
+	case rewrite.Path != "":
+		action.PathRewrite = rewrite.Path
+	case rewrite.Prefix != "":
+		action.PrefixRewrite = rewrite.Prefix
+	case rewrite.Regex != nil:
+		action.RegexRewrite = &matcher.RegexMatchAndSubstitute{
+			Pattern:      envoySafeRegex(rewrite.Regex.Pattern),
+			Substitution: rewrite.Regex.Substitution,
+		}
 	}
 }
 

@@ -41,19 +41,44 @@ type Listener struct {
 	Port    uint32 `yaml:"port,omitempty"`
 }
 
-// API describes one named write route and its upstream.
+// API describes one upstream and its routes.
 type API struct {
 	Name     string   `yaml:"name"`
-	Method   string   `yaml:"method,omitempty"`
-	Path     string   `yaml:"path"`
+	Routes   []Route  `yaml:"routes"`
 	Upstream Upstream `yaml:"upstream"`
 }
 
-// Upstream describes the service and path that receive a routed request.
+// Route describes the methods, path matcher, and optional rewrite for a route.
+type Route struct {
+	Methods []string     `yaml:"methods,omitempty"`
+	Path    PathMatch    `yaml:"path"`
+	Rewrite *PathRewrite `yaml:"rewrite,omitempty"`
+}
+
+// PathMatch selects one exact path, path prefix, or safe regular expression.
+type PathMatch struct {
+	Exact  string `yaml:"exact,omitempty"`
+	Prefix string `yaml:"prefix,omitempty"`
+	Regex  string `yaml:"regex,omitempty"`
+}
+
+// PathRewrite optionally replaces a path, prefix, or regex match.
+type PathRewrite struct {
+	Path   string        `yaml:"path,omitempty"`
+	Prefix string        `yaml:"prefix,omitempty"`
+	Regex  *RegexRewrite `yaml:"regex,omitempty"`
+}
+
+// RegexRewrite replaces matches in the request path using RE2 capture groups.
+type RegexRewrite struct {
+	Pattern      string `yaml:"pattern"`
+	Substitution string `yaml:"substitution"`
+}
+
+// Upstream describes the service that receives routed requests.
 type Upstream struct {
 	Address string `yaml:"address"`
 	Port    uint32 `yaml:"port"`
-	Path    string `yaml:"path,omitempty"`
 }
 
 // Kubernetes contains the settings needed to generate a Deployment and Service.
@@ -120,26 +145,38 @@ func (c Config) Validate() error {
 		}
 		names[api.Name] = struct{}{}
 
-		if !validMethod(api.Method) {
-			return fmt.Errorf("%s.method must be a valid uppercase HTTP method", name)
-		}
-		if err := validatePath(name+".path", api.Path); err != nil {
-			return err
-		}
-		routeKey := api.Method + "\x00" + api.Path
-		if _, exists := routes[routeKey]; exists {
-			return fmt.Errorf("duplicate API route %s %s", api.Method, api.Path)
-		}
-		routes[routeKey] = struct{}{}
-
 		if !validHost(api.Upstream.Address) {
 			return fmt.Errorf("%s.upstream.address must be an IP address or DNS name", name)
 		}
 		if api.Upstream.Port == 0 || api.Upstream.Port > 65535 {
 			return fmt.Errorf("%s.upstream.port must be between 1 and 65535", name)
 		}
-		if err := validatePath(name+".upstream.path", api.Upstream.Path); err != nil {
-			return err
+
+		if len(api.Routes) == 0 {
+			return fmt.Errorf("%s.routes must contain at least one route", name)
+		}
+		for routeIndex, route := range api.Routes {
+			routeName := fmt.Sprintf("%s.routes[%d]", name, routeIndex)
+			if err := validatePathMatch(routeName+".path", route.Path); err != nil {
+				return err
+			}
+			if err := validatePathRewrite(routeName+".rewrite", route.Rewrite); err != nil {
+				return err
+			}
+
+			seenMethods := make(map[string]struct{}, len(route.Methods))
+			for _, method := range route.Methods {
+				if !validMethod(method) {
+					return fmt.Errorf("%s.methods must contain valid uppercase HTTP methods", routeName)
+				}
+				if _, exists := seenMethods[method]; exists {
+					return fmt.Errorf("%s.methods contains duplicate method %q", routeName, method)
+				}
+				seenMethods[method] = struct{}{}
+				if err := addRouteKey(routes, route.Path, method); err != nil {
+					return err
+				}
+			}
 		}
 	}
 
@@ -176,15 +213,31 @@ func (c Config) withDefaults() Config {
 	}
 	if c.APIs != nil {
 		apis := make([]API, len(c.APIs))
-		copy(apis, c.APIs)
+		for i, api := range c.APIs {
+			apis[i] = api
+			if api.Routes != nil {
+				apis[i].Routes = make([]Route, len(api.Routes))
+				for j, route := range api.Routes {
+					apis[i].Routes[j] = route
+					apis[i].Routes[j].Methods = append([]string(nil), route.Methods...)
+					if route.Rewrite != nil {
+						rewrite := *route.Rewrite
+						if route.Rewrite.Regex != nil {
+							regexRewrite := *route.Rewrite.Regex
+							rewrite.Regex = &regexRewrite
+						}
+						apis[i].Routes[j].Rewrite = &rewrite
+					}
+				}
+			}
+		}
 		c.APIs = apis
 	}
 	for i := range c.APIs {
-		if c.APIs[i].Method == "" {
-			c.APIs[i].Method = http.MethodPost
-		}
-		if c.APIs[i].Upstream.Path == "" {
-			c.APIs[i].Upstream.Path = c.APIs[i].Path
+		for routeIndex := range c.APIs[i].Routes {
+			if len(c.APIs[i].Routes[routeIndex].Methods) == 0 {
+				c.APIs[i].Routes[routeIndex].Methods = []string{http.MethodPost}
+			}
 		}
 	}
 	if c.Kubernetes != nil {
@@ -202,6 +255,99 @@ func (c Config) withDefaults() Config {
 		}
 	}
 	return c
+}
+
+func addRouteKey(routes map[string]struct{}, path PathMatch, method string) error {
+	key := pathMatchKey(path) + "\x00" + method
+	if _, exists := routes[key]; exists {
+		return fmt.Errorf("duplicate API route for method %s and path matcher %q", method, pathMatchValue(path))
+	}
+	routes[key] = struct{}{}
+	return nil
+}
+
+func pathMatchKey(path PathMatch) string {
+	switch {
+	case path.Exact != "":
+		return "exact\x00" + path.Exact
+	case path.Prefix != "":
+		return "prefix\x00" + path.Prefix
+	default:
+		return "regex\x00" + path.Regex
+	}
+}
+
+func pathMatchValue(path PathMatch) string {
+	switch {
+	case path.Exact != "":
+		return path.Exact
+	case path.Prefix != "":
+		return path.Prefix
+	default:
+		return path.Regex
+	}
+}
+
+func validatePathMatch(name string, path PathMatch) error {
+	count := 0
+	if path.Exact != "" {
+		count++
+		if err := validatePath(name+".exact", path.Exact); err != nil {
+			return err
+		}
+	}
+	if path.Prefix != "" {
+		count++
+		if err := validatePathPrefix(name+".prefix", path.Prefix); err != nil {
+			return err
+		}
+	}
+	if path.Regex != "" {
+		count++
+		if _, err := regexp.Compile(path.Regex); err != nil {
+			return fmt.Errorf("%s.regex must be a valid RE2 expression: %w", name, err)
+		}
+	}
+	if count != 1 {
+		return fmt.Errorf("%s must set exactly one of exact, prefix, or regex", name)
+	}
+	return nil
+}
+
+func validatePathRewrite(name string, rewrite *PathRewrite) error {
+	if rewrite == nil {
+		return nil
+	}
+
+	count := 0
+	if rewrite.Path != "" {
+		count++
+		if err := validatePath(name+".path", rewrite.Path); err != nil {
+			return err
+		}
+	}
+	if rewrite.Prefix != "" {
+		count++
+		if err := validatePathPrefix(name+".prefix", rewrite.Prefix); err != nil {
+			return err
+		}
+	}
+	if rewrite.Regex != nil {
+		count++
+		if rewrite.Regex.Pattern == "" {
+			return fmt.Errorf("%s.regex.pattern must not be empty", name)
+		}
+		if _, err := regexp.Compile(rewrite.Regex.Pattern); err != nil {
+			return fmt.Errorf("%s.regex.pattern must be a valid RE2 expression: %w", name, err)
+		}
+		if strings.ContainsAny(rewrite.Regex.Substitution, "?#\r\n") {
+			return fmt.Errorf("%s.regex.substitution must not contain a query, fragment, or newline", name)
+		}
+	}
+	if count != 1 {
+		return fmt.Errorf("%s must set exactly one of path, prefix, or regex", name)
+	}
+	return nil
 }
 
 func validMethod(method string) bool {
@@ -226,6 +372,20 @@ func validatePath(name, value string) error {
 		return fmt.Errorf("%s must be a valid request path", name)
 	}
 	return nil
+}
+
+func validatePathPrefix(name, value string) error {
+	if value == "" {
+		return fmt.Errorf("%s must not be empty", name)
+	}
+	if strings.HasPrefix(value, "//") {
+		return fmt.Errorf("%s must be an absolute path prefix", name)
+	}
+	cleanable := value
+	if value != "/" && strings.HasSuffix(value, "/") {
+		cleanable = strings.TrimSuffix(value, "/")
+	}
+	return validatePath(name, cleanable)
 }
 
 func validHost(value string) bool {
