@@ -104,13 +104,12 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 						ImagePullPolicy: corev1.PullIfNotPresent,
 						Args: []string{
 							"-c", path.Join(configDirectory, "envoy.yaml"),
-							"--concurrency", "2",
 							"--log-level", "info",
-							"--disable-hot-restart",
+							"--disable-hot-restart", // Kubernetes handles Pod lifecycle.
 						},
 						Ports: []corev1.ContainerPort{
 							{Name: "http", ContainerPort: int32(c.Listener.Port), Protocol: corev1.ProtocolTCP},
-							{Name: "admin", ContainerPort: 9901, Protocol: corev1.ProtocolTCP},
+							{Name: "admin", ContainerPort: envoyAdminPort, Protocol: corev1.ProtocolTCP},
 						},
 						ReadinessProbe: &corev1.Probe{
 							ProbeHandler:     corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString("http")}},
@@ -118,14 +117,8 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 							FailureThreshold: 12,
 						},
 						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("50m"),
-								corev1.ResourceMemory: resource.MustParse("64Mi"),
-							},
-							Limits: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("1"),
-								corev1.ResourceMemory: resource.MustParse("256Mi"),
-							},
+							Requests: kubernetesResourceList(k.Resources.Requests),
+							Limits:   kubernetesResourceList(k.Resources.Limits),
 						},
 						SecurityContext: &corev1.SecurityContext{
 							AllowPrivilegeEscalation: new(false),
@@ -177,4 +170,15 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 		Deployment:     deployment,
 		Service:        service,
 	}, nil
+}
+
+func kubernetesResourceList(values map[string]string) corev1.ResourceList {
+	if values == nil {
+		return nil
+	}
+	resources := make(corev1.ResourceList, len(values))
+	for name, value := range values {
+		resources[corev1.ResourceName(name)] = resource.MustParse(value)
+	}
+	return resources
 }

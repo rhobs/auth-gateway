@@ -47,7 +47,7 @@ func Generate(c Config) (map[string][]byte, error) {
 
 	bootstrapConfig := &bootstrap.Bootstrap{
 		Node:  &core.Node{Id: c.Node.ID, Cluster: c.Node.Cluster},
-		Admin: &bootstrap.Admin{Address: socket("127.0.0.1", 9901)},
+		Admin: &bootstrap.Admin{Address: socket(envoyAdminAddress, envoyAdminPort)},
 		StaticResources: &bootstrap.Bootstrap_StaticResources{
 			Listeners: []*listener.Listener{{
 				Name:                          "ingestion",

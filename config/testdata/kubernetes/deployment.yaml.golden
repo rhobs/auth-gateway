@@ -24,8 +24,6 @@ spec:
       - args:
         - -c
         - /etc/auth-gateway/envoy.yaml
-        - --concurrency
-        - "2"
         - --log-level
         - info
         - --disable-hot-restart

@@ -12,14 +12,21 @@ import (
 	"strings"
 
 	"go.yaml.in/yaml/v3"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
 	configVersion                           = 1
+	envoyAdminAddress                       = "127.0.0.1"
+	envoyAdminPort                          = 9901
 	defaultListenerAddr                     = "0.0.0.0"
 	defaultListenerPort                     = 8080
 	defaultServicePort                      = 80
+	defaultKubernetesCPURequest             = "50m"
+	defaultKubernetesMemoryRequest          = "64Mi"
+	defaultKubernetesCPULimit               = "1"
+	defaultKubernetesMemoryLimit            = "256Mi"
 	defaultNodeID                           = "auth-gateway"
 	defaultNodeCluster                      = "auth-gateway"
 	defaultCircuitBreakerMaxConnections     = 1024
@@ -105,11 +112,19 @@ type Upstream struct {
 
 // Kubernetes contains the settings needed to generate a Deployment and Service.
 type Kubernetes struct {
-	Name        string `yaml:"name"`
-	Namespace   string `yaml:"namespace"`
-	Image       string `yaml:"image"`
-	Replicas    *int32 `yaml:"replicas,omitempty"`
-	ServicePort int32  `yaml:"service_port,omitempty"`
+	Name        string                         `yaml:"name"`
+	Namespace   string                         `yaml:"namespace"`
+	Image       string                         `yaml:"image"`
+	Replicas    *int32                         `yaml:"replicas,omitempty"`
+	ServicePort int32                          `yaml:"service_port,omitempty"`
+	Resources   KubernetesResourceRequirements `yaml:"resources,omitempty"`
+}
+
+// KubernetesResourceRequirements configures resources for the Envoy container.
+// Values use Kubernetes resource quantity notation.
+type KubernetesResourceRequirements struct {
+	Requests map[string]string `yaml:"requests,omitempty"`
+	Limits   map[string]string `yaml:"limits,omitempty"`
 }
 
 // Load decodes one strict YAML document and applies defaults before validation.
@@ -195,7 +210,7 @@ func (c Config) Validate() error {
 			seenMethods := make(map[string]struct{}, len(route.Methods))
 			for _, method := range route.Methods {
 				if !validMethod(method) {
-					return fmt.Errorf("%s.methods must contain valid uppercase HTTP methods", routeName)
+					return fmt.Errorf("%s.methods must contain supported HTTP methods", routeName)
 				}
 				if _, exists := seenMethods[method]; exists {
 					return fmt.Errorf("%s.methods contains duplicate method %q", routeName, method)
@@ -224,11 +239,38 @@ func (c Config) Validate() error {
 		if c.Kubernetes.ServicePort < 1 || c.Kubernetes.ServicePort > 65535 {
 			return fmt.Errorf("kubernetes.service_port must be between 1 and 65535")
 		}
+		if err := validateKubernetesResourceRequirements(c.Kubernetes.Resources); err != nil {
+			return err
+		}
 		if !net.ParseIP(c.Listener.Address).IsUnspecified() {
 			return fmt.Errorf("kubernetes requires a wildcard listener address (0.0.0.0 or ::)")
 		}
 	}
 
+	return nil
+}
+
+func validateKubernetesResourceRequirements(requirements KubernetesResourceRequirements) error {
+	for _, list := range []struct {
+		name   string
+		values map[string]string
+	}{
+		{name: "requests", values: requirements.Requests},
+		{name: "limits", values: requirements.Limits},
+	} {
+		for name, value := range list.values {
+			if problems := validation.IsQualifiedName(name); len(problems) > 0 {
+				return fmt.Errorf("kubernetes.resources.%s contains invalid resource name %q", list.name, name)
+			}
+			quantity, err := resource.ParseQuantity(value)
+			if err != nil {
+				return fmt.Errorf("kubernetes.resources.%s.%s must be a valid Kubernetes resource quantity: %w", list.name, name, err)
+			}
+			if quantity.Cmp(resource.Quantity{}) < 0 {
+				return fmt.Errorf("kubernetes.resources.%s.%s must not be negative", list.name, name)
+			}
+		}
+	}
 	return nil
 }
 
@@ -297,8 +339,29 @@ func (c Config) withDefaults() Config {
 		if c.Kubernetes.ServicePort == 0 {
 			c.Kubernetes.ServicePort = defaultServicePort
 		}
+		resources := kubernetes.Resources
+		resources.Requests = copyResourcesOrDefault(resources.Requests, map[string]string{
+			"cpu":    defaultKubernetesCPURequest,
+			"memory": defaultKubernetesMemoryRequest,
+		})
+		resources.Limits = copyResourcesOrDefault(resources.Limits, map[string]string{
+			"cpu":    defaultKubernetesCPULimit,
+			"memory": defaultKubernetesMemoryLimit,
+		})
+		c.Kubernetes.Resources = resources
 	}
 	return c
+}
+
+func copyResourcesOrDefault(values, defaults map[string]string) map[string]string {
+	if values == nil {
+		values = defaults
+	}
+	copy := make(map[string]string, len(values))
+	for name, value := range values {
+		copy[name] = value
+	}
+	return copy
 }
 
 func defaultUint32(value *uint32, fallback uint32) *uint32 {
@@ -403,15 +466,20 @@ func validatePathRewrite(name string, rewrite *PathRewrite) error {
 }
 
 func validMethod(method string) bool {
-	if method == "" || strings.ToUpper(method) != method {
+	switch method {
+	case http.MethodConnect,
+		http.MethodDelete,
+		http.MethodGet,
+		http.MethodHead,
+		http.MethodOptions,
+		http.MethodPatch,
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodTrace:
+		return true
+	default:
 		return false
 	}
-	for _, char := range method {
-		if char <= 0x20 || char >= 0x7f || strings.ContainsRune("()<>@,;:\\\"/[]?={}", char) {
-			return false
-		}
-	}
-	return true
 }
 
 func validatePath(name, value string) error {

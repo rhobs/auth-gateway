@@ -85,3 +85,12 @@ kubernetes:
   replicas: 2
   # Optional Service port. Defaults to 80.
   # service_port: 80
+  # Optional Envoy container resources. Omitted requests and limits use the defaults below.
+  # Set a category to {} to omit its defaults.
+  # resources:
+  #   requests:
+  #     cpu: 50m
+  #     memory: 64Mi
+  #   limits:
+  #     cpu: "1"
+  #     memory: 256Mi
