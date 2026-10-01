@@ -1,55 +1,23 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-const exampleConfig = `version: 1
-apis:
-  - name: metrics
-    upstream:
-      address: thanos-receive
-      port: 19291
-    routes:
-      - path:
-          exact: /metrics/api/v1/receive
-        rewrite:
-          path: /api/v1/receive
-kubernetes:
-  name: auth-gateway
-  namespace: observability
-  image: envoyproxy/envoy:v1.39.1
-`
-
-const routeListConfig = `version: 1
-apis:
-  - name: metrics-query
-    upstream:
-      address: thanos-query
-      port: 9090
-    routes:
-      - methods: [GET, POST]
-        path:
-          regex: '^/metrics/api/v1/(query|query_range)$'
-        rewrite:
-          regex:
-            pattern: '^/metrics/(.*)$'
-            substitution: '/\1'
-      - methods: [GET]
-        path:
-          prefix: /metrics/api/v1/label/
-        rewrite:
-          prefix: /api/v1/label/
-      - methods: [GET]
-        path:
-          exact: /metrics/api/v1/labels
-        rewrite:
-          path: /api/v1/labels
-`
+func readFixture(t testing.TB, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatalf("read fixture %q: %v", name, err)
+	}
+	return string(data)
+}
 
 func TestLoadAppliesDefaults(t *testing.T) {
-	config, err := Load(strings.NewReader(exampleConfig))
+	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +36,7 @@ func TestLoadAppliesDefaults(t *testing.T) {
 }
 
 func TestLoadAppliesRouteDefaults(t *testing.T) {
-	input := strings.Replace(routeListConfig, "      - methods: [GET, POST]\n", "      - methods: []\n", 1)
+	input := strings.Replace(readFixture(t, "route-list.yaml"), "      - methods: [GET, POST]\n", "      - methods: []\n", 1)
 	config, err := Load(strings.NewReader(input))
 	if err != nil {
 		t.Fatal(err)
@@ -82,6 +50,7 @@ func TestLoadAppliesRouteDefaults(t *testing.T) {
 }
 
 func TestLoadRejectsInvalidYAML(t *testing.T) {
+	exampleConfig := readFixture(t, "example.yaml")
 	tests := map[string]string{
 		"unknown field":      exampleConfig + "unknown: true\n",
 		"duplicate field":    strings.Replace(exampleConfig, "version: 1", "version: 1\nversion: 1", 1),
@@ -109,6 +78,7 @@ func TestLoadRejectsInvalidYAML(t *testing.T) {
 }
 
 func TestValidateRejectsInvalidConfiguration(t *testing.T) {
+	exampleConfig := readFixture(t, "example.yaml")
 	negativeReplicas := int32(-1)
 	tests := map[string]func(*Config){
 		"unsupported version": func(c *Config) { c.Version = 2 },
@@ -170,6 +140,7 @@ func TestValidateRejectsInvalidConfiguration(t *testing.T) {
 }
 
 func TestValidateRejectsInvalidRouteConfiguration(t *testing.T) {
+	routeListConfig := readFixture(t, "route-list.yaml")
 	tests := map[string]func(*Config){
 		"multiple path matchers": func(c *Config) {
 			c.APIs[0].Routes[0].Path.Prefix = "/metrics/"
@@ -205,7 +176,7 @@ func TestValidateRejectsInvalidRouteConfiguration(t *testing.T) {
 }
 
 func TestDefaultsDoNotMutateInput(t *testing.T) {
-	config, err := Load(strings.NewReader(exampleConfig))
+	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}

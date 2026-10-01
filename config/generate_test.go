@@ -14,7 +14,7 @@ import (
 )
 
 func TestGenerateBuildsNamedAPIClustersAndRoutes(t *testing.T) {
-	config, err := Load(strings.NewReader(exampleConfig))
+	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestGenerateBuildsNamedAPIClustersAndRoutes(t *testing.T) {
 }
 
 func TestGenerateAllowsMethodsOnOnePath(t *testing.T) {
-	config, err := Load(strings.NewReader(exampleConfig))
+	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestGenerateAllowsMethodsOnOnePath(t *testing.T) {
 }
 
 func TestGenerateBuildsRoutesFromRouteLists(t *testing.T) {
-	config, err := Load(strings.NewReader(routeListConfig))
+	config, err := Load(strings.NewReader(readFixture(t, "route-list.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestGenerateBuildsRoutesFromRouteLists(t *testing.T) {
 }
 
 func TestGenerateRejectsInvalidConfiguration(t *testing.T) {
-	config, err := Load(strings.NewReader(exampleConfig))
+	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -16,7 +16,7 @@ import (
 )
 
 func TestGenerateKubernetesProducesValidManifestStream(t *testing.T) {
-	config, err := Load(strings.NewReader(exampleConfig))
+	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestGenerateKubernetesProducesValidManifestStream(t *testing.T) {
 }
 
 func TestGenerateKubernetesRequiresSettings(t *testing.T) {
-	config, err := Load(strings.NewReader(exampleConfig))
+	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestGenerateKubernetesRequiresSettings(t *testing.T) {
 }
 
 func TestGenerateKubernetesFitsConfigMapNameLimit(t *testing.T) {
-	config, err := Load(strings.NewReader(exampleConfig))
+	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
