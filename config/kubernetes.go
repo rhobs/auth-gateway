@@ -64,7 +64,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	labels := func() map[string]string {
 		return map[string]string{
 			"app.kubernetes.io/name":     "auth-gateway",
-			"app.kubernetes.io/instance": k.Name,
+			"app.kubernetes.io/instance": c.Node.Cluster,
 		}
 	}
 	configMap := corev1.ConfigMap{
