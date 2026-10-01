@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	bootstrap "github.com/envoyproxy/go-control-plane/envoy/config/bootstrap/v3"
@@ -139,12 +140,12 @@ func apiRoutes(apis []API) *route.RouteConfiguration {
 	for i, fallback := range fallbacks {
 		methods := fallback.methods
 		sort.Strings(methods)
-		allow := ""
+		var allow strings.Builder
 		for index, method := range methods {
 			if index > 0 {
-				allow += ", "
+				allow.WriteString(", ")
 			}
-			allow += method
+			allow.WriteString(method)
 		}
 		routes = append(routes, &route.Route{
 			Name:  "method-not-allowed-" + strconv.Itoa(i),
@@ -153,7 +154,7 @@ func apiRoutes(apis []API) *route.RouteConfiguration {
 				Status: 405,
 			}},
 			ResponseHeadersToAdd: []*core.HeaderValueOption{{
-				Header:       &core.HeaderValue{Key: "allow", Value: allow},
+				Header:       &core.HeaderValue{Key: "allow", Value: allow.String()},
 				AppendAction: core.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 			}},
 		})

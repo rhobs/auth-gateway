@@ -197,7 +197,7 @@ func (c Config) Validate() error {
 			return fmt.Errorf("kubernetes.service_port must be between 1 and 65535")
 		}
 		if !net.ParseIP(c.Listener.Address).IsUnspecified() {
-			return fmt.Errorf("Kubernetes requires a wildcard listener address (0.0.0.0 or ::)")
+			return fmt.Errorf("kubernetes requires a wildcard listener address (0.0.0.0 or ::)")
 		}
 	}
 
