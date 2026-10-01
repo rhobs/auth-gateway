@@ -7,6 +7,13 @@ listener:
   # Envoy listener port. Defaults to 8080.
   port: 8080
 
+# Optional Envoy node metadata. Both values default to auth-gateway.
+node:
+  # Identifier for this Envoy instance.
+  id: auth-gateway
+  # Logical service cluster that this Envoy belongs to.
+  cluster: auth-gateway
+
 # Each API defines one upstream and one or more routes to it.
 apis:
   - name: metrics-write

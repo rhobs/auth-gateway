@@ -20,6 +20,8 @@ const (
 	defaultListenerAddr = "0.0.0.0"
 	defaultListenerPort = 8080
 	defaultServicePort  = 80
+	defaultNodeID       = "auth-gateway"
+	defaultNodeCluster  = "auth-gateway"
 )
 
 var (
@@ -27,12 +29,19 @@ var (
 	dnsNamePattern = regexp.MustCompile("^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$")
 )
 
-// Config describes listener, API routes, upstreams, and optional Kubernetes output.
+// Config describes Envoy node metadata, listener, API routes, upstreams, and optional Kubernetes output.
 type Config struct {
 	Version    int         `yaml:"version"`
+	Node       EnvoyNode   `yaml:"node,omitempty"`
 	Listener   Listener    `yaml:"listener"`
 	APIs       []API       `yaml:"apis"`
 	Kubernetes *Kubernetes `yaml:"kubernetes,omitempty"`
+}
+
+// EnvoyNode describes the identity and logical cluster of this Envoy instance.
+type EnvoyNode struct {
+	ID      string `yaml:"id,omitempty"`
+	Cluster string `yaml:"cluster,omitempty"`
 }
 
 // Listener describes the HTTP address used by Envoy.
@@ -123,6 +132,12 @@ func (c Config) Validate() error {
 	if c.Version != configVersion {
 		return fmt.Errorf("version must be %d", configVersion)
 	}
+	if strings.TrimSpace(c.Node.ID) == "" {
+		return fmt.Errorf("node.id must not be empty")
+	}
+	if strings.TrimSpace(c.Node.Cluster) == "" {
+		return fmt.Errorf("node.cluster must not be empty")
+	}
 	if net.ParseIP(c.Listener.Address) == nil {
 		return fmt.Errorf("listener.address must be an IP address")
 	}
@@ -205,6 +220,12 @@ func (c Config) Validate() error {
 }
 
 func (c Config) withDefaults() Config {
+	if c.Node.ID == "" {
+		c.Node.ID = defaultNodeID
+	}
+	if c.Node.Cluster == "" {
+		c.Node.Cluster = defaultNodeCluster
+	}
 	if c.Listener.Address == "" {
 		c.Listener.Address = defaultListenerAddr
 	}

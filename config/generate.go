@@ -46,7 +46,7 @@ func Generate(c Config) (map[string][]byte, error) {
 	clusters := apiClusters(c.APIs)
 
 	bootstrapConfig := &bootstrap.Bootstrap{
-		Node:  &core.Node{Id: "auth-gateway", Cluster: "auth-gateway"},
+		Node:  &core.Node{Id: c.Node.ID, Cluster: c.Node.Cluster},
 		Admin: &bootstrap.Admin{Address: socket("127.0.0.1", 9901)},
 		StaticResources: &bootstrap.Bootstrap_StaticResources{
 			Listeners: []*listener.Listener{{
