@@ -71,3 +71,14 @@ organization without managing complex authorization policies. It also lets us
 make runtime decisions about how data is routed and processed on the backend.
 This keeps us free from any specific tenancy model, which we consider more of
 a query-time concern than a write-time concern.
+
+## Current config and tests
+
+The `config` package loads one strict YAML document, applies defaults, and
+validates it. It generates Envoy config and Kubernetes resources. See
+[config.example.yaml](config.example.yaml).
+
+Run `make test` for unit tests. Run `make e2e` for the local Kind test. The e2e
+test needs Docker, Kind, kubectl, and network access. It creates or reuses the
+`auth-gateway-e2e` cluster and deletes its test namespace when it ends. It uses
+Envoy 1.39.1 and HTTPBin 2.25.0.
