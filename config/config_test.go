@@ -25,7 +25,7 @@ func TestLoadAppliesDefaults(t *testing.T) {
 		t.Fatalf("listener defaults = %s:%d", config.Listener.Address, config.Listener.Port)
 	}
 	if got := strings.Join(config.APIs[0].Routes[0].Methods, ","); got != "POST" {
-		t.Fatalf("route method default = %q, want POST", got)
+		t.Fatalf("route methods = %q, want POST", got)
 	}
 	if got := config.APIs[0].Routes[0].Rewrite.Path; got != "/api/v1/receive" {
 		t.Fatalf("rewrite path = %q", got)
@@ -35,17 +35,10 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadAppliesRouteDefaults(t *testing.T) {
-	input := strings.Replace(readFixture(t, "route-list.yaml"), "      - methods: [GET, POST]\n", "      - methods: []\n", 1)
-	config, err := Load(strings.NewReader(input))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(config.APIs[0].Routes[0].Methods, ","); got != "POST" {
-		t.Fatalf("default route methods = %q, want POST", got)
-	}
-	if got := strings.Join(config.APIs[0].Routes[1].Methods, ","); got != "GET" {
-		t.Fatalf("route methods = %q, want GET", got)
+func TestLoadRejectsMissingRouteMethods(t *testing.T) {
+	input := strings.Replace(readFixture(t, "route-list.yaml"), "      - methods: [GET, POST]\n", "      -\n", 1)
+	if _, err := Load(strings.NewReader(input)); err == nil {
+		t.Fatal("Load accepted a route with no methods")
 	}
 }
 
@@ -186,8 +179,10 @@ func TestDefaultsDoNotMutateInput(t *testing.T) {
 	if config.APIs[0].Routes[0].Methods != nil || config.Kubernetes.Replicas != nil {
 		t.Fatal("applying defaults mutated the caller's configuration")
 	}
-	if len(defaulted.APIs[0].Routes[0].Methods) != 1 || defaulted.APIs[0].Routes[0].Methods[0] != "POST" ||
-		defaulted.Kubernetes.Replicas == nil || *defaulted.Kubernetes.Replicas != 2 {
-		t.Fatal("defaults were not applied to the returned configuration")
+	if len(defaulted.APIs[0].Routes[0].Methods) != 0 {
+		t.Fatal("withDefaults supplied a method for a route without any")
+	}
+	if defaulted.Kubernetes.Replicas == nil || *defaulted.Kubernetes.Replicas != 2 {
+		t.Fatal("Kubernetes defaults were not applied to the returned configuration")
 	}
 }

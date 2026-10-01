@@ -77,9 +77,9 @@ type CircuitBreakerConfig struct {
 	MaxRetries         *uint32 `yaml:"max_retries,omitempty"`
 }
 
-// Route describes the methods, path matcher, and optional rewrite for a route.
+// Route describes the required methods and path matcher, plus an optional rewrite.
 type Route struct {
-	Methods []string     `yaml:"methods,omitempty"`
+	Methods []string     `yaml:"methods"`
 	Path    PathMatch    `yaml:"path"`
 	Rewrite *PathRewrite `yaml:"rewrite,omitempty"`
 }
@@ -206,6 +206,9 @@ func (c Config) Validate() error {
 			if err := validatePathRewrite(routeName+".rewrite", route.Rewrite); err != nil {
 				return err
 			}
+			if len(route.Methods) == 0 {
+				return fmt.Errorf("%s.methods must contain at least one supported HTTP method", routeName)
+			}
 
 			seenMethods := make(map[string]struct{}, len(route.Methods))
 			for _, method := range route.Methods {
@@ -319,11 +322,6 @@ func (c Config) withDefaults() Config {
 			MaxPendingRequests: defaultUint32(circuitBreakers.MaxPendingRequests, defaultCircuitBreakerMaxPendingRequests),
 			MaxRequests:        defaultUint32(circuitBreakers.MaxRequests, defaultCircuitBreakerMaxRequests),
 			MaxRetries:         defaultUint32(circuitBreakers.MaxRetries, defaultCircuitBreakerMaxRetries),
-		}
-		for routeIndex := range c.APIs[i].Routes {
-			if len(c.APIs[i].Routes[routeIndex].Methods) == 0 {
-				c.APIs[i].Routes[routeIndex].Methods = []string{http.MethodPost}
-			}
 		}
 	}
 	if c.Kubernetes != nil {

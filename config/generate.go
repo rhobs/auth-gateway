@@ -77,6 +77,10 @@ func httpManager(c Config) (*hcm.HttpConnectionManager, error) {
 	if err != nil {
 		return nil, err
 	}
+	accessLogs, err := errorAccessLogs()
+	if err != nil {
+		return nil, err
+	}
 	return &hcm.HttpConnectionManager{
 		StatPrefix:            "ingress",
 		CodecType:             hcm.HttpConnectionManager_AUTO,
@@ -92,6 +96,7 @@ func httpManager(c Config) (*hcm.HttpConnectionManager, error) {
 		NormalizePath:                wrapperspb.Bool(false),
 		PathWithEscapedSlashesAction: hcm.HttpConnectionManager_KEEP_UNCHANGED,
 		RouteSpecifier:               &hcm.HttpConnectionManager_RouteConfig{RouteConfig: routes},
+		AccessLog:                    accessLogs,
 		HttpFilters: []*hcm.HttpFilter{{
 			Name:       "envoy.filters.http.router",
 			ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: routerConfig},

@@ -5,7 +5,8 @@ apis:
       address: thanos-receive
       port: 19291
     routes:
-      - path:
+      - methods: [POST]
+        path:
           exact: /metrics/api/v1/receive
         rewrite:
           path: /api/v1/receive
