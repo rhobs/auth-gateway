@@ -24,7 +24,8 @@
 - The target repo is `/Users/pgough/Desktop/projects/rosa/auth-gateway`. The implementation branch is `rhobs-1783-bootstrap`; local `main` is the integration target.
 - This is a progress step. It does not complete or close RHOBS-1783.
 - The `config` package loads one strict YAML document, applies defaults, validates it, and generates Envoy config and Kubernetes resources.
-- The listener supports exact HTTP and HTTPS host groups on one Envoy port. If both groups are omitted, existing configs keep wildcard HTTP. HTTPS uses a server-only TLS context, file-based SDS, and a Kubernetes TLS Secret; the client certificate is not required. The HTTP and HTTPS host groups currently expose the same routes.
+- The listener supports exact HTTP and HTTPS host groups on one Envoy port. If both groups are omitted, existing configs keep wildcard HTTP. HTTPS uses a server-only TLS context, file-based SDS, and one Kubernetes TLS Secret shared by all HTTPS hosts; the client certificate is not required. The HTTP and HTTPS host groups currently expose the same routes and do not select different auth models.
+- `config/testdata/tls.yaml` covers mixed HTTP and HTTPS host groups. Envoy listens on port 8080 for both protocols; the generated Service exposes ports 80 and 443, both targeting that listener. If a proxy terminates caller TLS and forwards plain HTTP, Envoy matches the HTTP `Host`; it does not see the original scheme unless a trusted proxy header carries it. TLS passthrough or re-encryption to Envoy must use an SNI hostname in `https_hosts`.
 - The generated HTTP connection manager writes structured JSON access logs to stdout for HTTP status codes of 400 or higher. RHOBS-1798 tracks this work.
 - Each API has one upstream and must define one or more `routes`. Each route must list one or more supported HTTP methods and select exactly one exact path, prefix, or safe RE2 regex match. Missing or empty method lists are configuration errors. An optional path, prefix, or regex rewrite transforms the request path. The former `method`, `path`, and `upstream.path` fields are not supported.
 - Envoy checks routes in declaration order, returns 405 with an `Allow` header for a matched path with the wrong method, and returns 404 for unknown paths.
@@ -36,6 +37,7 @@
 - Config tests load the default, route-list, and TLS YAML examples from `config/testdata`. TLS ConfigMap and Deployment output are checked against goldens, including Envoy's file-based SDS configuration and the projected Secret mount.
 - The PoC's JWT, mTLS, SPIFFE, tenant policy, and other gateway features were not ported.
 - The HTTP/HTTPS bootstrap and certificate-rotation implementation is committed as `898449f` on `rhobs-1783-bootstrap`.
+- The e2e framework cleanup and TLS ConfigMap golden are committed as `45af222`; the TLS Deployment golden is committed as `b267dbd` on the same branch.
 
 ## Checks
 
@@ -62,8 +64,10 @@ RHOBS-1801 was created under RHOBS-1783 with status To Do. It describes the exac
 
 For the e2e framework cleanup, cert-manager installation moved from `e2e/cmd/setup-cert-manager` into `Environment.EnsureCertManager`, called by the Ginkgo `BeforeSuite`. This removes a one-off command and keeps cluster setup alongside the framework's other Kubernetes lifecycle operations. Renewal uses the pinned `cmctl renew` command through the framework; the suite does not duplicate cmctl's certificate status behavior in a unit test. `gofmt`, `go mod tidy -diff`, `go test ./...`, `go vet ./...`, `go test -tags=e2e -run '^$' ./e2e ./e2e/internal/framework`, `go vet -tags=e2e ./e2e ./e2e/internal/framework`, `go tool ginkgo --tags=e2e --dry-run --no-color ./e2e`, and `git diff --check` pass. `make -C e2e test` passes all seven specs against the reusable Kind cluster, including cert-manager installation from `BeforeSuite` and certificate rotation without a gateway pod restart.
 
+For the TLS Kubernetes goldens, `go test ./...`, `go vet ./...`, and `git diff --check` pass. The TLS fixture checks both the generated Envoy SDS ConfigMap and the Deployment's read-only Secret volume mount. The golden-only follow-up did not change runtime code.
+
 The e2e test needs Docker, Kind, Go, curl, and network access. It creates or reuses the `auth-gateway-e2e` Kind cluster and loads the pinned images. The Ginkgo suite installs the pinned cert-manager manifest and deletes only the `auth-gateway-e2e` namespace.
 
 ## Next step
 
-Resolve the authentication-policy API requirement in RHOBS-1783 before closing that task. Keep JWT work under RHOBS-1784 and port only the code needed for its accepted cases.
+Resolve the authentication-policy API requirement in RHOBS-1783 before closing that task. Before implementing host-specific auth, decide the host-to-auth-model config shape. The current HTTP and HTTPS host groups share routes and have no per-host auth binding; Envoy can enforce different requirements per virtual host or route once the config represents that mapping. Keep JWT work under RHOBS-1784 and port only the code needed for its accepted cases.
