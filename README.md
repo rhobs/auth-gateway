@@ -118,6 +118,9 @@ checks HTTP and HTTPS host isolation, then uses `cmctl renew` to request a new
 certificate. It verifies that a new TLS connection sees the renewed
 certificate and key without an Envoy pod restart.
 
+See [TLS secrets and rotation](docs/tls-secrets.md) for how Secret projection
+and Envoy file-based SDS work.
+
 ## Access logging
 
 Envoy writes structured JSON access logs to stdout for HTTP responses with a
