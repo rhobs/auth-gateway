@@ -41,7 +41,6 @@ setup: check-tools
 	docker pull '$(CERT_MANAGER_CAINJECTOR_IMAGE)'
 	docker pull '$(CERT_MANAGER_WEBHOOK_IMAGE)'
 	kind load docker-image --name '$(CLUSTER_NAME)' '$(ENVOY_IMAGE)' '$(HTTPBIN_IMAGE)' '$(OTEL_COLLECTOR_IMAGE)' '$(CERT_MANAGER_CONTROLLER_IMAGE)' '$(CERT_MANAGER_CAINJECTOR_IMAGE)' '$(CERT_MANAGER_WEBHOOK_IMAGE)'
-	cd .. && AUTH_GATEWAY_E2E_CONTEXT='kind-$(CLUSTER_NAME)' go run -tags=e2e ./e2e/cmd/setup-cert-manager -manifest '$(CERT_MANAGER_MANIFEST_ARG)'
 
 cmctl:
 	@set -eu; \
@@ -54,4 +53,4 @@ cmctl:
 test: setup cmctl
 	@mkdir -p .state/reports
 	cd .. && go test -tags=e2e ./e2e/internal/framework
-	cd .. && AUTH_GATEWAY_E2E_CONTEXT='kind-$(CLUSTER_NAME)' AUTH_GATEWAY_E2E_CMCTL='$(abspath $(CMCTL_BIN))' go tool ginkgo --tags=e2e --timeout=30m --no-color --output-dir=e2e/.state/reports --json-report=auth-gateway.json $(GINKGO_ARGS) ./e2e
+	cd .. && AUTH_GATEWAY_E2E_CONTEXT='kind-$(CLUSTER_NAME)' AUTH_GATEWAY_E2E_CMCTL='$(abspath $(CMCTL_BIN))' AUTH_GATEWAY_E2E_CERT_MANAGER_MANIFEST='$(CERT_MANAGER_MANIFEST_ARG)' go tool ginkgo --tags=e2e --timeout=30m --no-color --output-dir=e2e/.state/reports --json-report=auth-gateway.json $(GINKGO_ARGS) ./e2e

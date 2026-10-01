@@ -58,6 +58,36 @@ func TestGenerateKubernetesMatchesGoldenManifest(t *testing.T) {
 	}
 }
 
+func TestGenerateKubernetesTLSConfigMapMatchesGolden(t *testing.T) {
+	config, err := Load(strings.NewReader(readFixture(t, "tls.yaml")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resources, err := GenerateKubernetes(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := resources.YAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	documents := bytes.SplitN(manifest, []byte("\n---\n"), 2)
+	if len(documents) != 2 {
+		t.Fatalf("generated %d Kubernetes documents, want ConfigMap followed by another resource", len(documents))
+	}
+	configMap := append(documents[0], '\n')
+	const name = "kubernetes/configmap-tls.yaml.golden"
+	if *updateGolden {
+		path := filepath.Join("testdata", name)
+		if err := os.WriteFile(path, configMap, 0o644); err != nil {
+			t.Fatalf("update golden file %q: %v", path, err)
+		}
+	}
+	if want := []byte(readFixture(t, name)); !bytes.Equal(configMap, want) {
+		t.Fatal("generated TLS ConfigMap does not match the golden file")
+	}
+}
+
 func TestGenerateKubernetesExposesMetricsWithoutAdminPort(t *testing.T) {
 	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
 	if err != nil {

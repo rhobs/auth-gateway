@@ -13,8 +13,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -61,6 +59,7 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 	Expect(err).NotTo(HaveOccurred())
 	suiteConfig, _ := GinkgoConfiguration()
 	Expect(suiteConfig.ParallelTotal).To(Equal(1), "the suite shares a namespace and rotates its certificate")
+	Expect(env.EnsureCertManager(ctx, os.Getenv("AUTH_GATEWAY_E2E_CERT_MANAGER_MANIFEST"))).To(Succeed())
 	Expect(env.DeleteNamespace(ctx, testNamespace)).To(Succeed())
 	Expect(env.CreateNamespace(ctx, testNamespace)).To(Succeed())
 	DeferCleanup(func(ctx SpecContext) {
@@ -110,7 +109,7 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 	rootCAs = x509.NewCertPool()
 	Expect(rootCAs.AppendCertsFromPEM(caPEM)).To(BeTrue(), "load the cert-manager test CA")
 	ready = true
-}, NodeTimeout(12*time.Minute))
+}, NodeTimeout(18*time.Minute))
 
 var _ = ReportAfterEach(func(report SpecReport) {
 	if report.Failed() {
@@ -176,7 +175,7 @@ var _ = Describe("Auth Gateway", Label("gateway"), Serial, func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		By("asking cert-manager to renew the server certificate")
-		Expect(renewCertificate(ctx, os.Getenv("AUTH_GATEWAY_E2E_CMCTL"), env.KubeContext(), testNamespace, "auth-gateway-server")).To(Succeed())
+		Expect(env.RenewCertificate(ctx, testNamespace, "auth-gateway-server")).To(Succeed())
 
 		var rotatedTLS *httpsResult
 		initialSerial := initialTLS.certificate.SerialNumber.String()
@@ -266,18 +265,6 @@ func requestHTTPS(ctx context.Context, address, serverName, requestHost, request
 		certificate: response.TLS.PeerCertificates[0],
 		body:        body,
 	}, nil
-}
-
-func renewCertificate(ctx context.Context, cmctlPath, clusterContext, namespace, name string) error {
-	if cmctlPath == "" {
-		cmctlPath = "cmctl"
-	}
-	args := []string{"renew", "--context", clusterContext, "--namespace", namespace, name}
-	output, err := exec.CommandContext(ctx, cmctlPath, args...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("cmctl %s: %w\n%s", strings.Join(args, " "), err, output)
-	}
-	return nil
 }
 
 func gatewayPodUID(ctx context.Context, namespace string) (string, error) {

@@ -86,10 +86,10 @@ regular expression rewrites when the upstream path differs. Routes are checked
 in the order listed, so put narrower matches first.
 
 Run `make test` for unit tests. Run `make e2e` for the local Kind test. The e2e
-test needs Docker, Kind, kubectl, Go, curl, and network access. It downloads
-cmctl v2.6.1 on first use, creates or reuses the `auth-gateway-e2e` cluster, and
+test needs Docker, Kind, Go, curl, and network access. It downloads cmctl
+v2.6.1 on first use, creates or reuses the `auth-gateway-e2e` cluster, and
 deletes its test namespace when it ends. It uses Envoy 1.39.1, HTTPBin 2.25.0,
-and cert-manager 1.18.2. The setup installs cert-manager in the Kind cluster
+and cert-manager 1.18.2. The suite installs cert-manager in the Kind cluster
 and leaves it available when the cluster is reused.
 
 ## HTTP and HTTPS hosts

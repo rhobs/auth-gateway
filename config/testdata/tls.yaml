@@ -1,0 +1,21 @@
+version: 1
+listener:
+  http_hosts: [auth.example.com]
+  https_hosts: [tls.example.com]
+server_tls:
+  secret: auth-gateway-tls
+apis:
+  - name: metrics
+    upstream:
+      address: thanos-receive
+      port: 19291
+    routes:
+      - methods: [POST]
+        path:
+          exact: /metrics/api/v1/receive
+        rewrite:
+          path: /api/v1/receive
+kubernetes:
+  name: auth-gateway
+  namespace: observability
+  image: envoyproxy/envoy:v1.39.1
