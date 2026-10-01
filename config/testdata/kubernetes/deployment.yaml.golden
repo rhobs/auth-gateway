@@ -26,7 +26,6 @@ spec:
         - /etc/auth-gateway/envoy.yaml
         - --log-level
         - info
-        - --disable-hot-restart
         image: envoyproxy/envoy:v1.39.1
         imagePullPolicy: IfNotPresent
         name: envoy

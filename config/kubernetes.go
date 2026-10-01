@@ -105,7 +105,6 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 						Args: []string{
 							"-c", path.Join(configDirectory, "envoy.yaml"),
 							"--log-level", "info",
-							"--disable-hot-restart", // Kubernetes handles Pod lifecycle.
 						},
 						Ports: []corev1.ContainerPort{
 							{Name: "http", ContainerPort: int32(c.Listener.Port), Protocol: corev1.ProtocolTCP},
