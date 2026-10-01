@@ -1,0 +1,22 @@
+version: 1
+listener:
+  port: 8080
+apis:
+  - name: metrics
+    path: /metrics/api/v1/receive
+    upstream:
+      address: httpbin
+      port: 8080
+      path: /anything/api/v1/receive
+  - name: upstream-health
+    method: GET
+    path: /upstream-health
+    upstream:
+      address: httpbin
+      port: 8080
+      path: /status/200
+kubernetes:
+  name: auth-gateway
+  namespace: auth-gateway-e2e
+  image: envoyproxy/envoy:v1.39.1
+  replicas: 1

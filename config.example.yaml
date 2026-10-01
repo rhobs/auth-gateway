@@ -1,0 +1,17 @@
+version: 1
+listener:
+  address: 0.0.0.0
+  port: 8080
+apis:
+  - name: metrics
+    method: POST
+    path: /metrics/api/v1/receive
+    upstream:
+      address: thanos-receive
+      port: 19291
+      path: /api/v1/receive
+kubernetes:
+  name: auth-gateway
+  namespace: observability
+  image: envoyproxy/envoy:v1.39.1
+  replicas: 2
