@@ -14,9 +14,9 @@ data:
         clusters:
             - circuit_breakers:
                 thresholds:
-                    - max_connections: 32
-                      max_pending_requests: 32
-                      max_requests: 32
+                    - max_connections: 1024
+                      max_pending_requests: 1024
+                      max_requests: 1024
                       max_retries: 0
               connect_timeout: 5s
               load_assignment:

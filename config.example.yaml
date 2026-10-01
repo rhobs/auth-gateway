@@ -20,6 +20,16 @@ apis:
     upstream:
       address: thanos-receive
       port: 19291
+    # Optional limits for this API's upstream cluster.
+    # circuit_breakers:
+    #   # Maximum upstream connections. Envoy default: 1024.
+    #   max_connections: 1024
+    #   # Maximum pending requests. Envoy default: 1024.
+    #   max_pending_requests: 1024
+    #   # Maximum parallel requests. Envoy default: 1024.
+    #   max_requests: 1024
+    #   # Maximum parallel retries. Default: 0.
+    #   max_retries: 0
     routes:
       - methods: [POST]
         path:

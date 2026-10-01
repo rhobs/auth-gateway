@@ -16,12 +16,16 @@ import (
 )
 
 const (
-	configVersion       = 1
-	defaultListenerAddr = "0.0.0.0"
-	defaultListenerPort = 8080
-	defaultServicePort  = 80
-	defaultNodeID       = "auth-gateway"
-	defaultNodeCluster  = "auth-gateway"
+	configVersion                           = 1
+	defaultListenerAddr                     = "0.0.0.0"
+	defaultListenerPort                     = 8080
+	defaultServicePort                      = 80
+	defaultNodeID                           = "auth-gateway"
+	defaultNodeCluster                      = "auth-gateway"
+	defaultCircuitBreakerMaxConnections     = 1024
+	defaultCircuitBreakerMaxPendingRequests = 1024
+	defaultCircuitBreakerMaxRequests        = 1024
+	defaultCircuitBreakerMaxRetries         = 0
 )
 
 var (
@@ -52,9 +56,18 @@ type Listener struct {
 
 // API describes one upstream and its routes.
 type API struct {
-	Name     string   `yaml:"name"`
-	Routes   []Route  `yaml:"routes"`
-	Upstream Upstream `yaml:"upstream"`
+	Name            string                `yaml:"name"`
+	Routes          []Route               `yaml:"routes"`
+	Upstream        Upstream              `yaml:"upstream"`
+	CircuitBreakers *CircuitBreakerConfig `yaml:"circuit_breakers,omitempty"`
+}
+
+// CircuitBreakerConfig describes Envoy circuit breaker thresholds for an API's upstream cluster.
+type CircuitBreakerConfig struct {
+	MaxConnections     *uint32 `yaml:"max_connections,omitempty"`
+	MaxPendingRequests *uint32 `yaml:"max_pending_requests,omitempty"`
+	MaxRequests        *uint32 `yaml:"max_requests,omitempty"`
+	MaxRetries         *uint32 `yaml:"max_retries,omitempty"`
 }
 
 // Route describes the methods, path matcher, and optional rewrite for a route.
@@ -255,6 +268,16 @@ func (c Config) withDefaults() Config {
 		c.APIs = apis
 	}
 	for i := range c.APIs {
+		circuitBreakers := c.APIs[i].CircuitBreakers
+		if circuitBreakers == nil {
+			circuitBreakers = &CircuitBreakerConfig{}
+		}
+		c.APIs[i].CircuitBreakers = &CircuitBreakerConfig{
+			MaxConnections:     defaultUint32(circuitBreakers.MaxConnections, defaultCircuitBreakerMaxConnections),
+			MaxPendingRequests: defaultUint32(circuitBreakers.MaxPendingRequests, defaultCircuitBreakerMaxPendingRequests),
+			MaxRequests:        defaultUint32(circuitBreakers.MaxRequests, defaultCircuitBreakerMaxRequests),
+			MaxRetries:         defaultUint32(circuitBreakers.MaxRetries, defaultCircuitBreakerMaxRetries),
+		}
 		for routeIndex := range c.APIs[i].Routes {
 			if len(c.APIs[i].Routes[routeIndex].Methods) == 0 {
 				c.APIs[i].Routes[routeIndex].Methods = []string{http.MethodPost}
@@ -276,6 +299,14 @@ func (c Config) withDefaults() Config {
 		}
 	}
 	return c
+}
+
+func defaultUint32(value *uint32, fallback uint32) *uint32 {
+	if value == nil {
+		return &fallback
+	}
+	copy := *value
+	return &copy
 }
 
 func addRouteKey(routes map[string]struct{}, path PathMatch, method string) error {

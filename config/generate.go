@@ -229,10 +229,10 @@ func apiClusters(apis []API) []*cluster.Cluster {
 			PerConnectionBufferLimitBytes: wrapperspb.UInt32(1048576),
 			CircuitBreakers: &cluster.CircuitBreakers{Thresholds: []*cluster.CircuitBreakers_Thresholds{{
 				Priority:           core.RoutingPriority_DEFAULT,
-				MaxConnections:     wrapperspb.UInt32(32),
-				MaxPendingRequests: wrapperspb.UInt32(32),
-				MaxRequests:        wrapperspb.UInt32(32),
-				MaxRetries:         wrapperspb.UInt32(0),
+				MaxConnections:     wrapperspb.UInt32(*api.CircuitBreakers.MaxConnections),
+				MaxPendingRequests: wrapperspb.UInt32(*api.CircuitBreakers.MaxPendingRequests),
+				MaxRequests:        wrapperspb.UInt32(*api.CircuitBreakers.MaxRequests),
+				MaxRetries:         wrapperspb.UInt32(*api.CircuitBreakers.MaxRetries),
 			}}},
 			LoadAssignment: &endpoint.ClusterLoadAssignment{
 				ClusterName: name,
