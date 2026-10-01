@@ -58,7 +58,7 @@ func TestGenerateKubernetesMatchesGoldenManifest(t *testing.T) {
 	}
 }
 
-func TestGenerateKubernetesTLSConfigMapMatchesGolden(t *testing.T) {
+func TestGenerateKubernetesTLSResourcesMatchGolden(t *testing.T) {
 	config, err := Load(strings.NewReader(readFixture(t, "tls.yaml")))
 	if err != nil {
 		t.Fatal(err)
@@ -71,20 +71,29 @@ func TestGenerateKubernetesTLSConfigMapMatchesGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	documents := bytes.SplitN(manifest, []byte("\n---\n"), 2)
-	if len(documents) != 2 {
-		t.Fatalf("generated %d Kubernetes documents, want ConfigMap followed by another resource", len(documents))
+	documents := bytes.Split(manifest, []byte("\n---\n"))
+	if len(documents) != 5 {
+		t.Fatalf("generated %d Kubernetes documents, want 5", len(documents))
 	}
-	configMap := append(documents[0], '\n')
-	const name = "kubernetes/configmap-tls.yaml.golden"
-	if *updateGolden {
-		path := filepath.Join("testdata", name)
-		if err := os.WriteFile(path, configMap, 0o644); err != nil {
-			t.Fatalf("update golden file %q: %v", path, err)
+	for index := 0; index < len(documents)-1; index++ {
+		documents[index] = append(documents[index], '\n')
+	}
+	for _, golden := range []struct {
+		document int
+		name     string
+	}{
+		{document: 0, name: "kubernetes/configmap-tls.yaml.golden"},
+		{document: 3, name: "kubernetes/deployment-tls.yaml.golden"},
+	} {
+		if *updateGolden {
+			path := filepath.Join("testdata", golden.name)
+			if err := os.WriteFile(path, documents[golden.document], 0o644); err != nil {
+				t.Fatalf("update golden file %q: %v", path, err)
+			}
 		}
-	}
-	if want := []byte(readFixture(t, name)); !bytes.Equal(configMap, want) {
-		t.Fatal("generated TLS ConfigMap does not match the golden file")
+		if want := []byte(readFixture(t, golden.name)); !bytes.Equal(documents[golden.document], want) {
+			t.Errorf("generated TLS resource %q does not match the golden file", golden.name)
+		}
 	}
 }
 
