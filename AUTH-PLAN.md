@@ -7,10 +7,10 @@ The first implementation adds JWT authentication, identity mapping, server-bound
 authorization policies with per-API grants, and optional upstream headers. Other
 authentication methods and external processors will use the same stages.
 
-See [config.auth.example.yaml](config.auth.example.yaml) for the complete proposed
-JWT configuration and [config.mtls.example.yaml](config.mtls.example.yaml) for a
-complete future mTLS example. Neither file's auth fields are implemented in the
-current loader.
+See [config.auth.example.yaml](config.auth.example.yaml) for the JWT configuration
+schema and [config.mtls.example.yaml](config.mtls.example.yaml) for a complete
+future mTLS example. The loader validates JWT configuration; Envoy authentication
+generation and mTLS configuration remain future work.
 [config.example.yaml](config.example.yaml) describes the current supported format.
 
 ## Design

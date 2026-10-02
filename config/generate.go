@@ -37,6 +37,9 @@ func Generate(c Config) (map[string][]byte, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
+	if c.hasAuthenticationConfig() {
+		return nil, fmt.Errorf("authentication, authorization, and route processing generation is not implemented")
+	}
 
 	clusters := apiClusters(c.APIs)
 	apis := c.apisByName()

@@ -1,5 +1,5 @@
 # Proposed JWT configuration for RHOBS-1784. See AUTH-PLAN.md.
-# The current config loader does not yet support the auth fields in this file.
+# The loader validates this JWT configuration. Envoy auth generation is not implemented yet.
 # Replace example issuer URLs, backend Services, and the existing TLS Secret.
 version: 1
 

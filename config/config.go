@@ -44,14 +44,16 @@ const defaultKubernetesReplicas int32 = 2
 
 var apiNamePattern = regexp.MustCompile("^[a-z][a-z0-9-]{0,52}$")
 
-// Config describes Envoy node metadata, listener, API routes, upstreams, and optional Kubernetes output.
+// Config describes Envoy metadata, authentication, authorization, API routes, upstreams, and optional Kubernetes output.
 type Config struct {
-	Version    int         `yaml:"version"`
-	Node       EnvoyNode   `yaml:"node,omitempty"`
-	Listener   Listener    `yaml:"listener"`
-	Servers    []Server    `yaml:"servers"`
-	APIs       []API       `yaml:"apis"`
-	Kubernetes *Kubernetes `yaml:"kubernetes,omitempty"`
+	Version               int                   `yaml:"version"`
+	Node                  EnvoyNode             `yaml:"node,omitempty"`
+	Listener              Listener              `yaml:"listener"`
+	Authenticators        []Authenticator       `yaml:"authenticators,omitempty"`
+	AuthorizationPolicies []AuthorizationPolicy `yaml:"authorization_policies,omitempty"`
+	Servers               []Server              `yaml:"servers"`
+	APIs                  []API                 `yaml:"apis"`
+	Kubernetes            *Kubernetes           `yaml:"kubernetes,omitempty"`
 }
 
 // EnvoyNode describes the identity and logical cluster of this Envoy instance.
@@ -81,11 +83,12 @@ type CircuitBreakerConfig struct {
 	MaxRetries         *uint32 `yaml:"max_retries,omitempty"`
 }
 
-// Route describes the required methods and path matcher, plus an optional rewrite.
+// Route describes the required methods and path matcher, plus optional rewrite and processing.
 type Route struct {
-	Methods []string     `yaml:"methods"`
-	Path    PathMatch    `yaml:"path"`
-	Rewrite *PathRewrite `yaml:"rewrite,omitempty"`
+	Methods    []string         `yaml:"methods"`
+	Path       PathMatch        `yaml:"path"`
+	Rewrite    *PathRewrite     `yaml:"rewrite,omitempty"`
+	Processing *RouteProcessing `yaml:"processing,omitempty"`
 }
 
 // PathMatch selects one exact path, path prefix, or safe regular expression.
@@ -204,6 +207,9 @@ func (c Config) Validate() error {
 		routes := make(map[string]struct{}, len(api.Routes))
 		for routeIndex, route := range api.Routes {
 			routeName := fmt.Sprintf("%s.routes[%d]", name, routeIndex)
+			if err := validateRouteProcessing(routeName+".processing", route.Processing); err != nil {
+				return err
+			}
 			if err := validatePathMatch(routeName+".path", route.Path); err != nil {
 				return err
 			}
@@ -231,6 +237,9 @@ func (c Config) Validate() error {
 	}
 
 	if err := c.validateServers(names); err != nil {
+		return err
+	}
+	if err := c.validateAuthentication(names); err != nil {
 		return err
 	}
 
@@ -301,6 +310,8 @@ func validateKubernetesResourceRequirements(requirements KubernetesResourceRequi
 }
 
 func (c Config) withDefaults() Config {
+	c.Authenticators = cloneAuthenticators(c.Authenticators)
+	c.AuthorizationPolicies = cloneAuthorizationPolicies(c.AuthorizationPolicies)
 	if c.Node.ID == "" {
 		c.Node.ID = defaultNodeID
 	}
@@ -315,6 +326,8 @@ func (c Config) withDefaults() Config {
 		for i, server := range c.Servers {
 			servers[i] = server
 			servers[i].APIs = append([]string(nil), server.APIs...)
+			servers[i].Authentication = cloneAuthentication(server.Authentication)
+			servers[i].Authorization = cloneAuthorization(server.Authorization)
 			if server.TLSConfig != nil {
 				tlsConfig := server.TLSConfig.withDefaults()
 				servers[i].TLSConfig = &tlsConfig
@@ -331,6 +344,11 @@ func (c Config) withDefaults() Config {
 				for j, route := range api.Routes {
 					apis[i].Routes[j] = route
 					apis[i].Routes[j].Methods = append([]string(nil), route.Methods...)
+					if route.Processing != nil {
+						processing := *route.Processing
+						processing.RequestHeaders = append([]RequestHeaderMapping(nil), route.Processing.RequestHeaders...)
+						apis[i].Routes[j].Processing = &processing
+					}
 					if route.Rewrite != nil {
 						rewrite := *route.Rewrite
 						if route.Rewrite.Regex != nil {
