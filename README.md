@@ -72,11 +72,10 @@ make runtime decisions about how data is routed and processed on the backend.
 This keeps us free from any specific tenancy model, which we consider more of
 a query-time concern than a write-time concern.
 
-## Current config and tests
-
+## Configuration
 The `config` package loads one strict YAML document, applies defaults, and
 validates it. It generates Envoy config and Kubernetes resources. See
-[config.example.yaml](config.example.yaml).
+[config.example.yaml](config.example.yaml) for a complete example.
 
 Each API entry defines one upstream and must include one or more routes. A
 route must list one or more HTTP methods and match an exact path, a prefix, or
@@ -85,16 +84,13 @@ methods is a configuration error. Rewrites are optional; use path, prefix, or
 regular expression rewrites when the upstream path differs. Routes are checked
 in the order listed, so put narrower matches first.
 
+
+## Testing
+
 Run `make test` for unit tests. Run `make e2e` for the local Kind test. The e2e
 test needs Docker, Kind, Go, curl, and network access. It downloads cmctl
 v2.6.1 on first use, creates or reuses the `auth-gateway-e2e` cluster, and
-deletes its test namespaces when it ends. By default, Ginkgo runs the HTTP
-routing and metrics group alongside the server TLS and certificate rotation
-group, each in its own namespace. Set `GINKGO_PROCS=1` to run them in one
-process, for example with `make e2e GINKGO_PROCS=1`. The test uses Envoy
-1.39.1, HTTPBin 2.25.0, and cert-manager 1.18.2.
-The TLS group installs cert-manager in the Kind cluster and leaves it available
-when the cluster is reused.
+deletes its test namespaces when it ends.
 
 ## HTTP and HTTPS hosts
 
