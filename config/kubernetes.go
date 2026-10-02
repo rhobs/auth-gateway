@@ -2,7 +2,6 @@ package config
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"fmt"
 	"path"
 	"sort"
@@ -20,7 +19,6 @@ import (
 const (
 	configDirectory          = "/etc/auth-gateway"
 	collectorConfigDirectory = "/etc/collector"
-	configChecksumAnnotation = "auth-gateway/config-sha256"
 )
 
 // KubernetesResources contains native objects generated for a gateway.
@@ -124,8 +122,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 			Selector: &metav1.LabelSelector{MatchLabels: labels()},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels:      labels(),
-					Annotations: map[string]string{configChecksumAnnotation: configFilesChecksum(files)},
+					Labels: labels(),
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName:            k.Name,
@@ -295,23 +292,15 @@ func splitLuaFiles(files map[string][]byte) (map[string][]byte, map[string][]byt
 	luaFiles := make(map[string][]byte)
 	for filename, contents := range files {
 		if strings.HasPrefix(filename, "lua/") {
-			luaFiles[path.Base(filename)] = contents
+			// Mount the ECDS response, which contains the Lua source inline.
+			if strings.HasSuffix(filename, ".yaml") {
+				luaFiles[path.Base(filename)] = contents
+			}
 			continue
 		}
 		configFiles[filename] = contents
 	}
 	return configFiles, luaFiles
-}
-
-func configFilesChecksum(files map[string][]byte) string {
-	hash := sha256.New()
-	for _, filename := range sortedFileNames(files) {
-		hash.Write([]byte(filename))
-		hash.Write([]byte{0})
-		hash.Write(files[filename])
-		hash.Write([]byte{0})
-	}
-	return fmt.Sprintf("%x", hash.Sum(nil))
 }
 
 func sortedFileNames(files map[string][]byte) []string {

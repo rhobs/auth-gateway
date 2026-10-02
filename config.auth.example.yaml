@@ -1,7 +1,3 @@
-# Proposed JWT configuration for RHOBS-1784. See AUTH-PLAN.md.
-# The loader validates this configuration. JWT verification generation is supported;
-# authorization and route header processing are still in progress.
-# Replace example issuer URLs, backend Services, and the existing TLS Secret.
 version: 1
 
 node:

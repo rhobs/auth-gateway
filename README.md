@@ -78,9 +78,11 @@ validates it. It generates Envoy config and Kubernetes resources. See
 [config.example.yaml](config.example.yaml) for a complete example.
 JWT configuration is shown in [config.auth.example.yaml](config.auth.example.yaml).
 For protected servers, Kubernetes output stores the identity-mapping script in
-its own `<name>-lua` ConfigMap. The Deployment pod template includes a checksum
-of generated Envoy, SDS, and Lua files. Applying regenerated manifests rolls
-Envoy Pods when those files change, so each new Pod loads the updated script.
+its own `<name>-lua` ConfigMap as a file-based ECDS resource. Envoy watches the
+projected ConfigMap directory and reloads the Lua filter when its mapping
+changes, without restarting the Pod. The generator does not add a checksum to
+the Deployment. Envoy still requires an explicit rolling restart for changes to
+its static bootstrap, such as listeners, routes, or JWT provider settings.
 
 Each API entry defines one upstream and must include one or more routes. A
 route must list one or more HTTP methods and match an exact path, a prefix, or

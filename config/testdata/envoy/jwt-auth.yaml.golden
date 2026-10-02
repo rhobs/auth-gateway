@@ -152,11 +152,16 @@ static_resources:
                                             - provider_name: issuer-one
                                             - provider_name: issuer-two
                             strip_failure_response: true
-                        - name: envoy.filters.http.lua
-                          typed_config:
-                            '@type': type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
-                            default_source_code:
-                                filename: /etc/auth-gateway/lua/jwt.lua
+                        - config_discovery:
+                            config_source:
+                                path_config_source:
+                                    path: /etc/auth-gateway/lua/jwt.yaml
+                                    watched_directory:
+                                        path: /etc/auth-gateway/lua
+                                resource_api_version: V3
+                            type_urls:
+                                - envoy.extensions.filters.http.lua.v3.Lua
+                          name: envoy.filters.http.lua
                         - name: envoy.filters.http.rbac
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC

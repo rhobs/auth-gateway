@@ -167,7 +167,7 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		}
 	}, SpecTimeout(60*time.Second))
 
-	It("rolls Envoy when the Lua identity mapping changes", func(ctx SpecContext) {
+	It("reloads Lua identity mapping through ECDS without restarting Envoy", func(ctx SpecContext) {
 		claims := jwtTestClaims("customer-a")
 		claims["sub"] = "writer-17"
 		token := jwtGateway.token("issuer-one", claims, nil)
@@ -191,31 +191,20 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		updatedResources, err := config.GenerateKubernetes(updatedConfig)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(updatedResources.LuaConfigMap).NotTo(BeNil())
-		Expect(updatedResources.LuaConfigMap.Data["jwt.lua"]).NotTo(Equal(jwtGateway.resources.LuaConfigMap.Data["jwt.lua"]))
-		oldChecksum := jwtGateway.resources.Deployment.Spec.Template.Annotations["auth-gateway/config-sha256"]
-		newChecksum := updatedResources.Deployment.Spec.Template.Annotations["auth-gateway/config-sha256"]
-		Expect(newChecksum).NotTo(BeEmpty())
-		Expect(newChecksum).NotTo(Equal(oldChecksum))
-
-		deployment := jwtGateway.resources.Deployment.DeepCopy()
-		deployment.Spec.Template.Annotations["auth-gateway/config-sha256"] = newChecksum
-		manifest, err := yamlDocuments(updatedResources.LuaConfigMap, deployment)
+		Expect(updatedResources.LuaConfigMap.Data["jwt.yaml"]).NotTo(Equal(jwtGateway.resources.LuaConfigMap.Data["jwt.yaml"]))
+		manifest, err := yamlDocuments(updatedResources.LuaConfigMap)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(env.Apply(ctx, jwtNamespace, manifest)).To(Succeed())
-		Expect(env.WaitForDeployment(ctx, jwtNamespace, "auth-gateway", 4*time.Minute)).To(Succeed())
 
-		var newUID string
 		Eventually(func() bool {
-			newUID, err = env.PodUID(ctx, jwtNamespace, selector)
-			return err == nil && newUID != oldUID
-		}).WithContext(ctx).WithTimeout(time.Minute).WithPolling(250*time.Millisecond).Should(BeTrue(), func() string {
-			return fmt.Sprintf("gateway Pod UID did not change after Lua ConfigMap rollout: uid=%q, error=%v", newUID, err)
+			status, body, err = jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, token, false)
+			return err == nil && status == http.StatusForbidden
+		}).WithContext(ctx).WithTimeout(3*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
+			return fmt.Sprintf("Lua ECDS update did not change the mapped identity: status=%d body=%s error=%v", status, body, err)
 		})
-		jwtGateway.httpAddr = env.ForwardWithCleanup(ctx, jwtNamespace, "service/auth-gateway", 80)
-
-		status, body, err = jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, token, false)
+		newUID, err := env.PodUID(ctx, jwtNamespace, selector)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(status).To(Equal(http.StatusForbidden), "updated Lua script must map this token to a tenant without an issuer-one grant: "+string(body))
+		Expect(newUID).To(Equal(oldUID), "Lua ECDS update must not restart the gateway Pod")
 	}, SpecTimeout(6*time.Minute))
 })
 

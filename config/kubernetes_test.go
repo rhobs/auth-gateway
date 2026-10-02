@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-var updateGolden = flag.Bool("update", false, "update Kubernetes manifest golden files")
+var updateGolden = flag.Bool("update", false, "update generated golden files")
 
 func TestGenerateKubernetesMatchesGoldenManifest(t *testing.T) {
 	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
@@ -93,6 +93,45 @@ func TestGenerateKubernetesTLSResourcesMatchGolden(t *testing.T) {
 		}
 		if want := []byte(readFixture(t, golden.name)); !bytes.Equal(documents[golden.document], want) {
 			t.Errorf("generated TLS resource %q does not match the golden file", golden.name)
+		}
+	}
+}
+
+func TestGenerateJWTKubernetesMountedResourcesMatchGolden(t *testing.T) {
+	config := loadAuthExample(t)
+	config.Servers = config.Servers[:1]
+	config.Kubernetes.HTTPSServicePort = 0
+	resources, err := GenerateKubernetes(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := resources.YAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	documents := bytes.Split(manifest, []byte("\n---\n"))
+	if len(documents) != 6 {
+		t.Fatalf("generated %d Kubernetes documents, want 6", len(documents))
+	}
+	for index := 0; index < len(documents)-1; index++ {
+		documents[index] = append(documents[index], '\n')
+	}
+	for _, golden := range []struct {
+		document int
+		name     string
+	}{
+		{document: 0, name: "kubernetes/configmap-jwt.yaml.golden"},
+		{document: 1, name: "kubernetes/jwt-lua-ecds.yaml.golden"},
+		{document: 4, name: "kubernetes/deployment-jwt.yaml.golden"},
+	} {
+		if *updateGolden {
+			path := filepath.Join("testdata", golden.name)
+			if err := os.WriteFile(path, documents[golden.document], 0o644); err != nil {
+				t.Fatalf("update golden file %q: %v", path, err)
+			}
+		}
+		if want := []byte(readFixture(t, golden.name)); !bytes.Equal(documents[golden.document], want) {
+			t.Errorf("generated Kubernetes resource %q does not match the golden file", golden.name)
 		}
 	}
 }

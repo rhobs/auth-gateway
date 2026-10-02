@@ -15,8 +15,6 @@ spec:
   strategy: {}
   template:
     metadata:
-      annotations:
-        auth-gateway/config-sha256: 3d18132933235d32716aa8697f9e251f103b18634ef69625b5f12e61678573c6
       labels:
         app.kubernetes.io/instance: auth-gateway
         app.kubernetes.io/name: auth-gateway

@@ -2,22 +2,28 @@ package config
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	headermutation "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
 	jwt "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/jwt_authn/v3"
 	lua "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/lua/v3"
 	httpRBAC "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	"go.yaml.in/yaml/v3"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
-func TestGenerateJWTAuthenticationMatchesGolden(t *testing.T) {
+func TestGenerateJWTAuthenticationMatchesEnvoyGolden(t *testing.T) {
 	c, err := Load(bytes.NewReader([]byte(readFixture(t, "jwt-auth.yaml"))))
 	if err != nil {
 		t.Fatal(err)
@@ -26,7 +32,7 @@ func TestGenerateJWTAuthenticationMatchesGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	goldenPath := filepath.Join("testdata", "kubernetes", "jwt-envoy.yaml.golden")
+	goldenPath := filepath.Join("testdata", "envoy", "jwt-auth.yaml.golden")
 	if *updateGolden {
 		if err := os.WriteFile(goldenPath, files["envoy.yaml"], 0o644); err != nil {
 			t.Fatal(err)
@@ -37,7 +43,7 @@ func TestGenerateJWTAuthenticationMatchesGolden(t *testing.T) {
 	} else if !bytes.Equal(files["envoy.yaml"], want) {
 		t.Fatal("generated JWT Envoy config does not match the golden file")
 	}
-	luaGoldenPath := filepath.Join("testdata", "kubernetes", "jwt-lua.lua.golden")
+	luaGoldenPath := filepath.Join("testdata", "lua", "jwt.lua.golden")
 	if *updateGolden {
 		if err := os.WriteFile(luaGoldenPath, files["lua/jwt.lua"], 0o644); err != nil {
 			t.Fatal(err)
@@ -48,7 +54,6 @@ func TestGenerateJWTAuthenticationMatchesGolden(t *testing.T) {
 	} else if !bytes.Equal(files["lua/jwt.lua"], want) {
 		t.Fatal("generated JWT Lua script does not match the golden file")
 	}
-
 	bootstrapConfig := decodeBootstrap(t, files["envoy.yaml"])
 	if len(bootstrapConfig.StaticResources.Clusters) != len(c.APIs)+len(c.Authenticators) {
 		t.Fatalf("cluster count = %d", len(bootstrapConfig.StaticResources.Clusters))
@@ -79,12 +84,57 @@ func TestGenerateJWTAuthenticationMatchesGolden(t *testing.T) {
 		if len(manager.HttpFilters) != 4 || manager.HttpFilters[0].Name != "envoy.filters.http.jwt_authn" || manager.HttpFilters[1].Name != "envoy.filters.http.lua" || manager.HttpFilters[2].Name != "envoy.filters.http.rbac" || manager.HttpFilters[3].Name != "envoy.filters.http.router" {
 			t.Fatalf("HTTP filter order = %v", manager.HttpFilters)
 		}
-		var luaConfig lua.Lua
-		if err := manager.HttpFilters[1].GetTypedConfig().UnmarshalTo(&luaConfig); err != nil {
+		luaFilter := manager.HttpFilters[1]
+		if luaFilter.GetTypedConfig() != nil || luaFilter.GetConfigDiscovery() == nil {
+			t.Fatalf("Lua filter config = %#v, want file-based ECDS", luaFilter.GetConfigType())
+		}
+		ecds := luaFilter.GetConfigDiscovery()
+		if len(ecds.GetTypeUrls()) != 1 || ecds.GetTypeUrls()[0] != string((&lua.Lua{}).ProtoReflect().Descriptor().FullName()) {
+			t.Fatalf("Lua ECDS type URLs = %v", ecds.GetTypeUrls())
+		}
+		fileSource := ecds.GetConfigSource().GetPathConfigSource()
+		if ecds.GetConfigSource().GetResourceApiVersion() != core.ApiVersion_V3 ||
+			fileSource.GetPath() != path.Join(configDirectory, identityMappingECDSRelativePath) ||
+			fileSource.GetWatchedDirectory().GetPath() != path.Join(configDirectory, "lua") {
+			t.Fatalf("Lua ECDS file source = %#v", fileSource)
+		}
+		var yamlDocument map[string]any
+		if err := yaml.Unmarshal(files[identityMappingECDSRelativePath], &yamlDocument); err != nil {
 			t.Fatal(err)
 		}
-		if source := luaConfig.GetDefaultSourceCode(); source.GetFilename() != path.Join(configDirectory, "lua", "jwt.lua") || source.GetInlineString() != "" || source.GetWatchedDirectory() != nil {
-			t.Fatalf("Lua source = %#v, want separate file %q", source, path.Join(configDirectory, "lua", "jwt.lua"))
+		jsonDocument, err := json.Marshal(yamlDocument)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ecdsDocument map[string]any
+		if err := json.Unmarshal(jsonDocument, &ecdsDocument); err != nil {
+			t.Fatal(err)
+		}
+		resources, ok := ecdsDocument["resources"].([]any)
+		if !ok || len(resources) != 1 {
+			t.Fatalf("Lua ECDS resources = %#v, want one", ecdsDocument["resources"])
+		}
+		resourceData, err := json.Marshal(resources[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var resource anypb.Any
+		if err := protojson.Unmarshal(resourceData, &resource); err != nil {
+			t.Fatal(err)
+		}
+		var extension core.TypedExtensionConfig
+		if err := resource.UnmarshalTo(&extension); err != nil {
+			t.Fatal(err)
+		}
+		if extension.GetName() != "envoy.filters.http.lua" {
+			t.Fatalf("Lua ECDS resource name = %q", extension.GetName())
+		}
+		var luaConfig lua.Lua
+		if err := extension.GetTypedConfig().UnmarshalTo(&luaConfig); err != nil {
+			t.Fatal(err)
+		}
+		if source := luaConfig.GetDefaultSourceCode(); source.GetInlineString() != string(files["lua/jwt.lua"]) || source.GetFilename() != "" {
+			t.Fatal("Lua ECDS resource does not embed the generated identity script")
 		}
 		if script := string(files["lua/jwt.lua"]); !strings.Contains(script, "mapped_attributes") || !strings.Contains(script, `metadata:set("auth_gateway_attributes", name, value)`) || !strings.Contains(script, "claim_path") {
 			t.Fatal("identity mapping script is missing claim extraction or mapped-attribute metadata")
@@ -131,8 +181,12 @@ func TestGenerateJWTAuthenticationMatchesGolden(t *testing.T) {
 	}
 }
 
-func TestJWTLuaConfigMapAndRolloutChecksum(t *testing.T) {
+func TestJWTLuaECDSConfigMap(t *testing.T) {
 	config := loadAuthExample(t)
+	files, err := Generate(config)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resources, err := GenerateKubernetes(config)
 	if err != nil {
 		t.Fatal(err)
@@ -140,14 +194,17 @@ func TestJWTLuaConfigMapAndRolloutChecksum(t *testing.T) {
 	if resources.LuaConfigMap == nil {
 		t.Fatal("JWT deployment has no Lua ConfigMap")
 	}
-	if _, exists := resources.ConfigMap.Data["lua/jwt.lua"]; exists {
-		t.Fatal("bootstrap ConfigMap also contains the Lua script")
+	if _, exists := resources.ConfigMap.Data[identityMappingECDSRelativePath]; exists {
+		t.Fatal("bootstrap ConfigMap also contains the Lua ECDS response")
 	}
 	if got := resources.LuaConfigMap.Name; got != config.Kubernetes.Name+"-lua" {
 		t.Fatalf("Lua ConfigMap name = %q", got)
 	}
-	if got := resources.LuaConfigMap.Data["jwt.lua"]; got == "" || got != identityMappingScript(config) {
-		t.Fatal("Lua ConfigMap does not contain the generated identity script")
+	if got := resources.LuaConfigMap.Data["jwt.yaml"]; got == "" || got != string(files[identityMappingECDSRelativePath]) {
+		t.Fatal("Lua ConfigMap does not contain the generated ECDS response")
+	}
+	if _, exists := resources.LuaConfigMap.Data["jwt.lua"]; exists {
+		t.Fatal("Lua ConfigMap should load the ECDS resource with the script embedded")
 	}
 
 	var luaVolumeFound, luaMountFound bool
@@ -157,7 +214,7 @@ func TestJWTLuaConfigMapAndRolloutChecksum(t *testing.T) {
 		}
 		luaVolumeFound = true
 		if volume.ConfigMap == nil || volume.ConfigMap.Name != resources.LuaConfigMap.Name || len(volume.ConfigMap.Items) != 1 ||
-			volume.ConfigMap.Items[0].Key != "jwt.lua" || volume.ConfigMap.Items[0].Path != "jwt.lua" {
+			volume.ConfigMap.Items[0].Key != "jwt.yaml" || volume.ConfigMap.Items[0].Path != "jwt.yaml" {
 			t.Fatalf("Lua volume = %#v", volume)
 		}
 	}
@@ -170,30 +227,32 @@ func TestJWTLuaConfigMapAndRolloutChecksum(t *testing.T) {
 		t.Fatalf("separate Lua volume/mount found = %t/%t", luaVolumeFound, luaMountFound)
 	}
 
-	firstChecksum := resources.Deployment.Spec.Template.Annotations[configChecksumAnnotation]
+	if len(resources.Deployment.Spec.Template.Annotations) != 0 {
+		t.Fatalf("deployment template annotations = %v, want no generated checksum", resources.Deployment.Spec.Template.Annotations)
+	}
 	config.Authenticators[0].JWT.Attributes["tenant_id"].Mappings["client-123"] = "team-c"
 	updated, err := GenerateKubernetes(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resources.LuaConfigMap.Data["jwt.lua"] == updated.LuaConfigMap.Data["jwt.lua"] {
-		t.Fatal("changing the identity mapping did not update the Lua ConfigMap")
-	}
-	if firstChecksum == updated.Deployment.Spec.Template.Annotations[configChecksumAnnotation] {
-		t.Fatal("changing Lua identity mapping did not change the Deployment rollout checksum")
+	if resources.LuaConfigMap.Data["jwt.yaml"] == updated.LuaConfigMap.Data["jwt.yaml"] {
+		t.Fatal("changing the identity mapping did not update the Lua ECDS ConfigMap")
 	}
 	if resources.ConfigMap.Data["envoy.yaml"] != updated.ConfigMap.Data["envoy.yaml"] {
 		t.Fatal("changing only a Lua mapping unexpectedly changed the Envoy bootstrap")
 	}
+	if !reflect.DeepEqual(resources.Deployment.Spec.Template, updated.Deployment.Spec.Template) {
+		t.Fatal("changing only a Lua mapping unexpectedly changed the Deployment template")
+	}
 }
 
-func TestGenerateJWTExampleMatchesGolden(t *testing.T) {
+func TestGenerateJWTExampleMatchesEnvoyGolden(t *testing.T) {
 	c := loadAuthExample(t)
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join("testdata", "kubernetes", "jwt-full-envoy.yaml.golden")
+	path := filepath.Join("testdata", "envoy", "jwt-full.yaml.golden")
 	if *updateGolden {
 		if err := os.WriteFile(path, files["envoy.yaml"], 0o644); err != nil {
 			t.Fatal(err)

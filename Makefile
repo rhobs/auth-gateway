@@ -4,7 +4,7 @@ test:
 	go test ./...
 
 update-golden:
-	go test ./config -run '^TestGenerateKubernetesMatchesGoldenManifest$$' -update
+	go test ./config -update
 
 e2e:
 	$(MAKE) -C e2e test

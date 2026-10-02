@@ -189,12 +189,12 @@ changing credential, routing, connection, or message-framing headers.
 Keep the selected route stable through authorization and processing. Header
 output must not cause a second route selection with different permissions.
 
-The identity-mapping Lua source is generated as `lua/jwt.lua` and loaded by
-Envoy from a filename. Kubernetes output places it in a separate `<name>-lua`
-ConfigMap. A checksum of the generated Envoy, SDS, and Lua files is stored on
-the Deployment pod template. Applying regenerated manifests changes this
-checksum and triggers a rolling restart, so new Pods load the new script. This
-is a rolling reload, not an in-process Lua hot reload.
+The identity-mapping Lua source is generated as `lua/jwt.lua` and embedded in a
+file-based ECDS response in the separate `<name>-lua` ConfigMap. Envoy watches
+the projected ConfigMap directory and applies mapping changes to the Lua filter
+without restarting the Pod. The Deployment has no generated checksum
+annotation. Changes to the static Envoy bootstrap, including listeners, routes,
+and JWT provider settings, still require an explicit rolling restart.
 
 ## Complete examples
 
@@ -304,9 +304,8 @@ Start with focused unit tests and goldens, then exercise the generated gateway:
 - JWKS lifecycle: key rotation without a gateway Pod restart; unavailable or
   invalid JWKS with cold and warm caches; cache lifetime and refresh behavior;
   and continued access through a healthy issuer when another issuer fails.
-- Lua rollout: changing a mapped identity updates the Lua ConfigMap and
-  Deployment checksum, starts a replacement Envoy Pod, and applies the new
-  mapping to requests.
+- Lua ECDS reload: changing a mapped identity updates the Lua ConfigMap and
+  applies the new mapping to requests without replacing the Envoy Pod.
 - Future mTLS: reject an HTTP binding; reject missing, expired, or untrusted
   certificates during TLS under both operators, including with a valid JWT;
   exercise single URI SAN extraction and mapping failures. Cover ordered JWT
