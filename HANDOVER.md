@@ -98,4 +98,12 @@ For the e2e suite organization and framework diagnostics, `gofmt` and `git diff 
 
 ## Next step
 
-Continue the agreed JWT stages in `AUTH-PLAN.md` on `RHOBS-1784`, starting with Envoy JWT verification and runtime generation; mTLS and mixed methods remain future work. The bootstrap implementation is complete and merged into local `main`. Keep RHOBS-1783 open until its authentication-policy API requirement is resolved. Before adding runtime behavior, read the relevant Jira scope and add focused, high-value use-case coverage with isolated namespaces and setup.
+Continue the agreed JWT stages in `AUTH-PLAN.md` on `RHOBS-1784`. Envoy JWT verification generation is now implemented, but identity mapping, authorization, route processing, and JWT-specific e2e coverage remain. mTLS and mixed methods remain future work. The bootstrap implementation is complete and merged into local `main`. Keep RHOBS-1783 open until its authentication-policy API requirement is resolved. Before adding runtime behavior, read the relevant Jira scope and add focused, high-value use-case coverage with isolated namespaces and setup.
+
+## RHOBS-1784 JWT verification generation (2026-10-02)
+
+- `Generate` now emits Envoy's native JWT filter for servers with authentication. Each server selects its requirement by virtual host, so HTTP hosts sharing one connection manager keep issuer trust scoped. JWT providers require expiration, check the configured issuer and audiences, read only the bearer Authorization header, remove accepted credentials before forwarding, and retain each verified payload under its authenticator name for the mapping stage.
+- Each referenced issuer gets a dedicated HTTPS JWKS cluster with SNI and CA validation against the Envoy image's system certificate bundle. Unreferenced authenticators do not add clusters. Authorization and route processing still fail closed because their runtime stages are not implemented.
+- `config/testdata/jwt-auth.yaml` isolates public and protected virtual hosts with two possible issuers. Its generated Envoy bootstrap is compared with `config/testdata/jwt-envoy.yaml.golden`; the test also checks filter order, per-host requirement scoping, expiration, credential removal, payload metadata, and JWKS TLS validation.
+- `GOCACHE=/private/tmp/auth-gateway-go-cache make test`, `go vet ./...`, e2e compile and vet checks, and `git diff --check` pass. `make -C e2e test` passes all 11 existing Kind specs across the default two Ginkgo processes. These e2e cases cover the existing routing and TLS use cases; JWT-specific request behavior is not yet covered.
+- Jira MCP and CLI were unavailable in this workspace. The checked-in RHOBS-1784 design remains the implementation scope; Jira was not changed.

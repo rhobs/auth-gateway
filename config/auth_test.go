@@ -189,12 +189,12 @@ func TestAuthenticationDefaultsDoNotMutateInput(t *testing.T) {
 	}
 }
 
-func TestGenerateRejectsAuthenticationUntilRuntimeSupportExists(t *testing.T) {
+func TestGenerateRejectsAuthorizationUntilRuntimeSupportExists(t *testing.T) {
 	config := loadAuthExample(t)
-	if _, err := Generate(config); err == nil || !strings.Contains(err.Error(), "generation is not implemented") {
-		t.Fatalf("Generate error = %v, want auth generation support error", err)
+	if _, err := Generate(config); err == nil || !strings.Contains(err.Error(), "authorization and route processing generation is not implemented") {
+		t.Fatalf("Generate error = %v, want authorization generation support error", err)
 	}
-	if _, err := GenerateKubernetes(config); err == nil || !strings.Contains(err.Error(), "generation is not implemented") {
-		t.Fatalf("GenerateKubernetes error = %v, want auth generation support error", err)
+	if _, err := GenerateKubernetes(config); err == nil || !strings.Contains(err.Error(), "authorization and route processing generation is not implemented") {
+		t.Fatalf("GenerateKubernetes error = %v, want authorization generation support error", err)
 	}
 }

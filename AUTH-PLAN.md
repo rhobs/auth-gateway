@@ -9,8 +9,9 @@ authentication methods and external processors will use the same stages.
 
 See [config.auth.example.yaml](config.auth.example.yaml) for the JWT configuration
 schema and [config.mtls.example.yaml](config.mtls.example.yaml) for a complete
-future mTLS example. The loader validates JWT configuration; Envoy authentication
-generation and mTLS configuration remain future work.
+future mTLS example. The loader and Envoy JWT verification generation are
+implemented. Identity mapping, authorization, route processing, and mTLS remain
+future work.
 [config.example.yaml](config.example.yaml) describes the current supported format.
 
 ## Design

@@ -1,0 +1,39 @@
+version: 1
+node:
+  id: jwt-test
+  cluster: jwt-test
+listener:
+  port: 8080
+authenticators:
+  - name: issuer-one
+    jwt:
+      issuer: https://issuer-one.example.test
+      jwks_uri: https://issuer-one.example.test/jwks
+      audiences: [gateway-test]
+      attributes:
+        subject:
+          claim_path: [sub]
+  - name: issuer-two
+    jwt:
+      issuer: https://issuer-two.example.test
+      jwks_uri: https://issuer-two.example.test/jwks
+      audiences: [gateway-test]
+      attributes:
+        subject:
+          claim_path: [sub]
+apis:
+  - name: test-api
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [GET]
+        path:
+          exact: /protected
+servers:
+  - hostname: jwt-one.example.test
+    authentication:
+      any_of: [issuer-one, issuer-two]
+    apis: [test-api]
+  - hostname: public.example.test
+    apis: [test-api]

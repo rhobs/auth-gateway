@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"path"
 	"sort"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	endpoint "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	jwt "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/jwt_authn/v3"
 	router "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
 	inspector "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
@@ -37,11 +39,16 @@ func Generate(c Config) (map[string][]byte, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
-	if c.hasAuthenticationConfig() {
-		return nil, fmt.Errorf("authentication, authorization, and route processing generation is not implemented")
+	if c.hasAuthorizationOrProcessingConfig() {
+		return nil, fmt.Errorf("authorization and route processing generation is not implemented")
 	}
 
 	clusters := apiClusters(c.APIs)
+	jwks, err := jwksClusters(c.Authenticators, c.Servers)
+	if err != nil {
+		return nil, err
+	}
+	clusters = append(clusters, jwks...)
 	apis := c.apisByName()
 	var filterChains []*listener.FilterChain
 	var httpHosts []*route.VirtualHost
@@ -55,11 +62,19 @@ func Generate(c Config) (map[string][]byte, error) {
 			Domains: []string{server.Hostname},
 			Routes:  apiRoutes(bound),
 		}
+		if server.Authentication != nil {
+			requirementName := serverJWTRequirementName(i)
+			perRoute, err := packEnvoy(&jwt.PerRouteConfig{RequirementSpecifier: &jwt.PerRouteConfig_RequirementName{RequirementName: requirementName}})
+			if err != nil {
+				return nil, fmt.Errorf("servers[%d] JWT requirement: %w", i, err)
+			}
+			host.TypedPerFilterConfig = map[string]*anypb.Any{"envoy.filters.http.jwt_authn": perRoute}
+		}
 		if server.TLSConfig == nil {
 			httpHosts = append(httpHosts, host)
 			continue
 		}
-		chain, err := httpFilterChain([]*route.VirtualHost{host})
+		chain, err := httpFilterChain([]*route.VirtualHost{host}, c)
 		if err != nil {
 			return nil, fmt.Errorf("servers[%d]: %w", i, err)
 		}
@@ -74,7 +89,7 @@ func Generate(c Config) (map[string][]byte, error) {
 		filterChains = append(filterChains, chain)
 	}
 	if len(httpHosts) > 0 {
-		chain, err := httpFilterChain(httpHosts)
+		chain, err := httpFilterChain(httpHosts, c)
 		if err != nil {
 			return nil, err
 		}
@@ -128,8 +143,8 @@ func Generate(c Config) (map[string][]byte, error) {
 	return files, nil
 }
 
-func httpFilterChain(hosts []*route.VirtualHost) (*listener.FilterChain, error) {
-	manager, err := httpManager(hosts)
+func httpFilterChain(hosts []*route.VirtualHost, c Config) (*listener.FilterChain, error) {
+	manager, err := httpManager(hosts, c)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +158,7 @@ func httpFilterChain(hosts []*route.VirtualHost) (*listener.FilterChain, error) 
 	}}}, nil
 }
 
-func httpManager(hosts []*route.VirtualHost) (*hcm.HttpConnectionManager, error) {
+func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManager, error) {
 	routerConfig, err := packEnvoy(&router.Router{SuppressEnvoyHeaders: true})
 	if err != nil {
 		return nil, err
@@ -152,6 +167,19 @@ func httpManager(hosts []*route.VirtualHost) (*hcm.HttpConnectionManager, error)
 	if err != nil {
 		return nil, err
 	}
+	filters := make([]*hcm.HttpFilter, 0, 2)
+	if hasProtectedHosts(hosts) {
+		jwtConfig, err := jwtFilterConfig(c)
+		if err != nil {
+			return nil, err
+		}
+		packed, err := packEnvoy(jwtConfig)
+		if err != nil {
+			return nil, fmt.Errorf("encode JWT authentication filter: %w", err)
+		}
+		filters = append(filters, &hcm.HttpFilter{Name: "envoy.filters.http.jwt_authn", ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: packed}})
+	}
+	filters = append(filters, &hcm.HttpFilter{Name: "envoy.filters.http.router", ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: routerConfig}})
 	return &hcm.HttpConnectionManager{
 		StatPrefix:            "ingress",
 		CodecType:             hcm.HttpConnectionManager_AUTO,
@@ -170,12 +198,127 @@ func httpManager(hosts []*route.VirtualHost) (*hcm.HttpConnectionManager, error)
 			Name:         "ingestion",
 			VirtualHosts: hosts,
 		}},
-		AccessLog: accessLogs,
-		HttpFilters: []*hcm.HttpFilter{{
-			Name:       "envoy.filters.http.router",
-			ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: routerConfig},
-		}},
+		AccessLog:   accessLogs,
+		HttpFilters: filters,
 	}, nil
+}
+
+func (c Config) hasAuthorizationOrProcessingConfig() bool {
+	for _, server := range c.Servers {
+		if server.Authorization != nil {
+			return true
+		}
+	}
+	for _, api := range c.APIs {
+		for _, r := range api.Routes {
+			if r.Processing != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasProtectedHosts(hosts []*route.VirtualHost) bool {
+	for _, host := range hosts {
+		if host.TypedPerFilterConfig["envoy.filters.http.jwt_authn"] != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func serverJWTRequirementName(index int) string { return "server-" + strconv.Itoa(index) }
+
+func jwtFilterConfig(c Config) (*jwt.JwtAuthentication, error) {
+	config := &jwt.JwtAuthentication{Providers: map[string]*jwt.JwtProvider{}, RequirementMap: map[string]*jwt.JwtRequirement{}, StripFailureResponse: true}
+	for _, authenticator := range c.Authenticators {
+		if !authenticatorUsed(c.Servers, authenticator.Name) {
+			continue
+		}
+		config.Providers[authenticator.Name] = &jwt.JwtProvider{
+			Issuer:            authenticator.JWT.Issuer,
+			Audiences:         authenticator.JWT.Audiences,
+			RequireExpiration: true,
+			JwksSourceSpecifier: &jwt.JwtProvider_RemoteJwks{RemoteJwks: &jwt.RemoteJwks{
+				HttpUri:       &core.HttpUri{Uri: authenticator.JWT.JWKSURI, HttpUpstreamType: &core.HttpUri_Cluster{Cluster: jwksClusterName(authenticator.Name)}, Timeout: durationpb.New(5 * time.Second)},
+				CacheDuration: durationpb.New(5 * time.Minute),
+			}},
+			FromHeaders:       []*jwt.JwtHeader{{Name: "Authorization", ValuePrefix: "Bearer "}},
+			PayloadInMetadata: authenticator.Name,
+		}
+	}
+	for i, server := range c.Servers {
+		if server.Authentication == nil {
+			continue
+		}
+		names := server.Authentication.AnyOf
+		if len(server.Authentication.AllOf) > 0 {
+			names = server.Authentication.AllOf
+		}
+		requirements := make([]*jwt.JwtRequirement, 0, len(names))
+		for _, name := range names {
+			requirements = append(requirements, &jwt.JwtRequirement{RequiresType: &jwt.JwtRequirement_ProviderName{ProviderName: name}})
+		}
+		var requirement *jwt.JwtRequirement
+		if len(requirements) == 1 {
+			requirement = requirements[0]
+		} else if len(server.Authentication.AllOf) > 0 {
+			requirement = &jwt.JwtRequirement{RequiresType: &jwt.JwtRequirement_RequiresAll{RequiresAll: &jwt.JwtRequirementAndList{Requirements: requirements}}}
+		} else {
+			requirement = &jwt.JwtRequirement{RequiresType: &jwt.JwtRequirement_RequiresAny{RequiresAny: &jwt.JwtRequirementOrList{Requirements: requirements}}}
+		}
+		config.RequirementMap[serverJWTRequirementName(i)] = requirement
+	}
+	return config, nil
+}
+
+func authenticatorUsed(servers []Server, name string) bool {
+	for _, server := range servers {
+		if server.Authentication != nil {
+			for _, candidate := range append(append([]string{}, server.Authentication.AnyOf...), server.Authentication.AllOf...) {
+				if candidate == name {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func jwksClusterName(name string) string { return "jwks-" + name }
+
+func jwksClusters(authenticators []Authenticator, servers []Server) ([]*cluster.Cluster, error) {
+	var clusters []*cluster.Cluster
+	for _, authenticator := range authenticators {
+		if authenticator.JWT == nil || !authenticatorUsed(servers, authenticator.Name) {
+			continue
+		}
+		parsed, err := url.Parse(authenticator.JWT.JWKSURI)
+		if err != nil {
+			return nil, fmt.Errorf("authenticators.%s.jwt.jwks_uri: %w", authenticator.Name, err)
+		}
+		port := uint32(443)
+		if parsed.Port() != "" {
+			value, err := strconv.ParseUint(parsed.Port(), 10, 32)
+			if err != nil {
+				return nil, fmt.Errorf("authenticators.%s.jwt.jwks_uri port: %w", authenticator.Name, err)
+			}
+			port = uint32(value)
+		}
+		name := jwksClusterName(authenticator.Name)
+		tlsConfig, err := packEnvoy(&tls.UpstreamTlsContext{Sni: parsed.Hostname(), CommonTlsContext: &tls.CommonTlsContext{ValidationContextType: &tls.CommonTlsContext_ValidationContext{ValidationContext: &tls.CertificateValidationContext{TrustedCa: &core.DataSource{Specifier: &core.DataSource_Filename{Filename: "/etc/ssl/certs/ca-certificates.crt"}}}}}})
+		if err != nil {
+			return nil, fmt.Errorf("authenticators.%s JWKS TLS: %w", authenticator.Name, err)
+		}
+		clusters = append(clusters, &cluster.Cluster{
+			Name: name, ConnectTimeout: durationpb.New(5 * time.Second),
+			ClusterDiscoveryType: &cluster.Cluster_Type{Type: cluster.Cluster_STRICT_DNS},
+			LoadAssignment:       &endpoint.ClusterLoadAssignment{ClusterName: name, Endpoints: []*endpoint.LocalityLbEndpoints{{LbEndpoints: []*endpoint.LbEndpoint{{HostIdentifier: &endpoint.LbEndpoint_Endpoint{Endpoint: &endpoint.Endpoint{Address: socket(parsed.Hostname(), port)}}}}}}},
+			TransportSocket:      &core.TransportSocket{Name: "envoy.transport_sockets.tls", ConfigType: &core.TransportSocket_TypedConfig{TypedConfig: tlsConfig}},
+		})
+	}
+	return clusters, nil
 }
 
 func apiRoutes(apis []API) []*route.Route {
