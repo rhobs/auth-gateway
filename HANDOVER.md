@@ -83,6 +83,13 @@ The e2e test needs Docker, Kind, Go, curl, and network access. It creates or reu
 
 For the e2e suite organization and framework diagnostics, `gofmt` and `git diff --check` pass. The Kind e2e suite was not run after these changes.
 
+## RHOBS-1784 design proposal (2026-10-02)
+
+- The active branch is `RHOBS-1784`. Commit `d646043` adds `AUTH-PLAN.md` with the proposed auth design and implementation stages, and `config.auth.example.yaml` with the complete proposed configuration. The current loader does not yet support its auth fields. Runtime authentication work has not started.
+- The agreed model uses named authenticators bound to servers with explicit `any_of` or `all_of`, alternative issuers within JWT, named string attributes from literal claim-path segments, optional per-issuer value translation, and named authorization policies bound to APIs. Header output is optional per route. Future credentials must agree on shared attributes. Omitted server authentication permits public access; protected APIs cannot be bound to public servers.
+- Read RHOBS-1782, RHOBS-1783, and RHOBS-1784 through the authenticated Jira REST API while planning. Jira MCP and the Jira CLI were unavailable. No Jira issues were changed.
+- Validated the example with Ruby/Psych: one YAML document, no duplicate keys, valid named references and attribute sources, image pins, and agreement with the document's permission table. Local links and ASCII content pass checks. `git diff --cached --check` passes. Go and Kind tests were not run for this documentation-only step.
+
 ## Next step
 
-The bootstrap implementation is complete and merged into local `main`. The user will create a separate feature branch for RHOBS-1784 JWT work. Keep RHOBS-1783 open until its authentication-policy API requirement is resolved. Before adding new behavior, read the relevant Jira scope and add focused, high-value use-case coverage with isolated namespaces and setup.
+Review `AUTH-PLAN.md` and `config.auth.example.yaml` with the user, then implement the agreed stages on `RHOBS-1784`. The bootstrap implementation is complete and merged into local `main`. Keep RHOBS-1783 open until its authentication-policy API requirement is resolved. Before adding runtime behavior, read the relevant Jira scope and add focused, high-value use-case coverage with isolated namespaces and setup.
