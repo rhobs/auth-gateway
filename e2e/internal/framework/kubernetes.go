@@ -188,6 +188,22 @@ func (e *Environment) WaitForDeployment(ctx context.Context, namespace, name str
 	return nil
 }
 
+// RestartDeployment changes a pod-template annotation and waits for the replacement Pods to become available.
+func (e *Environment) RestartDeployment(ctx context.Context, namespace, name string, timeout time.Duration) error {
+	deployment, err := e.client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get Deployment %q before restart: %w", name, err)
+	}
+	if deployment.Spec.Template.Annotations == nil {
+		deployment.Spec.Template.Annotations = map[string]string{}
+	}
+	deployment.Spec.Template.Annotations["auth-gateway-e2e/restarted-at"] = time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := e.client.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("restart Deployment %q: %w", name, err)
+	}
+	return e.WaitForDeployment(ctx, namespace, name, timeout)
+}
+
 func deploymentFailed(deployment *appsv1.Deployment) bool {
 	for _, condition := range deployment.Status.Conditions {
 		if condition.Type == appsv1.DeploymentProgressing &&

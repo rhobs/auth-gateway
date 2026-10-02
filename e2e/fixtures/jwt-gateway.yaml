@@ -1,0 +1,98 @@
+version: 1
+node:
+  id: jwt-e2e
+  cluster: jwt-e2e
+listener:
+  port: 8080
+authenticators:
+  - name: issuer-one
+    jwt:
+      issuer: https://issuer-one.jwt.test
+      jwks_uri: https://jwks.jwt.test/issuer-one
+      audiences: [gateway-test]
+      attributes:
+        tenant_id:
+          claim_path: [organization, id]
+          mappings:
+            customer-a: team-a
+            customer-b: team-b
+        writer_id:
+          claim_path: [sub]
+  - name: issuer-two
+    jwt:
+      issuer: https://issuer-two.jwt.test
+      jwks_uri: https://jwks.jwt.test/issuer-two
+      audiences: [gateway-test]
+      attributes:
+        tenant_id:
+          claim_path: [organization, id]
+          mappings:
+            customer-a: team-a
+            customer-b: team-b
+        writer_id:
+          claim_path: [sub]
+authorization_policies:
+  - name: metrics-writers
+    grants:
+      - authenticator: issuer-one
+        apis: [metrics]
+        attributes:
+          tenant_id: [team-a]
+      - authenticator: issuer-two
+        apis: [metrics]
+        attributes:
+          tenant_id: [team-b]
+apis:
+  - name: metrics
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [GET]
+        path:
+          exact: /protected
+        rewrite:
+          path: /anything
+        processing:
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: tenant_id
+            - name: X-Writer-ID
+              from_attribute: writer_id
+      - methods: [GET]
+        path:
+          exact: /headerless
+        rewrite:
+          path: /anything
+servers:
+  - hostname: writer.jwt.auth-gateway.test
+    authentication:
+      any_of: [issuer-one, issuer-two]
+    authorization:
+      any_of: [metrics-writers]
+    apis: [metrics]
+  - hostname: writer-tls.jwt.auth-gateway.test
+    tls_config:
+      secret: jwt-gateway-tls
+      certificate: /etc/jwt-gateway-tls/tls.crt
+      private_key: /etc/jwt-gateway-tls/tls.key
+    authentication:
+      any_of: [issuer-one, issuer-two]
+    authorization:
+      any_of: [metrics-writers]
+    apis: [metrics]
+kubernetes:
+  name: auth-gateway
+  namespace: default
+  image: envoyproxy/envoy:v1.39.1
+  otel_collector_image: otel/opentelemetry-collector-contrib:0.135.0
+  replicas: 1
+  service_port: 80
+  https_service_port: 443
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: "1"
+      memory: 256Mi

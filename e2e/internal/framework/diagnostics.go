@@ -95,6 +95,28 @@ func (e *Environment) envoyClusterDiagnostics(namespace, dir string) {
 	}
 	writeDiagnostic(dir, "envoy-clusters.json", data, nil)
 	fmt.Fprintf(GinkgoWriter, "Envoy cluster state (HTTP %d):\n%s\n", response.StatusCode, data)
+	writeEnvoyAdminDiagnostic(ctx, dir, address, "envoy-stats.txt", "/stats?filter=http.ingress")
+}
+
+func writeEnvoyAdminDiagnostic(ctx context.Context, dir, address, filename, path string) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+path, nil)
+	if err != nil {
+		writeDiagnostic(dir, filename, nil, err)
+		return
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		writeDiagnostic(dir, filename, nil, err)
+		return
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		writeDiagnostic(dir, filename, nil, err)
+		return
+	}
+	writeDiagnostic(dir, filename, data, nil)
+	fmt.Fprintf(GinkgoWriter, "Envoy auth stats (HTTP %d):\n%s\n", response.StatusCode, data)
 }
 
 func writeDiagnostic(dir, name string, value any, err error) {

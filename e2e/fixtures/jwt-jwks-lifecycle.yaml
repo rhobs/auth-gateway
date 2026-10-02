@@ -1,0 +1,72 @@
+version: 1
+node:
+  id: jwt-jwks-lifecycle-e2e
+  cluster: jwt-jwks-lifecycle-e2e
+listener:
+  port: 8080
+authenticators:
+  - name: issuer-one
+    jwt:
+      issuer: https://issuer-one.jwt.test
+      jwks_uri: https://jwks.jwt.test/issuer-one
+      audiences: [gateway-test]
+      attributes:
+        tenant_id:
+          claim_path: [organization, id]
+          mappings:
+            customer-a: team-a
+  - name: issuer-two
+    jwt:
+      issuer: https://issuer-two.jwt.test
+      jwks_uri: https://jwks.jwt.test/issuer-two
+      audiences: [gateway-test]
+      attributes:
+        tenant_id:
+          claim_path: [organization, id]
+          mappings:
+            customer-b: team-b
+authorization_policies:
+  - name: issuer-one-writers
+    grants:
+      - authenticator: issuer-one
+        apis: [metrics]
+        attributes:
+          tenant_id: [team-a]
+  - name: issuer-two-writers
+    grants:
+      - authenticator: issuer-two
+        apis: [metrics]
+        attributes:
+          tenant_id: [team-b]
+apis:
+  - name: metrics
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [GET]
+        path:
+          exact: /protected
+        rewrite:
+          path: /anything
+servers:
+  - hostname: lifecycle.jwt.auth-gateway.test
+    authentication:
+      any_of: [issuer-one, issuer-two]
+    authorization:
+      any_of: [issuer-one-writers, issuer-two-writers]
+    apis: [metrics]
+kubernetes:
+  name: auth-gateway
+  namespace: default
+  image: envoyproxy/envoy:v1.39.1
+  otel_collector_image: otel/opentelemetry-collector-contrib:0.135.0
+  replicas: 1
+  service_port: 80
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: "1"
+      memory: 256Mi
