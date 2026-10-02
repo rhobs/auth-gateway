@@ -92,31 +92,40 @@ test needs Docker, Kind, Go, curl, and network access. It downloads cmctl
 v2.6.1 on first use, creates or reuses the `auth-gateway-e2e` cluster, and
 deletes its test namespaces when it ends.
 
-## HTTP and HTTPS hosts
+## Servers
 
-`listener.http_hosts` and `listener.https_hosts` bind exact hostnames to
-plaintext HTTP and TLS HTTPS. If both are omitted, existing configurations keep
-the wildcard HTTP behavior. If either list is set, only the hosts listed for
-each protocol are served. Every host currently exposes the same API routes.
+The required `servers` list binds exact DNS hostnames to named APIs. Each
+hostname appears once. An entry without `tls_config` serves HTTP; an entry
+with `tls_config` serves HTTPS. There is no wildcard fallback.
 
-HTTPS uses SNI to select a TLS filter chain on the same Envoy listener port as
-HTTP. Set `server_tls.secret` to a Kubernetes TLS Secret containing `tls.crt`
-and `tls.key`. The certificate and private key paths default to
-`/etc/auth-gateway-tls/tls.crt` and `/etc/auth-gateway-tls/tls.key`. The
-generated Deployment mounts the Secret directory read-only, and Envoy's
-file-based SDS watches that directory so projected Secret updates can be
-loaded without restarting Envoy. Server TLS does not request a client
-certificate.
+Only APIs named in a server's `apis` list are exposed. Missing or empty
+bindings serve 404 for every path. Unknown API names and repeated bindings are
+configuration errors. An API can be shared by several servers or remain
+unbound. The binding list sets the order between APIs, and each API keeps its
+route order. Duplicate path/method matches are rejected within a server;
+separate servers can expose different APIs at the same path.
 
-When HTTP and HTTPS hosts are both configured, the generated Service exposes
-ports 80 and 443, both targeting the same Envoy listener port (8080 by
-default). HTTPS-only configuration exposes port 443. Metrics stay on port
-8889.
+HTTPS uses SNI to select a server's TLS chain. The HTTP `Host` or
+`:authority` must also match that server. Set `tls_config.secret` to a
+Kubernetes TLS Secret containing `tls.crt` and `tls.key`. Paths default to
+`/etc/<secret>/tls.crt` and `/etc/<secret>/tls.key`. Servers can use different
+Secrets or share one. Envoy's file-based SDS reloads projected certificate
+updates without a Pod restart. Server TLS does not request client certificates.
 
-The TLS e2e group creates a local CA and server certificate with cert-manager.
-It checks HTTP and HTTPS host isolation, then uses `cmctl renew` to request a
-new certificate. It verifies that a new TLS connection sees the renewed
-certificate and key without an Envoy pod restart.
+All servers share one Envoy listener port (8080 by default). The generated
+Service exposes port 80 when HTTP servers exist and port 443 when HTTPS servers
+exist, both targeting that listener. Metrics stay on port 8889.
+
+Version 1 now requires explicit servers. To migrate, replace
+`listener.http_hosts` and `listener.https_hosts` with one server per hostname,
+move the former `server_tls` settings into each HTTPS server's `tls_config`,
+and list its API bindings. The old fields are rejected. A former wildcard HTTP
+configuration needs an exact hostname and explicit bindings.
+
+The TLS e2e group creates a local CA and two server certificates with
+cert-manager. It checks hostname and API isolation, then uses `cmctl renew`
+to renew one certificate. It verifies that Envoy serves the new certificate and
+key while the other certificate and gateway Pod UID stay unchanged.
 
 See [TLS secrets and rotation](docs/tls-secrets.md) for how Secret projection
 and Envoy file-based SDS work.

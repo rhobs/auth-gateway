@@ -1,19 +1,22 @@
 # TLS secrets and rotation
 
-The gateway uses a Kubernetes TLS Secret for its downstream HTTPS certificate. Set `listener.https_hosts` and `server_tls.secret` in the gateway config:
+Each HTTPS server uses a Kubernetes TLS Secret. Set `tls_config.secret` on its server entry:
 
 ```yaml
-listener:
-  https_hosts: [tls.example.com]
-server_tls:
-  secret: auth-gateway-tls
+servers:
+  - hostname: tls.example.com
+    tls_config:
+      secret: auth-gateway-tls
+    apis: [metrics]
 ```
 
-The Secret is type `kubernetes.io/tls` and contains `tls.crt` and `tls.key`. Certificate and key file paths default to `/etc/auth-gateway-tls/tls.crt` and `/etc/auth-gateway-tls/tls.key`. See [`config.example.yaml`](../config.example.yaml) and the [TLS test fixture](../config/testdata/tls.yaml).
+The Secret is type `kubernetes.io/tls` and contains `tls.crt` and `tls.key`. Paths default to `/etc/<secret>/tls.crt` and `/etc/<secret>/tls.key`. Optional `certificate` and `private_key` paths can override them; both files must be in the same directory. Distinct mounts need non-overlapping directories outside the gateway and collector configuration directories. See [`config.example.yaml`](../config.example.yaml) and the [TLS test fixture](../config/testdata/tls.yaml).
+
+For file-only Envoy output, the Secret name is optional. Without a Secret name, paths default to `/etc/auth-gateway-tls/tls.crt` and `/etc/auth-gateway-tls/tls.key`. Kubernetes output requires a Secret name for every HTTPS server.
 
 ## How Envoy reads the Secret
 
-The generated ConfigMap contains `envoy.yaml` and `server-certificate.yaml`. The SDS resource contains file paths, not certificate bytes. The Deployment mounts this ConfigMap at `/etc/auth-gateway` and mounts the Secret read-only at the certificate directory. Envoy's bootstrap reads the file-based SDS resource; that resource points to the mounted certificate and key. Envoy watches both directories.
+The generated ConfigMap contains `envoy.yaml` and one `server-certificate-<index>.yaml` SDS file per HTTPS server. The index is its position in the server list. The SDS resource contains certificate file paths. The Deployment mounts all generated files at `/etc/auth-gateway` and each Secret read-only at its certificate directory. Envoy's bootstrap reads the SDS resource, which points to the mounted certificate and key. Envoy watches both directories.
 
 ```mermaid
 sequenceDiagram
@@ -31,11 +34,13 @@ sequenceDiagram
     Envoy-->>Client: New TLS handshakes receive the new certificate
 ```
 
-The certificate update does not require an Envoy Pod restart. The current config uses one Secret for all configured HTTPS hosts, so that certificate must cover each hostname. The Secret is mounted as a regular volume, not with `subPath`, so Kubernetes can refresh its projected files.
+A certificate update does not require an Envoy Pod restart. Each certificate must cover its server's hostname. Servers can share a Secret, in which case the certificate must cover each hostname. Identical Secret/path bindings share a mount; each HTTPS server still has its own SDS resource, SNI chain, and HTTP authority match.
+
+Secrets are mounted as directory volumes, without `subPath`, so Kubernetes can refresh their projected files.
 
 ## Rotation test
 
-cert-manager renews the `Certificate` according to its policy and updates the referenced Secret. The Kind end-to-end test uses `cmctl renew` to trigger that same update path quickly, then checks that a new TLS connection sees a different certificate and public key while the gateway Pod UID stays the same.
+cert-manager renews the `Certificate` according to its policy and updates the referenced Secret. The Kind end-to-end test uses `cmctl renew` to trigger that update path, then checks that a new TLS connection sees a different certificate and public key. The other server's certificate and gateway Pod UID must stay unchanged.
 
 If a proxy terminates client TLS before Envoy and forwards plain HTTP, Envoy sees HTTP and does not present this certificate for that request.
 

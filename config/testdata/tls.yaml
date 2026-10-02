@@ -1,9 +1,15 @@
 version: 1
-listener:
-  http_hosts: [auth.example.com]
-  https_hosts: [tls.example.com]
-server_tls:
-  secret: auth-gateway-tls
+servers:
+  - hostname: auth.example.com
+    apis: [metrics]
+  - hostname: tls.example.com
+    tls_config:
+      secret: auth-gateway-tls
+    apis: [metrics]
+  - hostname: query.example.com
+    tls_config:
+      secret: query-gateway-tls
+    apis: []
 apis:
   - name: metrics
     upstream:

@@ -133,12 +133,14 @@ func TestGenerateKubernetesMountsServerTLSSecretAndSharesListenerPort(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	config.Listener.HTTPHosts = []string{"auth.example.com"}
-	config.Listener.HTTPSHosts = []string{"mts.auth.example.com"}
-	config.ServerTLS = &ServerTLS{
+	tlsConfig := &ServerTLS{
 		Secret:      "auth-gateway-tls",
 		Certificate: "/etc/gateway-certs/tls.crt",
 		PrivateKey:  "/etc/gateway-certs/tls.key",
+	}
+	config.Servers = []Server{
+		{Hostname: "auth.example.com", APIs: []string{"metrics"}},
+		{Hostname: "mts.auth.example.com", TLSConfig: tlsConfig, APIs: []string{"metrics"}},
 	}
 	resources, err := GenerateKubernetes(config)
 	if err != nil {
@@ -164,16 +166,16 @@ func TestGenerateKubernetesMountsServerTLSSecretAndSharesListenerPort(t *testing
 	if got := ports["https"]; got.port != defaultHTTPSServicePort || got.targetPort != "http" {
 		t.Fatalf("HTTPS Service port = %#v, want port 443 targeting the same Envoy listener", got)
 	}
-	if got := resources.ConfigMap.Data[serverTLSResourceFilename]; got == "" {
+	if got := resources.ConfigMap.Data["server-certificate-1.yaml"]; got == "" {
 		t.Fatalf("config Map does not contain the server TLS SDS resource")
 	}
 
 	var tlsVolumeFound bool
 	for _, volume := range resources.Deployment.Spec.Template.Spec.Volumes {
-		if volume.Name == "server-tls" && volume.Secret != nil {
+		if volume.Name == "server-tls-1" && volume.Secret != nil {
 			tlsVolumeFound = true
-			if volume.Secret.SecretName != config.ServerTLS.Secret {
-				t.Errorf("mounted Secret = %q, want %q", volume.Secret.SecretName, config.ServerTLS.Secret)
+			if volume.Secret.SecretName != tlsConfig.Secret {
+				t.Errorf("mounted Secret = %q, want %q", volume.Secret.SecretName, tlsConfig.Secret)
 			}
 			if got := volume.Secret.Items; len(got) != 2 || got[0].Key != "tls.crt" || got[0].Path != "tls.crt" || got[1].Key != "tls.key" || got[1].Path != "tls.key" {
 				t.Errorf("mounted TLS Secret items = %#v", got)
@@ -185,7 +187,7 @@ func TestGenerateKubernetesMountsServerTLSSecretAndSharesListenerPort(t *testing
 	}
 	var tlsMountFound bool
 	for _, mount := range resources.Deployment.Spec.Template.Spec.Containers[0].VolumeMounts {
-		if mount.Name == "server-tls" && mount.MountPath == "/etc/gateway-certs" && mount.ReadOnly {
+		if mount.Name == "server-tls-1" && mount.MountPath == "/etc/gateway-certs" && mount.ReadOnly {
 			tlsMountFound = true
 		}
 	}
@@ -199,9 +201,11 @@ func TestGenerateKubernetesOmitsHTTPServicePortForHTTPSOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config.Listener.HTTPHosts = nil
-	config.Listener.HTTPSHosts = []string{"mts.auth.example.com"}
-	config.ServerTLS = &ServerTLS{Secret: "auth-gateway-tls"}
+	config.Servers = []Server{{
+		Hostname:  "mts.auth.example.com",
+		TLSConfig: &ServerTLS{Secret: "auth-gateway-tls"},
+		APIs:      []string{"metrics"},
+	}}
 	resources, err := GenerateKubernetes(config)
 	if err != nil {
 		t.Fatal(err)
@@ -222,6 +226,93 @@ func TestGenerateKubernetesRequiresSettings(t *testing.T) {
 	config.Kubernetes = nil
 	if _, err := GenerateKubernetes(config); err == nil {
 		t.Fatal("GenerateKubernetes accepted missing Kubernetes settings")
+	}
+}
+
+func TestGenerateKubernetesSharesTLSSecretMount(t *testing.T) {
+	config, err := Load(strings.NewReader(readFixture(t, "tls.yaml")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Servers[2].TLSConfig = config.Servers[1].TLSConfig
+	resources, err := GenerateKubernetes(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := resources.Deployment.Spec.Template.Spec
+	secretVolumes := 0
+	for _, volume := range pod.Volumes {
+		if volume.Secret != nil {
+			secretVolumes++
+			if volume.Secret.SecretName != "auth-gateway-tls" || volume.Secret.DefaultMode == nil || *volume.Secret.DefaultMode != 0o444 {
+				t.Fatalf("unexpected shared Secret volume: %#v", volume.Secret)
+			}
+		}
+	}
+	if secretVolumes != 1 {
+		t.Fatalf("shared Secret volume count = %d, want 1", secretVolumes)
+	}
+	tlsMounts := 0
+	for _, mount := range pod.Containers[0].VolumeMounts {
+		if mount.Name == "server-tls-1" {
+			tlsMounts++
+			if mount.MountPath != "/etc/auth-gateway-tls" || !mount.ReadOnly || mount.SubPath != "" || mount.SubPathExpr != "" {
+				t.Fatalf("shared Secret mount prevents directory projection: %#v", mount)
+			}
+		}
+	}
+	if tlsMounts != 1 {
+		t.Fatalf("shared TLS mount count = %d, want 1", tlsMounts)
+	}
+	if len(resources.ConfigMap.Data) != 3 {
+		t.Fatal("shared certificate servers did not get separate SDS files")
+	}
+	for _, volume := range pod.Volumes {
+		if volume.ConfigMap == nil || volume.Name != "config" {
+			continue
+		}
+		if len(volume.ConfigMap.Items) != len(resources.ConfigMap.Data) {
+			t.Fatal("Deployment does not project every generated config file")
+		}
+		previous := ""
+		for _, item := range volume.ConfigMap.Items {
+			if _, exists := resources.ConfigMap.Data[item.Key]; !exists || item.Path != item.Key || item.Key <= previous {
+				t.Fatalf("unexpected ConfigMap item: %#v", item)
+			}
+			previous = item.Key
+		}
+	}
+}
+
+func TestGenerateKubernetesMountsSharedSecretAtDifferentPaths(t *testing.T) {
+	config, err := Load(strings.NewReader(readFixture(t, "tls.yaml")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Servers[2].TLSConfig = &ServerTLS{
+		Secret: "auth-gateway-tls", Certificate: "/etc/query-tls/server.pem", PrivateKey: "/etc/query-tls/key.pem",
+	}
+	resources, err := GenerateKubernetes(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretVolumes := 0
+	for _, volume := range resources.Deployment.Spec.Template.Spec.Volumes {
+		if volume.Secret != nil {
+			secretVolumes++
+			if volume.Secret.SecretName != "auth-gateway-tls" {
+				t.Fatal("mounted a different Secret")
+			}
+			if volume.Name == "server-tls-2" {
+				items := volume.Secret.Items
+				if len(items) != 2 || items[0].Path != "server.pem" || items[1].Path != "key.pem" {
+					t.Fatalf("custom certificate filenames = %#v", items)
+				}
+			}
+		}
+	}
+	if secretVolumes != 2 {
+		t.Fatalf("Secret volume count = %d, want 2 for distinct paths", secretVolumes)
 	}
 }
 

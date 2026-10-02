@@ -2,11 +2,20 @@ version: 1
 
 listener:
   port: 8080
-  http_hosts: [auth.auth-gateway.test]
-  https_hosts: [tls.auth-gateway.test]
 
-server_tls:
-  secret: auth-gateway-tls
+servers:
+  - hostname: auth.auth-gateway.test
+    apis: [metrics, upstream-health]
+  - hostname: query.auth-gateway.test
+    apis: [upstream-health]
+  - hostname: tls.auth-gateway.test
+    tls_config:
+      secret: auth-gateway-tls
+    apis: [metrics, upstream-health]
+  - hostname: query-tls.auth-gateway.test
+    tls_config:
+      secret: query-gateway-tls
+    apis: [upstream-health]
 
 apis:
   - name: metrics

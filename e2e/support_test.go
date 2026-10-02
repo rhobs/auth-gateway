@@ -26,6 +26,9 @@ const (
 	tlsNamespace     = "auth-gateway-tls-e2e"
 	httpHost         = "auth.auth-gateway.test"
 	httpsHost        = "tls.auth-gateway.test"
+	queryHTTPHost    = "query.auth-gateway.test"
+	queryHTTPSHost   = "query-tls.auth-gateway.test"
+	unknownHost      = "unknown.auth-gateway.test"
 )
 
 var (
@@ -62,6 +65,7 @@ func setupGateway(ctx SpecContext, namespace string, useTLS bool) {
 		}{
 			{gvr: schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "issuers"}, name: "auth-gateway-ca"},
 			{gvr: schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "certificates"}, name: "auth-gateway-server"},
+			{gvr: schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "certificates"}, name: "auth-gateway-query-server"},
 		} {
 			Expect(env.WaitForResourceCondition(ctx, namespace, resource.gvr, resource.name, "Ready", 4*time.Minute)).To(Succeed())
 		}
@@ -103,8 +107,13 @@ func generatedGatewayManifest(namespace string, useTLS bool) []byte {
 	Expect(err).NotTo(HaveOccurred())
 	gatewayConfig.Kubernetes.Namespace = namespace
 	if !useTLS {
-		gatewayConfig.Listener.HTTPSHosts = nil
-		gatewayConfig.ServerTLS = nil
+		var servers []config.Server
+		for _, server := range gatewayConfig.Servers {
+			if server.TLSConfig == nil {
+				servers = append(servers, server)
+			}
+		}
+		gatewayConfig.Servers = servers
 		gatewayConfig.Kubernetes.HTTPSServicePort = 0
 	}
 	resources, err := config.GenerateKubernetes(gatewayConfig)
@@ -137,10 +146,15 @@ func checkUpstream(ctx context.Context, address, host string) error {
 
 type httpsResult struct {
 	status      int
+	allow       string
 	certificate *x509.Certificate
 }
 
 func requestHTTPS(ctx context.Context, address, serverName, requestHost, requestPath string, rootCAs *x509.CertPool) (*httpsResult, error) {
+	return requestHTTPSWithMethod(ctx, address, serverName, requestHost, http.MethodGet, requestPath, rootCAs)
+}
+
+func requestHTTPSWithMethod(ctx context.Context, address, serverName, requestHost, method, requestPath string, rootCAs *x509.CertPool) (*httpsResult, error) {
 	transport := &http.Transport{TLSClientConfig: &tls.Config{
 		RootCAs:    rootCAs,
 		ServerName: serverName,
@@ -148,7 +162,7 @@ func requestHTTPS(ctx context.Context, address, serverName, requestHost, request
 	}}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+address+requestPath, nil)
+	request, err := http.NewRequestWithContext(ctx, method, "https://"+address+requestPath, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +178,11 @@ func requestHTTPS(ctx context.Context, address, serverName, requestHost, request
 	if response.TLS == nil || len(response.TLS.PeerCertificates) == 0 {
 		return nil, fmt.Errorf("HTTPS response did not include the peer certificate")
 	}
-	return &httpsResult{status: response.StatusCode, certificate: response.TLS.PeerCertificates[0]}, nil
+	return &httpsResult{
+		status:      response.StatusCode,
+		allow:       response.Header.Get("Allow"),
+		certificate: response.TLS.PeerCertificates[0],
+	}, nil
 }
 
 func gatewayPodUID(ctx context.Context, namespace string) (string, error) {

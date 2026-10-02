@@ -38,7 +38,27 @@ spec:
   commonName: tls.auth-gateway.test
   dnsNames:
     - tls.auth-gateway.test
+    # Test SNI matching independently of certificate coverage.
+    - unknown.auth-gateway.test
   secretName: auth-gateway-tls
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    name: auth-gateway-ca
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: auth-gateway-query-server
+spec:
+  commonName: query-tls.auth-gateway.test
+  dnsNames:
+    - query-tls.auth-gateway.test
+  secretName: query-gateway-tls
   privateKey:
     algorithm: ECDSA
     size: 256

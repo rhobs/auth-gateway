@@ -85,8 +85,8 @@ data:
                             name: ingestion
                             virtual_hosts:
                                 - domains:
-                                    - '*'
-                                  name: ingestion
+                                    - auth.example.com
+                                  name: auth.example.com
                                   routes:
                                     - match:
                                         headers:

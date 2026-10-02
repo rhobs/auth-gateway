@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"path"
+	"sort"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -14,7 +15,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-const configDirectory = "/etc/auth-gateway"
+const (
+	configDirectory          = "/etc/auth-gateway"
+	collectorConfigDirectory = "/etc/collector"
+)
 
 // KubernetesResources contains native objects generated for a gateway.
 type KubernetesResources struct {
@@ -144,7 +148,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 						Name:            "metrics",
 						Image:           k.OTelCollectorImage,
 						ImagePullPolicy: corev1.PullIfNotPresent,
-						Args:            []string{"--config=/etc/collector/config.yaml"},
+						Args:            []string{"--config=" + path.Join(collectorConfigDirectory, "config.yaml")},
 						Ports: []corev1.ContainerPort{{
 							Name: "metrics", ContainerPort: defaultOTelMetricsPort, Protocol: corev1.ProtocolTCP,
 						}},
@@ -159,7 +163,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 						},
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "metrics-config",
-							MountPath: "/etc/collector",
+							MountPath: collectorConfigDirectory,
 							ReadOnly:  true,
 						}},
 					}},
@@ -179,14 +183,16 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 			},
 		},
 	}
-	if len(c.Listener.HTTPSHosts) > 0 {
-		certificateFilename := path.Base(c.ServerTLS.Certificate)
-		privateKeyFilename := path.Base(c.ServerTLS.PrivateKey)
+	for _, mount := range c.tlsMounts() {
+		tlsConfig := mount.config
+		certificateFilename := path.Base(tlsConfig.Certificate)
+		privateKeyFilename := path.Base(tlsConfig.PrivateKey)
+		volumeName := fmt.Sprintf("server-tls-%d", mount.serverIndex)
 		defaultMode := int32(0o444)
 		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
-			Name: "server-tls",
+			Name: volumeName,
 			VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
-				SecretName:  c.ServerTLS.Secret,
+				SecretName:  tlsConfig.Secret,
 				DefaultMode: &defaultMode,
 				Items: []corev1.KeyToPath{
 					{Key: "tls.crt", Path: certificateFilename},
@@ -196,13 +202,13 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 		})
 		envoy := &deployment.Spec.Template.Spec.Containers[0]
 		envoy.VolumeMounts = append(envoy.VolumeMounts, corev1.VolumeMount{
-			Name:      "server-tls",
-			MountPath: path.Dir(c.ServerTLS.Certificate),
+			Name:      volumeName,
+			MountPath: path.Dir(tlsConfig.Certificate),
 			ReadOnly:  true,
 		})
 	}
 	servicePorts := make([]corev1.ServicePort, 0, 3)
-	if c.listenerHasHTTP() {
+	if c.hasHTTP() {
 		servicePorts = append(servicePorts, corev1.ServicePort{
 			Name:       "http",
 			Port:       k.ServicePort,
@@ -210,7 +216,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 			Protocol:   corev1.ProtocolTCP,
 		})
 	}
-	if len(c.Listener.HTTPSHosts) > 0 {
+	if c.hasHTTPS() {
 		servicePorts = append(servicePorts, corev1.ServicePort{
 			Name:       "https",
 			Port:       k.HTTPSServicePort,
@@ -257,10 +263,13 @@ func stringFiles(files map[string][]byte) map[string]string {
 
 func configMapItems(files map[string][]byte) []corev1.KeyToPath {
 	items := make([]corev1.KeyToPath, 0, len(files))
-	for _, name := range []string{"envoy.yaml", serverTLSResourceFilename} {
-		if _, exists := files[name]; exists {
-			items = append(items, corev1.KeyToPath{Key: name, Path: name})
-		}
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		items = append(items, corev1.KeyToPath{Key: name, Path: name})
 	}
 	return items
 }

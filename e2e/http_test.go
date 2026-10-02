@@ -41,6 +41,8 @@ var _ = Describe("HTTP routing and metrics", Label("gateway", "routing", "metric
 		Expect(response.StatusCode).To(Equal(test.wantStatus), string(responseBody))
 		if test.wantStatus == http.StatusMethodNotAllowed {
 			Expect(response.Header.Get("Allow")).To(Equal("POST"))
+		} else if test.wantStatus == http.StatusNotFound {
+			Expect(response.Header.Get("Allow")).To(BeEmpty())
 		}
 		if !test.inspectEcho {
 			return
@@ -60,6 +62,10 @@ var _ = Describe("HTTP routing and metrics", Label("gateway", "routing", "metric
 		Entry("forwards metrics", httpCase{method: http.MethodPost, path: "/metrics/api/v1/receive", host: httpHost, wantStatus: http.StatusOK, inspectEcho: true}),
 		Entry("rejects other methods", httpCase{method: http.MethodGet, path: "/metrics/api/v1/receive", host: httpHost, wantStatus: http.StatusMethodNotAllowed}),
 		Entry("rejects unknown paths", httpCase{method: http.MethodPost, path: "/unknown", host: httpHost, wantStatus: http.StatusNotFound}),
+		Entry("serves the query host's bound API", httpCase{method: http.MethodGet, path: "/upstream-health", host: queryHTTPHost, wantStatus: http.StatusOK}),
+		Entry("rejects an API not bound to the query host", httpCase{method: http.MethodPost, path: "/metrics/api/v1/receive", host: queryHTTPHost, wantStatus: http.StatusNotFound}),
+		Entry("omits method fallbacks for unbound APIs", httpCase{method: http.MethodGet, path: "/metrics/api/v1/receive", host: queryHTTPHost, wantStatus: http.StatusNotFound}),
+		Entry("rejects unknown hosts", httpCase{method: http.MethodPost, path: "/metrics/api/v1/receive", host: unknownHost, wantStatus: http.StatusNotFound}),
 	)
 
 	It("exposes scraped Envoy metrics", func(ctx SpecContext) {

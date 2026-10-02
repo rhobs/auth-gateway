@@ -1,4 +1,7 @@
 version: 1
+servers:
+  - hostname: query.example.com
+    apis: [metrics-query]
 apis:
   - name: metrics-query
     upstream:
