@@ -21,7 +21,7 @@
 - RHOBS-1783 is the bootstrap and developer experience task. It covers the config API, local e2e testing, a pluggable metrics backend, and Kubernetes manifests.
 - RHOBS-1784 is the JWT task. It covers multiple issuers, transport modes, tenant mapping, and per-tenant API authorization.
 - RHOBS-1783 also mentions authentication policies in its config API. This implementation has no auth policy API. Keep RHOBS-1783 open until this scope is resolved and tested.
-- Jira MCP and the `jira` CLI are unavailable in this workspace, so Jira was accessed through the authenticated REST API. RHOBS-1798 is a subtask of RHOBS-1783 for error-only access logging. RHOBS-1799 tracks built-in Prometheus metrics. RHOBS-1801 is a new subtask of RHOBS-1783 for host-scoped HTTP/HTTPS support and cert-manager certificate-rotation coverage.
+- Jira MCP and the `jira` CLI are unavailable in this workspace, so Jira was accessed through the authenticated REST API. RHOBS-1798 is a subtask of RHOBS-1783 for error-only access logging. RHOBS-1799 is a separate Story for built-in Prometheus metrics. RHOBS-1801 is a subtask of RHOBS-1783 for host-scoped HTTP/HTTPS support and cert-manager certificate-rotation coverage. RHOBS-1803, RHOBS-1804, and RHOBS-1805 are new RHOBS-1783 subtasks for the local e2e framework, core Kubernetes manifests, and named API/route configuration. They were created in To Do; the authentication-policy API requirement remains unresolved.
 
 ## Current state
 
