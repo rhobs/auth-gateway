@@ -2,8 +2,10 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -222,11 +224,10 @@ func validateJWTAuthenticator(name string, jwt JWTAuthenticator) error {
 		if len(mapping.ClaimPath) == 0 {
 			return fmt.Errorf("%s.attributes.%s.claim_path must contain at least one literal object key", name, attribute)
 		}
-		for _, key := range mapping.ClaimPath {
-			if key == "" {
-				return fmt.Errorf("%s.attributes.%s.claim_path keys must not be empty", name, attribute)
-			}
+		if slices.Contains(mapping.ClaimPath, "") {
+			return fmt.Errorf("%s.attributes.%s.claim_path keys must not be empty", name, attribute)
 		}
+
 		for _, source := range sortedKeys(mapping.Mappings) {
 			target := mapping.Mappings[source]
 			if source == "" || target == "" || strings.TrimSpace(source) != source || strings.TrimSpace(target) != target {
@@ -470,9 +471,7 @@ func cloneMap[K comparable, V any](values map[K]V) map[K]V {
 		return nil
 	}
 	out := make(map[K]V, len(values))
-	for key, value := range values {
-		out[key] = value
-	}
+	maps.Copy(out, values)
 	return out
 }
 

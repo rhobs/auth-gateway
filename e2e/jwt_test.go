@@ -59,6 +59,7 @@ type jwtE2E struct {
 	httpAddr  string
 	httpsAddr string
 	certs     *jwtTestCertificates
+	resources *config.KubernetesResources
 }
 
 var (
@@ -165,6 +166,57 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 			Expect(status).To(Equal(test.status), test.name+": "+string(body))
 		}
 	}, SpecTimeout(60*time.Second))
+
+	It("rolls Envoy when the Lua identity mapping changes", func(ctx SpecContext) {
+		claims := jwtTestClaims("customer-a")
+		claims["sub"] = "writer-17"
+		token := jwtGateway.token("issuer-one", claims, nil)
+		status, body, err := jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, token, false)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(http.StatusOK), "original identity mapping should be authorized: "+string(body))
+
+		selector := "app.kubernetes.io/name=auth-gateway"
+		oldUID, err := env.PodUID(ctx, jwtNamespace, selector)
+		Expect(err).NotTo(HaveOccurred())
+
+		fixture, err := env.Fixture("jwt-gateway.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		updatedConfig, err := config.Load(bytes.NewReader(fixture))
+		Expect(err).NotTo(HaveOccurred())
+		updatedConfig.Kubernetes.Namespace = jwtNamespace
+		for i := range updatedConfig.Authenticators {
+			updatedConfig.Authenticators[i].JWT.JWKSURI = "https://jwks." + jwtNamespace + ".svc.cluster.local/" + updatedConfig.Authenticators[i].Name
+		}
+		updatedConfig.Authenticators[0].JWT.Attributes["tenant_id"].Mappings["customer-a"] = "team-b"
+		updatedResources, err := config.GenerateKubernetes(updatedConfig)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(updatedResources.LuaConfigMap).NotTo(BeNil())
+		Expect(updatedResources.LuaConfigMap.Data["jwt.lua"]).NotTo(Equal(jwtGateway.resources.LuaConfigMap.Data["jwt.lua"]))
+		oldChecksum := jwtGateway.resources.Deployment.Spec.Template.Annotations["auth-gateway/config-sha256"]
+		newChecksum := updatedResources.Deployment.Spec.Template.Annotations["auth-gateway/config-sha256"]
+		Expect(newChecksum).NotTo(BeEmpty())
+		Expect(newChecksum).NotTo(Equal(oldChecksum))
+
+		deployment := jwtGateway.resources.Deployment.DeepCopy()
+		deployment.Spec.Template.Annotations["auth-gateway/config-sha256"] = newChecksum
+		manifest, err := yamlDocuments(updatedResources.LuaConfigMap, deployment)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(env.Apply(ctx, jwtNamespace, manifest)).To(Succeed())
+		Expect(env.WaitForDeployment(ctx, jwtNamespace, "auth-gateway", 4*time.Minute)).To(Succeed())
+
+		var newUID string
+		Eventually(func() bool {
+			newUID, err = env.PodUID(ctx, jwtNamespace, selector)
+			return err == nil && newUID != oldUID
+		}).WithContext(ctx).WithTimeout(time.Minute).WithPolling(250*time.Millisecond).Should(BeTrue(), func() string {
+			return fmt.Sprintf("gateway Pod UID did not change after Lua ConfigMap rollout: uid=%q, error=%v", newUID, err)
+		})
+		jwtGateway.httpAddr = env.ForwardWithCleanup(ctx, jwtNamespace, "service/auth-gateway", 80)
+
+		status, body, err = jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, token, false)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(http.StatusForbidden), "updated Lua script must map this token to a tenant without an issuer-one grant: "+string(body))
+	}, SpecTimeout(6*time.Minute))
 })
 
 var _ = Describe("JWT JWKS lifecycle", Label("gateway", "jwt", "jwks"), Ordered, func() {
@@ -390,7 +442,10 @@ func setupJWTGateway(ctx SpecContext, namespace, fixtureName string, jwksCacheDu
 		return nil, fmt.Errorf("warm up JWT gateway: %w (last attempt: %v)", err, warmupErr)
 	}
 	rootCAs = roots
-	return &jwtE2E{keys: keys, wrongKey: wrongKey, rootCAs: roots, httpAddr: httpAddress, httpsAddr: httpsAddress, certs: certificates}, nil
+	return &jwtE2E{
+		keys: keys, wrongKey: wrongKey, rootCAs: roots, httpAddr: httpAddress, httpsAddr: httpsAddress,
+		certs: certificates, resources: resources,
+	}, nil
 }
 
 func setJWKSCacheDuration(data []byte, cacheDuration time.Duration) ([]byte, error) {

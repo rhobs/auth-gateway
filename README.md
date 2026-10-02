@@ -76,6 +76,11 @@ a query-time concern than a write-time concern.
 The `config` package loads one strict YAML document, applies defaults, and
 validates it. It generates Envoy config and Kubernetes resources. See
 [config.example.yaml](config.example.yaml) for a complete example.
+JWT configuration is shown in [config.auth.example.yaml](config.auth.example.yaml).
+For protected servers, Kubernetes output stores the identity-mapping script in
+its own `<name>-lua` ConfigMap. The Deployment pod template includes a checksum
+of generated Envoy, SDS, and Lua files. Applying regenerated manifests rolls
+Envoy Pods when those files change, so each new Pod loads the updated script.
 
 Each API entry defines one upstream and must include one or more routes. A
 route must list one or more HTTP methods and match an exact path, a prefix, or

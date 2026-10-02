@@ -182,72 +182,17 @@ static_resources:
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
                             default_source_code:
-                                inline_string: |-
-                                    local settings = {["authenticators"]={["external-jwt"]={["attributes"]={["tenant_id"]={["claim_path"]={"organization","id"},["mappings"]={["customer-456"]="team-a",["customer-789"]="team-b"}},["writer_id"]={["claim_path"]={"sub"},["mappings"]=nil}},["issuer"]="https://sso.external.example.com/realms/observability"},["internal-jwt"]={["attributes"]={["tenant_id"]={["claim_path"]={"x","y","z","claim"},["mappings"]={["client-123"]="team-a",["client-456"]="team-b"}},["writer_id"]={["claim_path"]={"sub"},["mappings"]=nil}},["issuer"]="https://sso.internal.example.com/realms/observability"}},["managed_headers"]={"x-scope-orgid","x-writer-id"},["routes"]={["api-0-metrics-write-route-0-method-0"]={["headers"]={{["from_attribute"]="tenant_id",["name"]="X-Scope-OrgID"},{["from_attribute"]="writer_id",["name"]="X-Writer-ID"}}},["api-1-logs-route-0-method-0"]={["headers"]={{["from_attribute"]="tenant_id",["name"]="X-Scope-OrgID"}}}},["servers"]={["write-internal.auth.example.com"]={["authenticators"]={"internal-jwt","external-jwt"},["mode"]="any_of",["protected"]=true},["write.auth.example.com"]={["authenticators"]={"internal-jwt","external-jwt"},["mode"]="any_of",["protected"]=true}}}
-                                    local function reject(handle)
-                                      handle:respond({[":status"] = "403"}, "Forbidden")
-                                    end
-                                    local function mapped_attributes(authenticator, payload)
-                                      local attributes = {}
-                                      for name, mapping in pairs(authenticator.attributes or {}) do
-                                        local value = payload
-                                        for _, key in ipairs(mapping.claim_path) do
-                                          if type(value) ~= "table" then value = nil; break end
-                                          value = value[key]
-                                        end
-                                        if type(value) ~= "string" or value == "" then return nil end
-                                        if mapping.mappings ~= nil then
-                                          value = mapping.mappings[value]
-                                          if type(value) ~= "string" or value == "" then return nil end
-                                        end
-                                        attributes[name] = value
-                                      end
-                                      return attributes
-                                    end
-                                    function envoy_on_request(handle)
-                                      local headers = handle:headers()
-                                      for _, name in ipairs(settings.managed_headers) do headers:remove(name) end
-                                      local authority = string.lower((headers:get(":authority") or ""):gsub(":%d+$", ""))
-                                      local server = settings.servers[authority]
-                                      if server == nil or not server.protected then return end
-                                      local verified = handle:streamInfo():dynamicMetadata():get("envoy.filters.http.jwt_authn") or {}
-                                      local selected, combined, credentials, saw_verified = nil, {}, {}, false
-                                      for _, name in ipairs(server.authenticators) do
-                                        local payload = verified[name]
-                                        if type(payload) == "table" then
-                                          saw_verified = true
-                                          local attributes = mapped_attributes(settings.authenticators[name], payload)
-                                          if attributes ~= nil then
-                                            if selected == nil then selected = name end
-                                            credentials[#credentials + 1] = {authenticator = name, issuer = settings.authenticators[name].issuer}
-                                            local conflict = false
-                                            for key, value in pairs(attributes) do
-                                              if combined[key] ~= nil and combined[key] ~= value then conflict = true end
-                                            end
-                                            if conflict then
-                                              if server.mode == "all_of" then reject(handle); return end
-                                            else
-                                              for key, value in pairs(attributes) do combined[key] = value end
-                                            end
-                                            if server.mode == "any_of" then break end
-                                          end
-                                        end
-                                      end
-                                      if not saw_verified then handle:respond({[":status"] = "401"}, "Unauthorized"); return end
-                                      if selected == nil or (server.mode == "all_of" and #credentials ~= #server.authenticators) then reject(handle); return end
-                                      handle:streamInfo():dynamicMetadata():set("auth_gateway", "identity", {authenticator = selected, credentials = credentials, attributes = combined})
-                                      local route = settings.routes[handle:streamInfo():routeName()]
-                                      if route ~= nil then
-                                        for _, mapping in ipairs(route.headers) do
-                                          local value = combined[mapping.from_attribute]
-                                          if type(value) ~= "string" then reject(handle); return end
-                                          headers:replace(mapping.name, value)
-                                        end
-                                      end
-                                    end
+                                filename: /etc/auth-gateway/lua/jwt.lua
                         - name: envoy.filters.http.rbac
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+                        - name: envoy.filters.http.header_mutation
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
+                            mutations:
+                                request_mutations:
+                                    - remove: x-scope-orgid
+                                    - remove: x-writer-id
                         - name: envoy.filters.http.router
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -279,6 +224,21 @@ static_resources:
                                     cluster: api-metrics-write
                                     path_rewrite: /api/v1/receive
                                     timeout: 30s
+                                  typed_per_filter_config:
+                                    envoy.filters.http.header_mutation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
+                                        mutations:
+                                            request_mutations:
+                                                - append:
+                                                    append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                                                    header:
+                                                        key: X-Scope-OrgID
+                                                        value: '%DYNAMIC_METADATA(auth_gateway_attributes:tenant_id)%'
+                                                - append:
+                                                    append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                                                    header:
+                                                        key: X-Writer-ID
+                                                        value: '%DYNAMIC_METADATA(auth_gateway_attributes:writer_id)%'
                                 - match:
                                     headers:
                                         - name: :method
@@ -294,6 +254,16 @@ static_resources:
                                     cluster: api-logs
                                     prefix_rewrite: /otlp/
                                     timeout: 30s
+                                  typed_per_filter_config:
+                                    envoy.filters.http.header_mutation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
+                                        mutations:
+                                            request_mutations:
+                                                - append:
+                                                    append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                                                    header:
+                                                        key: X-Scope-OrgID
+                                                        value: '%DYNAMIC_METADATA(auth_gateway_attributes:tenant_id)%'
                                 - direct_response:
                                     status: 405
                                   match:
@@ -564,72 +534,17 @@ static_resources:
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
                             default_source_code:
-                                inline_string: |-
-                                    local settings = {["authenticators"]={["external-jwt"]={["attributes"]={["tenant_id"]={["claim_path"]={"organization","id"},["mappings"]={["customer-456"]="team-a",["customer-789"]="team-b"}},["writer_id"]={["claim_path"]={"sub"},["mappings"]=nil}},["issuer"]="https://sso.external.example.com/realms/observability"},["internal-jwt"]={["attributes"]={["tenant_id"]={["claim_path"]={"x","y","z","claim"},["mappings"]={["client-123"]="team-a",["client-456"]="team-b"}},["writer_id"]={["claim_path"]={"sub"},["mappings"]=nil}},["issuer"]="https://sso.internal.example.com/realms/observability"}},["managed_headers"]={"x-scope-orgid","x-writer-id"},["routes"]={["api-0-metrics-write-route-0-method-0"]={["headers"]={{["from_attribute"]="tenant_id",["name"]="X-Scope-OrgID"},{["from_attribute"]="writer_id",["name"]="X-Writer-ID"}}},["api-1-logs-route-0-method-0"]={["headers"]={{["from_attribute"]="tenant_id",["name"]="X-Scope-OrgID"}}}},["servers"]={["write-internal.auth.example.com"]={["authenticators"]={"internal-jwt","external-jwt"},["mode"]="any_of",["protected"]=true},["write.auth.example.com"]={["authenticators"]={"internal-jwt","external-jwt"},["mode"]="any_of",["protected"]=true}}}
-                                    local function reject(handle)
-                                      handle:respond({[":status"] = "403"}, "Forbidden")
-                                    end
-                                    local function mapped_attributes(authenticator, payload)
-                                      local attributes = {}
-                                      for name, mapping in pairs(authenticator.attributes or {}) do
-                                        local value = payload
-                                        for _, key in ipairs(mapping.claim_path) do
-                                          if type(value) ~= "table" then value = nil; break end
-                                          value = value[key]
-                                        end
-                                        if type(value) ~= "string" or value == "" then return nil end
-                                        if mapping.mappings ~= nil then
-                                          value = mapping.mappings[value]
-                                          if type(value) ~= "string" or value == "" then return nil end
-                                        end
-                                        attributes[name] = value
-                                      end
-                                      return attributes
-                                    end
-                                    function envoy_on_request(handle)
-                                      local headers = handle:headers()
-                                      for _, name in ipairs(settings.managed_headers) do headers:remove(name) end
-                                      local authority = string.lower((headers:get(":authority") or ""):gsub(":%d+$", ""))
-                                      local server = settings.servers[authority]
-                                      if server == nil or not server.protected then return end
-                                      local verified = handle:streamInfo():dynamicMetadata():get("envoy.filters.http.jwt_authn") or {}
-                                      local selected, combined, credentials, saw_verified = nil, {}, {}, false
-                                      for _, name in ipairs(server.authenticators) do
-                                        local payload = verified[name]
-                                        if type(payload) == "table" then
-                                          saw_verified = true
-                                          local attributes = mapped_attributes(settings.authenticators[name], payload)
-                                          if attributes ~= nil then
-                                            if selected == nil then selected = name end
-                                            credentials[#credentials + 1] = {authenticator = name, issuer = settings.authenticators[name].issuer}
-                                            local conflict = false
-                                            for key, value in pairs(attributes) do
-                                              if combined[key] ~= nil and combined[key] ~= value then conflict = true end
-                                            end
-                                            if conflict then
-                                              if server.mode == "all_of" then reject(handle); return end
-                                            else
-                                              for key, value in pairs(attributes) do combined[key] = value end
-                                            end
-                                            if server.mode == "any_of" then break end
-                                          end
-                                        end
-                                      end
-                                      if not saw_verified then handle:respond({[":status"] = "401"}, "Unauthorized"); return end
-                                      if selected == nil or (server.mode == "all_of" and #credentials ~= #server.authenticators) then reject(handle); return end
-                                      handle:streamInfo():dynamicMetadata():set("auth_gateway", "identity", {authenticator = selected, credentials = credentials, attributes = combined})
-                                      local route = settings.routes[handle:streamInfo():routeName()]
-                                      if route ~= nil then
-                                        for _, mapping in ipairs(route.headers) do
-                                          local value = combined[mapping.from_attribute]
-                                          if type(value) ~= "string" then reject(handle); return end
-                                          headers:replace(mapping.name, value)
-                                        end
-                                      end
-                                    end
+                                filename: /etc/auth-gateway/lua/jwt.lua
                         - name: envoy.filters.http.rbac
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+                        - name: envoy.filters.http.header_mutation
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
+                            mutations:
+                                request_mutations:
+                                    - remove: x-scope-orgid
+                                    - remove: x-writer-id
                         - name: envoy.filters.http.router
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -661,6 +576,21 @@ static_resources:
                                     cluster: api-metrics-write
                                     path_rewrite: /api/v1/receive
                                     timeout: 30s
+                                  typed_per_filter_config:
+                                    envoy.filters.http.header_mutation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
+                                        mutations:
+                                            request_mutations:
+                                                - append:
+                                                    append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                                                    header:
+                                                        key: X-Scope-OrgID
+                                                        value: '%DYNAMIC_METADATA(auth_gateway_attributes:tenant_id)%'
+                                                - append:
+                                                    append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                                                    header:
+                                                        key: X-Writer-ID
+                                                        value: '%DYNAMIC_METADATA(auth_gateway_attributes:writer_id)%'
                                 - match:
                                     headers:
                                         - name: :method
@@ -676,6 +606,16 @@ static_resources:
                                     cluster: api-logs
                                     prefix_rewrite: /otlp/
                                     timeout: 30s
+                                  typed_per_filter_config:
+                                    envoy.filters.http.header_mutation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
+                                        mutations:
+                                            request_mutations:
+                                                - append:
+                                                    append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                                                    header:
+                                                        key: X-Scope-OrgID
+                                                        value: '%DYNAMIC_METADATA(auth_gateway_attributes:tenant_id)%'
                                 - direct_response:
                                     status: 405
                                   match:

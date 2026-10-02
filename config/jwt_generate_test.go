@@ -3,11 +3,13 @@ package config
 import (
 	"bytes"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+	headermutation "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
 	jwt "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/jwt_authn/v3"
 	lua "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/lua/v3"
 	httpRBAC "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
@@ -24,16 +26,27 @@ func TestGenerateJWTAuthenticationMatchesGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join("testdata", "kubernetes", "jwt-envoy.yaml.golden")
+	goldenPath := filepath.Join("testdata", "kubernetes", "jwt-envoy.yaml.golden")
 	if *updateGolden {
-		if err := os.WriteFile(path, files["envoy.yaml"], 0o644); err != nil {
+		if err := os.WriteFile(goldenPath, files["envoy.yaml"], 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if want, err := os.ReadFile(path); err != nil {
+	if want, err := os.ReadFile(goldenPath); err != nil {
 		t.Fatal(err)
 	} else if !bytes.Equal(files["envoy.yaml"], want) {
 		t.Fatal("generated JWT Envoy config does not match the golden file")
+	}
+	luaGoldenPath := filepath.Join("testdata", "kubernetes", "jwt-lua.lua.golden")
+	if *updateGolden {
+		if err := os.WriteFile(luaGoldenPath, files["lua/jwt.lua"], 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if want, err := os.ReadFile(luaGoldenPath); err != nil {
+		t.Fatal(err)
+	} else if !bytes.Equal(files["lua/jwt.lua"], want) {
+		t.Fatal("generated JWT Lua script does not match the golden file")
 	}
 
 	bootstrapConfig := decodeBootstrap(t, files["envoy.yaml"])
@@ -66,15 +79,17 @@ func TestGenerateJWTAuthenticationMatchesGolden(t *testing.T) {
 		if len(manager.HttpFilters) != 4 || manager.HttpFilters[0].Name != "envoy.filters.http.jwt_authn" || manager.HttpFilters[1].Name != "envoy.filters.http.lua" || manager.HttpFilters[2].Name != "envoy.filters.http.rbac" || manager.HttpFilters[3].Name != "envoy.filters.http.router" {
 			t.Fatalf("HTTP filter order = %v", manager.HttpFilters)
 		}
-		if !bytes.Contains(manager.HttpFilters[1].GetTypedConfig().GetValue(), []byte("claim_path")) {
-			t.Fatal("identity mapping filter is missing the configured claim paths")
-		}
 		var luaConfig lua.Lua
 		if err := manager.HttpFilters[1].GetTypedConfig().UnmarshalTo(&luaConfig); err != nil {
 			t.Fatal(err)
 		}
-		if script := luaConfig.GetDefaultSourceCode().GetInlineString(); !strings.Contains(script, "mapped_attributes") || !strings.Contains(script, "headers:remove") {
-			t.Fatal("identity mapping script is missing claim extraction or managed-header sanitization")
+		if source := luaConfig.GetDefaultSourceCode(); source.GetFilename() != path.Join(configDirectory, "lua", "jwt.lua") || source.GetInlineString() != "" || source.GetWatchedDirectory() != nil {
+			t.Fatalf("Lua source = %#v, want separate file %q", source, path.Join(configDirectory, "lua", "jwt.lua"))
+		}
+		if script := string(files["lua/jwt.lua"]); !strings.Contains(script, "mapped_attributes") || !strings.Contains(script, `metadata:set("auth_gateway_attributes", name, value)`) || !strings.Contains(script, "claim_path") {
+			t.Fatal("identity mapping script is missing claim extraction or mapped-attribute metadata")
+		} else if strings.Contains(script, "headers:replace") || strings.Contains(script, "headers:remove") {
+			t.Fatal("identity mapping script mutates request headers")
 		}
 		var jwtConfig jwt.JwtAuthentication
 		if err := manager.HttpFilters[0].GetTypedConfig().UnmarshalTo(&jwtConfig); err != nil {
@@ -116,6 +131,62 @@ func TestGenerateJWTAuthenticationMatchesGolden(t *testing.T) {
 	}
 }
 
+func TestJWTLuaConfigMapAndRolloutChecksum(t *testing.T) {
+	config := loadAuthExample(t)
+	resources, err := GenerateKubernetes(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resources.LuaConfigMap == nil {
+		t.Fatal("JWT deployment has no Lua ConfigMap")
+	}
+	if _, exists := resources.ConfigMap.Data["lua/jwt.lua"]; exists {
+		t.Fatal("bootstrap ConfigMap also contains the Lua script")
+	}
+	if got := resources.LuaConfigMap.Name; got != config.Kubernetes.Name+"-lua" {
+		t.Fatalf("Lua ConfigMap name = %q", got)
+	}
+	if got := resources.LuaConfigMap.Data["jwt.lua"]; got == "" || got != identityMappingScript(config) {
+		t.Fatal("Lua ConfigMap does not contain the generated identity script")
+	}
+
+	var luaVolumeFound, luaMountFound bool
+	for _, volume := range resources.Deployment.Spec.Template.Spec.Volumes {
+		if volume.Name != "lua-config" {
+			continue
+		}
+		luaVolumeFound = true
+		if volume.ConfigMap == nil || volume.ConfigMap.Name != resources.LuaConfigMap.Name || len(volume.ConfigMap.Items) != 1 ||
+			volume.ConfigMap.Items[0].Key != "jwt.lua" || volume.ConfigMap.Items[0].Path != "jwt.lua" {
+			t.Fatalf("Lua volume = %#v", volume)
+		}
+	}
+	for _, mount := range resources.Deployment.Spec.Template.Spec.Containers[0].VolumeMounts {
+		if mount.Name == "lua-config" {
+			luaMountFound = mount.MountPath == path.Join(configDirectory, "lua") && mount.ReadOnly
+		}
+	}
+	if !luaVolumeFound || !luaMountFound {
+		t.Fatalf("separate Lua volume/mount found = %t/%t", luaVolumeFound, luaMountFound)
+	}
+
+	firstChecksum := resources.Deployment.Spec.Template.Annotations[configChecksumAnnotation]
+	config.Authenticators[0].JWT.Attributes["tenant_id"].Mappings["client-123"] = "team-c"
+	updated, err := GenerateKubernetes(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resources.LuaConfigMap.Data["jwt.lua"] == updated.LuaConfigMap.Data["jwt.lua"] {
+		t.Fatal("changing the identity mapping did not update the Lua ConfigMap")
+	}
+	if firstChecksum == updated.Deployment.Spec.Template.Annotations[configChecksumAnnotation] {
+		t.Fatal("changing Lua identity mapping did not change the Deployment rollout checksum")
+	}
+	if resources.ConfigMap.Data["envoy.yaml"] != updated.ConfigMap.Data["envoy.yaml"] {
+		t.Fatal("changing only a Lua mapping unexpectedly changed the Envoy bootstrap")
+	}
+}
+
 func TestGenerateJWTExampleMatchesGolden(t *testing.T) {
 	c := loadAuthExample(t)
 	files, err := Generate(c)
@@ -135,6 +206,104 @@ func TestGenerateJWTExampleMatchesGolden(t *testing.T) {
 	if !bytes.Equal(files["envoy.yaml"], want) {
 		t.Fatal("generated full JWT Envoy config does not match the golden file")
 	}
+}
+
+func TestJWTHeaderMutationRunsAfterAuthorization(t *testing.T) {
+	files, err := Generate(loadAuthExample(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrapConfig := decodeBootstrap(t, files["envoy.yaml"])
+	for _, chain := range bootstrapConfig.StaticResources.Listeners[0].FilterChains {
+		manager := decodeHTTPManager(t, chain)
+		filterNames := make([]string, len(manager.HttpFilters))
+		var headerMutationFilter *hcm.HttpFilter
+		for i, filter := range manager.HttpFilters {
+			filterNames[i] = filter.Name
+			if filter.Name == "envoy.filters.http.header_mutation" {
+				headerMutationFilter = filter
+			}
+		}
+		if want := []string{"envoy.filters.http.jwt_authn", "envoy.filters.http.lua", "envoy.filters.http.rbac", "envoy.filters.http.header_mutation", "envoy.filters.http.router"}; !equalStrings(filterNames, want) {
+			t.Fatalf("HTTP filter order = %v, want %v", filterNames, want)
+		}
+		if headerMutationFilter == nil {
+			t.Fatal("request header mutation filter is missing")
+		}
+		var filterConfig headermutation.HeaderMutation
+		if err := headerMutationFilter.GetTypedConfig().UnmarshalTo(&filterConfig); err != nil {
+			t.Fatal(err)
+		}
+		removed := make(map[string]bool)
+		for _, mutation := range filterConfig.GetMutations().GetRequestMutations() {
+			removed[mutation.GetRemove()] = mutation.GetRemove() != ""
+		}
+		if len(removed) != 2 || !removed["x-scope-orgid"] || !removed["x-writer-id"] {
+			t.Fatalf("managed request headers removed = %v", removed)
+		}
+
+		for _, host := range manager.GetRouteConfig().GetVirtualHosts() {
+			assertRouteHeaders := func(routeName string, want map[string]string) {
+				t.Helper()
+				for _, generatedRoute := range host.GetRoutes() {
+					if generatedRoute.GetName() != routeName {
+						continue
+					}
+					packed := generatedRoute.GetTypedPerFilterConfig()["envoy.filters.http.header_mutation"]
+					if packed == nil {
+						t.Fatalf("route %q lacks header mutation config", routeName)
+					}
+					var perRoute headermutation.HeaderMutationPerRoute
+					if err := packed.UnmarshalTo(&perRoute); err != nil {
+						t.Fatal(err)
+					}
+					got := make(map[string]string)
+					for _, mutation := range perRoute.GetMutations().GetRequestMutations() {
+						append := mutation.GetAppend()
+						if append != nil && append.GetHeader() != nil {
+							got[append.GetHeader().GetKey()] = append.GetHeader().GetValue()
+						}
+					}
+					if !equalStringMaps(got, want) {
+						t.Fatalf("route %q request header mutations = %v, want %v", routeName, got, want)
+					}
+					return
+				}
+				t.Fatalf("route %q not found on virtual host %q", routeName, host.GetName())
+			}
+			assertRouteHeaders("api-0-metrics-write-route-0-method-0", map[string]string{
+				"X-Scope-OrgID": "%DYNAMIC_METADATA(auth_gateway_attributes:tenant_id)%",
+				"X-Writer-ID":   "%DYNAMIC_METADATA(auth_gateway_attributes:writer_id)%",
+			})
+			assertRouteHeaders("api-1-logs-route-0-method-0", map[string]string{
+				"X-Scope-OrgID": "%DYNAMIC_METADATA(auth_gateway_attributes:tenant_id)%",
+			})
+		}
+	}
+}
+
+func equalStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func equalStringMaps(left, right map[string]string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, value := range left {
+		if right[key] != value {
+			return false
+		}
+	}
+	return true
 }
 
 func TestJWTAuthorizationPolicyCombinationsAreAPIScoped(t *testing.T) {

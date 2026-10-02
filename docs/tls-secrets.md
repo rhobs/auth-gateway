@@ -16,7 +16,9 @@ For file-only Envoy output, the Secret name is optional. Without a Secret name, 
 
 ## How Envoy reads the Secret
 
-The generated ConfigMap contains `envoy.yaml` and one `server-certificate-<index>.yaml` SDS file per HTTPS server. The index is its position in the server list. The SDS resource contains certificate file paths. The Deployment mounts all generated files at `/etc/auth-gateway` and each Secret read-only at its certificate directory. Envoy's bootstrap reads the SDS resource, which points to the mounted certificate and key. Envoy watches both directories.
+The generated `<name>-config` ConfigMap contains `envoy.yaml` and one `server-certificate-<index>.yaml` SDS file per HTTPS server. The index is its position in the server list. The SDS resource contains certificate file paths. The Deployment mounts these files at `/etc/auth-gateway` and each Secret read-only at its certificate directory. Envoy's bootstrap reads the SDS resource, which points to the mounted certificate and key. Envoy watches both directories.
+
+When JWT is enabled, the generated `<name>-lua` ConfigMap contains the identity-mapping script. Envoy loads it from `/etc/auth-gateway/lua/jwt.lua`. The Deployment pod template includes a checksum of generated Envoy, SDS, and Lua files. Applying regenerated manifests rolls the Pods when those files change. Envoy loads the updated Lua source in replacement Pods; it does not hot-reload the script inside an existing process.
 
 ```mermaid
 sequenceDiagram
