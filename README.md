@@ -116,12 +116,6 @@ All servers share one Envoy listener port (8080 by default). The generated
 Service exposes port 80 when HTTP servers exist and port 443 when HTTPS servers
 exist, both targeting that listener. Metrics stay on port 8889.
 
-Version 1 now requires explicit servers. To migrate, replace
-`listener.http_hosts` and `listener.https_hosts` with one server per hostname,
-move the former `server_tls` settings into each HTTPS server's `tls_config`,
-and list its API bindings. The old fields are rejected. A former wildcard HTTP
-configuration needs an exact hostname and explicit bindings.
-
 The TLS e2e group creates a local CA and two server certificates with
 cert-manager. It checks hostname and API isolation, then uses `cmctl renew`
 to renew one certificate. It verifies that Envoy serves the new certificate and

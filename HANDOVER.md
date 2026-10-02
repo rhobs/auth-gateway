@@ -4,6 +4,7 @@
 
 - Implement the epic in small, tested steps. This branch covers the bootstrap work for RHOBS-1783.
 - Use `/Users/pgough/Desktop/projects/regional-observability-service` as a reference. Port only code needed for the current Jira step.
+- This is a greenfield project. Do not preserve backwards compatibility by default; make breaking changes when they improve the design, and update affected code, fixtures, tests, and docs together.
 - Keep docs brief and use simple technical English (STE). Add a handover after each step.
 - Commit each tested step on a feature branch. Never push directly to `main`.
 - Write commit messages with enough context to explain what changed and why.
@@ -27,12 +28,12 @@
 - The target repo is `/Users/pgough/Desktop/projects/rosa/auth-gateway`. The implementation branch is `rhobs-1783-bootstrap`; local `main` is the integration target.
 - This is a progress step. It does not complete or close RHOBS-1783.
 - The `config` package loads one strict YAML document, applies defaults, validates it, and generates Envoy config and Kubernetes resources.
-- The required `servers` list binds exact DNS hostnames to named APIs on one Envoy port. Each hostname appears once across HTTP and HTTPS. An absent `tls_config` selects HTTP; a non-nil `tls_config` selects HTTPS. Version 1 now rejects `listener.http_hosts`, `listener.https_hosts`, and global `server_tls`. There is no wildcard fallback.
+- The required `servers` list binds exact DNS hostnames to named APIs on one Envoy port. Each hostname appears once across HTTP and HTTPS. An absent `tls_config` selects HTTP; a non-nil `tls_config` selects HTTPS. There is no wildcard fallback.
 - A server exposes only its `apis` bindings. Missing or empty bindings serve 404 for every path. Unknown or repeated bindings are errors. APIs can be reused across servers or remain unbound. Duplicate path/method matches are rejected within an API and across APIs bound to the same server; separate servers can use the same route.
 - Each HTTPS server has its own SNI-selected TLS chain, HTTP authority match, and file-based SDS resource. Servers can use separate Kubernetes TLS Secrets or share a certificate. Paths default to `/etc/<secret>/tls.crt` and `tls.key`; file-only TLS without a Secret retains `/etc/auth-gateway-tls` defaults. Identical Secret/path bindings share a mount; conflicting or overlapping mount directories are rejected. Client certificates are not required.
 - `config/testdata/tls.yaml` covers one HTTP and two HTTPS servers, including an empty API binding and distinct Secrets. HTTP and HTTPS share port 8080; the generated Service exposes ports 80 and 443 when those protocols exist. If a proxy terminates caller TLS and forwards plain HTTP, Envoy matches the HTTP `Host`. TLS passthrough or re-encryption must use a configured HTTPS server's SNI hostname.
 - The generated HTTP connection manager writes structured JSON access logs to stdout for HTTP status codes of 400 or higher. RHOBS-1798 tracks this work.
-- Each API has one upstream and must define one or more `routes`. Each route must list one or more supported HTTP methods and select exactly one exact path, prefix, or safe RE2 regex match. Missing or empty method lists are configuration errors. An optional path, prefix, or regex rewrite transforms the request path. The former `method`, `path`, and `upstream.path` fields are not supported.
+- Each API has one upstream and must define one or more `routes`. Each route must list one or more supported HTTP methods and select exactly one exact path, prefix, or safe RE2 regex match. Missing or empty method lists are configuration errors. An optional path, prefix, or regex rewrite transforms the request path.
 - Envoy checks APIs in server binding order, then routes in each API's declaration order. It returns 405 with an `Allow` header only for bound routes with the wrong method, and 404 for unbound or unknown paths.
 - Kubernetes output includes Envoy and collector ConfigMaps, a ServiceAccount, a Deployment, and one Service with ports for configured protocols and metrics. HTTP and HTTPS target the same Envoy listener. All generated SDS files are projected into the Envoy container. Envoy runs as UID and GID 101. The Envoy image entrypoint fails when it runs as root.
 - The Deployment includes an OpenTelemetry Collector sidecar. It scrapes Envoy's loopback `/stats/prometheus` endpoint on port 9901 every 30 seconds and exposes Prometheus metrics on port 8889. The scrape path is fixed in the generated Collector config. The image is configurable with `kubernetes.otel_collector_image` and defaults to `otel/opentelemetry-collector-contrib:0.135.0`.
@@ -42,13 +43,13 @@
 - Config tests load the default, route-list, and TLS fixtures and the root `config.example.yaml`. Tests cover server bindings, route isolation/order, scoped conflicts, TLS defaults, input immutability, and mount conflicts/sharing. TLS ConfigMap and Deployment goldens include multiple SDS files and Secret mounts.
 - `docs/tls-secrets.md` describes the Kubernetes Secret projection and Envoy file-based SDS rotation flow, with upstream Envoy and Kubernetes references.
 - The PoC's JWT, mTLS, SPIFFE, tenant policy, and other gateway features were not ported.
-- `SERVER-CONFIG-PLAN.md` records the approved server migration plan. The README and TLS documentation describe the new format and migration from the old host lists.
+- `SERVER-CONFIG-PLAN.md` records the server configuration design and implementation plan. The README and TLS documentation describe the current format and certificate rotation.
 - The HTTP/HTTPS bootstrap and certificate-rotation implementation is committed as `898449f` on `rhobs-1783-bootstrap`.
 - The e2e framework cleanup and TLS ConfigMap golden are committed as `45af222`; the TLS Deployment golden is committed as `b267dbd` on the same branch.
 
 ## Checks
 
-For the server configuration migration (2026-10-02), `make test`, `go vet ./...`, `go test -tags=e2e -run '^$' ./e2e`, `go vet -tags=e2e ./e2e`, and `make -C e2e test` pass. All 11 Kind specs pass across the default two Ginkgo processes. The TLS test verifies strict SNI/authority and API isolation, then renews one certificate through Secret projection and SDS while the other certificate and gateway Pod UID stay unchanged. Goldens were regenerated with `go test ./config -run Golden -update` and reviewed. Modified Go files are formatted and `git diff --check` passes.
+For the server configuration work (2026-10-02), `make test`, `go vet ./...`, `go test -tags=e2e -run '^$' ./e2e`, `go vet -tags=e2e ./e2e`, and `make -C e2e test` pass. All 11 Kind specs pass across the default two Ginkgo processes. The TLS test verifies strict SNI/authority and API isolation, then renews one certificate through Secret projection and SDS while the other certificate and gateway Pod UID stay unchanged. Goldens were regenerated with `go test ./config -run Golden -update` and reviewed. Modified Go files are formatted and `git diff --check` passes.
 
 Checks used `GOCACHE=/private/tmp/auth-gateway-go-cache` because the default Go build cache was restricted in the agent sandbox. Jira scope was read through the authenticated REST API: RHOBS-1783 still includes an unresolved authentication-policy API requirement, and RHOBS-1801 keeps JWT and client mTLS out of scope. No Jira status was changed.
 
@@ -83,4 +84,4 @@ For the e2e suite organization and framework diagnostics, `gofmt` and `git diff 
 
 ## Next step
 
-The server migration and parallel Kind checks are complete. Resolve the authentication-policy API requirement in RHOBS-1783 before closing that task. Keep JWT work under RHOBS-1784. Before adding new behavior, read the relevant Jira scope and add use-case coverage with isolated namespaces and setup.
+The server configuration work and parallel Kind checks are complete. Resolve the authentication-policy API requirement in RHOBS-1783 before closing that task. Keep JWT work under RHOBS-1784. Before adding new behavior, read the relevant Jira scope and add use-case coverage with isolated namespaces and setup.

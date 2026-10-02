@@ -35,7 +35,7 @@ servers:
 ```
 
 - Add `Config.Servers []Server`. Each `Server` contains `Hostname string`, `TLSConfig *ServerTLS`, and `APIs []string`, using YAML keys `hostname`, `tls_config`, and `apis`. Reuse the existing certificate configuration type.
-- Remove `listener.http_hosts`, `listener.https_hosts`, and top-level `server_tls`. Keep strict YAML decoding and reject these legacy fields. Keep `version: 1` for this bootstrap change.
+- Configure hostnames, protocol, and API bindings in the required server list. Keep strict YAML decoding for unknown fields.
 - Require at least one server. Require exact DNS hostnames using the existing hostname rules. Reject duplicate hostnames across the entire list, including HTTP/HTTPS duplicates. Remove implicit wildcard HTTP.
 - An absent TLS configuration selects HTTP. A non-nil TLS configuration selects HTTPS with server TLS. Preserve existing TLS protocol settings.
 - Bind APIs by their existing names. Reject unknown names and repeated bindings within a server. Permit API reuse across servers and valid API definitions that remain unbound.
@@ -53,13 +53,13 @@ servers:
 4. Generate one SDS resource per HTTPS server, using declaration indexes for `gateway_server_<index>` and `server-certificate-<index>.yaml`. Preserve SDS and certificate directory watches. Mount every generated configuration file in deterministic order.
 5. Mount each distinct Secret/certificate-path/private-key-path binding read-only. Deduplicate identical bindings. Reject conflicting or overlapping certificate mount directories, including overlap with gateway or collector configuration directories. Use directory mounts so Secret projection and certificate rotation continue to work.
 6. Expose HTTP and HTTPS Service ports only when corresponding servers exist. Both target the existing Envoy listener. Preserve metrics on port 8889 and existing Service port conflict checks.
-7. Replace the draft example with complete server entries. Convert unit and e2e fixtures to explicit bindings. Update the README and TLS documentation with the format, breaking migration, certificate defaults, and shared Secret behavior. Test loading the root example and generating its Kubernetes output.
+7. Replace the draft example with complete server entries. Update unit and e2e fixtures to use explicit bindings. Update the README and TLS documentation with the current format, certificate defaults, and shared Secret behavior. Test loading the root example and generating its Kubernetes output.
 
 ## Validation and handoff
 
 Start with unit tests and goldens, then run live e2e coverage.
 
-- Configuration: missing/empty servers, invalid/duplicate hostnames, legacy fields, unknown/repeated bindings, empty bindings, API reuse, unbound APIs, route conflicts scoped to servers, binding order, TLS defaults, and unchanged input after defaulting.
+- Configuration: missing/empty servers, invalid/duplicate hostnames, unknown/repeated bindings, empty bindings, API reuse, unbound APIs, route conflicts scoped to servers, binding order, TLS defaults, and unchanged input after defaulting.
 - Generation: HTTP virtual hosts and separate HTTPS chains contain only bound routes; 405 and `Allow` are scoped; empty servers return 404; clusters are shared; SDS files are unique; output is deterministic.
 - Kubernetes: HTTP-only and mixed-protocol goldens, multiple HTTPS servers with distinct Secrets, HTTPS-only Service ports, mount deduplication/conflicts, and all generated ConfigMap files being mounted.
 - Live e2e: two HTTP hosts with different API sets; two HTTPS hosts with different bindings and certificates; unknown hosts, unbound paths, wrong protocols, unknown SNI, and mismatched SNI/authority. Renew one certificate and check that it changes while the other certificate and gateway Pod UID stay unchanged.
@@ -78,4 +78,4 @@ git diff --check
 
 Run e2e with its default two Ginkgo processes. Record unavailable checks explicitly.
 
-Review the relevant Jira scope before implementation. Commit tested steps on the feature branch and update `HANDOVER.md` with the schema, migration, and check results. Keep RHOBS-1783 open until its authentication-policy API requirement is resolved.
+Review the relevant Jira scope before implementation. Commit tested steps on the feature branch and update `HANDOVER.md` with the current schema and check results. Keep RHOBS-1783 open until its authentication-policy API requirement is resolved.
