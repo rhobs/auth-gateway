@@ -21,7 +21,7 @@ func TestGenerateJWTAuthenticationMatchesGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join("testdata", "jwt-envoy.yaml.golden")
+	path := filepath.Join("testdata", "kubernetes", "jwt-envoy.yaml.golden")
 	if *updateGolden {
 		if err := os.WriteFile(path, files["envoy.yaml"], 0o644); err != nil {
 			t.Fatal(err)
