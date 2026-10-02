@@ -2,7 +2,7 @@
 
 ## Goal and rules
 
-- Implement the epic in small, tested steps. This branch covers the bootstrap work for RHOBS-1783.
+- Implement the epic in small, tested steps. This branch contains the completed bootstrap implementation for RHOBS-1783.
 - Use `/Users/pgough/Desktop/projects/regional-observability-service` as a reference. Port only code needed for the current Jira step.
 - This is a greenfield project. Do not preserve backwards compatibility by default; make breaking changes when they improve the design, and update affected code, fixtures, tests, and docs together.
 - Keep docs brief and use simple technical English (STE). Add a handover after each step.
@@ -26,7 +26,7 @@
 ## Current state
 
 - The target repo is `/Users/pgough/Desktop/projects/rosa/auth-gateway`. The implementation branch is `rhobs-1783-bootstrap`; local `main` is the integration target.
-- This is a progress step. It does not complete or close RHOBS-1783.
+- The bootstrap implementation is complete for this feature branch. RHOBS-1783 remains open until its authentication-policy API requirement is resolved and covered.
 - The `config` package loads one strict YAML document, applies defaults, validates it, and generates Envoy config and Kubernetes resources.
 - The required `servers` list binds exact DNS hostnames to named APIs on one Envoy port. Each hostname appears once across HTTP and HTTPS. An absent `tls_config` selects HTTP; a non-nil `tls_config` selects HTTPS. There is no wildcard fallback.
 - A server exposes only its `apis` bindings. Missing or empty bindings serve 404 for every path. Unknown or repeated bindings are errors. APIs can be reused across servers or remain unbound. Duplicate path/method matches are rejected within an API and across APIs bound to the same server; separate servers can use the same route.
@@ -44,10 +44,11 @@
 - `docs/tls-secrets.md` describes the Kubernetes Secret projection and Envoy file-based SDS rotation flow, with upstream Envoy and Kubernetes references.
 - The PoC's JWT, mTLS, SPIFFE, tenant policy, and other gateway features were not ported.
 - `SERVER-CONFIG-PLAN.md` records the server configuration design and implementation plan. The README and TLS documentation describe the current format and certificate rotation.
-- The HTTP/HTTPS bootstrap and certificate-rotation implementation is committed as `898449f` on `rhobs-1783-bootstrap`.
-- The e2e framework cleanup and TLS ConfigMap golden are committed as `45af222`; the TLS Deployment golden is committed as `b267dbd` on the same branch.
+- JWT work belongs on a separate feature branch for RHOBS-1784. Do not start JWT implementation on the bootstrap branch.
 
 ## Checks
+
+For branch closeout, `GOCACHE=/private/tmp/auth-gateway-go-cache make test`, `GOCACHE=/private/tmp/auth-gateway-go-cache go vet ./...`, and `git diff --check` pass. The Kind e2e suite was not rerun for closeout.
 
 For the server configuration work (2026-10-02), `make test`, `go vet ./...`, `go test -tags=e2e -run '^$' ./e2e`, `go vet -tags=e2e ./e2e`, and `make -C e2e test` pass. All 11 Kind specs pass across the default two Ginkgo processes. The TLS test verifies strict SNI/authority and API isolation, then renews one certificate through Secret projection and SDS while the other certificate and gateway Pod UID stay unchanged. Goldens were regenerated with `go test ./config -run Golden -update` and reviewed. Modified Go files are formatted and `git diff --check` passes.
 
@@ -84,4 +85,4 @@ For the e2e suite organization and framework diagnostics, `gofmt` and `git diff 
 
 ## Next step
 
-The server configuration work and parallel Kind checks are complete. Resolve the authentication-policy API requirement in RHOBS-1783 before closing that task. Keep JWT work under RHOBS-1784. Before adding new behavior, read the relevant Jira scope and add use-case coverage with isolated namespaces and setup.
+After the bootstrap branch lands on `main`, the user will create a separate feature branch for RHOBS-1784 JWT work. Keep RHOBS-1783 open until its authentication-policy API requirement is resolved. Before adding new behavior, read the relevant Jira scope and add focused, high-value use-case coverage with isolated namespaces and setup.
