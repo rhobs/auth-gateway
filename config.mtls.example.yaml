@@ -1,0 +1,141 @@
+# Proposed future mTLS configuration. See AUTH-PLAN.md.
+# The current config loader does not yet support the auth fields in this file.
+# Replace example issuer URLs, backend Services, and the existing Secrets.
+# The client CA Secret contains ca.crt; server TLS Secrets contain tls.crt and tls.key.
+# Client TLS must reach Envoy directly or through TLS passthrough.
+version: 1
+
+node:
+  id: auth-gateway-mtls
+  cluster: auth-gateway-mtls
+
+listener:
+  port: 8080
+
+authenticators:
+  - name: internal-jwt
+    jwt:
+      issuer: https://sso.internal.example.com/realms/observability
+      jwks_uri: https://sso.internal.example.com/realms/observability/protocol/openid-connect/certs
+      audiences: [observability-ingestion]
+      attributes:
+        tenant_id:
+          claim_path: [x, y, z, claim]
+          mappings:
+            client-123: team-a
+            client-456: team-b
+        jwt_subject:
+          claim_path: [sub]
+
+  - name: writers-mtls
+    mtls:
+      client_ca_secret: writers-client-ca
+      attributes:
+        tenant_id:
+          # This example requires exactly one URI SAN in the client certificate.
+          certificate_field: uri_san
+          mappings:
+            "urn:example:writer:client-123": team-a
+            "urn:example:writer:client-456": team-b
+        certificate_id:
+          # Keep the certificate identity separate from the JWT subject.
+          certificate_field: uri_san
+
+authorization_policies:
+  - name: jwt-writers
+    grants:
+      - authenticator: internal-jwt
+        apis: [metrics-write]
+        attributes:
+          tenant_id: [team-a, team-b]
+      - authenticator: internal-jwt
+        apis: [logs]
+        attributes:
+          tenant_id: [team-a]
+
+  - name: certificate-writers
+    grants:
+      - authenticator: writers-mtls
+        apis: [metrics-write]
+        attributes:
+          tenant_id: [team-a, team-b]
+
+apis:
+  - name: metrics-write
+    upstream:
+      address: thanos-receive
+      port: 19291
+    routes:
+      - methods: [POST]
+        path:
+          exact: /metrics/api/v1/receive
+        rewrite:
+          path: /api/v1/receive
+        processing:
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: tenant_id
+
+  - name: logs
+    upstream:
+      address: loki
+      port: 3100
+    routes:
+      - methods: [POST]
+        path:
+          prefix: /logs/otlp/
+        rewrite:
+          prefix: /otlp/
+        processing:
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: tenant_id
+
+servers:
+  - hostname: mtls.auth.example.com
+    tls_config:
+      secret: mtls-server-tls
+    authentication:
+      all_of: [writers-mtls]
+    authorization:
+      any_of: [certificate-writers]
+    # Exposing logs does not grant access; the certificate policy only allows metrics.
+    apis: [metrics-write, logs]
+
+  - hostname: jwt-preferred.auth.example.com
+    tls_config:
+      secret: jwt-preferred-server-tls
+    authentication:
+      # A valid client certificate is always required at the TLS handshake.
+      # Prefer a verified, mapped JWT; otherwise try the certificate identity.
+      # An authorization denial never retries with the other identity.
+      any_of: [internal-jwt, writers-mtls]
+    authorization:
+      any_of: [jwt-writers, certificate-writers]
+    apis: [metrics-write, logs]
+
+  - hostname: jwt-and-mtls.auth.example.com
+    tls_config:
+      secret: jwt-and-mtls-server-tls
+    authentication:
+      # Require both mapped identities and the same tenant_id.
+      all_of: [internal-jwt, writers-mtls]
+    authorization:
+      # Both policies must allow the requested API.
+      all_of: [jwt-writers, certificate-writers]
+    apis: [metrics-write, logs]
+
+kubernetes:
+  name: auth-gateway-mtls
+  namespace: observability
+  image: envoyproxy/envoy:v1.39.1
+  otel_collector_image: otel/opentelemetry-collector-contrib:0.135.0
+  replicas: 2
+  https_service_port: 443
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: "1"
+      memory: 256Mi

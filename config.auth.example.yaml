@@ -1,4 +1,4 @@
-# Proposed authentication configuration for RHOBS-1784. See AUTH-PLAN.md.
+# Proposed JWT configuration for RHOBS-1784. See AUTH-PLAN.md.
 # The current config loader does not yet support the auth fields in this file.
 # Replace example issuer URLs, backend Services, and the existing TLS Secret.
 version: 1
@@ -11,63 +11,60 @@ listener:
   port: 8080
 
 authenticators:
-  - name: writers-jwt
+  - name: internal-jwt
     jwt:
-      # Any one issuer can satisfy this authenticator.
-      issuers:
-        - name: internal
-          issuer: https://sso.internal.example.com/realms/observability
-          jwks_uri: https://sso.internal.example.com/realms/observability/protocol/openid-connect/certs
-          audiences: [observability-ingestion]
-          attributes:
-            tenant_id:
-              claim_path: [x, y, z, claim]
-              mappings:
-                client-123: team-a
-                client-456: team-b
-            writer_id:
-              # No mappings: use the verified sub claim directly.
-              claim_path: [sub]
+      issuer: https://sso.internal.example.com/realms/observability
+      jwks_uri: https://sso.internal.example.com/realms/observability/protocol/openid-connect/certs
+      audiences: [observability-ingestion]
+      attributes:
+        tenant_id:
+          claim_path: [x, y, z, claim]
+          mappings:
+            client-123: team-a
+            client-456: team-b
+        writer_id:
+          # No mappings: use the verified sub claim directly.
+          claim_path: [sub]
 
-        - name: external
-          issuer: https://sso.external.example.com/realms/observability
-          jwks_uri: https://sso.external.example.com/realms/observability/protocol/openid-connect/certs
-          audiences: [observability-ingestion]
-          attributes:
-            tenant_id:
-              claim_path: [organization, id]
-              mappings:
-                customer-456: team-a
-                customer-789: team-b
-            writer_id:
-              claim_path: [sub]
+  - name: external-jwt
+    jwt:
+      issuer: https://sso.external.example.com/realms/observability
+      jwks_uri: https://sso.external.example.com/realms/observability/protocol/openid-connect/certs
+      audiences: [observability-ingestion]
+      attributes:
+        tenant_id:
+          claim_path: [organization, id]
+          mappings:
+            customer-456: team-a
+            customer-789: team-b
+        writer_id:
+          claim_path: [sub]
 
 authorization_policies:
   - name: metrics-writers
     grants:
-      - authenticator: writers-jwt
-        issuer: internal
+      - authenticator: internal-jwt
+        apis: [metrics-write]
         attributes:
           tenant_id: [team-a, team-b]
-      - authenticator: writers-jwt
-        issuer: external
+      - authenticator: external-jwt
+        apis: [metrics-write]
         attributes:
           tenant_id: [team-a]
 
   - name: logs-writers
     grants:
-      - authenticator: writers-jwt
-        issuer: internal
+      - authenticator: internal-jwt
+        apis: [logs]
         attributes:
           tenant_id: [team-a]
-      - authenticator: writers-jwt
-        issuer: external
+      - authenticator: external-jwt
+        apis: [logs]
         attributes:
           tenant_id: [team-a, team-b]
 
 apis:
   - name: metrics-write
-    authorization: metrics-writers
     upstream:
       address: thanos-receive
       port: 19291
@@ -85,7 +82,6 @@ apis:
               from_attribute: writer_id
 
   - name: logs
-    authorization: logs-writers
     upstream:
       address: loki
       port: 3100
@@ -105,7 +101,11 @@ servers:
   # Plain HTTP for the internal hop after TLS termination at an ingress.
   - hostname: write-internal.auth.example.com
     authentication:
-      any_of: [writers-jwt]
+      # Select the first method that verifies and maps the credential.
+      any_of: [internal-jwt, external-jwt]
+    authorization:
+      # Either policy can grant access to the requested API.
+      any_of: [metrics-writers, logs-writers]
     apis: [metrics-write, logs]
 
   # TLS terminates at the gateway for this SNI hostname.
@@ -115,9 +115,9 @@ servers:
       certificate: /etc/write-gateway-tls/tls.crt
       private_key: /etc/write-gateway-tls/tls.key
     authentication:
-      # With one authenticator, all_of and any_of are equivalent.
-      # The JWT authenticator still accepts either issuer.
-      all_of: [writers-jwt]
+      any_of: [internal-jwt, external-jwt]
+    authorization:
+      any_of: [metrics-writers, logs-writers]
     apis: [metrics-write, logs]
 
 kubernetes:
