@@ -25,7 +25,7 @@
 
 ## Current state
 
-- The target repo is `/Users/pgough/Desktop/projects/rosa/auth-gateway`. The implementation branch is `rhobs-1783-bootstrap`. At closeout, local `main` is commit `3674958`, but the remote has no `main` branch and GitHub lists `rhobs-1783-bootstrap` as its default branch. A PR to `main` cannot be opened until the remote target branch is restored.
+- The target repo is `/Users/pgough/Desktop/projects/rosa/auth-gateway`. The completed bootstrap branch `rhobs-1783-bootstrap` was fast-forwarded into local `main` at `21f1d89`. No push to remote `main` was made. GitHub currently has no remote `main` branch and lists `rhobs-1783-bootstrap` as its default; local `main` has no existing upstream.
 - The bootstrap implementation is complete for this feature branch. RHOBS-1783 remains open until its authentication-policy API requirement is resolved and covered.
 - The `config` package loads one strict YAML document, applies defaults, validates it, and generates Envoy config and Kubernetes resources.
 - The required `servers` list binds exact DNS hostnames to named APIs on one Envoy port. Each hostname appears once across HTTP and HTTPS. An absent `tls_config` selects HTTP; a non-nil `tls_config` selects HTTPS. There is no wildcard fallback.
@@ -85,4 +85,4 @@ For the e2e suite organization and framework diagnostics, `gofmt` and `git diff 
 
 ## Next step
 
-Restore the remote `main` branch through the repository's approved branch setup, then merge `rhobs-1783-bootstrap` through a pull request. Do not push directly to `main`. After integration, the user will create a separate feature branch for RHOBS-1784 JWT work. Keep RHOBS-1783 open until its authentication-policy API requirement is resolved. Before adding new behavior, read the relevant Jira scope and add focused, high-value use-case coverage with isolated namespaces and setup.
+The bootstrap implementation is complete and merged into local `main`. The user will create a separate feature branch for RHOBS-1784 JWT work. Keep RHOBS-1783 open until its authentication-policy API requirement is resolved. Before adding new behavior, read the relevant Jira scope and add focused, high-value use-case coverage with isolated namespaces and setup.
