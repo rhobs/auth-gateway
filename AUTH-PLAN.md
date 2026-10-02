@@ -9,9 +9,9 @@ authentication methods and external processors will use the same stages.
 
 See [config.auth.example.yaml](config.auth.example.yaml) for the JWT configuration
 schema and [config.mtls.example.yaml](config.mtls.example.yaml) for a complete
-future mTLS example. The loader and Envoy JWT verification generation are
-implemented. Identity mapping, authorization, route processing, and mTLS remain
-future work.
+future mTLS example. JWT validation, Envoy verification, identity mapping,
+per-API authorization, and optional route header processing are implemented.
+mTLS and other authentication methods remain future work.
 [config.example.yaml](config.example.yaml) describes the current supported format.
 
 ## Design
@@ -162,12 +162,15 @@ overrides. A grant cannot expose an API absent from the server's `apis` list.
 | Public | Present | Reject the configuration. |
 
 Unknown policy, authenticator, or API references are configuration errors.
-Unsatisfied JWT credential requirements receive 401. Verified credentials that
-cannot produce a required mapped identity, conflicting `all_of` attributes,
-and identities denied by authorization receive 403. An unsuccessful `any_of`
-method does not reject the request if a later method succeeds. Local 404/405
-responses remain local responses after successful authentication on a protected
-server. mTLS handshake failures happen before any HTTP response.
+Unsatisfied JWT credential requirements are rejected before identity mapping.
+Envoy 1.39.1 returns 401 for missing, malformed, expired, wrongly signed, and
+wrong-issuer tokens; a correctly signed token with an untrusted audience returns
+403. Verified credentials that cannot produce a required mapped identity,
+conflicting `all_of` attributes, and identities denied by authorization also
+receive 403. An unsuccessful `any_of` method does not reject the request if a
+later method succeeds. Local 404/405 responses remain local responses after
+successful authentication on a protected server. mTLS handshake failures
+happen before any HTTP response.
 
 ### Route processing
 
@@ -303,11 +306,15 @@ Start with focused unit tests and goldens, then exercise the generated gateway:
   servers. Add these runtime cases with the mTLS implementation.
 
 Use local signing keys and controllable JWKS endpoints, with no dependency on
-production SSO. Group JWT access and JWKS lifecycle scenarios into separate
-Ginkgo `Ordered` containers, each with its own namespace, setup, cleanup, and
-label. Keep Kubernetes lifecycle and diagnostics in `e2e/internal/framework`;
-keep token helpers and protocol assertions in the e2e package. Test each
-distinct behavior at the layer that owns it.
+production SSO. The access and identity group uses
+`e2e/fixtures/jwt-gateway.yaml`; the JWKS lifecycle group uses
+`e2e/fixtures/jwt-jwks-lifecycle.yaml`. Keep these scenarios in separate Ginkgo
+`Ordered` containers, each with its own namespace, setup, cleanup, and label.
+The lifecycle test shortens the generated JWKS cache duration only in its test
+deployment to check expiry and refresh without a multi-minute wait. Keep
+Kubernetes lifecycle and diagnostics in `e2e/internal/framework`; keep token
+helpers and protocol assertions in the e2e package. Test each distinct behavior
+at the layer that owns it.
 
 For runtime implementation, run `make test`, `go vet ./...`, e2e compilation and
 vet checks, and `make -C e2e test` with the default two processes. Review updated
