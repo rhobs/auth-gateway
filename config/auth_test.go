@@ -189,12 +189,16 @@ func TestAuthenticationDefaultsDoNotMutateInput(t *testing.T) {
 	}
 }
 
-func TestGenerateRejectsAuthorizationUntilRuntimeSupportExists(t *testing.T) {
+func TestGenerateIncludesAuthenticationAuthorizationAndProcessing(t *testing.T) {
 	config := loadAuthExample(t)
-	if _, err := Generate(config); err == nil || !strings.Contains(err.Error(), "authorization and route processing generation is not implemented") {
-		t.Fatalf("Generate error = %v, want authorization generation support error", err)
+	files, err := Generate(config)
+	if err != nil {
+		t.Fatalf("Generate rejected the JWT example: %v", err)
 	}
-	if _, err := GenerateKubernetes(config); err == nil || !strings.Contains(err.Error(), "authorization and route processing generation is not implemented") {
-		t.Fatalf("GenerateKubernetes error = %v, want authorization generation support error", err)
+	if !strings.Contains(string(files["envoy.yaml"]), "envoy.filters.http.rbac") || !strings.Contains(string(files["envoy.yaml"]), "X-Scope-OrgID") {
+		t.Fatal("generated Envoy config is missing authorization or route processing")
+	}
+	if _, err := GenerateKubernetes(config); err != nil {
+		t.Fatalf("GenerateKubernetes rejected the JWT example: %v", err)
 	}
 }

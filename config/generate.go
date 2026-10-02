@@ -14,8 +14,11 @@ import (
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	endpoint "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
+	rbac "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	jwt "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/jwt_authn/v3"
+	lua "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/lua/v3"
+	httpRBAC "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	router "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
 	inspector "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
@@ -26,6 +29,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -39,10 +43,6 @@ func Generate(c Config) (map[string][]byte, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
-	if c.hasAuthorizationOrProcessingConfig() {
-		return nil, fmt.Errorf("authorization and route processing generation is not implemented")
-	}
-
 	clusters := apiClusters(c.APIs)
 	jwks, err := jwksClusters(c.Authenticators, c.Servers)
 	if err != nil {
@@ -60,7 +60,7 @@ func Generate(c Config) (map[string][]byte, error) {
 		host := &route.VirtualHost{
 			Name:    server.Hostname,
 			Domains: []string{server.Hostname},
-			Routes:  apiRoutes(bound),
+			Routes:  apiRoutesWithMetadata(bound, c.hasAuthenticationConfig()),
 		}
 		if server.Authentication != nil {
 			requirementName := serverJWTRequirementName(i)
@@ -69,6 +69,11 @@ func Generate(c Config) (map[string][]byte, error) {
 				return nil, fmt.Errorf("servers[%d] JWT requirement: %w", i, err)
 			}
 			host.TypedPerFilterConfig = map[string]*anypb.Any{"envoy.filters.http.jwt_authn": perRoute}
+			rbacConfig, err := packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: serverRBACRules(c, server)}})
+			if err != nil {
+				return nil, fmt.Errorf("servers[%d] RBAC rules: %w", i, err)
+			}
+			host.TypedPerFilterConfig["envoy.filters.http.rbac"] = rbacConfig
 		}
 		if server.TLSConfig == nil {
 			httpHosts = append(httpHosts, host)
@@ -167,7 +172,7 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 	if err != nil {
 		return nil, err
 	}
-	filters := make([]*hcm.HttpFilter, 0, 2)
+	filters := make([]*hcm.HttpFilter, 0, 4)
 	if hasProtectedHosts(hosts) {
 		jwtConfig, err := jwtFilterConfig(c)
 		if err != nil {
@@ -178,6 +183,16 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 			return nil, fmt.Errorf("encode JWT authentication filter: %w", err)
 		}
 		filters = append(filters, &hcm.HttpFilter{Name: "envoy.filters.http.jwt_authn", ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: packed}})
+		identityConfig, err := packEnvoy(&lua.Lua{DefaultSourceCode: &core.DataSource{Specifier: &core.DataSource_InlineString{InlineString: identityMappingScript(c)}}})
+		if err != nil {
+			return nil, fmt.Errorf("encode identity mapping filter: %w", err)
+		}
+		filters = append(filters, &hcm.HttpFilter{Name: "envoy.filters.http.lua", ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: identityConfig}})
+		rbacConfig, err := packEnvoy(&httpRBAC.RBAC{})
+		if err != nil {
+			return nil, fmt.Errorf("encode RBAC filter: %w", err)
+		}
+		filters = append(filters, &hcm.HttpFilter{Name: "envoy.filters.http.rbac", ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: rbacConfig}})
 	}
 	filters = append(filters, &hcm.HttpFilter{Name: "envoy.filters.http.router", ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: routerConfig}})
 	return &hcm.HttpConnectionManager{
@@ -201,22 +216,6 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 		AccessLog:   accessLogs,
 		HttpFilters: filters,
 	}, nil
-}
-
-func (c Config) hasAuthorizationOrProcessingConfig() bool {
-	for _, server := range c.Servers {
-		if server.Authorization != nil {
-			return true
-		}
-	}
-	for _, api := range c.APIs {
-		for _, r := range api.Routes {
-			if r.Processing != nil {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func hasProtectedHosts(hosts []*route.VirtualHost) bool {
@@ -273,6 +272,299 @@ func jwtFilterConfig(c Config) (*jwt.JwtAuthentication, error) {
 	return config, nil
 }
 
+func serverRBACRules(c Config, server Server) *rbac.RBAC {
+	policies := map[string]*rbac.Policy{
+		"local-responses": {
+			Permissions: []*rbac.Permission{apiPermission("__local")},
+			Principals:  []*rbac.Principal{{Identifier: &rbac.Principal_Any{Any: true}}},
+		},
+	}
+	if server.Authorization != nil {
+		for _, apiName := range server.APIs {
+			var principal *rbac.Principal
+			if len(server.Authorization.AnyOf) > 0 {
+				var grants []*rbac.Principal
+				for _, policyName := range server.Authorization.AnyOf {
+					for _, grant := range authorizationPolicy(c, policyName).Grants {
+						if contains(grant.APIs, apiName) {
+							grants = append(grants, grantPrincipal(grant))
+						}
+					}
+				}
+				if len(grants) > 0 {
+					principal = &rbac.Principal{Identifier: &rbac.Principal_OrIds{OrIds: &rbac.Principal_Set{Ids: grants}}}
+				}
+			} else {
+				var policyPrincipals []*rbac.Principal
+				allowed := true
+				for _, policyName := range server.Authorization.AllOf {
+					var grants []*rbac.Principal
+					for _, grant := range authorizationPolicy(c, policyName).Grants {
+						if contains(grant.APIs, apiName) {
+							grants = append(grants, grantPrincipal(grant))
+						}
+					}
+					if len(grants) == 0 {
+						allowed = false
+						break
+					}
+					policyPrincipals = append(policyPrincipals, &rbac.Principal{Identifier: &rbac.Principal_OrIds{OrIds: &rbac.Principal_Set{Ids: grants}}})
+				}
+				if allowed {
+					principal = &rbac.Principal{Identifier: &rbac.Principal_AndIds{AndIds: &rbac.Principal_Set{Ids: policyPrincipals}}}
+				}
+			}
+			if principal != nil {
+				policies["api-"+apiName] = &rbac.Policy{Permissions: []*rbac.Permission{apiPermission(apiName)}, Principals: []*rbac.Principal{principal}}
+			}
+		}
+	}
+	return &rbac.RBAC{Action: rbac.RBAC_ALLOW, Policies: policies}
+}
+
+func authorizationPolicy(c Config, name string) AuthorizationPolicy {
+	for _, policy := range c.AuthorizationPolicies {
+		if policy.Name == name {
+			return policy
+		}
+	}
+	return AuthorizationPolicy{}
+}
+
+func apiPermission(api string) *rbac.Permission {
+	return &rbac.Permission{Rule: &rbac.Permission_SourcedMetadata{SourcedMetadata: &rbac.SourcedMetadata{MetadataSource: rbac.MetadataSource_ROUTE, MetadataMatcher: &matcher.MetadataMatcher{
+		Filter: "envoy.filters.http.rbac", Path: []*matcher.MetadataMatcher_PathSegment{metadataPathSegment("api")},
+		Value: &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: api}}}},
+	}}}}
+}
+
+func grantPrincipal(grant AuthorizationGrant) *rbac.Principal {
+	conditions := []*rbac.Principal{identityMetadataPrincipal([]string{"identity", "authenticator"}, grant.Authenticator)}
+	for _, attribute := range sortedKeys(grant.Attributes) {
+		values := make([]*matcher.ValueMatcher, 0, len(grant.Attributes[attribute]))
+		for _, value := range grant.Attributes[attribute] {
+			values = append(values, &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: value}}}})
+		}
+		var valueMatcher *matcher.ValueMatcher
+		if len(values) == 1 {
+			valueMatcher = values[0]
+		} else {
+			valueMatcher = &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_OrMatch{OrMatch: &matcher.OrMatcher{ValueMatchers: values}}}
+		}
+		conditions = append(conditions, &rbac.Principal{Identifier: &rbac.Principal_SourcedMetadata{SourcedMetadata: &rbac.SourcedMetadata{MetadataSource: rbac.MetadataSource_DYNAMIC, MetadataMatcher: &matcher.MetadataMatcher{
+			Filter: "auth_gateway", Path: []*matcher.MetadataMatcher_PathSegment{metadataPathSegment("identity"), metadataPathSegment("attributes"), metadataPathSegment(attribute)},
+			Value: valueMatcher,
+		}}}})
+	}
+	if len(conditions) == 1 {
+		return conditions[0]
+	}
+	return &rbac.Principal{Identifier: &rbac.Principal_AndIds{AndIds: &rbac.Principal_Set{Ids: conditions}}}
+}
+
+func contains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func identityMetadataPrincipal(path []string, value string) *rbac.Principal {
+	metadataPath := make([]*matcher.MetadataMatcher_PathSegment, 0, len(path))
+	for _, key := range path {
+		metadataPath = append(metadataPath, metadataPathSegment(key))
+	}
+	return &rbac.Principal{Identifier: &rbac.Principal_SourcedMetadata{SourcedMetadata: &rbac.SourcedMetadata{MetadataSource: rbac.MetadataSource_DYNAMIC, MetadataMatcher: &matcher.MetadataMatcher{
+		Filter: "auth_gateway", Path: metadataPath,
+		Value: &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: value}}}},
+	}}}}
+}
+
+func metadataPathSegment(key string) *matcher.MetadataMatcher_PathSegment {
+	return &matcher.MetadataMatcher_PathSegment{Segment: &matcher.MetadataMatcher_PathSegment_Key{Key: key}}
+}
+
+func identityMappingScript(c Config) string {
+	settings := map[string]any{"authenticators": map[string]any{}, "servers": map[string]any{}, "routes": map[string]any{}, "managed_headers": []string{}}
+	authenticators := settings["authenticators"].(map[string]any)
+	for _, authenticator := range c.Authenticators {
+		if authenticator.JWT != nil {
+			attributes := map[string]any{}
+			for name, attribute := range authenticator.JWT.Attributes {
+				var mappings any
+				if attribute.Mappings != nil {
+					mappings = attribute.Mappings
+				}
+				attributes[name] = map[string]any{"claim_path": attribute.ClaimPath, "mappings": mappings}
+			}
+			authenticators[authenticator.Name] = map[string]any{"issuer": authenticator.JWT.Issuer, "attributes": attributes}
+		}
+	}
+	servers := settings["servers"].(map[string]any)
+	for _, server := range c.Servers {
+		value := map[string]any{"protected": server.Authentication != nil}
+		if server.Authentication != nil {
+			names, mode := server.Authentication.AnyOf, "any_of"
+			if len(server.Authentication.AllOf) > 0 {
+				names, mode = server.Authentication.AllOf, "all_of"
+			}
+			value["authenticators"], value["mode"] = names, mode
+		}
+		servers[server.Hostname] = value
+	}
+	routes := settings["routes"].(map[string]any)
+	managed := map[string]struct{}{}
+	for apiIndex, api := range c.APIs {
+		for routeIndex, apiRoute := range api.Routes {
+			headers := make([]any, 0)
+			if apiRoute.Processing != nil {
+				for _, mapping := range apiRoute.Processing.RequestHeaders {
+					headers = append(headers, map[string]string{"name": mapping.Name, "from_attribute": mapping.FromAttribute})
+					managed[strings.ToLower(mapping.Name)] = struct{}{}
+				}
+			}
+			for methodIndex := range apiRoute.Methods {
+				name := "api-" + strconv.Itoa(apiIndex) + "-" + api.Name + "-route-" + strconv.Itoa(routeIndex) + "-method-" + strconv.Itoa(methodIndex)
+				routes[name] = map[string]any{"headers": headers}
+			}
+		}
+	}
+	managedHeaders := sortedKeys(managed)
+	settings["managed_headers"] = managedHeaders
+	return `local settings = ` + luaValue(settings) + `
+local function reject(handle)
+  handle:respond({[":status"] = "403"}, "Forbidden")
+end
+local function mapped_attributes(authenticator, payload)
+  local attributes = {}
+  for name, mapping in pairs(authenticator.attributes or {}) do
+    local value = payload
+    for _, key in ipairs(mapping.claim_path) do
+      if type(value) ~= "table" then value = nil; break end
+      value = value[key]
+    end
+    if type(value) ~= "string" or value == "" then return nil end
+    if mapping.mappings ~= nil then
+      value = mapping.mappings[value]
+      if type(value) ~= "string" or value == "" then return nil end
+    end
+    attributes[name] = value
+  end
+  return attributes
+end
+function envoy_on_request(handle)
+  local headers = handle:headers()
+  for _, name in ipairs(settings.managed_headers) do headers:remove(name) end
+  local authority = string.lower((headers:get(":authority") or ""):gsub(":%d+$", ""))
+  local server = settings.servers[authority]
+  if server == nil or not server.protected then return end
+  local verified = handle:streamInfo():dynamicMetadata():get("envoy.filters.http.jwt_authn") or {}
+  local selected, combined, credentials, saw_verified = nil, {}, {}, false
+  for _, name in ipairs(server.authenticators) do
+    local payload = verified[name]
+    if type(payload) == "table" then
+      saw_verified = true
+      local attributes = mapped_attributes(settings.authenticators[name], payload)
+      if attributes ~= nil then
+        if selected == nil then selected = name end
+        credentials[#credentials + 1] = {authenticator = name, issuer = settings.authenticators[name].issuer}
+        local conflict = false
+        for key, value in pairs(attributes) do
+          if combined[key] ~= nil and combined[key] ~= value then conflict = true end
+        end
+        if conflict then
+          if server.mode == "all_of" then reject(handle); return end
+        else
+          for key, value in pairs(attributes) do combined[key] = value end
+        end
+        if server.mode == "any_of" then break end
+      end
+    end
+  end
+  if not saw_verified then handle:respond({[":status"] = "401"}, "Unauthorized"); return end
+  if selected == nil or (server.mode == "all_of" and #credentials ~= #server.authenticators) then reject(handle); return end
+  handle:streamInfo():dynamicMetadata():set("auth_gateway", "identity", {authenticator = selected, credentials = credentials, attributes = combined})
+  local route = settings.routes[handle:streamInfo():routeName()]
+  if route ~= nil then
+    for _, mapping in ipairs(route.headers) do
+      local value = combined[mapping.from_attribute]
+      if type(value) ~= "string" then reject(handle); return end
+      headers:replace(mapping.name, value)
+    end
+  end
+end`
+}
+
+func luaValue(value any) string {
+	switch value := value.(type) {
+	case nil:
+		return "nil"
+	case string:
+		return luaQuote(value)
+	case bool:
+		if value {
+			return "true"
+		}
+		return "false"
+	case []string:
+		items := make([]string, len(value))
+		for i := range value {
+			items[i] = luaValue(value[i])
+		}
+		return "{" + strings.Join(items, ",") + "}"
+	case []any:
+		items := make([]string, len(value))
+		for i := range value {
+			items[i] = luaValue(value[i])
+		}
+		return "{" + strings.Join(items, ",") + "}"
+	case map[string]any:
+		keys := sortedKeys(value)
+		items := make([]string, 0, len(keys))
+		for _, key := range keys {
+			items = append(items, "["+luaQuote(key)+"]="+luaValue(value[key]))
+		}
+		return "{" + strings.Join(items, ",") + "}"
+	case map[string]string:
+		keys := sortedKeys(value)
+		items := make([]string, 0, len(keys))
+		for _, key := range keys {
+			items = append(items, "["+luaQuote(key)+"]="+luaQuote(value[key]))
+		}
+		return "{" + strings.Join(items, ",") + "}"
+	default:
+		panic(fmt.Sprintf("unsupported Lua settings value %T", value))
+	}
+}
+
+func luaQuote(value string) string {
+	var out strings.Builder
+	out.WriteByte('"')
+	for _, r := range value {
+		switch r {
+		case '\\', '"':
+			out.WriteByte('\\')
+			out.WriteRune(r)
+		case '\n':
+			out.WriteString(`\n`)
+		case '\r':
+			out.WriteString(`\r`)
+		case '\t':
+			out.WriteString(`\t`)
+		default:
+			if r < 0x20 {
+				fmt.Fprintf(&out, `\%03d`, r)
+			} else {
+				out.WriteRune(r)
+			}
+		}
+	}
+	out.WriteByte('"')
+	return out.String()
+}
+
 func authenticatorUsed(servers []Server, name string) bool {
 	for _, server := range servers {
 		if server.Authentication != nil {
@@ -322,6 +614,10 @@ func jwksClusters(authenticators []Authenticator, servers []Server) ([]*cluster.
 }
 
 func apiRoutes(apis []API) []*route.Route {
+	return apiRoutesWithMetadata(apis, false)
+}
+
+func apiRoutesWithMetadata(apis []API, includeMetadata bool) []*route.Route {
 	var routes []*route.Route
 	type methodFallback struct {
 		path    PathMatch
@@ -349,11 +645,15 @@ func apiRoutes(apis []API) []*route.Route {
 				applyPathRewrite(action, apiRoute.Rewrite)
 				match := pathMatch(apiRoute.Path)
 				match.Headers = []*route.HeaderMatcher{methodHeader(method)}
-				routes = append(routes, &route.Route{
+				routeConfig := &route.Route{
 					Name:   name,
 					Match:  match,
 					Action: &route.Route_Route{Route: action},
-				})
+				}
+				if includeMetadata {
+					routeConfig.Metadata = apiRouteMetadata(api.Name)
+				}
+				routes = append(routes, routeConfig)
 				fallbacks[fallbackIndex].methods = append(fallbacks[fallbackIndex].methods, method)
 			}
 		}
@@ -369,7 +669,7 @@ func apiRoutes(apis []API) []*route.Route {
 			}
 			allow.WriteString(method)
 		}
-		routes = append(routes, &route.Route{
+		methodRoute := &route.Route{
 			Name:  "method-not-allowed-" + strconv.Itoa(i),
 			Match: pathMatch(fallback.path),
 			Action: &route.Route_DirectResponse{DirectResponse: &route.DirectResponseAction{
@@ -379,14 +679,27 @@ func apiRoutes(apis []API) []*route.Route {
 				Header:       &core.HeaderValue{Key: "allow", Value: allow.String()},
 				AppendAction: core.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 			}},
-		})
+		}
+		if includeMetadata {
+			methodRoute.Metadata = apiRouteMetadata("__local")
+		}
+		routes = append(routes, methodRoute)
 	}
-	routes = append(routes, &route.Route{
+	notFound := &route.Route{
 		Name:   "not-found",
 		Match:  &route.RouteMatch{PathSpecifier: &route.RouteMatch_Prefix{Prefix: "/"}},
 		Action: &route.Route_DirectResponse{DirectResponse: &route.DirectResponseAction{Status: 404}},
-	})
+	}
+	if includeMetadata {
+		notFound.Metadata = apiRouteMetadata("__local")
+	}
+	routes = append(routes, notFound)
 	return routes
+}
+
+func apiRouteMetadata(apiName string) *core.Metadata {
+	api, _ := structpb.NewStruct(map[string]any{"api": apiName})
+	return &core.Metadata{FilterMetadata: map[string]*structpb.Struct{"envoy.filters.http.rbac": api}}
 }
 
 func serverTLSSecretName(index int) string {
