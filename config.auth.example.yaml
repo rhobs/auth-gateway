@@ -1,0 +1,137 @@
+# Proposed authentication configuration for RHOBS-1784. See AUTH-PLAN.md.
+# The current config loader does not yet support the auth fields in this file.
+# Replace example issuer URLs, backend Services, and the existing TLS Secret.
+version: 1
+
+node:
+  id: auth-gateway
+  cluster: auth-gateway
+
+listener:
+  port: 8080
+
+authenticators:
+  - name: writers-jwt
+    jwt:
+      # Any one issuer can satisfy this authenticator.
+      issuers:
+        - name: internal
+          issuer: https://sso.internal.example.com/realms/observability
+          jwks_uri: https://sso.internal.example.com/realms/observability/protocol/openid-connect/certs
+          audiences: [observability-ingestion]
+          attributes:
+            tenant_id:
+              claim_path: [x, y, z, claim]
+              mappings:
+                client-123: team-a
+                client-456: team-b
+            writer_id:
+              # No mappings: use the verified sub claim directly.
+              claim_path: [sub]
+
+        - name: external
+          issuer: https://sso.external.example.com/realms/observability
+          jwks_uri: https://sso.external.example.com/realms/observability/protocol/openid-connect/certs
+          audiences: [observability-ingestion]
+          attributes:
+            tenant_id:
+              claim_path: [organization, id]
+              mappings:
+                customer-456: team-a
+                customer-789: team-b
+            writer_id:
+              claim_path: [sub]
+
+authorization_policies:
+  - name: metrics-writers
+    grants:
+      - authenticator: writers-jwt
+        issuer: internal
+        attributes:
+          tenant_id: [team-a, team-b]
+      - authenticator: writers-jwt
+        issuer: external
+        attributes:
+          tenant_id: [team-a]
+
+  - name: logs-writers
+    grants:
+      - authenticator: writers-jwt
+        issuer: internal
+        attributes:
+          tenant_id: [team-a]
+      - authenticator: writers-jwt
+        issuer: external
+        attributes:
+          tenant_id: [team-a, team-b]
+
+apis:
+  - name: metrics-write
+    authorization: metrics-writers
+    upstream:
+      address: thanos-receive
+      port: 19291
+    routes:
+      - methods: [POST]
+        path:
+          exact: /metrics/api/v1/receive
+        rewrite:
+          path: /api/v1/receive
+        processing:
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: tenant_id
+            - name: X-Writer-ID
+              from_attribute: writer_id
+
+  - name: logs
+    authorization: logs-writers
+    upstream:
+      address: loki
+      port: 3100
+    routes:
+      - methods: [POST]
+        path:
+          prefix: /logs/otlp/
+        rewrite:
+          prefix: /otlp/
+        # Processing is optional; each route selects its own outputs.
+        processing:
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: tenant_id
+
+servers:
+  # Plain HTTP for the internal hop after TLS termination at an ingress.
+  - hostname: write-internal.auth.example.com
+    authentication:
+      any_of: [writers-jwt]
+    apis: [metrics-write, logs]
+
+  # TLS terminates at the gateway for this SNI hostname.
+  - hostname: write.auth.example.com
+    tls_config:
+      secret: write-gateway-tls
+      certificate: /etc/write-gateway-tls/tls.crt
+      private_key: /etc/write-gateway-tls/tls.key
+    authentication:
+      # With one authenticator, all_of and any_of are equivalent.
+      # The JWT authenticator still accepts either issuer.
+      all_of: [writers-jwt]
+    apis: [metrics-write, logs]
+
+kubernetes:
+  name: auth-gateway
+  namespace: observability
+  image: envoyproxy/envoy:v1.39.1
+  otel_collector_image: otel/opentelemetry-collector-contrib:0.135.0
+  replicas: 2
+  service_port: 80
+  https_service_port: 443
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: "1"
+      memory: 256Mi
