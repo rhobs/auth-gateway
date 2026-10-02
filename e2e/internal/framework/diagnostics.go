@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -16,9 +18,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 )
 
-// Diagnostics saves Kubernetes objects and recent container logs under e2e/.state.
+// Diagnostics saves Kubernetes objects, recent container logs, and Envoy cluster state under e2e/.state.
 func (e *Environment) Diagnostics(namespace string) {
-	if e == nil {
+	if e == nil || namespace == "" {
 		return
 	}
 	dir := e.StatePath("artifacts", time.Now().UTC().Format("20060102T150405.000000000"))
@@ -54,7 +56,45 @@ func (e *Environment) Diagnostics(namespace string) {
 	writeDiagnostic(dir, "deployments.json", deployments, err)
 	events, err := core.Events(namespace).List(ctx, metav1.ListOptions{})
 	writeDiagnostic(dir, "events.json", events, err)
+	e.envoyClusterDiagnostics(namespace, dir)
 	fmt.Fprintf(GinkgoWriter, "Failure diagnostics: %s\n", dir)
+}
+
+func (e *Environment) envoyClusterDiagnostics(namespace, dir string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	address, stop, err := e.Forward(ctx, namespace, "deployment/auth-gateway", 9901)
+	if err != nil {
+		diagnosticErr := fmt.Errorf("start Envoy cluster diagnostics port-forward: %w", err)
+		writeDiagnostic(dir, "envoy-clusters.json", nil, diagnosticErr)
+		fmt.Fprintf(GinkgoWriter, "Envoy cluster state: %v\n", diagnosticErr)
+		return
+	}
+	defer stop()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+"/clusters?format=json", nil)
+	if err != nil {
+		diagnosticErr := fmt.Errorf("create Envoy cluster diagnostics request: %w", err)
+		writeDiagnostic(dir, "envoy-clusters.json", nil, diagnosticErr)
+		fmt.Fprintf(GinkgoWriter, "Envoy cluster state: %v\n", diagnosticErr)
+		return
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		diagnosticErr := fmt.Errorf("request Envoy cluster diagnostics: %w", err)
+		writeDiagnostic(dir, "envoy-clusters.json", nil, diagnosticErr)
+		fmt.Fprintf(GinkgoWriter, "Envoy cluster state: %v\n", diagnosticErr)
+		return
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		diagnosticErr := fmt.Errorf("read Envoy cluster diagnostics: %w", err)
+		writeDiagnostic(dir, "envoy-clusters.json", nil, diagnosticErr)
+		fmt.Fprintf(GinkgoWriter, "Envoy cluster state: %v\n", diagnosticErr)
+		return
+	}
+	writeDiagnostic(dir, "envoy-clusters.json", data, nil)
+	fmt.Fprintf(GinkgoWriter, "Envoy cluster state (HTTP %d):\n%s\n", response.StatusCode, data)
 }
 
 func writeDiagnostic(dir, name string, value any, err error) {

@@ -18,6 +18,7 @@ CMCTL_BIN ?= $(CURDIR)/.bin/cmctl-$(CMCTL_VERSION)$(CMCTL_SUFFIX)
 CMCTL_ASSET = cmctl_$(CMCTL_OS)_$(CMCTL_ARCH)$(CMCTL_SUFFIX)
 CERT_MANAGER_MANIFEST_ARG = $(if $(filter http://% https://%,$(CERT_MANAGER_MANIFEST)),$(CERT_MANAGER_MANIFEST),$(abspath $(CERT_MANAGER_MANIFEST)))
 GINKGO_ARGS ?=
+GINKGO_PROCS ?= 2
 
 check-tools:
 	@set -eu; \
@@ -53,4 +54,4 @@ cmctl:
 test: setup cmctl
 	@mkdir -p .state/reports
 	cd .. && go test -tags=e2e ./e2e/internal/framework
-	cd .. && AUTH_GATEWAY_E2E_CONTEXT='kind-$(CLUSTER_NAME)' AUTH_GATEWAY_E2E_CMCTL='$(abspath $(CMCTL_BIN))' AUTH_GATEWAY_E2E_CERT_MANAGER_MANIFEST='$(CERT_MANAGER_MANIFEST_ARG)' go tool ginkgo --tags=e2e --timeout=30m --no-color --output-dir=e2e/.state/reports --json-report=auth-gateway.json $(GINKGO_ARGS) ./e2e
+	cd .. && AUTH_GATEWAY_E2E_CONTEXT='kind-$(CLUSTER_NAME)' AUTH_GATEWAY_E2E_CMCTL='$(abspath $(CMCTL_BIN))' AUTH_GATEWAY_E2E_CERT_MANAGER_MANIFEST='$(CERT_MANAGER_MANIFEST_ARG)' go tool ginkgo --tags=e2e --procs='$(GINKGO_PROCS)' --timeout=30m --no-color --output-dir=e2e/.state/reports --json-report=auth-gateway.json $(GINKGO_ARGS) ./e2e

@@ -88,9 +88,13 @@ in the order listed, so put narrower matches first.
 Run `make test` for unit tests. Run `make e2e` for the local Kind test. The e2e
 test needs Docker, Kind, Go, curl, and network access. It downloads cmctl
 v2.6.1 on first use, creates or reuses the `auth-gateway-e2e` cluster, and
-deletes its test namespace when it ends. It uses Envoy 1.39.1, HTTPBin 2.25.0,
-and cert-manager 1.18.2. The suite installs cert-manager in the Kind cluster
-and leaves it available when the cluster is reused.
+deletes its test namespaces when it ends. By default, Ginkgo runs the HTTP
+routing and metrics group alongside the server TLS and certificate rotation
+group, each in its own namespace. Set `GINKGO_PROCS=1` to run them in one
+process, for example with `make e2e GINKGO_PROCS=1`. The test uses Envoy
+1.39.1, HTTPBin 2.25.0, and cert-manager 1.18.2.
+The TLS group installs cert-manager in the Kind cluster and leaves it available
+when the cluster is reused.
 
 ## HTTP and HTTPS hosts
 
@@ -113,9 +117,9 @@ ports 80 and 443, both targeting the same Envoy listener port (8080 by
 default). HTTPS-only configuration exposes port 443. Metrics stay on port
 8889.
 
-The e2e test creates a local CA and server certificate with cert-manager. It
-checks HTTP and HTTPS host isolation, then uses `cmctl renew` to request a new
-certificate. It verifies that a new TLS connection sees the renewed
+The TLS e2e group creates a local CA and server certificate with cert-manager.
+It checks HTTP and HTTPS host isolation, then uses `cmctl renew` to request a
+new certificate. It verifies that a new TLS connection sees the renewed
 certificate and key without an Envoy pod restart.
 
 See [TLS secrets and rotation](docs/tls-secrets.md) for how Secret projection
