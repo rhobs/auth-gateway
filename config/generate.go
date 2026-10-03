@@ -301,8 +301,8 @@ func jwtFilterConfig(c Config) (*jwt.JwtAuthentication, error) {
 			Audiences:         authenticator.JWT.Audiences,
 			RequireExpiration: true,
 			JwksSourceSpecifier: &jwt.JwtProvider_RemoteJwks{RemoteJwks: &jwt.RemoteJwks{
-				HttpUri:       &core.HttpUri{Uri: authenticator.JWT.JWKSURI, HttpUpstreamType: &core.HttpUri_Cluster{Cluster: jwksClusterName(authenticator.Name)}, Timeout: durationpb.New(5 * time.Second)},
-				CacheDuration: durationpb.New(5 * time.Minute),
+				HttpUri:       &core.HttpUri{Uri: authenticator.JWT.JWKS.URI, HttpUpstreamType: &core.HttpUri_Cluster{Cluster: jwksClusterName(authenticator.Name)}, Timeout: authenticator.JWT.JWKS.FetchTimeout.protobuf()},
+				CacheDuration: authenticator.JWT.JWKS.CacheDuration.protobuf(),
 			}},
 			FromHeaders:       []*jwt.JwtHeader{{Name: "Authorization", ValuePrefix: "Bearer "}},
 			PayloadInMetadata: authenticator.Name,
@@ -728,28 +728,29 @@ func jwksClusters(authenticators []Authenticator, servers []Server) ([]*cluster.
 		if authenticator.JWT == nil || !authenticatorUsed(servers, authenticator.Name) {
 			continue
 		}
-		parsed, err := url.Parse(authenticator.JWT.JWKSURI)
+		parsed, err := url.Parse(authenticator.JWT.JWKS.URI)
 		if err != nil {
-			return nil, fmt.Errorf("authenticators.%s.jwt.jwks_uri: %w", authenticator.Name, err)
+			return nil, fmt.Errorf("authenticators.%s.jwt.jwks.uri: %w", authenticator.Name, err)
 		}
 		port := uint32(443)
 		if parsed.Port() != "" {
 			value, err := strconv.ParseUint(parsed.Port(), 10, 32)
 			if err != nil {
-				return nil, fmt.Errorf("authenticators.%s.jwt.jwks_uri port: %w", authenticator.Name, err)
+				return nil, fmt.Errorf("authenticators.%s.jwt.jwks.uri port: %w", authenticator.Name, err)
 			}
 			port = uint32(value)
 		}
 		name := jwksClusterName(authenticator.Name)
-		tlsConfig, err := packEnvoy(&tls.UpstreamTlsContext{Sni: parsed.Hostname(), CommonTlsContext: &tls.CommonTlsContext{ValidationContextType: &tls.CommonTlsContext_ValidationContext{ValidationContext: &tls.CertificateValidationContext{TrustedCa: &core.DataSource{Specifier: &core.DataSource_Filename{Filename: "/etc/ssl/certs/ca-certificates.crt"}}}}}})
+		tlsSocket, err := verifiedTLS(strings.ToLower(parsed.Hostname()), authenticator.JWT.JWKS.TrustedCA, nil)
 		if err != nil {
 			return nil, fmt.Errorf("authenticators.%s JWKS TLS: %w", authenticator.Name, err)
 		}
 		clusters = append(clusters, &cluster.Cluster{
-			Name: name, ConnectTimeout: durationpb.New(5 * time.Second),
+			Name: name, ConnectTimeout: authenticator.JWT.JWKS.ConnectTimeout.protobuf(),
+			CircuitBreakers:      envoyCircuitBreakers(authenticator.JWT.JWKS.CircuitBreakers),
 			ClusterDiscoveryType: &cluster.Cluster_Type{Type: cluster.Cluster_STRICT_DNS},
 			LoadAssignment:       &endpoint.ClusterLoadAssignment{ClusterName: name, Endpoints: []*endpoint.LocalityLbEndpoints{{LbEndpoints: []*endpoint.LbEndpoint{{HostIdentifier: &endpoint.LbEndpoint_Endpoint{Endpoint: &endpoint.Endpoint{Address: socket(parsed.Hostname(), port)}}}}}}},
-			TransportSocket:      &core.TransportSocket{Name: "envoy.transport_sockets.tls", ConfigType: &core.TransportSocket_TypedConfig{TypedConfig: tlsConfig}},
+			TransportSocket:      tlsSocket,
 		})
 	}
 	return clusters, nil
@@ -975,13 +976,7 @@ func apiClusters(apis []API) []*cluster.Cluster {
 			ConnectTimeout:                durationpb.New(5 * time.Second),
 			ClusterDiscoveryType:          &cluster.Cluster_Type{Type: cluster.Cluster_STRICT_DNS},
 			PerConnectionBufferLimitBytes: wrapperspb.UInt32(1048576),
-			CircuitBreakers: &cluster.CircuitBreakers{Thresholds: []*cluster.CircuitBreakers_Thresholds{{
-				Priority:           core.RoutingPriority_DEFAULT,
-				MaxConnections:     wrapperspb.UInt32(*api.CircuitBreakers.MaxConnections),
-				MaxPendingRequests: wrapperspb.UInt32(*api.CircuitBreakers.MaxPendingRequests),
-				MaxRequests:        wrapperspb.UInt32(*api.CircuitBreakers.MaxRequests),
-				MaxRetries:         wrapperspb.UInt32(*api.CircuitBreakers.MaxRetries),
-			}}},
+			CircuitBreakers:               envoyCircuitBreakers(api.CircuitBreakers),
 			LoadAssignment: &endpoint.ClusterLoadAssignment{
 				ClusterName: name,
 				Endpoints: []*endpoint.LocalityLbEndpoints{{

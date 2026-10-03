@@ -8,7 +8,8 @@ authenticators:
   - name: issuer-one
     jwt:
       issuer: https://issuer-one.jwt.test
-      jwks_uri: https://jwks.jwt.test/issuer-one
+      jwks:
+        uri: https://jwks.jwt.test/issuer-one
       audiences: [gateway-test]
       attributes:
         tenant_id:

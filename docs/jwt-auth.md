@@ -58,7 +58,8 @@ authenticators:
   - name: metrics-jwt
     jwt:
       issuer: https://issuer.example.com
-      jwks_uri: https://issuer.example.com/.well-known/jwks.json
+      jwks:
+        uri: https://issuer.example.com/.well-known/jwks.json
       audiences: [metrics-ingestion]
       attributes:
         tenant_id:
@@ -86,6 +87,41 @@ servers:
 The gateway accepts bearer tokens from the `Authorization` header and removes
 that credential before forwarding the request. A plain JWT configuration with
 no route header outputs does not add attribute-processing filters.
+
+## JWKS transport and cache
+
+The required `jwt.jwks` block replaces `jwt.jwks_uri`; the old key is rejected.
+`cache_duration` defaults to `5m`, and `fetch_timeout` and `connect_timeout`
+default to `5s`. Use positive duration strings; connect timeout must not exceed
+fetch timeout. Each authenticator has a separate cluster and cache, even when
+two providers use the same endpoint. Optional `circuit_breakers` uses the API
+breaker defaults (1,024 connections, pending requests and requests; 0 retries).
+A positive retry breaker does not create a retry policy.
+
+JWKS connections verify both the certificate chain and the URI hostname
+(or IP SAN for an IP URI). DNS identities use SNI. TLS 1.2 and 1.3 are supported.
+The default trust bundle is `/etc/ssl/certs/ca-certificates.crt`. To replace it:
+
+```yaml
+jwks:
+  uri: https://issuer.example.com/jwks
+  cache_duration: 5m
+  fetch_timeout: 5s
+  connect_timeout: 5s
+  trusted_ca:
+    config_map: {name: issuer-ca, key: ca.crt}
+```
+
+Kubernetes references an existing CA ConfigMap in the gateway namespace and
+mounts it read-only without `subPath`. File-only configurations instead accept
+`trusted_ca: {filename: /etc/company/ca.crt}`. Custom bundles replace system
+trust; include all required roots. CA changes require a rollout.
+
+Fetching stays on demand, with per-worker caches. A usable cached key can
+survive a temporary issuer outage. Once a needed key expires or the cache is
+cold, an unavailable endpoint fails closed. Cache TTL is independent of token
+expiry and does not promise immediate key revocation. Rotate with overlapping
+keys and test the actual worker count and cache duration.
 
 ## Direct upstream headers
 

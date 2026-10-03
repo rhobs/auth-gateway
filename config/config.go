@@ -2,6 +2,8 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -144,10 +146,23 @@ func Load(r io.Reader) (Config, error) {
 		return Config{}, fmt.Errorf("read gateway configuration: input is nil")
 	}
 
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return Config{}, fmt.Errorf("read gateway configuration: %w", err)
+	}
 	var c Config
-	decoder := yaml.NewDecoder(r)
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&c); err != nil {
+		var durationError *durationYAMLError
+		if errors.As(err, &durationError) {
+			var document yaml.Node
+			if yaml.Unmarshal(data, &document) == nil {
+				if field := yamlPathAtPosition(&document, durationError.line, durationError.column, ""); field != "" {
+					return Config{}, fmt.Errorf("%s: %w", field, err)
+				}
+			}
+		}
 		return Config{}, fmt.Errorf("read gateway configuration: %w", err)
 	}
 
@@ -368,16 +383,7 @@ func (c Config) withDefaults() Config {
 		c.APIs = apis
 	}
 	for i := range c.APIs {
-		circuitBreakers := c.APIs[i].CircuitBreakers
-		if circuitBreakers == nil {
-			circuitBreakers = &CircuitBreakerConfig{}
-		}
-		c.APIs[i].CircuitBreakers = &CircuitBreakerConfig{
-			MaxConnections:     defaultUint32(circuitBreakers.MaxConnections, defaultCircuitBreakerMaxConnections),
-			MaxPendingRequests: defaultUint32(circuitBreakers.MaxPendingRequests, defaultCircuitBreakerMaxPendingRequests),
-			MaxRequests:        defaultUint32(circuitBreakers.MaxRequests, defaultCircuitBreakerMaxRequests),
-			MaxRetries:         defaultUint32(circuitBreakers.MaxRetries, defaultCircuitBreakerMaxRetries),
-		}
+		c.APIs[i].CircuitBreakers = defaultCircuitBreakers(c.APIs[i].CircuitBreakers)
 	}
 	if c.Kubernetes != nil {
 		kubernetes := *c.Kubernetes

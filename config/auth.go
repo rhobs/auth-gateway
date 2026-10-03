@@ -22,7 +22,7 @@ type Authenticator struct {
 // JWTAuthenticator validates one issuer and declares attributes from its verified claims.
 type JWTAuthenticator struct {
 	Issuer     string                  `yaml:"issuer"`
-	JWKSURI    string                  `yaml:"jwks_uri"`
+	JWKS       JWKSConfig              `yaml:"jwks"`
 	Audiences  []string                `yaml:"audiences"`
 	Attributes map[string]JWTAttribute `yaml:"attributes,omitempty"`
 }
@@ -94,6 +94,9 @@ func (c Config) validateAuthentication(apis map[string]API) error {
 			return fmt.Errorf("%s.jwt is required; only JWT authenticators are supported", name)
 		}
 		if err := validateJWTAuthenticator(name+".jwt", *authenticator.JWT); err != nil {
+			return err
+		}
+		if err := authenticator.JWT.JWKS.validate(name+".jwt.jwks", c.Kubernetes != nil); err != nil {
 			return err
 		}
 		authenticators[authenticator.Name] = authenticator
@@ -264,14 +267,17 @@ func validateJWTAuthenticator(name string, jwt JWTAuthenticator) error {
 	if jwt.Issuer == "" || strings.TrimSpace(jwt.Issuer) != jwt.Issuer || strings.ContainsAny(jwt.Issuer, "\r\n\t") {
 		return fmt.Errorf("%s.issuer must be a nonempty issuer identifier without surrounding whitespace", name)
 	}
-	parsed, err := url.Parse(jwt.JWKSURI)
+	parsed, err := url.Parse(jwt.JWKS.URI)
 	if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" || parsed.Opaque != "" {
-		return fmt.Errorf("%s.jwks_uri must be an absolute HTTPS URL without user information or a fragment", name)
+		return fmt.Errorf("%s.jwks.uri must be an absolute HTTPS URL without user information or a fragment", name)
+	}
+	if !validHost(strings.ToLower(parsed.Hostname())) || strings.HasSuffix(parsed.Host, ":") {
+		return fmt.Errorf("%s.jwks.uri must use a valid DNS name or IP address and optional port", name)
 	}
 	if port := parsed.Port(); port != "" {
 		value, err := strconv.Atoi(port)
 		if err != nil || value < 1 || value > 65535 {
-			return fmt.Errorf("%s.jwks_uri must use a valid port", name)
+			return fmt.Errorf("%s.jwks.uri must use a valid port", name)
 		}
 	}
 	if len(jwt.Audiences) == 0 {
@@ -465,6 +471,7 @@ func cloneAuthenticators(values []Authenticator) []Authenticator {
 		out[i] = value
 		if value.JWT != nil {
 			jwt := *value.JWT
+			jwt.JWKS = jwt.JWKS.withDefaults()
 			jwt.Audiences = cloneSlice(value.JWT.Audiences)
 			if value.JWT.Attributes != nil {
 				jwt.Attributes = make(map[string]JWTAttribute, len(value.JWT.Attributes))

@@ -150,7 +150,7 @@ func (c Config) validateTLSMounts() error {
 			return fmt.Errorf("%s.secret is required when generating Kubernetes resources", name)
 		}
 		directory := path.Dir(mount.config.Certificate)
-		for _, reserved := range []string{configDirectory, collectorConfigDirectory} {
+		for _, reserved := range []string{configDirectory, collectorConfigDirectory, caDirectory} {
 			if directoriesOverlap(directory, reserved) {
 				return fmt.Errorf("%s certificate directory %q overlaps configuration directory %q", name, directory, reserved)
 			}

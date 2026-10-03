@@ -74,10 +74,10 @@ func TestValidateRejectsInvalidAuthenticationAndAuthorization(t *testing.T) {
 			c.Authenticators[0].JWT.Issuer = ""
 		},
 		"non-HTTPS JWKS": func(c *Config) {
-			c.Authenticators[0].JWT.JWKSURI = "http://sso.example.com/jwks"
+			c.Authenticators[0].JWT.JWKS.URI = "http://sso.example.com/jwks"
 		},
 		"JWKS user information": func(c *Config) {
-			c.Authenticators[0].JWT.JWKSURI = "https://user@sso.example.com/jwks"
+			c.Authenticators[0].JWT.JWKS.URI = "https://user@sso.example.com/jwks"
 		},
 		"missing audiences": func(c *Config) {
 			c.Authenticators[0].JWT.Audiences = nil

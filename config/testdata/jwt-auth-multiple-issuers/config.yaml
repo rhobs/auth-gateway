@@ -4,7 +4,8 @@ authenticators:
   - name: issuer-one
     jwt:
       issuer: https://issuer-one.jwt.test
-      jwks_uri: https://issuer-one.jwt.test/jwks
+      jwks:
+        uri: https://issuer-one.jwt.test/jwks
       audiences: [gateway-test]
       attributes:
         tenant_id:
@@ -12,7 +13,8 @@ authenticators:
   - name: issuer-two
     jwt:
       issuer: https://issuer-two.jwt.test
-      jwks_uri: https://issuer-two.jwt.test/jwks
+      jwks:
+        uri: https://issuer-two.jwt.test/jwks
       audiences: [gateway-test]
       attributes:
         tenant_id:

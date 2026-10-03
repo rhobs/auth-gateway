@@ -248,6 +248,21 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 			ReadOnly:  true,
 		})
 	}
+	for _, ref := range c.caMounts() {
+		volumeName := "ca-" + ref.id()
+		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
+			Name: volumeName,
+			VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: ref.Name},
+				DefaultMode:          new(int32(0o444)),
+				Items:                []corev1.KeyToPath{{Key: ref.Key, Path: "ca.crt"}},
+			}},
+		})
+		envoy := &deployment.Spec.Template.Spec.Containers[0]
+		envoy.VolumeMounts = append(envoy.VolumeMounts, corev1.VolumeMount{
+			Name: volumeName, MountPath: path.Join(caDirectory, ref.id()), ReadOnly: true,
+		})
+	}
 	servicePorts := make([]corev1.ServicePort, 0, 3)
 	if c.hasHTTP() {
 		servicePorts = append(servicePorts, corev1.ServicePort{

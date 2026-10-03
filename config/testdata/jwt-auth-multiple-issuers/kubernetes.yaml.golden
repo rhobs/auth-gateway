@@ -31,7 +31,13 @@ data:
               name: api-metrics
               per_connection_buffer_limit_bytes: 1048576
               type: STRICT_DNS
-            - connect_timeout: 5s
+            - circuit_breakers:
+                thresholds:
+                    - max_connections: 1024
+                      max_pending_requests: 1024
+                      max_requests: 1024
+                      max_retries: 0
+              connect_timeout: 5s
               load_assignment:
                 cluster_name: jwks-issuer-one
                 endpoints:
@@ -47,12 +53,25 @@ data:
                 typed_config:
                     '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
                     common_tls_context:
+                        tls_params:
+                            tls_maximum_protocol_version: TLSv1_3
+                            tls_minimum_protocol_version: TLSv1_2
                         validation_context:
+                            match_typed_subject_alt_names:
+                                - matcher:
+                                    exact: issuer-one.jwt.test
+                                  san_type: DNS
                             trusted_ca:
                                 filename: /etc/ssl/certs/ca-certificates.crt
                     sni: issuer-one.jwt.test
               type: STRICT_DNS
-            - connect_timeout: 5s
+            - circuit_breakers:
+                thresholds:
+                    - max_connections: 1024
+                      max_pending_requests: 1024
+                      max_requests: 1024
+                      max_retries: 0
+              connect_timeout: 5s
               load_assignment:
                 cluster_name: jwks-issuer-two
                 endpoints:
@@ -68,7 +87,14 @@ data:
                 typed_config:
                     '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
                     common_tls_context:
+                        tls_params:
+                            tls_maximum_protocol_version: TLSv1_3
+                            tls_minimum_protocol_version: TLSv1_2
                         validation_context:
+                            match_typed_subject_alt_names:
+                                - matcher:
+                                    exact: issuer-two.jwt.test
+                                  san_type: DNS
                             trusted_ca:
                                 filename: /etc/ssl/certs/ca-certificates.crt
                     sni: issuer-two.jwt.test

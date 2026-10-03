@@ -26,17 +26,10 @@ import (
 	"strings"
 	"time"
 
-	bootstrap "github.com/envoyproxy/go-control-plane/envoy/config/bootstrap/v3"
-	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
-	jwtfilter "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/jwt_authn/v3"
-	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/rhobs/auth-gateway/config"
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/types/known/anypb"
-	"google.golang.org/protobuf/types/known/durationpb"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -79,7 +72,7 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 	BeforeAll(func(ctx SpecContext) {
 		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, jwtPlainNamespace)).To(Succeed()) }, NodeTimeout(3*time.Minute))
 		var err error
-		jwtPlainGateway, err = setupJWTGateway(ctx, jwtPlainNamespace, "jwt-auth.yaml", 0)
+		jwtPlainGateway, err = setupJWTGateway(ctx, jwtPlainNamespace, "jwt-auth.yaml")
 		Expect(err).NotTo(HaveOccurred())
 	}, NodeTimeout(12*time.Minute))
 
@@ -132,7 +125,7 @@ var _ = Describe("Direct JWT headers", Label("gateway", "jwt", "authentication",
 	BeforeAll(func(ctx SpecContext) {
 		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, jwtHeadersNamespace)).To(Succeed()) }, NodeTimeout(3*time.Minute))
 		var err error
-		jwtHeadersGateway, err = setupJWTGateway(ctx, jwtHeadersNamespace, "jwt-auth-with-headers.yaml", 0)
+		jwtHeadersGateway, err = setupJWTGateway(ctx, jwtHeadersNamespace, "jwt-auth-with-headers.yaml")
 		Expect(err).NotTo(HaveOccurred())
 	}, NodeTimeout(12*time.Minute))
 
@@ -179,7 +172,7 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 	BeforeAll(func(ctx SpecContext) {
 		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, jwtNamespace)).To(Succeed()) }, NodeTimeout(3*time.Minute))
 		var err error
-		jwtGateway, err = setupJWTGateway(ctx, jwtNamespace, "jwt-gateway.yaml", 0)
+		jwtGateway, err = setupJWTGateway(ctx, jwtNamespace, "jwt-gateway.yaml")
 		Expect(err).NotTo(HaveOccurred())
 	}, NodeTimeout(12*time.Minute))
 
@@ -335,7 +328,8 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		Expect(err).NotTo(HaveOccurred())
 		updatedConfig.Kubernetes.Namespace = jwtNamespace
 		for i := range updatedConfig.Authenticators {
-			updatedConfig.Authenticators[i].JWT.JWKSURI = "https://jwks." + jwtNamespace + ".svc.cluster.local/" + updatedConfig.Authenticators[i].Name
+			updatedConfig.Authenticators[i].JWT.JWKS.URI = "https://jwks." + jwtNamespace + ".svc.cluster.local/" + updatedConfig.Authenticators[i].Name
+			updatedConfig.Authenticators[i].JWT.JWKS.TrustedCA = jwtTrustedCA()
 		}
 		updatedConfig.Processing[0].Attributes["tenant_id"].Mappings["customer-a"] = "team-b"
 		updatedResources, err := config.GenerateKubernetes(updatedConfig)
@@ -363,7 +357,7 @@ var _ = Describe("JWT JWKS lifecycle", Label("gateway", "jwt", "jwks"), Ordered,
 	BeforeAll(func(ctx SpecContext) {
 		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, jwtLifecycleNamespace)).To(Succeed()) }, NodeTimeout(3*time.Minute))
 		var err error
-		jwtLifecycleGateway, err = setupJWTGateway(ctx, jwtLifecycleNamespace, "jwt-jwks-lifecycle.yaml", 15*time.Second)
+		jwtLifecycleGateway, err = setupJWTGateway(ctx, jwtLifecycleNamespace, "jwt-jwks-lifecycle.yaml")
 		Expect(err).NotTo(HaveOccurred())
 	}, NodeTimeout(12*time.Minute))
 
@@ -410,6 +404,40 @@ var _ = Describe("JWT JWKS lifecycle", Label("gateway", "jwt", "jwks"), Ordered,
 			return fmt.Sprintf("rotated token returned HTTP %d: %s (error: %v)", rotatedStatus, rotatedBody, err)
 		})
 
+		adminAddress := env.ForwardWithCleanup(ctx, jwtLifecycleNamespace, "deployment/auth-gateway", 9901)
+		Eventually(func() int {
+			status, _, err := jwtLifecycleGateway.request(ctx, jwtLifecycleGateway.httpAddr, jwtLifecycleHost, false, issuerTwoToken, false)
+			Expect(err).NotTo(HaveOccurred())
+			return status
+		}).WithContext(ctx).WithTimeout(45*time.Second).WithPolling(500*time.Millisecond).Should(BeNumerically(">=", 400), "an expired JWKS cache must fail closed during a sustained outage")
+		before, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
+		Expect(err).NotTo(HaveOccurred())
+		for range 5 {
+			status, _, err := jwtLifecycleGateway.request(ctx, jwtLifecycleGateway.httpAddr, jwtLifecycleHost, false, issuerTwoToken, false)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(status).To(BeNumerically(">=", 400))
+		}
+		after, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(after).To(Equal(before), "cache-expiry denials must not reach the backend")
+		status, body, err = jwtLifecycleGateway.request(ctx, jwtLifecycleGateway.httpAddr, jwtLifecycleHost, false, rotatedToken, false)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(http.StatusOK), "healthy issuer after cache expiry: "+string(body))
+		currentUID, err = env.PodUID(ctx, jwtLifecycleNamespace, selector)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(currentUID).To(Equal(gatewayUID), "cache expiry must be observed without a Pod restart")
+
+		Expect(updateJWTJWKSServer(ctx, jwtLifecycleNamespace, jwtLifecycleGateway.certs, rotatedKeys, nil, "warm-recovery")).To(Succeed())
+		Eventually(func() int {
+			status, _, err := jwtLifecycleGateway.request(ctx, jwtLifecycleGateway.httpAddr, jwtLifecycleHost, false, issuerTwoToken, false)
+			Expect(err).NotTo(HaveOccurred())
+			return status
+		}).WithContext(ctx).WithTimeout(30 * time.Second).WithPolling(500 * time.Millisecond).Should(Equal(http.StatusOK))
+		currentUID, err = env.PodUID(ctx, jwtLifecycleNamespace, selector)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(currentUID).To(Equal(gatewayUID), "outage recovery must not replace the gateway Pod")
+		Expect(updateJWTJWKSServer(ctx, jwtLifecycleNamespace, jwtLifecycleGateway.certs, rotatedKeys, map[string]int{"issuer-two": http.StatusServiceUnavailable}, "cold-outage")).To(Succeed())
+
 		// A new gateway pod has a cold JWKS cache. The unhealthy issuer fails,
 		// while the healthy issuer fetches the rotated key and remains available.
 		Expect(env.RestartDeployment(ctx, jwtLifecycleNamespace, "auth-gateway", 4*time.Minute)).To(Succeed())
@@ -444,7 +472,11 @@ var _ = Describe("JWT JWKS lifecycle", Label("gateway", "jwt", "jwks"), Ordered,
 	}, SpecTimeout(12*time.Minute))
 })
 
-func setupJWTGateway(ctx SpecContext, namespace, fixtureName string, jwksCacheDuration time.Duration) (*jwtE2E, error) {
+func jwtTrustedCA() *config.TrustedCA {
+	return &config.TrustedCA{ConfigMap: &config.CAConfigMap{Name: "jwt-jwks-ca", Key: "ca.pem"}}
+}
+
+func setupJWTGateway(ctx SpecContext, namespace, fixtureName string) (*jwtE2E, error) {
 	activeNamespace = namespace
 	if err := env.DeleteNamespace(ctx, namespace); err != nil {
 		return nil, err
@@ -501,19 +533,12 @@ func setupJWTGateway(ctx SpecContext, namespace, fixtureName string, jwksCacheDu
 	}
 	gatewayConfig.Kubernetes.Namespace = namespace
 	for i := range gatewayConfig.Authenticators {
-		gatewayConfig.Authenticators[i].JWT.JWKSURI = "https://jwks." + namespace + ".svc.cluster.local/" + gatewayConfig.Authenticators[i].Name
+		gatewayConfig.Authenticators[i].JWT.JWKS.URI = "https://jwks." + namespace + ".svc.cluster.local/" + gatewayConfig.Authenticators[i].Name
+		gatewayConfig.Authenticators[i].JWT.JWKS.TrustedCA = jwtTrustedCA()
 	}
 	resources, err := config.GenerateKubernetes(gatewayConfig)
 	if err != nil {
 		return nil, err
-	}
-	if jwksCacheDuration > 0 {
-		var envoyConfig []byte
-		envoyConfig, err = setJWKSCacheDuration([]byte(resources.ConfigMap.Data["envoy.yaml"]), jwksCacheDuration)
-		if err != nil {
-			return nil, err
-		}
-		resources.ConfigMap.Data["envoy.yaml"] = string(envoyConfig)
 	}
 	hasHTTPS := false
 	for _, server := range gatewayConfig.Servers {
@@ -533,9 +558,6 @@ func setupJWTGateway(ctx SpecContext, namespace, fixtureName string, jwksCacheDu
 		}
 	}
 	caConfigMap := &corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: "jwt-jwks-ca", Namespace: namespace}, Data: map[string]string{"ca.pem": string(certificates.caPEM)}}
-	caMode := int32(0o444)
-	resources.Deployment.Spec.Template.Spec.Volumes = append(resources.Deployment.Spec.Template.Spec.Volumes, corev1.Volume{Name: "jwt-jwks-ca", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: caConfigMap.Name}, DefaultMode: &caMode}}})
-	resources.Deployment.Spec.Template.Spec.Containers[0].VolumeMounts = append(resources.Deployment.Spec.Template.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "jwt-jwks-ca", MountPath: "/etc/ssl/certs/ca-certificates.crt", SubPath: "ca.pem", ReadOnly: true})
 	manifest, err := resources.YAML()
 	if err != nil {
 		return nil, err
@@ -588,76 +610,9 @@ func setupJWTGateway(ctx SpecContext, namespace, fixtureName string, jwksCacheDu
 	}, nil
 }
 
-func setJWKSCacheDuration(data []byte, cacheDuration time.Duration) ([]byte, error) {
-	var document map[string]any
-	if err := yaml.Unmarshal(data, &document); err != nil {
-		return nil, fmt.Errorf("decode generated Envoy config: %w", err)
-	}
-	jsonData, err := json.Marshal(document)
-	if err != nil {
-		return nil, fmt.Errorf("encode generated Envoy config: %w", err)
-	}
-	var generated bootstrap.Bootstrap
-	if err := protojson.Unmarshal(jsonData, &generated); err != nil {
-		return nil, fmt.Errorf("unmarshal generated Envoy bootstrap: %w", err)
-	}
-	updatedProviders := 0
-	for _, envoyListener := range generated.GetStaticResources().GetListeners() {
-		for _, chain := range envoyListener.GetFilterChains() {
-			for _, networkFilter := range chain.GetFilters() {
-				if networkFilter.GetName() != "envoy.filters.network.http_connection_manager" {
-					continue
-				}
-				var manager hcm.HttpConnectionManager
-				if err := networkFilter.GetTypedConfig().UnmarshalTo(&manager); err != nil {
-					return nil, fmt.Errorf("decode HTTP connection manager: %w", err)
-				}
-				for _, httpFilter := range manager.GetHttpFilters() {
-					if httpFilter.GetName() != "envoy.filters.http.jwt_authn" {
-						continue
-					}
-					var authentication jwtfilter.JwtAuthentication
-					if err := httpFilter.GetTypedConfig().UnmarshalTo(&authentication); err != nil {
-						return nil, fmt.Errorf("decode JWT filter: %w", err)
-					}
-					for _, provider := range authentication.GetProviders() {
-						remote := provider.GetRemoteJwks()
-						if remote == nil {
-							continue
-						}
-						remote.CacheDuration = durationpb.New(cacheDuration)
-						updatedProviders++
-					}
-					packedAuthentication, err := anypb.New(&authentication)
-					if err != nil {
-						return nil, fmt.Errorf("pack JWT filter: %w", err)
-					}
-					httpFilter.ConfigType = &hcm.HttpFilter_TypedConfig{TypedConfig: packedAuthentication}
-				}
-				packedManager, err := anypb.New(&manager)
-				if err != nil {
-					return nil, fmt.Errorf("pack HTTP connection manager: %w", err)
-				}
-				networkFilter.ConfigType = &listenerv3.Filter_TypedConfig{TypedConfig: packedManager}
-			}
-		}
-	}
-	if updatedProviders == 0 {
-		return nil, fmt.Errorf("generated Envoy config has no remote JWKS providers")
-	}
-	jsonData, err = (protojson.MarshalOptions{UseProtoNames: true}).Marshal(&generated)
-	if err != nil {
-		return nil, fmt.Errorf("marshal updated Envoy bootstrap: %w", err)
-	}
-	yamlData, err := yaml.JSONToYAML(jsonData)
-	if err != nil {
-		return nil, fmt.Errorf("convert updated Envoy bootstrap to YAML: %w", err)
-	}
-	return append([]byte("# Generated by github.com/rhobs/auth-gateway.\n"), yamlData...), nil
-}
-
 type jwtTestCertificates struct {
 	root                    *x509.Certificate
+	caKey                   *ecdsa.PrivateKey
 	caPEM, chainPEM, keyPEM []byte
 }
 
@@ -676,12 +631,18 @@ func makeJWTTestCertificates(dnsNames []string) (*jwtTestCertificates, error) {
 	if err != nil {
 		return nil, err
 	}
+	certificates := &jwtTestCertificates{root: root, caKey: caKey, caPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})}
+	return certificates.withDNSNames(dnsNames)
+}
+
+func (c *jwtTestCertificates) withDNSNames(dnsNames []string) (*jwtTestCertificates, error) {
+	now := time.Now()
 	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
 	}
 	serverTemplate := &x509.Certificate{SerialNumber: big.NewInt(now.UnixNano() + 1), Subject: pkix.Name{CommonName: dnsNames[0]}, DNSNames: dnsNames, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(12 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
-	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, root, &serverKey.PublicKey, caKey)
+	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, c.root, &serverKey.PublicKey, c.caKey)
 	if err != nil {
 		return nil, err
 	}
@@ -689,9 +650,8 @@ func makeJWTTestCertificates(dnsNames []string) (*jwtTestCertificates, error) {
 	if err != nil {
 		return nil, err
 	}
-	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
-	chainPEM := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER}), caPEM...)
-	return &jwtTestCertificates{root: root, caPEM: caPEM, chainPEM: chainPEM, keyPEM: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})}, nil
+	chainPEM := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER}), c.caPEM...)
+	return &jwtTestCertificates{root: c.root, caKey: c.caKey, caPEM: c.caPEM, chainPEM: chainPEM, keyPEM: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})}, nil
 }
 
 func jwtIssuerManifest(namespace string, certificates *jwtTestCertificates, keys map[string]*rsa.PrivateKey) ([]byte, error) {

@@ -11,7 +11,8 @@ authenticators:
   - name: internal-jwt
     jwt:
       issuer: https://sso.internal.example.com/realms/observability
-      jwks_uri: https://sso.internal.example.com/realms/observability/protocol/openid-connect/certs
+      jwks:
+        uri: https://sso.internal.example.com/realms/observability/protocol/openid-connect/certs
       audiences: [observability-ingestion]
       attributes:
         tenant_id:
@@ -22,7 +23,8 @@ authenticators:
   - name: external-jwt
     jwt:
       issuer: https://sso.external.example.com/realms/observability
-      jwks_uri: https://sso.external.example.com/realms/observability/protocol/openid-connect/certs
+      jwks:
+        uri: https://sso.external.example.com/realms/observability/protocol/openid-connect/certs
       audiences: [observability-ingestion]
       attributes:
         tenant_id:
