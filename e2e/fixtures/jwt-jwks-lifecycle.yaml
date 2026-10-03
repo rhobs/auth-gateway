@@ -13,8 +13,6 @@ authenticators:
       attributes:
         tenant_id:
           claim_path: [organization, id]
-          mappings:
-            customer-a: team-a
   - name: issuer-two
     jwt:
       issuer: https://issuer-two.jwt.test
@@ -23,21 +21,19 @@ authenticators:
       attributes:
         tenant_id:
           claim_path: [organization, id]
-          mappings:
-            customer-b: team-b
 authorization_policies:
   - name: issuer-one-writers
     grants:
       - authenticator: issuer-one
         apis: [metrics]
         attributes:
-          tenant_id: [team-a]
+          tenant_id: [customer-a]
   - name: issuer-two-writers
     grants:
       - authenticator: issuer-two
         apis: [metrics]
         attributes:
-          tenant_id: [team-b]
+          tenant_id: [customer-b]
 apis:
   - name: metrics
     upstream:

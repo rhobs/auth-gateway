@@ -13,11 +13,14 @@ authenticators:
       attributes:
         tenant_id:
           claim_path: [organization, id]
-          mappings:
-            customer-a: team-a
-            customer-b: team-b
         writer_id:
           claim_path: [sub]
+        chain_id:
+          claim_path: [chain]
+        order_id:
+          claim_path: [order]
+        escaped_id:
+          claim_path: [literal.claim]
   - name: issuer-two
     jwt:
       issuer: https://issuer-two.jwt.test
@@ -26,22 +29,25 @@ authenticators:
       attributes:
         tenant_id:
           claim_path: [organization, id]
-          mappings:
-            customer-a: team-a
-            customer-b: team-b
         writer_id:
           claim_path: [sub]
+        chain_id:
+          claim_path: [chain]
+        order_id:
+          claim_path: [order]
+        escaped_id:
+          claim_path: [literal.claim]
 authorization_policies:
   - name: metrics-writers
     grants:
       - authenticator: issuer-one
         apis: [metrics]
         attributes:
-          tenant_id: [team-a]
+          tenant_id: [customer-a, customer-pass]
       - authenticator: issuer-two
         apis: [metrics]
         attributes:
-          tenant_id: [team-b]
+          tenant_id: [customer-b]
 apis:
   - name: metrics
     upstream:
@@ -59,11 +65,41 @@ apis:
               from_attribute: tenant_id
             - name: X-Writer-ID
               from_attribute: writer_id
+            - name: X-Chain
+              from_attribute: chain_id
+            - name: X-Order
+              from_attribute: order_id
+            - name: X-Literal
+              from_attribute: escaped_id
       - methods: [GET]
         path:
           exact: /headerless
         rewrite:
           path: /anything
+processing:
+  - name: first-mappings
+    type: attribute-mapper
+    attributes:
+      tenant_id:
+        mappings:
+          customer-a: team-a
+          customer-b: team-b
+      chain_id:
+        mappings:
+          first: second
+          second: third
+      order_id:
+        mappings:
+          first: second
+      escaped_id:
+        mappings:
+          'source "quoted" \ value': 'mapped "quoted" \ value'
+  - name: later-mappings
+    type: attribute-mapper
+    attributes:
+      order_id:
+        mappings:
+          second: final
 servers:
   - hostname: writer.jwt.auth-gateway.test
     authentication:
@@ -78,6 +114,12 @@ servers:
       private_key: /etc/jwt-gateway-tls/tls.key
     authentication:
       any_of: [issuer-one, issuer-two]
+    authorization:
+      any_of: [metrics-writers]
+    apis: [metrics]
+  - hostname: issuer-one-only.jwt.auth-gateway.test
+    authentication:
+      any_of: [issuer-one]
     authorization:
       any_of: [metrics-writers]
     apis: [metrics]
