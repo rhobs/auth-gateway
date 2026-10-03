@@ -1,18 +1,13 @@
 package config
 
 import (
-	"bytes"
-	"flag"
-	"os"
-	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
 
-var updateGolden = flag.Bool("update", false, "update generated golden files")
-
-func TestGenerateKubernetesMatchesGoldenManifest(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+func TestGenerateKubernetesKeepsProcessingConfigOutsidePodTemplate(t *testing.T) {
+	config, err := Load(strings.NewReader(readFixture(t, "jwt-auth-with-mappings/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -20,124 +15,76 @@ func TestGenerateKubernetesMatchesGoldenManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := resources.YAML()
+	if resources.ConfigMap.Data["envoy.yaml"] == "" {
+		t.Fatal("Envoy bootstrap is missing from the gateway ConfigMap")
+	}
+	if resources.ProcessingConfigMap == nil {
+		t.Fatal("attribute mappings did not generate a processing ConfigMap")
+	}
+	if got := resources.ProcessingConfigMap.Name; got != "auth-gateway-processing" {
+		t.Fatalf("processing ConfigMap name = %q", got)
+	}
+	if resources.ProcessingConfigMap.Data[processingConfigFilename] == "" {
+		t.Fatal("processing ConfigMap is missing its ECDS resource")
+	}
+	if _, exists := resources.ConfigMap.Data[processingConfigFilename]; exists {
+		t.Fatal("processing ECDS resource was included in the main Envoy ConfigMap")
+	}
+	var processingVolume, processingMount bool
+	for _, volume := range resources.Deployment.Spec.Template.Spec.Volumes {
+		if volume.Name == "processing-config" {
+			processingVolume = volume.ConfigMap != nil && volume.ConfigMap.Name == resources.ProcessingConfigMap.Name
+			if !processingVolume || len(volume.ConfigMap.Items) != 1 || volume.ConfigMap.Items[0].Key != processingConfigFilename || volume.ConfigMap.Items[0].Path != processingConfigFilename {
+				t.Fatalf("processing config volume = %#v", volume)
+			}
+		}
+	}
+	for _, mount := range resources.Deployment.Spec.Template.Spec.Containers[0].VolumeMounts {
+		if mount.Name == "processing-config" {
+			processingMount = mount.MountPath == processingDirectory && mount.ReadOnly && mount.SubPath == "" && mount.SubPathExpr == ""
+		}
+	}
+	if !processingVolume || !processingMount {
+		t.Fatalf("processing config volume/mount = %t/%t", processingVolume, processingMount)
+	}
+	if len(resources.Deployment.Spec.Template.Annotations) != 0 {
+		t.Fatalf("Deployment template unexpectedly has rollout annotations: %#v", resources.Deployment.Spec.Template.Annotations)
+	}
+
+	config.Processing[0].Attributes["tenant_id"].Mappings["client-123"] = "team-c"
+	updated, err := GenerateKubernetes(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	goldenFiles := []string{
-		"kubernetes/configmap.yaml.golden",
-		"kubernetes/otel-collector-configmap.yaml.golden",
-		"kubernetes/service-account.yaml.golden",
-		"kubernetes/deployment.yaml.golden",
-		"kubernetes/service.yaml.golden",
+	if !reflect.DeepEqual(resources.ConfigMap.Data, updated.ConfigMap.Data) {
+		t.Fatal("mapping update changed the main Envoy ConfigMap")
 	}
-	documents := bytes.Split(manifest, []byte("\n---\n"))
-	if len(documents) != len(goldenFiles) {
-		t.Fatalf("generated %d Kubernetes documents, want %d", len(documents), len(goldenFiles))
+	if updated.ProcessingConfigMap == nil || resources.ProcessingConfigMap.Data[processingConfigFilename] == updated.ProcessingConfigMap.Data[processingConfigFilename] {
+		t.Fatal("mapping update did not change the processing ECDS resource")
 	}
-	for index := 0; index < len(documents)-1; index++ {
-		documents[index] = append(documents[index], '\n')
-	}
-
-	want := bytes.Buffer{}
-	for index, name := range goldenFiles {
-		if *updateGolden {
-			path := filepath.Join("testdata", name)
-			if err := os.WriteFile(path, documents[index], 0o644); err != nil {
-				t.Fatalf("update golden file %q: %v", path, err)
-			}
-		}
-		if index > 0 {
-			want.WriteString("---\n")
-		}
-		want.WriteString(readFixture(t, name))
-	}
-	if !bytes.Equal(manifest, want.Bytes()) {
-		t.Fatal("generated Kubernetes manifest does not match the golden files")
+	if !reflect.DeepEqual(resources.Deployment.Spec.Template, updated.Deployment.Spec.Template) {
+		t.Fatal("mapping update changed the Deployment template")
 	}
 }
 
-func TestGenerateKubernetesTLSResourcesMatchGolden(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "tls.yaml")))
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestGenerateKubernetesOmitsProcessingConfigWithoutMappings(t *testing.T) {
+	config := loadConfigCase(t, "jwt-auth-with-headers")
 	resources, err := GenerateKubernetes(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := resources.YAML()
-	if err != nil {
-		t.Fatal(err)
+	if resources.ProcessingConfigMap != nil {
+		t.Fatal("direct header attributes generated an unnecessary processing ConfigMap")
 	}
-	documents := bytes.Split(manifest, []byte("\n---\n"))
-	if len(documents) != 5 {
-		t.Fatalf("generated %d Kubernetes documents, want 5", len(documents))
-	}
-	for index := 0; index < len(documents)-1; index++ {
-		documents[index] = append(documents[index], '\n')
-	}
-	for _, golden := range []struct {
-		document int
-		name     string
-	}{
-		{document: 0, name: "kubernetes/configmap-tls.yaml.golden"},
-		{document: 3, name: "kubernetes/deployment-tls.yaml.golden"},
-	} {
-		if *updateGolden {
-			path := filepath.Join("testdata", golden.name)
-			if err := os.WriteFile(path, documents[golden.document], 0o644); err != nil {
-				t.Fatalf("update golden file %q: %v", path, err)
-			}
-		}
-		if want := []byte(readFixture(t, golden.name)); !bytes.Equal(documents[golden.document], want) {
-			t.Errorf("generated TLS resource %q does not match the golden file", golden.name)
-		}
-	}
-}
-
-func TestGenerateJWTKubernetesMountedResourcesMatchGolden(t *testing.T) {
-	config := loadAuthExample(t)
-	config.Servers = config.Servers[:1]
-	config.Kubernetes.HTTPSServicePort = 0
-	resources, err := GenerateKubernetes(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest, err := resources.YAML()
-	if err != nil {
-		t.Fatal(err)
-	}
-	documents := bytes.Split(manifest, []byte("\n---\n"))
-	if len(documents) != 6 {
-		t.Fatalf("generated %d Kubernetes documents, want 6", len(documents))
-	}
-	for index := 0; index < len(documents)-1; index++ {
-		documents[index] = append(documents[index], '\n')
-	}
-	for _, golden := range []struct {
-		document int
-		name     string
-	}{
-		{document: 0, name: "kubernetes/configmap-jwt.yaml.golden"},
-		{document: 1, name: "kubernetes/jwt-lua-ecds.yaml.golden"},
-		{document: 4, name: "kubernetes/deployment-jwt.yaml.golden"},
-	} {
-		if *updateGolden {
-			path := filepath.Join("testdata", golden.name)
-			if err := os.WriteFile(path, documents[golden.document], 0o644); err != nil {
-				t.Fatalf("update golden file %q: %v", path, err)
-			}
-		}
-		if want := []byte(readFixture(t, golden.name)); !bytes.Equal(documents[golden.document], want) {
-			t.Errorf("generated Kubernetes resource %q does not match the golden file", golden.name)
+	for _, volume := range resources.Deployment.Spec.Template.Spec.Volumes {
+		if volume.Name == "processing-config" {
+			t.Fatal("direct header attributes generated an unnecessary processing volume")
 		}
 	}
 }
 
 func TestGenerateKubernetesExposesMetricsWithoutAdminPort(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +115,7 @@ func TestGenerateKubernetesExposesMetricsWithoutAdminPort(t *testing.T) {
 }
 
 func TestGenerateKubernetesMountsServerTLSSecretAndSharesListenerPort(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +183,7 @@ func TestGenerateKubernetesMountsServerTLSSecretAndSharesListenerPort(t *testing
 }
 
 func TestGenerateKubernetesOmitsHTTPServicePortForHTTPSOnly(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +205,7 @@ func TestGenerateKubernetesOmitsHTTPServicePortForHTTPSOnly(t *testing.T) {
 }
 
 func TestGenerateKubernetesRequiresSettings(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +216,7 @@ func TestGenerateKubernetesRequiresSettings(t *testing.T) {
 }
 
 func TestGenerateKubernetesSharesTLSSecretMount(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "tls.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "server-tls/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +271,7 @@ func TestGenerateKubernetesSharesTLSSecretMount(t *testing.T) {
 }
 
 func TestGenerateKubernetesMountsSharedSecretAtDifferentPaths(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "tls.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "server-tls/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +303,7 @@ func TestGenerateKubernetesMountsSharedSecretAtDifferentPaths(t *testing.T) {
 }
 
 func TestGenerateKubernetesFitsConfigMapNameLimit(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}

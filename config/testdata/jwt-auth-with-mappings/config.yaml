@@ -1,0 +1,138 @@
+version: 1
+
+node:
+  id: auth-gateway
+  cluster: auth-gateway
+
+listener:
+  port: 8080
+
+authenticators:
+  - name: internal-jwt
+    jwt:
+      issuer: https://sso.internal.example.com/realms/observability
+      jwks_uri: https://sso.internal.example.com/realms/observability/protocol/openid-connect/certs
+      audiences: [observability-ingestion]
+      attributes:
+        tenant_id:
+          claim_path: [x, y, z, claim]
+        writer_id:
+          claim_path: [sub]
+
+  - name: external-jwt
+    jwt:
+      issuer: https://sso.external.example.com/realms/observability
+      jwks_uri: https://sso.external.example.com/realms/observability/protocol/openid-connect/certs
+      audiences: [observability-ingestion]
+      attributes:
+        tenant_id:
+          claim_path: [organization, id]
+        writer_id:
+          claim_path: [sub]
+
+authorization_policies:
+  - name: metrics-writers
+    grants:
+      - authenticator: internal-jwt
+        apis: [metrics-write]
+        attributes:
+          tenant_id: [client-123, client-456]
+      - authenticator: external-jwt
+        apis: [metrics-write]
+        attributes:
+          tenant_id: [customer-456]
+
+  - name: logs-writers
+    grants:
+      - authenticator: internal-jwt
+        apis: [logs]
+        attributes:
+          tenant_id: [client-123]
+      - authenticator: external-jwt
+        apis: [logs]
+        attributes:
+          tenant_id: [customer-456, customer-789]
+
+apis:
+  - name: metrics-write
+    upstream:
+      address: thanos-receive
+      port: 19291
+    routes:
+      - methods: [POST]
+        path:
+          exact: /metrics/api/v1/receive
+        rewrite:
+          path: /api/v1/receive
+        processing:
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: tenant_id
+            - name: X-Writer-ID
+              from_attribute: writer_id
+
+  - name: logs
+    upstream:
+      address: loki
+      port: 3100
+    routes:
+      - methods: [POST]
+        path:
+          prefix: /logs/otlp/
+        rewrite:
+          prefix: /otlp/
+        # Processing is optional; each route selects its own outputs.
+        processing:
+          # these should use header mutation filter
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: tenant_id
+processing:
+  - name: upstream-tenants
+    type: attribute-mapper
+    attributes:
+      tenant_id:
+        mappings:
+          client-123: team-a
+          client-456: team-b
+          customer-456: team-a
+          customer-789: team-b
+
+servers:
+  # Plain HTTP for the internal hop after TLS termination at an ingress.
+  - hostname: write-internal.auth.example.com
+    authentication:
+      # Accept JWTs from either configured issuer.
+      any_of: [internal-jwt, external-jwt]
+    authorization:
+      # Either policy can grant access to the requested API.
+      any_of: [metrics-writers, logs-writers]
+    apis: [metrics-write, logs]
+
+  # TLS terminates at the gateway for this SNI hostname.
+  - hostname: write.auth.example.com
+    tls_config:
+      secret: write-gateway-tls
+      certificate: /etc/write-gateway-tls/tls.crt
+      private_key: /etc/write-gateway-tls/tls.key
+    authentication:
+      any_of: [internal-jwt, external-jwt]
+    authorization:
+      any_of: [metrics-writers, logs-writers]
+    apis: [metrics-write, logs]
+
+kubernetes:
+  name: auth-gateway
+  namespace: observability
+  image: envoyproxy/envoy:v1.39.1
+  otel_collector_image: otel/opentelemetry-collector-contrib:0.135.0
+  replicas: 2
+  service_port: 80
+  https_service_port: 443
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: "1"
+      memory: 256Mi

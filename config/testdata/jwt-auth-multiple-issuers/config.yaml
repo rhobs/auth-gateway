@@ -1,0 +1,62 @@
+version: 1
+
+authenticators:
+  - name: issuer-one
+    jwt:
+      issuer: https://issuer-one.jwt.test
+      jwks_uri: https://issuer-one.jwt.test/jwks
+      audiences: [gateway-test]
+      attributes:
+        tenant_id:
+          claim_path: [organization, id]
+  - name: issuer-two
+    jwt:
+      issuer: https://issuer-two.jwt.test
+      jwks_uri: https://issuer-two.jwt.test/jwks
+      audiences: [gateway-test]
+      attributes:
+        tenant_id:
+          claim_path: [organization, id]
+
+authorization_policies:
+  - name: metrics-writers
+    grants:
+      - authenticator: issuer-one
+        apis: [metrics]
+        attributes:
+          tenant_id: [customer-a]
+      - authenticator: issuer-two
+        apis: [metrics]
+        attributes:
+          tenant_id: [customer-b]
+
+apis:
+  - name: metrics
+    upstream:
+      address: thanos-receive
+      port: 19291
+    routes:
+      - methods: [GET]
+        path:
+          exact: /protected
+        rewrite:
+          path: /anything
+
+servers:
+  - hostname: writer.jwt.example.test
+    authentication:
+      any_of: [issuer-one, issuer-two]
+    authorization:
+      any_of: [metrics-writers]
+    apis: [metrics]
+  - hostname: issuer-one.jwt.example.test
+    authentication:
+      any_of: [issuer-one]
+    authorization:
+      any_of: [metrics-writers]
+    apis: [metrics]
+
+kubernetes:
+  name: auth-gateway
+  namespace: observability
+  image: envoyproxy/envoy:v1.39.1

@@ -178,17 +178,20 @@ static_resources:
                                             - provider_name: internal-jwt
                                             - provider_name: external-jwt
                             strip_failure_response: true
+                        - name: envoy.filters.http.rbac
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
                         - config_discovery:
                             config_source:
                                 path_config_source:
-                                    path: /etc/auth-gateway/lua/jwt.yaml
+                                    path: /etc/auth-gateway/processing/processing.yaml
                                     watched_directory:
-                                        path: /etc/auth-gateway/lua
+                                        path: /etc/auth-gateway/processing
                                 resource_api_version: V3
                             type_urls:
-                                - envoy.extensions.filters.http.lua.v3.Lua
-                          name: envoy.filters.http.lua
-                        - name: envoy.filters.http.rbac
+                                - envoy.extensions.filters.http.set_filter_state.v3.Config
+                          name: envoy.filters.http.set_filter_state
+                        - name: auth_gateway.required_headers
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
                         - name: envoy.filters.http.header_mutation
@@ -230,6 +233,29 @@ static_resources:
                                     path_rewrite: /api/v1/receive
                                     timeout: 30s
                                   typed_per_filter_config:
+                                    auth_gateway.required_headers:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                policies:
+                                                    required-attributes:
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - and_ids:
+                                                                ids:
+                                                                    - filter_state:
+                                                                        key: auth_gateway.attributes.tenant_id
+                                                                        string_match:
+                                                                            safe_regex:
+                                                                                google_re2: {}
+                                                                                regex: ^[^\x00-\x1f\x7f]+$
+                                                                    - filter_state:
+                                                                        key: auth_gateway.attributes.writer_id
+                                                                        string_match:
+                                                                            safe_regex:
+                                                                                google_re2: {}
+                                                                                regex: ^[^\x00-\x1f\x7f]+$
                                     envoy.filters.http.header_mutation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
                                         mutations:
@@ -238,12 +264,12 @@ static_resources:
                                                     append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                                     header:
                                                         key: X-Scope-OrgID
-                                                        value: '%DYNAMIC_METADATA(auth_gateway_attributes:tenant_id)%'
+                                                        value: '%FILTER_STATE(auth_gateway.attributes.tenant_id:PLAIN)%'
                                                 - append:
                                                     append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                                     header:
                                                         key: X-Writer-ID
-                                                        value: '%DYNAMIC_METADATA(auth_gateway_attributes:writer_id)%'
+                                                        value: '%FILTER_STATE(auth_gateway.attributes.writer_id:PLAIN)%'
                                 - match:
                                     headers:
                                         - name: :method
@@ -260,6 +286,21 @@ static_resources:
                                     prefix_rewrite: /otlp/
                                     timeout: 30s
                                   typed_per_filter_config:
+                                    auth_gateway.required_headers:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                policies:
+                                                    required-attributes:
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - filter_state:
+                                                                key: auth_gateway.attributes.tenant_id
+                                                                string_match:
+                                                                    safe_regex:
+                                                                        google_re2: {}
+                                                                        regex: ^[^\x00-\x1f\x7f]+$
                                     envoy.filters.http.header_mutation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
                                         mutations:
@@ -268,7 +309,7 @@ static_resources:
                                                     append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                                     header:
                                                         key: X-Scope-OrgID
-                                                        value: '%DYNAMIC_METADATA(auth_gateway_attributes:tenant_id)%'
+                                                        value: '%FILTER_STATE(auth_gateway.attributes.tenant_id:PLAIN)%'
                                 - direct_response:
                                     status: 405
                                   match:
@@ -329,52 +370,32 @@ static_resources:
                                                     principals:
                                                         - or_ids:
                                                             ids:
-                                                                - and_ids:
-                                                                    ids:
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway
-                                                                                path:
-                                                                                    - key: identity
-                                                                                    - key: authenticator
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: internal-jwt
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway
-                                                                                path:
-                                                                                    - key: identity
-                                                                                    - key: attributes
-                                                                                    - key: tenant_id
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: team-a
-                                                                - and_ids:
-                                                                    ids:
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway
-                                                                                path:
-                                                                                    - key: identity
-                                                                                    - key: authenticator
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: external-jwt
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway
-                                                                                path:
-                                                                                    - key: identity
-                                                                                    - key: attributes
-                                                                                    - key: tenant_id
-                                                                                value:
-                                                                                    or_match:
-                                                                                        value_matchers:
-                                                                                            - string_match:
-                                                                                                exact: team-a
-                                                                                            - string_match:
-                                                                                                exact: team-b
+                                                                - sourced_metadata:
+                                                                    metadata_matcher:
+                                                                        filter: envoy.filters.http.jwt_authn
+                                                                        path:
+                                                                            - key: internal-jwt
+                                                                            - key: x
+                                                                            - key: "y"
+                                                                            - key: z
+                                                                            - key: claim
+                                                                        value:
+                                                                            string_match:
+                                                                                exact: client-123
+                                                                - sourced_metadata:
+                                                                    metadata_matcher:
+                                                                        filter: envoy.filters.http.jwt_authn
+                                                                        path:
+                                                                            - key: external-jwt
+                                                                            - key: organization
+                                                                            - key: id
+                                                                        value:
+                                                                            or_match:
+                                                                                value_matchers:
+                                                                                    - string_match:
+                                                                                        exact: customer-456
+                                                                                    - string_match:
+                                                                                        exact: customer-789
                                                 api-metrics-write:
                                                     permissions:
                                                         - sourced_metadata:
@@ -389,52 +410,32 @@ static_resources:
                                                     principals:
                                                         - or_ids:
                                                             ids:
-                                                                - and_ids:
-                                                                    ids:
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway
-                                                                                path:
-                                                                                    - key: identity
-                                                                                    - key: authenticator
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: internal-jwt
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway
-                                                                                path:
-                                                                                    - key: identity
-                                                                                    - key: attributes
-                                                                                    - key: tenant_id
-                                                                                value:
-                                                                                    or_match:
-                                                                                        value_matchers:
-                                                                                            - string_match:
-                                                                                                exact: team-a
-                                                                                            - string_match:
-                                                                                                exact: team-b
-                                                                - and_ids:
-                                                                    ids:
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway
-                                                                                path:
-                                                                                    - key: identity
-                                                                                    - key: authenticator
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: external-jwt
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway
-                                                                                path:
-                                                                                    - key: identity
-                                                                                    - key: attributes
-                                                                                    - key: tenant_id
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: team-a
+                                                                - sourced_metadata:
+                                                                    metadata_matcher:
+                                                                        filter: envoy.filters.http.jwt_authn
+                                                                        path:
+                                                                            - key: internal-jwt
+                                                                            - key: x
+                                                                            - key: "y"
+                                                                            - key: z
+                                                                            - key: claim
+                                                                        value:
+                                                                            or_match:
+                                                                                value_matchers:
+                                                                                    - string_match:
+                                                                                        exact: client-123
+                                                                                    - string_match:
+                                                                                        exact: client-456
+                                                                - sourced_metadata:
+                                                                    metadata_matcher:
+                                                                        filter: envoy.filters.http.jwt_authn
+                                                                        path:
+                                                                            - key: external-jwt
+                                                                            - key: organization
+                                                                            - key: id
+                                                                        value:
+                                                                            string_match:
+                                                                                exact: customer-456
                                                 local-responses:
                                                     permissions:
                                                         - sourced_metadata:
@@ -535,17 +536,20 @@ static_resources:
                                             - provider_name: internal-jwt
                                             - provider_name: external-jwt
                             strip_failure_response: true
+                        - name: envoy.filters.http.rbac
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
                         - config_discovery:
                             config_source:
                                 path_config_source:
-                                    path: /etc/auth-gateway/lua/jwt.yaml
+                                    path: /etc/auth-gateway/processing/processing.yaml
                                     watched_directory:
-                                        path: /etc/auth-gateway/lua
+                                        path: /etc/auth-gateway/processing
                                 resource_api_version: V3
                             type_urls:
-                                - envoy.extensions.filters.http.lua.v3.Lua
-                          name: envoy.filters.http.lua
-                        - name: envoy.filters.http.rbac
+                                - envoy.extensions.filters.http.set_filter_state.v3.Config
+                          name: envoy.filters.http.set_filter_state
+                        - name: auth_gateway.required_headers
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
                         - name: envoy.filters.http.header_mutation
@@ -587,6 +591,29 @@ static_resources:
                                     path_rewrite: /api/v1/receive
                                     timeout: 30s
                                   typed_per_filter_config:
+                                    auth_gateway.required_headers:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                policies:
+                                                    required-attributes:
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - and_ids:
+                                                                ids:
+                                                                    - filter_state:
+                                                                        key: auth_gateway.attributes.tenant_id
+                                                                        string_match:
+                                                                            safe_regex:
+                                                                                google_re2: {}
+                                                                                regex: ^[^\x00-\x1f\x7f]+$
+                                                                    - filter_state:
+                                                                        key: auth_gateway.attributes.writer_id
+                                                                        string_match:
+                                                                            safe_regex:
+                                                                                google_re2: {}
+                                                                                regex: ^[^\x00-\x1f\x7f]+$
                                     envoy.filters.http.header_mutation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
                                         mutations:
@@ -595,12 +622,12 @@ static_resources:
                                                     append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                                     header:
                                                         key: X-Scope-OrgID
-                                                        value: '%DYNAMIC_METADATA(auth_gateway_attributes:tenant_id)%'
+                                                        value: '%FILTER_STATE(auth_gateway.attributes.tenant_id:PLAIN)%'
                                                 - append:
                                                     append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                                     header:
                                                         key: X-Writer-ID
-                                                        value: '%DYNAMIC_METADATA(auth_gateway_attributes:writer_id)%'
+                                                        value: '%FILTER_STATE(auth_gateway.attributes.writer_id:PLAIN)%'
                                 - match:
                                     headers:
                                         - name: :method
@@ -617,6 +644,21 @@ static_resources:
                                     prefix_rewrite: /otlp/
                                     timeout: 30s
                                   typed_per_filter_config:
+                                    auth_gateway.required_headers:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                policies:
+                                                    required-attributes:
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - filter_state:
+                                                                key: auth_gateway.attributes.tenant_id
+                                                                string_match:
+                                                                    safe_regex:
+                                                                        google_re2: {}
+                                                                        regex: ^[^\x00-\x1f\x7f]+$
                                     envoy.filters.http.header_mutation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
                                         mutations:
@@ -625,7 +667,7 @@ static_resources:
                                                     append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                                     header:
                                                         key: X-Scope-OrgID
-                                                        value: '%DYNAMIC_METADATA(auth_gateway_attributes:tenant_id)%'
+                                                        value: '%FILTER_STATE(auth_gateway.attributes.tenant_id:PLAIN)%'
                                 - direct_response:
                                     status: 405
                                   match:
@@ -686,52 +728,32 @@ static_resources:
                                                     principals:
                                                         - or_ids:
                                                             ids:
-                                                                - and_ids:
-                                                                    ids:
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway
-                                                                                path:
-                                                                                    - key: identity
-                                                                                    - key: authenticator
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: internal-jwt
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway
-                                                                                path:
-                                                                                    - key: identity
-                                                                                    - key: attributes
-                                                                                    - key: tenant_id
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: team-a
-                                                                - and_ids:
-                                                                    ids:
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway
-                                                                                path:
-                                                                                    - key: identity
-                                                                                    - key: authenticator
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: external-jwt
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway
-                                                                                path:
-                                                                                    - key: identity
-                                                                                    - key: attributes
-                                                                                    - key: tenant_id
-                                                                                value:
-                                                                                    or_match:
-                                                                                        value_matchers:
-                                                                                            - string_match:
-                                                                                                exact: team-a
-                                                                                            - string_match:
-                                                                                                exact: team-b
+                                                                - sourced_metadata:
+                                                                    metadata_matcher:
+                                                                        filter: envoy.filters.http.jwt_authn
+                                                                        path:
+                                                                            - key: internal-jwt
+                                                                            - key: x
+                                                                            - key: "y"
+                                                                            - key: z
+                                                                            - key: claim
+                                                                        value:
+                                                                            string_match:
+                                                                                exact: client-123
+                                                                - sourced_metadata:
+                                                                    metadata_matcher:
+                                                                        filter: envoy.filters.http.jwt_authn
+                                                                        path:
+                                                                            - key: external-jwt
+                                                                            - key: organization
+                                                                            - key: id
+                                                                        value:
+                                                                            or_match:
+                                                                                value_matchers:
+                                                                                    - string_match:
+                                                                                        exact: customer-456
+                                                                                    - string_match:
+                                                                                        exact: customer-789
                                                 api-metrics-write:
                                                     permissions:
                                                         - sourced_metadata:
@@ -746,52 +768,32 @@ static_resources:
                                                     principals:
                                                         - or_ids:
                                                             ids:
-                                                                - and_ids:
-                                                                    ids:
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway
-                                                                                path:
-                                                                                    - key: identity
-                                                                                    - key: authenticator
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: internal-jwt
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway
-                                                                                path:
-                                                                                    - key: identity
-                                                                                    - key: attributes
-                                                                                    - key: tenant_id
-                                                                                value:
-                                                                                    or_match:
-                                                                                        value_matchers:
-                                                                                            - string_match:
-                                                                                                exact: team-a
-                                                                                            - string_match:
-                                                                                                exact: team-b
-                                                                - and_ids:
-                                                                    ids:
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway
-                                                                                path:
-                                                                                    - key: identity
-                                                                                    - key: authenticator
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: external-jwt
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway
-                                                                                path:
-                                                                                    - key: identity
-                                                                                    - key: attributes
-                                                                                    - key: tenant_id
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: team-a
+                                                                - sourced_metadata:
+                                                                    metadata_matcher:
+                                                                        filter: envoy.filters.http.jwt_authn
+                                                                        path:
+                                                                            - key: internal-jwt
+                                                                            - key: x
+                                                                            - key: "y"
+                                                                            - key: z
+                                                                            - key: claim
+                                                                        value:
+                                                                            or_match:
+                                                                                value_matchers:
+                                                                                    - string_match:
+                                                                                        exact: client-123
+                                                                                    - string_match:
+                                                                                        exact: client-456
+                                                                - sourced_metadata:
+                                                                    metadata_matcher:
+                                                                        filter: envoy.filters.http.jwt_authn
+                                                                        path:
+                                                                            - key: external-jwt
+                                                                            - key: organization
+                                                                            - key: id
+                                                                        value:
+                                                                            string_match:
+                                                                                exact: customer-456
                                                 local-responses:
                                                     permissions:
                                                         - sourced_metadata:

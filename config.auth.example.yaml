@@ -16,11 +16,7 @@ authenticators:
       attributes:
         tenant_id:
           claim_path: [x, y, z, claim]
-          mappings:
-            client-123: team-a
-            client-456: team-b
         writer_id:
-          # No mappings: use the verified sub claim directly.
           claim_path: [sub]
 
   - name: external-jwt
@@ -31,9 +27,6 @@ authenticators:
       attributes:
         tenant_id:
           claim_path: [organization, id]
-          mappings:
-            customer-456: team-a
-            customer-789: team-b
         writer_id:
           claim_path: [sub]
 
@@ -43,22 +36,22 @@ authorization_policies:
       - authenticator: internal-jwt
         apis: [metrics-write]
         attributes:
-          tenant_id: [team-a, team-b]
+          tenant_id: [client-123, client-456]
       - authenticator: external-jwt
         apis: [metrics-write]
         attributes:
-          tenant_id: [team-a]
+          tenant_id: [customer-456]
 
   - name: logs-writers
     grants:
       - authenticator: internal-jwt
         apis: [logs]
         attributes:
-          tenant_id: [team-a]
+          tenant_id: [client-123]
       - authenticator: external-jwt
         apis: [logs]
         attributes:
-          tenant_id: [team-a, team-b]
+          tenant_id: [customer-456, customer-789]
 
 apis:
   - name: metrics-write
@@ -93,12 +86,22 @@ apis:
           request_headers:
             - name: X-Scope-OrgID
               from_attribute: tenant_id
+processing:
+  - name: upstream-tenants
+    type: attribute-mapper
+    attributes:
+      tenant_id:
+        mappings:
+          client-123: team-a
+          client-456: team-b
+          customer-456: team-a
+          customer-789: team-b
 
 servers:
   # Plain HTTP for the internal hop after TLS termination at an ingress.
   - hostname: write-internal.auth.example.com
     authentication:
-      # Select the first method that verifies and maps the credential.
+      # Accept JWTs from either configured issuer.
       any_of: [internal-jwt, external-jwt]
     authorization:
       # Either policy can grant access to the requested API.

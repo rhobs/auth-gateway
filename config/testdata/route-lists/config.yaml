@@ -25,3 +25,7 @@ apis:
           exact: /metrics/api/v1/labels
         rewrite:
           path: /api/v1/labels
+kubernetes:
+  name: auth-gateway
+  namespace: observability
+  image: envoyproxy/envoy:v1.39.1

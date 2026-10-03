@@ -335,3 +335,194 @@ kind: ConfigMap
 metadata:
   name: auth-gateway-config
   namespace: observability
+---
+apiVersion: v1
+data:
+  config.yaml: |
+    receivers:
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: auth-gateway
+              scrape_interval: 30s
+              metrics_path: /stats/prometheus
+              static_configs:
+                - targets:
+                    - 127.0.0.1:9901
+    exporters:
+      prometheus:
+        endpoint: 0.0.0.0:8889
+    service:
+      pipelines:
+        metrics:
+          receivers:
+            - prometheus
+          exporters:
+            - prometheus
+kind: ConfigMap
+metadata:
+  name: auth-gateway-metrics
+  namespace: observability
+---
+apiVersion: v1
+automountServiceAccountToken: false
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/instance: auth-gateway
+    app.kubernetes.io/name: auth-gateway
+  name: auth-gateway
+  namespace: observability
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/instance: auth-gateway
+    app.kubernetes.io/name: auth-gateway
+  name: auth-gateway
+  namespace: observability
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: auth-gateway
+      app.kubernetes.io/name: auth-gateway
+  strategy: {}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: auth-gateway
+        app.kubernetes.io/name: auth-gateway
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - args:
+        - -c
+        - /etc/auth-gateway/envoy.yaml
+        - --log-level
+        - info
+        image: envoyproxy/envoy:v1.39.1
+        imagePullPolicy: IfNotPresent
+        name: envoy
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        - containerPort: 9901
+          name: admin
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 12
+          periodSeconds: 5
+          tcpSocket:
+            port: http
+        resources:
+          limits:
+            cpu: "1"
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsGroup: 101
+          runAsNonRoot: true
+          runAsUser: 101
+        volumeMounts:
+        - mountPath: /etc/auth-gateway
+          name: config
+          readOnly: true
+        - mountPath: /etc/auth-gateway-tls
+          name: server-tls-1
+          readOnly: true
+        - mountPath: /etc/query-gateway-tls
+          name: server-tls-2
+          readOnly: true
+      - args:
+        - --config=/etc/collector/config.yaml
+        image: otel/opentelemetry-collector-contrib:0.135.0
+        imagePullPolicy: IfNotPresent
+        name: metrics
+        ports:
+        - containerPort: 8889
+          name: metrics
+          protocol: TCP
+        resources:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 20m
+            memory: 64Mi
+        volumeMounts:
+        - mountPath: /etc/collector
+          name: metrics-config
+          readOnly: true
+      serviceAccountName: auth-gateway
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - configMap:
+          items:
+          - key: envoy.yaml
+            path: envoy.yaml
+          - key: server-certificate-1.yaml
+            path: server-certificate-1.yaml
+          - key: server-certificate-2.yaml
+            path: server-certificate-2.yaml
+          name: auth-gateway-config
+        name: config
+      - configMap:
+          name: auth-gateway-metrics
+        name: metrics-config
+      - name: server-tls-1
+        secret:
+          defaultMode: 292
+          items:
+          - key: tls.crt
+            path: tls.crt
+          - key: tls.key
+            path: tls.key
+          secretName: auth-gateway-tls
+      - name: server-tls-2
+        secret:
+          defaultMode: 292
+          items:
+          - key: tls.crt
+            path: tls.crt
+          - key: tls.key
+            path: tls.key
+          secretName: query-gateway-tls
+status: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/instance: auth-gateway
+    app.kubernetes.io/name: auth-gateway
+  name: auth-gateway
+  namespace: observability
+spec:
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: http
+  - name: https
+    port: 443
+    protocol: TCP
+    targetPort: http
+  - name: metrics
+    port: 8889
+    protocol: TCP
+    targetPort: metrics
+  selector:
+    app.kubernetes.io/instance: auth-gateway
+    app.kubernetes.io/name: auth-gateway
+  type: ClusterIP
+status:
+  loadBalancer: {}

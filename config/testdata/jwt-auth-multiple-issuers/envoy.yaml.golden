@@ -5,8 +5,8 @@ admin:
             address: 127.0.0.1
             port_value: 9901
 node:
-    cluster: jwt-test
-    id: jwt-test
+    cluster: auth-gateway
+    id: auth-gateway
 static_resources:
     clusters:
         - circuit_breakers:
@@ -17,15 +17,15 @@ static_resources:
                   max_retries: 0
           connect_timeout: 5s
           load_assignment:
-            cluster_name: api-test-api
+            cluster_name: api-metrics
             endpoints:
                 - lb_endpoints:
                     - endpoint:
                         address:
                             socket_address:
-                                address: httpbin
-                                port_value: 8080
-          name: api-test-api
+                                address: thanos-receive
+                                port_value: 19291
+          name: api-metrics
           per_connection_buffer_limit_bytes: 1048576
           type: STRICT_DNS
         - connect_timeout: 5s
@@ -36,7 +36,7 @@ static_resources:
                     - endpoint:
                         address:
                             socket_address:
-                                address: issuer-one.example.test
+                                address: issuer-one.jwt.test
                                 port_value: 443
           name: jwks-issuer-one
           transport_socket:
@@ -47,7 +47,7 @@ static_resources:
                     validation_context:
                         trusted_ca:
                             filename: /etc/ssl/certs/ca-certificates.crt
-                sni: issuer-one.example.test
+                sni: issuer-one.jwt.test
           type: STRICT_DNS
         - connect_timeout: 5s
           load_assignment:
@@ -57,7 +57,7 @@ static_resources:
                     - endpoint:
                         address:
                             socket_address:
-                                address: issuer-two.example.test
+                                address: issuer-two.jwt.test
                                 port_value: 443
           name: jwks-issuer-two
           transport_socket:
@@ -68,7 +68,7 @@ static_resources:
                     validation_context:
                         trusted_ca:
                             filename: /etc/ssl/certs/ca-certificates.crt
-                sni: issuer-two.example.test
+                sni: issuer-two.jwt.test
           type: STRICT_DNS
     listeners:
         - address:
@@ -121,14 +121,14 @@ static_resources:
                                     from_headers:
                                         - name: Authorization
                                           value_prefix: 'Bearer '
-                                    issuer: https://issuer-one.example.test
+                                    issuer: https://issuer-one.jwt.test
                                     payload_in_metadata: issuer-one
                                     remote_jwks:
                                         cache_duration: 300s
                                         http_uri:
                                             cluster: jwks-issuer-one
                                             timeout: 5s
-                                            uri: https://issuer-one.example.test/jwks
+                                            uri: https://issuer-one.jwt.test/jwks
                                     require_expiration: true
                                 issuer-two:
                                     audiences:
@@ -136,14 +136,14 @@ static_resources:
                                     from_headers:
                                         - name: Authorization
                                           value_prefix: 'Bearer '
-                                    issuer: https://issuer-two.example.test
+                                    issuer: https://issuer-two.jwt.test
                                     payload_in_metadata: issuer-two
                                     remote_jwks:
                                         cache_duration: 300s
                                         http_uri:
                                             cluster: jwks-issuer-two
                                             timeout: 5s
-                                            uri: https://issuer-two.example.test/jwks
+                                            uri: https://issuer-two.jwt.test/jwks
                                     require_expiration: true
                             requirement_map:
                                 server-0:
@@ -151,17 +151,9 @@ static_resources:
                                         requirements:
                                             - provider_name: issuer-one
                                             - provider_name: issuer-two
+                                server-1:
+                                    provider_name: issuer-one
                             strip_failure_response: true
-                        - config_discovery:
-                            config_source:
-                                path_config_source:
-                                    path: /etc/auth-gateway/lua/jwt.yaml
-                                    watched_directory:
-                                        path: /etc/auth-gateway/lua
-                                resource_api_version: V3
-                            type_urls:
-                                - envoy.extensions.filters.http.lua.v3.Lua
-                          name: envoy.filters.http.lua
                         - name: envoy.filters.http.rbac
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
@@ -178,8 +170,8 @@ static_resources:
                         name: ingestion
                         virtual_hosts:
                             - domains:
-                                - jwt-one.example.test
-                              name: jwt-one.example.test
+                                - writer.jwt.example.test
+                              name: writer.jwt.example.test
                               routes:
                                 - match:
                                     headers:
@@ -190,10 +182,11 @@ static_resources:
                                   metadata:
                                     filter_metadata:
                                         envoy.filters.http.rbac:
-                                            api: test-api
-                                  name: api-0-test-api-route-0-method-0
+                                            api: metrics
+                                  name: api-0-metrics-route-0-method-0
                                   route:
-                                    cluster: api-test-api
+                                    cluster: api-metrics
+                                    path_rewrite: /anything
                                     timeout: 30s
                                 - direct_response:
                                     status: 405
@@ -227,6 +220,40 @@ static_resources:
                                     rbac:
                                         rules:
                                             policies:
+                                                api-metrics:
+                                                    permissions:
+                                                        - sourced_metadata:
+                                                            metadata_matcher:
+                                                                filter: envoy.filters.http.rbac
+                                                                path:
+                                                                    - key: api
+                                                                value:
+                                                                    string_match:
+                                                                        exact: metrics
+                                                            metadata_source: ROUTE
+                                                    principals:
+                                                        - or_ids:
+                                                            ids:
+                                                                - sourced_metadata:
+                                                                    metadata_matcher:
+                                                                        filter: envoy.filters.http.jwt_authn
+                                                                        path:
+                                                                            - key: issuer-one
+                                                                            - key: organization
+                                                                            - key: id
+                                                                        value:
+                                                                            string_match:
+                                                                                exact: customer-a
+                                                                - sourced_metadata:
+                                                                    metadata_matcher:
+                                                                        filter: envoy.filters.http.jwt_authn
+                                                                        path:
+                                                                            - key: issuer-two
+                                                                            - key: organization
+                                                                            - key: id
+                                                                        value:
+                                                                            string_match:
+                                                                                exact: customer-b
                                                 local-responses:
                                                     permissions:
                                                         - sourced_metadata:
@@ -241,8 +268,8 @@ static_resources:
                                                     principals:
                                                         - any: true
                             - domains:
-                                - public.example.test
-                              name: public.example.test
+                                - issuer-one.jwt.example.test
+                              name: issuer-one.jwt.example.test
                               routes:
                                 - match:
                                     headers:
@@ -253,10 +280,11 @@ static_resources:
                                   metadata:
                                     filter_metadata:
                                         envoy.filters.http.rbac:
-                                            api: test-api
-                                  name: api-0-test-api-route-0-method-0
+                                            api: metrics
+                                  name: api-0-metrics-route-0-method-0
                                   route:
-                                    cluster: api-test-api
+                                    cluster: api-metrics
+                                    path_rewrite: /anything
                                     timeout: 30s
                                 - direct_response:
                                     status: 405
@@ -281,6 +309,62 @@ static_resources:
                                         envoy.filters.http.rbac:
                                             api: __local
                                   name: not-found
+                              typed_per_filter_config:
+                                envoy.filters.http.jwt_authn:
+                                    '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
+                                    requirement_name: server-1
+                                envoy.filters.http.rbac:
+                                    '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                    rbac:
+                                        rules:
+                                            policies:
+                                                api-metrics:
+                                                    permissions:
+                                                        - sourced_metadata:
+                                                            metadata_matcher:
+                                                                filter: envoy.filters.http.rbac
+                                                                path:
+                                                                    - key: api
+                                                                value:
+                                                                    string_match:
+                                                                        exact: metrics
+                                                            metadata_source: ROUTE
+                                                    principals:
+                                                        - or_ids:
+                                                            ids:
+                                                                - sourced_metadata:
+                                                                    metadata_matcher:
+                                                                        filter: envoy.filters.http.jwt_authn
+                                                                        path:
+                                                                            - key: issuer-one
+                                                                            - key: organization
+                                                                            - key: id
+                                                                        value:
+                                                                            string_match:
+                                                                                exact: customer-a
+                                                                - sourced_metadata:
+                                                                    metadata_matcher:
+                                                                        filter: envoy.filters.http.jwt_authn
+                                                                        path:
+                                                                            - key: issuer-two
+                                                                            - key: organization
+                                                                            - key: id
+                                                                        value:
+                                                                            string_match:
+                                                                                exact: customer-b
+                                                local-responses:
+                                                    permissions:
+                                                        - sourced_metadata:
+                                                            metadata_matcher:
+                                                                filter: envoy.filters.http.rbac
+                                                                path:
+                                                                    - key: api
+                                                                value:
+                                                                    string_match:
+                                                                        exact: __local
+                                                            metadata_source: ROUTE
+                                                    principals:
+                                                        - any: true
                     stat_prefix: ingress
                     stream_idle_timeout: 60s
           name: ingestion

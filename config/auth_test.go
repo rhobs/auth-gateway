@@ -29,8 +29,14 @@ func TestLoadAuthExample(t *testing.T) {
 	if len(config.Authenticators) != 2 || len(config.AuthorizationPolicies) != 2 {
 		t.Fatalf("auth config counts = %d authenticators, %d policies", len(config.Authenticators), len(config.AuthorizationPolicies))
 	}
+	if len(config.Processing) != 1 || config.Processing[0].Type != "attribute-mapper" {
+		t.Fatalf("processing config = %#v", config.Processing)
+	}
 	if got := config.Authenticators[0].JWT.Attributes["tenant_id"].ClaimPath; len(got) != 4 {
 		t.Fatalf("nested claim path = %#v", got)
+	}
+	if got := config.AuthorizationPolicies[0].Grants[0].Attributes["tenant_id"]; len(got) != 2 || got[0] != "client-123" {
+		t.Fatalf("authorization must use original IDs, got %#v", got)
 	}
 	if got := config.APIs[0].Routes[0].Processing.RequestHeaders; len(got) != 2 {
 		t.Fatalf("request header mappings = %#v", got)
@@ -41,7 +47,6 @@ func TestValidateAcceptsLiteralClaimKeysAndSingleJWTAllOf(t *testing.T) {
 	config := loadAuthExample(t)
 	config.Authenticators[0].JWT.Attributes["tenant_id"] = JWTAttribute{
 		ClaimPath: []string{"organization", "customer.id"},
-		Mappings:  map[string]string{"client-123": "team-a"},
 	}
 	config.Servers[0].Authentication = &Authentication{AllOf: []string{"internal-jwt"}}
 	config.Servers[0].Authorization = &Authorization{AllOf: []string{"metrics-writers", "logs-writers"}}
@@ -84,10 +89,22 @@ func TestValidateRejectsInvalidAuthenticationAndAuthorization(t *testing.T) {
 			c.Authenticators[0].JWT.Attributes["tenant_id"] = JWTAttribute{ClaimPath: []string{""}}
 		},
 		"empty mapping output": func(c *Config) {
-			c.Authenticators[0].JWT.Attributes["tenant_id"].Mappings["client-123"] = ""
+			c.Processing[0].Attributes["tenant_id"].Mappings["client-123"] = ""
 		},
 		"unsafe mapping output": func(c *Config) {
-			c.Authenticators[0].JWT.Attributes["tenant_id"].Mappings["client-123"] = "team-a\r\nInjected: yes"
+			c.Processing[0].Attributes["tenant_id"].Mappings["client-123"] = "team-a\r\nInjected: yes"
+		},
+		"duplicate processor name": func(c *Config) {
+			c.Processing = append(c.Processing, c.Processing[0])
+		},
+		"unsupported processor type": func(c *Config) {
+			c.Processing[0].Type = "unknown"
+		},
+		"invalid processor attribute": func(c *Config) {
+			c.Processing[0].Attributes["bad.name"] = AttributeMappings{Mappings: map[string]string{"from": "to"}}
+		},
+		"empty mapping source": func(c *Config) {
+			c.Processing[0].Attributes["tenant_id"].Mappings[""] = "team-a"
 		},
 		"duplicate policy": func(c *Config) {
 			c.AuthorizationPolicies[1].Name = c.AuthorizationPolicies[0].Name
@@ -150,9 +167,6 @@ func TestValidateRejectsInvalidAuthenticationAndAuthorization(t *testing.T) {
 			c.Servers[0].Authentication = nil
 			c.Servers[0].Authorization = nil
 		},
-		"missing any_of processing attribute": func(c *Config) {
-			delete(c.Authenticators[1].JWT.Attributes, "writer_id")
-		},
 	}
 	for name, change := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -165,12 +179,42 @@ func TestValidateRejectsInvalidAuthenticationAndAuthorization(t *testing.T) {
 	}
 }
 
+func TestAnyOfMayOmitUnusedHeaderAttributes(t *testing.T) {
+	config := loadAuthExample(t)
+	delete(config.Authenticators[1].JWT.Attributes, "writer_id")
+	if err := config.Validate(); err != nil {
+		t.Fatalf("Validate rejected an any_of authenticator that omits a route attribute: %v", err)
+	}
+
+	delete(config.Authenticators[0].JWT.Attributes, "writer_id")
+	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "does not provide processing attribute") {
+		t.Fatalf("Validate error = %v, want missing bound attribute error", err)
+	}
+}
+
+func TestDuplicateJWTIssuersAreRejectedPerServer(t *testing.T) {
+	config := loadAuthExample(t)
+	config.Authenticators[1].JWT.Issuer = config.Authenticators[0].JWT.Issuer
+	config.Authenticators[1].JWT.Audiences = []string{"another-audience"}
+	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "same issuer") {
+		t.Fatalf("Validate error = %v, want duplicate issuer binding error", err)
+	}
+
+	config = loadAuthExample(t)
+	config.Authenticators[1].JWT.Issuer = config.Authenticators[0].JWT.Issuer
+	config.Servers[0].Authentication = &Authentication{AnyOf: []string{"internal-jwt"}}
+	config.Servers[1].Authentication = &Authentication{AnyOf: []string{"external-jwt"}}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("same issuer on separate servers was rejected: %v", err)
+	}
+}
+
 func TestAuthenticationDefaultsDoNotMutateInput(t *testing.T) {
 	config := loadAuthExample(t)
 	defaulted := config.withDefaults()
 	defaulted.Authenticators[0].JWT.Audiences[0] = "changed"
 	defaulted.Authenticators[0].JWT.Attributes["tenant_id"].ClaimPath[0] = "changed"
-	defaulted.Authenticators[0].JWT.Attributes["tenant_id"].Mappings["client-123"] = "changed"
+	defaulted.Processing[0].Attributes["tenant_id"].Mappings["client-123"] = "changed"
 	defaulted.AuthorizationPolicies[0].Grants[0].APIs[0] = "changed"
 	defaulted.AuthorizationPolicies[0].Grants[0].Attributes["tenant_id"][0] = "changed"
 	defaulted.Servers[0].Authentication.AnyOf[0] = "changed"
@@ -179,7 +223,7 @@ func TestAuthenticationDefaultsDoNotMutateInput(t *testing.T) {
 
 	if config.Authenticators[0].JWT.Audiences[0] == "changed" ||
 		config.Authenticators[0].JWT.Attributes["tenant_id"].ClaimPath[0] == "changed" ||
-		config.Authenticators[0].JWT.Attributes["tenant_id"].Mappings["client-123"] == "changed" ||
+		config.Processing[0].Attributes["tenant_id"].Mappings["client-123"] == "changed" ||
 		config.AuthorizationPolicies[0].Grants[0].APIs[0] == "changed" ||
 		config.AuthorizationPolicies[0].Grants[0].Attributes["tenant_id"][0] == "changed" ||
 		config.Servers[0].Authentication.AnyOf[0] == "changed" ||
@@ -195,10 +239,31 @@ func TestGenerateIncludesAuthenticationAuthorizationAndProcessing(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Generate rejected the JWT example: %v", err)
 	}
-	if !strings.Contains(string(files["envoy.yaml"]), "envoy.filters.http.rbac") || !strings.Contains(string(files["envoy.yaml"]), "X-Scope-OrgID") {
-		t.Fatal("generated Envoy config is missing authorization or route processing")
+	manager := firstHTTPManager(t, files["envoy.yaml"])
+	want := []string{
+		"envoy.filters.http.jwt_authn", authorizationFilterName, attributeFilterName,
+		requiredHeaderFilterName, "envoy.filters.http.header_mutation", "envoy.filters.http.router",
 	}
-	if _, err := GenerateKubernetes(config); err != nil {
+	if got := httpFilterNames(manager); !equalStringSlices(got, want) {
+		t.Fatalf("JWT example filter order = %v, want %v", got, want)
+	}
+	resources, err := GenerateKubernetes(config)
+	if err != nil {
 		t.Fatalf("GenerateKubernetes rejected the JWT example: %v", err)
 	}
+	if resources.ConfigMap.Data["envoy.yaml"] == "" {
+		t.Fatal("generated JWT example has no Envoy configuration")
+	}
+}
+
+func equalStringSlices(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }

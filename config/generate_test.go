@@ -18,7 +18,7 @@ import (
 )
 
 func TestGenerateBuildsNamedAPIClustersAndRoutes(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestGenerateBuildsNamedAPIClustersAndRoutes(t *testing.T) {
 }
 
 func TestGenerateAllowsMethodsOnOnePath(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestGenerateAllowsMethodsOnOnePath(t *testing.T) {
 }
 
 func TestGenerateBuildsRoutesFromRouteLists(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "route-list.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "route-lists/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,10 +198,11 @@ func TestGenerateBuildsRoutesFromRouteLists(t *testing.T) {
 }
 
 func TestGenerateBuildsHTTPAndSNISelectedHTTPSChains(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "route-list.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "route-lists/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
+	config.Kubernetes = nil
 	tlsConfig := &ServerTLS{
 		Certificate: "/etc/gateway-certs/tls.crt",
 		PrivateKey:  "/etc/gateway-certs/tls.key",
@@ -282,7 +283,7 @@ func TestGenerateBuildsHTTPAndSNISelectedHTTPSChains(t *testing.T) {
 }
 
 func TestGenerateRejectsInvalidConfiguration(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +294,7 @@ func TestGenerateRejectsInvalidConfiguration(t *testing.T) {
 }
 
 func TestGenerateScopesAPIExposureToServers(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +401,7 @@ func TestGenerateScopesAPIExposureToServers(t *testing.T) {
 }
 
 func TestGenerateUsesAPIBindingOrder(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,7 +435,7 @@ func decodeHTTPManager(t testing.TB, chain *listener.FilterChain) *hcm.HttpConne
 	return &manager
 }
 
-func decodeBootstrap(t *testing.T, data []byte) *bootstrap.Bootstrap {
+func decodeBootstrap(t testing.TB, data []byte) *bootstrap.Bootstrap {
 	t.Helper()
 	var document map[string]any
 	if err := yaml.Unmarshal(data, &document); err != nil {

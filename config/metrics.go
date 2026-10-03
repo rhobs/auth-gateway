@@ -33,7 +33,14 @@ func generateOTelCollectorConfig() []byte {
 }
 
 func metricsResourceName(name string) string {
-	const suffix = "-metrics"
+	return resourceNameWithSuffix(name, "-metrics")
+}
+
+func processingResourceName(name string) string {
+	return resourceNameWithSuffix(name, "-processing")
+}
+
+func resourceNameWithSuffix(name, suffix string) string {
 	const maxDNSLabelLength = 63
 	if len(name)+len(suffix) <= maxDNSLabelLength {
 		return name + suffix

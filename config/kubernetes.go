@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path"
 	"sort"
-	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -18,13 +17,14 @@ import (
 
 const (
 	configDirectory          = "/etc/auth-gateway"
+	processingDirectory      = "/etc/auth-gateway/processing"
 	collectorConfigDirectory = "/etc/collector"
 )
 
 // KubernetesResources contains native objects generated for a gateway.
 type KubernetesResources struct {
 	ConfigMap              corev1.ConfigMap
-	LuaConfigMap           *corev1.ConfigMap
+	ProcessingConfigMap    *corev1.ConfigMap
 	OTelCollectorConfigMap corev1.ConfigMap
 	ServiceAccount         corev1.ServiceAccount
 	Deployment             appsv1.Deployment
@@ -34,8 +34,8 @@ type KubernetesResources struct {
 // Objects returns the resources in apply order.
 func (r *KubernetesResources) Objects() []runtime.Object {
 	objects := []runtime.Object{&r.ConfigMap}
-	if r.LuaConfigMap != nil {
-		objects = append(objects, r.LuaConfigMap)
+	if r.ProcessingConfigMap != nil {
+		objects = append(objects, r.ProcessingConfigMap)
 	}
 	return append(objects, &r.OTelCollectorConfigMap, &r.ServiceAccount, &r.Deployment, &r.Service)
 }
@@ -69,12 +69,28 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	if err != nil {
 		return nil, err
 	}
-	configFiles, luaFiles := splitLuaFiles(files)
+	configFiles := files
+	var processingConfigMap *corev1.ConfigMap
+	if processingData, ok := files[processingConfigFilename]; ok {
+		configFiles = make(map[string][]byte, len(files)-1)
+		for name, contents := range files {
+			if name != processingConfigFilename {
+				configFiles[name] = contents
+			}
+		}
+		processingConfigMap = &corev1.ConfigMap{
+			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      processingResourceName(c.Kubernetes.Name),
+				Namespace: c.Kubernetes.Namespace,
+			},
+			Data: map[string]string{processingConfigFilename: string(processingData)},
+		}
+	}
 	otelConfig := generateOTelCollectorConfig()
 
 	k := c.Kubernetes
 	configName := k.Name + "-config"
-	luaConfigName := k.Name + "-lua"
 	metricsName := metricsResourceName(k.Name)
 	labels := func() map[string]string {
 		return map[string]string{
@@ -86,14 +102,6 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
 		ObjectMeta: metav1.ObjectMeta{Name: configName, Namespace: k.Namespace},
 		Data:       stringFiles(configFiles),
-	}
-	var luaConfigMap *corev1.ConfigMap
-	if len(luaFiles) > 0 {
-		luaConfigMap = &corev1.ConfigMap{
-			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
-			ObjectMeta: metav1.ObjectMeta{Name: luaConfigName, Namespace: k.Namespace},
-			Data:       stringFiles(luaFiles),
-		}
 	}
 	otelConfigMap := corev1.ConfigMap{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
@@ -201,18 +209,18 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 			},
 		},
 	}
-	if luaConfigMap != nil {
+	if processingConfigMap != nil {
 		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
-			Name: "lua-config",
+			Name: "processing-config",
 			VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-				LocalObjectReference: corev1.LocalObjectReference{Name: luaConfigName},
-				Items:                configMapItems(luaFiles),
+				LocalObjectReference: corev1.LocalObjectReference{Name: processingConfigMap.Name},
+				Items:                []corev1.KeyToPath{{Key: processingConfigFilename, Path: processingConfigFilename}},
 			}},
 		})
 		envoy := &deployment.Spec.Template.Spec.Containers[0]
 		envoy.VolumeMounts = append(envoy.VolumeMounts, corev1.VolumeMount{
-			Name:      "lua-config",
-			MountPath: path.Join(configDirectory, "lua"),
+			Name:      "processing-config",
+			MountPath: processingDirectory,
 			ReadOnly:  true,
 		})
 	}
@@ -279,28 +287,12 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 
 	return &KubernetesResources{
 		ConfigMap:              configMap,
-		LuaConfigMap:           luaConfigMap,
+		ProcessingConfigMap:    processingConfigMap,
 		OTelCollectorConfigMap: otelConfigMap,
 		ServiceAccount:         serviceAccount,
 		Deployment:             deployment,
 		Service:                service,
 	}, nil
-}
-
-func splitLuaFiles(files map[string][]byte) (map[string][]byte, map[string][]byte) {
-	configFiles := make(map[string][]byte, len(files))
-	luaFiles := make(map[string][]byte)
-	for filename, contents := range files {
-		if strings.HasPrefix(filename, "lua/") {
-			// Mount the ECDS response, which contains the Lua source inline.
-			if strings.HasSuffix(filename, ".yaml") {
-				luaFiles[path.Base(filename)] = contents
-			}
-			continue
-		}
-		configFiles[filename] = contents
-	}
-	return configFiles, luaFiles
 }
 
 func sortedFileNames(files map[string][]byte) []string {

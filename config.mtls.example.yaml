@@ -21,9 +21,6 @@ authenticators:
       attributes:
         tenant_id:
           claim_path: [x, y, z, claim]
-          mappings:
-            client-123: team-a
-            client-456: team-b
         jwt_subject:
           claim_path: [sub]
 
@@ -34,9 +31,6 @@ authenticators:
         tenant_id:
           # This example requires exactly one URI SAN in the client certificate.
           certificate_field: uri_san
-          mappings:
-            "urn:example:writer:client-123": team-a
-            "urn:example:writer:client-456": team-b
         certificate_id:
           # Keep the certificate identity separate from the JWT subject.
           certificate_field: uri_san

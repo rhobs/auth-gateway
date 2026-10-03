@@ -51,6 +51,7 @@ type Config struct {
 	Listener              Listener              `yaml:"listener"`
 	Authenticators        []Authenticator       `yaml:"authenticators,omitempty"`
 	AuthorizationPolicies []AuthorizationPolicy `yaml:"authorization_policies,omitempty"`
+	Processing            []Processor           `yaml:"processing,omitempty"`
 	Servers               []Server              `yaml:"servers"`
 	APIs                  []API                 `yaml:"apis"`
 	Kubernetes            *Kubernetes           `yaml:"kubernetes,omitempty"`
@@ -239,6 +240,9 @@ func (c Config) Validate() error {
 	if err := c.validateServers(names); err != nil {
 		return err
 	}
+	if err := c.validateProcessing(); err != nil {
+		return err
+	}
 	if err := c.validateAuthentication(names); err != nil {
 		return err
 	}
@@ -312,6 +316,7 @@ func validateKubernetesResourceRequirements(requirements KubernetesResourceRequi
 func (c Config) withDefaults() Config {
 	c.Authenticators = cloneAuthenticators(c.Authenticators)
 	c.AuthorizationPolicies = cloneAuthorizationPolicies(c.AuthorizationPolicies)
+	c.Processing = cloneProcessors(c.Processing)
 	if c.Node.ID == "" {
 		c.Node.ID = defaultNodeID
 	}

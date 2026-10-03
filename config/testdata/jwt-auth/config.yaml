@@ -1,0 +1,44 @@
+version: 1
+
+authenticators:
+  - name: internal-jwt
+    jwt:
+      issuer: https://issuer-one.jwt.test
+      jwks_uri: https://issuer-one.jwt.test/jwks
+      audiences: [gateway-test]
+      attributes:
+        tenant_id:
+          claim_path: [organization, id]
+
+authorization_policies:
+  - name: metrics-writers
+    grants:
+      - authenticator: internal-jwt
+        apis: [metrics]
+        attributes:
+          tenant_id: [customer-a]
+
+apis:
+  - name: metrics
+    upstream:
+      address: thanos-receive
+      port: 19291
+    routes:
+      - methods: [GET]
+        path:
+          exact: /protected
+        rewrite:
+          path: /anything
+
+servers:
+  - hostname: writer.jwt.example.test
+    authentication:
+      any_of: [internal-jwt]
+    authorization:
+      any_of: [metrics-writers]
+    apis: [metrics]
+
+kubernetes:
+  name: auth-gateway
+  namespace: observability
+  image: envoyproxy/envoy:v1.39.1

@@ -23,7 +23,7 @@ apis:
 }
 
 func TestServerRouteConflictsAreScopedToBindings(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestServerRouteConflictsAreScopedToBindings(t *testing.T) {
 }
 
 func TestValidateRejectsInvalidUnboundAPI(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestServerTLSDefaults(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+			config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -92,7 +92,7 @@ func TestServerTLSDefaults(t *testing.T) {
 }
 
 func TestServerDefaultsDoNotMutateInput(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestValidateKubernetesTLSMounts(t *testing.T) {
 	}
 	for name, change := range tests {
 		t.Run(name, func(t *testing.T) {
-			config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+			config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -17,7 +17,7 @@ func readFixture(t testing.TB, name string) string {
 }
 
 func TestLoadAppliesDefaults(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "tls.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "server-tls/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestLoadRejectsInvalidYAML(t *testing.T) {
 }
 
 func TestValidateRejectsInvalidConfiguration(t *testing.T) {
-	exampleConfig := readFixture(t, "example.yaml")
+	exampleConfig := readFixture(t, "public-routing/config.yaml")
 	tests := map[string]func(*Config){
 		"unsupported version": func(c *Config) { c.Version = 2 },
 		"invalid listener port": func(c *Config) {
@@ -153,7 +153,7 @@ func TestValidateRejectsInvalidConfiguration(t *testing.T) {
 }
 
 func TestValidateRejectsInvalidRouteConfiguration(t *testing.T) {
-	routeListConfig := readFixture(t, "route-list.yaml")
+	routeListConfig := readFixture(t, "route-lists/config.yaml")
 	tests := map[string]func(*Config){
 		"multiple path matchers": func(c *Config) {
 			c.APIs[0].Routes[0].Path.Prefix = "/metrics/"
@@ -190,7 +190,7 @@ func TestValidateRejectsInvalidRouteConfiguration(t *testing.T) {
 
 func TestValidateServers(t *testing.T) {
 	newConfig := func() Config {
-		config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+		config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -258,7 +258,7 @@ func TestRootExampleGeneratesKubernetes(t *testing.T) {
 }
 
 func TestDefaultsDoNotMutateInput(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}

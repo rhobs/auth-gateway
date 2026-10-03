@@ -19,7 +19,7 @@ type Authenticator struct {
 	JWT  *JWTAuthenticator `yaml:"jwt,omitempty"`
 }
 
-// JWTAuthenticator validates one issuer and maps its verified claims.
+// JWTAuthenticator validates one issuer and declares attributes from its verified claims.
 type JWTAuthenticator struct {
 	Issuer     string                  `yaml:"issuer"`
 	JWKSURI    string                  `yaml:"jwks_uri"`
@@ -27,10 +27,21 @@ type JWTAuthenticator struct {
 	Attributes map[string]JWTAttribute `yaml:"attributes,omitempty"`
 }
 
-// JWTAttribute selects a literal object path and can translate source values.
+// JWTAttribute selects a literal object path in the verified JWT payload.
 type JWTAttribute struct {
-	ClaimPath []string          `yaml:"claim_path"`
-	Mappings  map[string]string `yaml:"mappings,omitempty"`
+	ClaimPath []string `yaml:"claim_path"`
+}
+
+// Processor transforms working attributes after authorization.
+type Processor struct {
+	Name       string                       `yaml:"name"`
+	Type       string                       `yaml:"type"`
+	Attributes map[string]AttributeMappings `yaml:"attributes,omitempty"`
+}
+
+// AttributeMappings defines exact string lookups for one working attribute.
+type AttributeMappings struct {
+	Mappings map[string]string `yaml:"mappings,omitempty"`
 }
 
 // AuthorizationPolicy contains allow grants for named APIs.
@@ -39,7 +50,7 @@ type AuthorizationPolicy struct {
 	Grants []AuthorizationGrant `yaml:"grants,omitempty"`
 }
 
-// AuthorizationGrant allows selected APIs for mapped attributes from one authenticator.
+// AuthorizationGrant allows selected APIs for raw verified claims from one authenticator.
 type AuthorizationGrant struct {
 	Authenticator string              `yaml:"authenticator"`
 	APIs          []string            `yaml:"apis"`
@@ -63,7 +74,7 @@ type RouteProcessing struct {
 	RequestHeaders []RequestHeaderMapping `yaml:"request_headers,omitempty"`
 }
 
-// RequestHeaderMapping sets an upstream header from a mapped identity attribute.
+// RequestHeaderMapping sets an upstream header from a processed attribute.
 type RequestHeaderMapping struct {
 	Name          string `yaml:"name"`
 	FromAttribute string `yaml:"from_attribute"`
@@ -148,11 +159,15 @@ func (c Config) validateAuthentication(apis map[string]API) error {
 	for i, server := range c.Servers {
 		name := fmt.Sprintf("servers[%d]", i)
 		if server.Authentication != nil {
-			if _, err := validateSelection(name+".authentication", server.Authentication.AnyOf, server.Authentication.AllOf, authenticatorNames(authenticators)); err != nil {
+			selected, err := validateSelection(name+".authentication", server.Authentication.AnyOf, server.Authentication.AllOf, authenticatorNames(authenticators))
+			if err != nil {
 				return err
 			}
 			if len(server.Authentication.AllOf) > 1 {
 				return fmt.Errorf("%s.authentication.all_of cannot contain more than one JWT authenticator", name)
+			}
+			if err := validateUniqueIssuerBindings(name+".authentication", selected, authenticators); err != nil {
+				return err
 			}
 		}
 		if server.Authorization != nil {
@@ -168,6 +183,62 @@ func (c Config) validateAuthentication(apis map[string]API) error {
 		}
 	}
 	return nil
+}
+
+func validateUniqueIssuerBindings(name string, selected []string, authenticators map[string]Authenticator) error {
+	seen := make(map[string]string, len(selected))
+	for _, authenticatorName := range selected {
+		issuer := authenticators[authenticatorName].JWT.Issuer
+		if previous, exists := seen[issuer]; exists {
+			return fmt.Errorf("%s binds authenticators %q and %q with the same issuer %q", name, previous, authenticatorName, issuer)
+		}
+		seen[issuer] = authenticatorName
+	}
+	return nil
+}
+
+func (c Config) validateProcessing() error {
+	seen := make(map[string]struct{}, len(c.Processing))
+	for i, processor := range c.Processing {
+		name := fmt.Sprintf("processing[%d]", i)
+		if !apiNamePattern.MatchString(processor.Name) {
+			return fmt.Errorf("%s.name must start with a lowercase letter and contain only lowercase letters, numbers, or hyphens", name)
+		}
+		if _, exists := seen[processor.Name]; exists {
+			return fmt.Errorf("duplicate processing name %q", processor.Name)
+		}
+		seen[processor.Name] = struct{}{}
+		if processor.Type != "attribute-mapper" {
+			return fmt.Errorf("%s.type must be %q", name, "attribute-mapper")
+		}
+		for _, attribute := range sortedKeys(processor.Attributes) {
+			attributeName := name + ".attributes." + attribute
+			if !attributeNamePattern.MatchString(attribute) {
+				return fmt.Errorf("%s is not a valid attribute name", attributeName)
+			}
+			for _, source := range sortedKeys(processor.Attributes[attribute].Mappings) {
+				target := processor.Attributes[attribute].Mappings[source]
+				if source == "" || strings.TrimSpace(source) != source || target == "" || strings.TrimSpace(target) != target {
+					return fmt.Errorf("%s.mappings keys and values must not be empty or have surrounding whitespace", attributeName)
+				}
+				if strings.ContainsAny(target, "\r\n\x00") {
+					return fmt.Errorf("%s.mappings values must not contain line breaks or NUL", attributeName)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (c Config) hasAttributeMappings() bool {
+	for _, processor := range c.Processing {
+		for _, attribute := range processor.Attributes {
+			if len(attribute.Mappings) > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c Config) hasAuthenticationConfig() bool {
@@ -226,16 +297,6 @@ func validateJWTAuthenticator(name string, jwt JWTAuthenticator) error {
 		}
 		if slices.Contains(mapping.ClaimPath, "") {
 			return fmt.Errorf("%s.attributes.%s.claim_path keys must not be empty", name, attribute)
-		}
-
-		for _, source := range sortedKeys(mapping.Mappings) {
-			target := mapping.Mappings[source]
-			if source == "" || target == "" || strings.TrimSpace(source) != source || strings.TrimSpace(target) != target {
-				return fmt.Errorf("%s.attributes.%s.mappings keys and values must not be empty or have surrounding whitespace", name, attribute)
-			}
-			if strings.ContainsAny(target, "\r\n\x00") {
-				return fmt.Errorf("%s.attributes.%s.mappings values must not contain line breaks or NUL", name, attribute)
-			}
 		}
 	}
 	return nil
@@ -319,22 +380,16 @@ func validateRouteAttributeSources(serverName string, server Server, apis map[st
 				return fmt.Errorf("%s processing on API %q route %d requires authentication", serverName, api.Name, routeIndex)
 			}
 			selected := server.Authentication.AnyOf
-			allOf := server.Authentication.AllOf != nil
-			if allOf {
+			if server.Authentication.AllOf != nil {
 				selected = server.Authentication.AllOf
 			}
 			for _, header := range route.Processing.RequestHeaders {
 				provided := false
 				for _, name := range selected {
-					_, exists := authenticators[name].JWT.Attributes[header.FromAttribute]
-					if allOf && exists {
+					if _, exists := authenticators[name].JWT.Attributes[header.FromAttribute]; exists {
 						provided = true
 						break
 					}
-					if !allOf && !exists {
-						return fmt.Errorf("%s authentication method %q does not provide processing attribute %q", serverName, name, header.FromAttribute)
-					}
-					provided = provided || exists
 				}
 				if !provided {
 					return fmt.Errorf("%s authentication does not provide processing attribute %q", serverName, header.FromAttribute)
@@ -415,11 +470,28 @@ func cloneAuthenticators(values []Authenticator) []Authenticator {
 				jwt.Attributes = make(map[string]JWTAttribute, len(value.JWT.Attributes))
 				for name, attribute := range value.JWT.Attributes {
 					attribute.ClaimPath = cloneSlice(attribute.ClaimPath)
-					attribute.Mappings = cloneMap(attribute.Mappings)
 					jwt.Attributes[name] = attribute
 				}
 			}
 			out[i].JWT = &jwt
+		}
+	}
+	return out
+}
+
+func cloneProcessors(values []Processor) []Processor {
+	if values == nil {
+		return nil
+	}
+	out := make([]Processor, len(values))
+	for i, value := range values {
+		out[i] = value
+		if value.Attributes != nil {
+			out[i].Attributes = make(map[string]AttributeMappings, len(value.Attributes))
+			for name, attribute := range value.Attributes {
+				attribute.Mappings = cloneMap(attribute.Mappings)
+				out[i].Attributes[name] = attribute
+			}
 		}
 	}
 	return out
