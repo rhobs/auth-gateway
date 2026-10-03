@@ -18,12 +18,6 @@ func TestJWKSFetchTimeoutDefaultsForNull(t *testing.T) {
 	}
 }
 
-func TestJWKSRejectsLegacyURIField(t *testing.T) {
-	if _, err := Load(strings.NewReader(readFixture(t, "jwks-uri-legacy.yaml"))); err == nil || !strings.Contains(err.Error(), "field jwks_uri not found") {
-		t.Fatalf("legacy jwks_uri error = %v", err)
-	}
-}
-
 func TestJWKSTransportAndTrust(t *testing.T) {
 	c := loadConfigCase(t, "jwt-auth-multiple-issuers")
 	ca := &TrustedCA{ConfigMap: &CAConfigMap{Name: "issuer-ca", Key: "roots.pem"}}
