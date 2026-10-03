@@ -97,6 +97,11 @@ func (c Config) caMounts() []CAConfigMap {
 			add(authenticator.JWT.JWKS.TrustedCA)
 		}
 	}
+	for _, api := range c.APIs {
+		if api.Upstream.TLSConfig != nil {
+			add(api.Upstream.TLSConfig.TrustedCA)
+		}
+	}
 	return mounts
 }
 

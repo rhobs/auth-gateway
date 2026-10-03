@@ -241,7 +241,7 @@ func TestGenerateIncludesAuthenticationAuthorizationAndProcessing(t *testing.T) 
 	}
 	manager := firstHTTPManager(t, files["envoy.yaml"])
 	want := []string{
-		"envoy.filters.http.jwt_authn", authorizationFilterName, attributeFilterName,
+		requestControlsFilterName, "envoy.filters.http.jwt_authn", authorizationFilterName, attributeFilterName,
 		requiredHeaderFilterName, "envoy.filters.http.header_mutation", "envoy.filters.http.router",
 	}
 	if got := httpFilterNames(manager); !equalStringSlices(got, want) {

@@ -40,13 +40,13 @@ func TestJWTFilterOrderAndNativeProviders(t *testing.T) {
 	generated := decodeBootstrap(t, files["envoy.yaml"])
 	manager := decodeHTTPManager(t, generated.StaticResources.Listeners[0].FilterChains[0])
 	if got, want := httpFilterNames(manager), []string{
-		"envoy.filters.http.jwt_authn", authorizationFilterName, "envoy.filters.http.router",
+		requestControlsFilterName, "envoy.filters.http.jwt_authn", authorizationFilterName, "envoy.filters.http.router",
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("plain JWT filter order = %v, want %v", got, want)
 	}
 
 	var jwtConfig jwt.JwtAuthentication
-	if err := manager.HttpFilters[0].GetTypedConfig().UnmarshalTo(&jwtConfig); err != nil {
+	if err := manager.HttpFilters[1].GetTypedConfig().UnmarshalTo(&jwtConfig); err != nil {
 		t.Fatal(err)
 	}
 	if len(jwtConfig.Providers) != 2 || len(jwtConfig.RequirementMap) != 2 {
@@ -139,7 +139,7 @@ func TestJWTProcessingAndHeaderFilterOrder(t *testing.T) {
 	}
 	plainManager := firstHTTPManager(t, plainFiles["envoy.yaml"])
 	if got, want := httpFilterNames(plainManager), []string{
-		"envoy.filters.http.jwt_authn", authorizationFilterName, "envoy.filters.http.router",
+		requestControlsFilterName, "envoy.filters.http.jwt_authn", authorizationFilterName, "envoy.filters.http.router",
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("plain JWT filters = %v, want %v", got, want)
 	}
@@ -154,7 +154,7 @@ func TestJWTProcessingAndHeaderFilterOrder(t *testing.T) {
 	}
 	directManager := firstHTTPManager(t, directFiles["envoy.yaml"])
 	wantDirect := []string{
-		"envoy.filters.http.jwt_authn", authorizationFilterName, attributeFilterName,
+		requestControlsFilterName, "envoy.filters.http.jwt_authn", authorizationFilterName, attributeFilterName,
 		requiredHeaderFilterName, "envoy.filters.http.header_mutation", "envoy.filters.http.router",
 	}
 	if got := httpFilterNames(directManager); !reflect.DeepEqual(got, wantDirect) {
@@ -297,7 +297,7 @@ func TestJWTProcessingUsesFileBasedECDSConfiguration(t *testing.T) {
 	manager := firstHTTPManager(t, files["envoy.yaml"])
 	assertNoLuaResources(t, files, manager)
 	want := []string{
-		"envoy.filters.http.jwt_authn", authorizationFilterName, attributeFilterName,
+		requestControlsFilterName, "envoy.filters.http.jwt_authn", authorizationFilterName, attributeFilterName,
 		requiredHeaderFilterName, "envoy.filters.http.header_mutation", "envoy.filters.http.router",
 	}
 	if got := httpFilterNames(manager); !reflect.DeepEqual(got, want) {

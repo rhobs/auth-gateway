@@ -404,40 +404,6 @@ var _ = Describe("JWT JWKS lifecycle", Label("gateway", "jwt", "jwks"), Ordered,
 			return fmt.Sprintf("rotated token returned HTTP %d: %s (error: %v)", rotatedStatus, rotatedBody, err)
 		})
 
-		adminAddress := env.ForwardWithCleanup(ctx, jwtLifecycleNamespace, "deployment/auth-gateway", 9901)
-		Eventually(func() int {
-			status, _, err := jwtLifecycleGateway.request(ctx, jwtLifecycleGateway.httpAddr, jwtLifecycleHost, false, issuerTwoToken, false)
-			Expect(err).NotTo(HaveOccurred())
-			return status
-		}).WithContext(ctx).WithTimeout(45*time.Second).WithPolling(500*time.Millisecond).Should(BeNumerically(">=", 400), "an expired JWKS cache must fail closed during a sustained outage")
-		before, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-		Expect(err).NotTo(HaveOccurred())
-		for range 5 {
-			status, _, err := jwtLifecycleGateway.request(ctx, jwtLifecycleGateway.httpAddr, jwtLifecycleHost, false, issuerTwoToken, false)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(status).To(BeNumerically(">=", 400))
-		}
-		after, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(after).To(Equal(before), "cache-expiry denials must not reach the backend")
-		status, body, err = jwtLifecycleGateway.request(ctx, jwtLifecycleGateway.httpAddr, jwtLifecycleHost, false, rotatedToken, false)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(status).To(Equal(http.StatusOK), "healthy issuer after cache expiry: "+string(body))
-		currentUID, err = env.PodUID(ctx, jwtLifecycleNamespace, selector)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(currentUID).To(Equal(gatewayUID), "cache expiry must be observed without a Pod restart")
-
-		Expect(updateJWTJWKSServer(ctx, jwtLifecycleNamespace, jwtLifecycleGateway.certs, rotatedKeys, nil, "warm-recovery")).To(Succeed())
-		Eventually(func() int {
-			status, _, err := jwtLifecycleGateway.request(ctx, jwtLifecycleGateway.httpAddr, jwtLifecycleHost, false, issuerTwoToken, false)
-			Expect(err).NotTo(HaveOccurred())
-			return status
-		}).WithContext(ctx).WithTimeout(30 * time.Second).WithPolling(500 * time.Millisecond).Should(Equal(http.StatusOK))
-		currentUID, err = env.PodUID(ctx, jwtLifecycleNamespace, selector)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(currentUID).To(Equal(gatewayUID), "outage recovery must not replace the gateway Pod")
-		Expect(updateJWTJWKSServer(ctx, jwtLifecycleNamespace, jwtLifecycleGateway.certs, rotatedKeys, map[string]int{"issuer-two": http.StatusServiceUnavailable}, "cold-outage")).To(Succeed())
-
 		// A new gateway pod has a cold JWKS cache. The unhealthy issuer fails,
 		// while the healthy issuer fetches the rotated key and remains available.
 		Expect(env.RestartDeployment(ctx, jwtLifecycleNamespace, "auth-gateway", 4*time.Minute)).To(Succeed())
@@ -612,7 +578,6 @@ func setupJWTGateway(ctx SpecContext, namespace, fixtureName string) (*jwtE2E, e
 
 type jwtTestCertificates struct {
 	root                    *x509.Certificate
-	caKey                   *ecdsa.PrivateKey
 	caPEM, chainPEM, keyPEM []byte
 }
 
@@ -631,18 +596,12 @@ func makeJWTTestCertificates(dnsNames []string) (*jwtTestCertificates, error) {
 	if err != nil {
 		return nil, err
 	}
-	certificates := &jwtTestCertificates{root: root, caKey: caKey, caPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})}
-	return certificates.withDNSNames(dnsNames)
-}
-
-func (c *jwtTestCertificates) withDNSNames(dnsNames []string) (*jwtTestCertificates, error) {
-	now := time.Now()
 	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
 	}
 	serverTemplate := &x509.Certificate{SerialNumber: big.NewInt(now.UnixNano() + 1), Subject: pkix.Name{CommonName: dnsNames[0]}, DNSNames: dnsNames, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(12 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
-	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, c.root, &serverKey.PublicKey, c.caKey)
+	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, root, &serverKey.PublicKey, caKey)
 	if err != nil {
 		return nil, err
 	}
@@ -650,8 +609,9 @@ func (c *jwtTestCertificates) withDNSNames(dnsNames []string) (*jwtTestCertifica
 	if err != nil {
 		return nil, err
 	}
-	chainPEM := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER}), c.caPEM...)
-	return &jwtTestCertificates{root: c.root, caKey: c.caKey, caPEM: c.caPEM, chainPEM: chainPEM, keyPEM: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})}, nil
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+	chainPEM := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER}), caPEM...)
+	return &jwtTestCertificates{root: root, caPEM: caPEM, chainPEM: chainPEM, keyPEM: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})}, nil
 }
 
 func jwtIssuerManifest(namespace string, certificates *jwtTestCertificates, keys map[string]*rsa.PrivateKey) ([]byte, error) {

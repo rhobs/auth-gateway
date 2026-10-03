@@ -24,8 +24,8 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if config.Node.ID != defaultNodeID || config.Node.Cluster != defaultNodeCluster {
 		t.Fatalf("node defaults = %#v", config.Node)
 	}
-	if config.Listener.Port != defaultListenerPort {
-		t.Fatalf("listener port default = %d, want %d", config.Listener.Port, defaultListenerPort)
+	if *config.Listener.Port != defaultListenerPort {
+		t.Fatalf("listener port default = %d, want %d", *config.Listener.Port, defaultListenerPort)
 	}
 
 	breakers := config.APIs[0].CircuitBreakers
@@ -45,8 +45,8 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	}
 
 	if config.Kubernetes.Replicas == nil || *config.Kubernetes.Replicas != defaultKubernetesReplicas ||
-		config.Kubernetes.ServicePort != defaultServicePort ||
-		config.Kubernetes.HTTPSServicePort != defaultHTTPSServicePort ||
+		*config.Kubernetes.ServicePort != defaultServicePort ||
+		*config.Kubernetes.HTTPSServicePort != defaultHTTPSServicePort ||
 		config.Kubernetes.OTelCollectorImage != defaultOTelCollectorImage {
 		t.Fatalf("Kubernetes defaults = %#v", config.Kubernetes)
 	}
@@ -102,7 +102,7 @@ func TestValidateRejectsInvalidConfiguration(t *testing.T) {
 	tests := map[string]func(*Config){
 		"unsupported version": func(c *Config) { c.Version = 2 },
 		"invalid listener port": func(c *Config) {
-			c.Listener.Port = 65536
+			c.Listener.Port = new(uint32(65536))
 		},
 		"no APIs":          func(c *Config) { c.APIs = nil },
 		"invalid API name": func(c *Config) { c.APIs[0].Name = "Metrics" },
@@ -135,7 +135,7 @@ func TestValidateRejectsInvalidConfiguration(t *testing.T) {
 		"empty image":       func(c *Config) { c.Kubernetes.Image = " " },
 		"negative replicas": func(c *Config) { c.Kubernetes.Replicas = new(int32(-1)) },
 		"invalid service port": func(c *Config) {
-			c.Kubernetes.ServicePort = 65536
+			c.Kubernetes.ServicePort = new(int32(65536))
 		},
 	}
 	for name, change := range tests {

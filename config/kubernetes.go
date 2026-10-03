@@ -58,14 +58,15 @@ func (r *KubernetesResources) YAML() ([]byte, error) {
 // GenerateKubernetes builds Kubernetes resources for Envoy and its metrics sidecar.
 // It does not contact a cluster, read credentials, or write files.
 func GenerateKubernetes(c Config) (*KubernetesResources, error) {
-	c = c.withDefaults()
-	if err := c.Validate(); err != nil {
+	effective, err := resolveConfig(c)
+	if err != nil {
 		return nil, err
 	}
+	c = effective.Config
 	if c.Kubernetes == nil {
 		return nil, fmt.Errorf("kubernetes settings are required")
 	}
-	files, err := Generate(c)
+	files, err := generate(effective)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +146,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 							"--log-level", "info",
 						},
 						Ports: []corev1.ContainerPort{
-							{Name: "http", ContainerPort: int32(c.Listener.Port), Protocol: corev1.ProtocolTCP},
+							{Name: "http", ContainerPort: int32(*c.Listener.Port), Protocol: corev1.ProtocolTCP},
 							{Name: "admin", ContainerPort: envoyAdminPort, Protocol: corev1.ProtocolTCP},
 						},
 						ReadinessProbe: &corev1.Probe{
@@ -267,7 +268,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	if c.hasHTTP() {
 		servicePorts = append(servicePorts, corev1.ServicePort{
 			Name:       "http",
-			Port:       k.ServicePort,
+			Port:       *k.ServicePort,
 			TargetPort: intstr.FromString("http"),
 			Protocol:   corev1.ProtocolTCP,
 		})
@@ -275,7 +276,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	if c.hasHTTPS() {
 		servicePorts = append(servicePorts, corev1.ServicePort{
 			Name:       "https",
-			Port:       k.HTTPSServicePort,
+			Port:       *k.HTTPSServicePort,
 			TargetPort: intstr.FromString("http"),
 			Protocol:   corev1.ProtocolTCP,
 		})

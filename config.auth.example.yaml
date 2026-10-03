@@ -1,11 +1,28 @@
 version: 1
 
-node:
-  id: auth-gateway
-  cluster: auth-gateway
+# Optional node identity, defaults shown.
+# node:
+#   id: auth-gateway
+#   cluster: auth-gateway
 
-listener:
-  port: 8080
+# Optional listener limits, defaults shown.
+# listener:
+#   port: 8080
+#   per_connection_buffer_limit_bytes: 1048576
+#   max_request_headers_kb: 32
+#   max_request_headers_count: 100
+#   request_headers_timeout: 5s
+#   request_timeout: 30s
+#   connection_idle_timeout: 60s
+#   stream_idle_timeout: 60s
+#   max_stream_duration: 30s
+#   stream_flush_timeout: 5s
+#   tls_handshake_timeout: 5s
+#   # Optional HTTP/2 overrides, Envoy defaults shown.
+#   http2:
+#     max_concurrent_streams: 1024
+#     initial_stream_window_size: 16777216
+#     initial_connection_window_size: 25165824
 
 authenticators:
   - name: internal-jwt
@@ -13,6 +30,11 @@ authenticators:
       issuer: https://sso.internal.example.com/realms/observability
       jwks:
         uri: https://sso.internal.example.com/realms/observability/protocol/openid-connect/certs
+        # cache_duration: 5m # Optional, default shown.
+        # fetch_timeout: 5s # Optional, default shown.
+        # connect_timeout: 5s # Optional, default shown.
+        # Custom trust replaces the image's system CA bundle.
+        # trusted_ca: {config_map: {name: internal-issuer-ca, key: ca.crt}}
       audiences: [observability-ingestion]
       attributes:
         tenant_id:
@@ -25,6 +47,9 @@ authenticators:
       issuer: https://sso.external.example.com/realms/observability
       jwks:
         uri: https://sso.external.example.com/realms/observability/protocol/openid-connect/certs
+        # cache_duration: 5m # Optional, default shown.
+        # fetch_timeout: 5s # Optional, default shown.
+        # connect_timeout: 5s # Optional, default shown.
       audiences: [observability-ingestion]
       attributes:
         tenant_id:
@@ -60,6 +85,24 @@ apis:
     upstream:
       address: thanos-receive
       port: 19291
+      # connect_timeout: 5s # Optional, default shown.
+      # per_connection_buffer_limit_bytes: 1048576 # Optional, default shown.
+      # http_protocol: http1 # Optional, default shown.
+      # Enable only when the backend serves TLS with this identity.
+      # tls_config:
+      #   server_name: receive.backend.example.com
+      #   trusted_ca: {config_map: {name: backend-ca, key: ca.crt}}
+    # Optional cluster circuit breakers, defaults shown. No retry policy is created.
+    # circuit_breakers:
+    #   max_connections: 1024
+    #   max_pending_requests: 1024
+    #   max_requests: 1024
+    #   max_retries: 0
+    # Optional API timeouts, defaults shown.
+    # timeouts:
+    #   response_timeout: 30s
+    #   idle_timeout: 60s # Inherits listener.stream_idle_timeout.
+    #   max_stream_duration: 30s # Inherits listener.max_stream_duration.
     routes:
       - methods: [POST]
         path:
@@ -77,10 +120,16 @@ apis:
     upstream:
       address: loki
       port: 3100
+      # connect_timeout: 5s # Optional, default shown.
+      # http_protocol: http1 # Optional, default shown.
+    # timeouts: # Optional API overrides, default shown.
+    #   response_timeout: 30s
     routes:
       - methods: [POST]
         path:
           prefix: /logs/otlp/
+        # timeouts: # Optional per-route overrides, inherit the API by default.
+        #   response_timeout: 30s
         rewrite:
           prefix: /otlp/
         # Processing is optional; each route selects its own outputs.
@@ -114,8 +163,8 @@ servers:
   - hostname: write.auth.example.com
     tls_config:
       secret: write-gateway-tls
-      certificate: /etc/write-gateway-tls/tls.crt
-      private_key: /etc/write-gateway-tls/tls.key
+      # certificate: /etc/write-gateway-tls/tls.crt # Optional, derived from secret.
+      # private_key: /etc/write-gateway-tls/tls.key # Optional, derived from secret.
     authentication:
       any_of: [internal-jwt, external-jwt]
     authorization:
@@ -126,14 +175,15 @@ kubernetes:
   name: auth-gateway
   namespace: observability
   image: envoyproxy/envoy:v1.39.1
-  otel_collector_image: otel/opentelemetry-collector-contrib:0.135.0
-  replicas: 2
-  service_port: 80
-  https_service_port: 443
-  resources:
-    requests:
-      cpu: 50m
-      memory: 64Mi
-    limits:
-      cpu: "1"
-      memory: 256Mi
+  # Optional Kubernetes settings, defaults shown.
+  # otel_collector_image: otel/opentelemetry-collector-contrib:0.135.0
+  # replicas: 2
+  # service_port: 80
+  # https_service_port: 443 # Only emitted when HTTPS servers exist.
+  # resources:
+  #   requests:
+  #     cpu: 50m
+  #     memory: 64Mi
+  #   limits:
+  #     cpu: "1"
+  #     memory: 256Mi

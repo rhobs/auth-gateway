@@ -426,6 +426,9 @@ func validHeaderFieldName(name string) bool {
 }
 
 func forbiddenIdentityHeader(name string) bool {
+	if isRequestControlHeader(name) {
+		return true
+	}
 	switch name {
 	case "authorization", "proxy-authorization", "cookie", "host", "connection", "keep-alive", "proxy-connection",
 		"transfer-encoding", "content-length", "trailer", "te", "upgrade", "forwarded", "x-forwarded-for",

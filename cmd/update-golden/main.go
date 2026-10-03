@@ -16,6 +16,7 @@ var cases = []string{
 	"jwt-auth-with-headers",
 	"jwt-auth-with-mappings",
 	"jwt-auth-multiple-issuers",
+	"production-tuning",
 }
 
 func main() {

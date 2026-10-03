@@ -98,10 +98,10 @@ func TestServerDefaultsDoNotMutateInput(t *testing.T) {
 	}
 	config.Servers[0].TLSConfig = &ServerTLS{Secret: "server-tls"}
 	defaulted := config.withDefaults()
-	if config.Servers[0].TLSConfig.Certificate != "" || config.Servers[0].TLSConfig.PrivateKey != "" || config.Kubernetes.HTTPSServicePort != 0 {
+	if config.Servers[0].TLSConfig.Certificate != "" || config.Servers[0].TLSConfig.PrivateKey != "" || config.Kubernetes.HTTPSServicePort != nil {
 		t.Fatal("defaults changed the input TLS configuration")
 	}
-	if defaulted.Kubernetes.HTTPSServicePort != defaultHTTPSServicePort {
+	if *defaulted.Kubernetes.HTTPSServicePort != defaultHTTPSServicePort {
 		t.Fatal("HTTPS Service port was not defaulted")
 	}
 	defaulted.Servers[0].APIs[0] = "other"
@@ -141,15 +141,15 @@ func TestValidateKubernetesTLSMounts(t *testing.T) {
 		"conflicting filenames for a shared Secret": func(c *Config) {
 			c.Servers[1].TLSConfig = &ServerTLS{Secret: "tls-one", Certificate: "/etc/tls-one/server.pem", PrivateKey: "/etc/tls-one/key.pem"}
 		},
-		"metrics port conflict": func(c *Config) { c.Kubernetes.HTTPSServicePort = 8889 },
+		"metrics port conflict": func(c *Config) { c.Kubernetes.HTTPSServicePort = new(int32(8889)) },
 		"HTTP and HTTPS port conflict": func(c *Config) {
 			c.Servers = append(c.Servers, Server{Hostname: "http.example.com", APIs: []string{"metrics"}})
-			c.Kubernetes.HTTPSServicePort = 80
+			c.Kubernetes.HTTPSServicePort = new(int32(80))
 		},
 		"HTTPS port without HTTPS": func(c *Config) {
 			c.Servers[0].TLSConfig = nil
 			c.Servers[1].TLSConfig = nil
-			c.Kubernetes.HTTPSServicePort = 443
+			c.Kubernetes.HTTPSServicePort = new(int32(443))
 		},
 	}
 	for name, change := range tests {

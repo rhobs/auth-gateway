@@ -67,7 +67,18 @@ type EnvoyNode struct {
 
 // Listener describes the socket shared by the configured servers.
 type Listener struct {
-	Port uint32 `yaml:"port,omitempty"`
+	Port                          *uint32       `yaml:"port,omitempty"`
+	PerConnectionBufferLimitBytes *uint32       `yaml:"per_connection_buffer_limit_bytes,omitempty"`
+	MaxRequestHeadersKB           *uint32       `yaml:"max_request_headers_kb,omitempty"`
+	MaxRequestHeadersCount        *uint32       `yaml:"max_request_headers_count,omitempty"`
+	RequestHeadersTimeout         *Duration     `yaml:"request_headers_timeout,omitempty"`
+	RequestTimeout                *Duration     `yaml:"request_timeout,omitempty"`
+	ConnectionIdleTimeout         *Duration     `yaml:"connection_idle_timeout,omitempty"`
+	StreamIdleTimeout             *Duration     `yaml:"stream_idle_timeout,omitempty"`
+	MaxStreamDuration             *Duration     `yaml:"max_stream_duration,omitempty"`
+	StreamFlushTimeout            *Duration     `yaml:"stream_flush_timeout,omitempty"`
+	TLSHandshakeTimeout           *Duration     `yaml:"tls_handshake_timeout,omitempty"`
+	HTTP2                         *HTTP2Options `yaml:"http2,omitempty"`
 }
 
 // API describes one upstream and its routes.
@@ -76,6 +87,7 @@ type API struct {
 	Routes          []Route               `yaml:"routes"`
 	Upstream        Upstream              `yaml:"upstream"`
 	CircuitBreakers *CircuitBreakerConfig `yaml:"circuit_breakers,omitempty"`
+	Timeouts        *RouteTimeouts        `yaml:"timeouts,omitempty"`
 }
 
 // CircuitBreakerConfig describes Envoy circuit breaker thresholds for an API's upstream cluster.
@@ -92,6 +104,7 @@ type Route struct {
 	Path       PathMatch        `yaml:"path"`
 	Rewrite    *PathRewrite     `yaml:"rewrite,omitempty"`
 	Processing *RouteProcessing `yaml:"processing,omitempty"`
+	Timeouts   *RouteTimeouts   `yaml:"timeouts,omitempty"`
 }
 
 // PathMatch selects one exact path, path prefix, or safe regular expression.
@@ -116,8 +129,13 @@ type RegexRewrite struct {
 
 // Upstream describes the service that receives routed requests.
 type Upstream struct {
-	Address string `yaml:"address"`
-	Port    uint32 `yaml:"port"`
+	Address                       string        `yaml:"address"`
+	Port                          uint32        `yaml:"port"`
+	ConnectTimeout                *Duration     `yaml:"connect_timeout,omitempty"`
+	PerConnectionBufferLimitBytes *uint32       `yaml:"per_connection_buffer_limit_bytes,omitempty"`
+	HTTPProtocol                  string        `yaml:"http_protocol,omitempty"`
+	HTTP2                         *HTTP2Options `yaml:"http2,omitempty"`
+	TLSConfig                     *UpstreamTLS  `yaml:"tls_config,omitempty"`
 }
 
 // Kubernetes contains the settings needed to generate a Deployment and Service.
@@ -128,8 +146,8 @@ type Kubernetes struct {
 	// OTelCollectorImage defaults to the OpenTelemetry Collector Contrib image used by the PoC.
 	OTelCollectorImage string                         `yaml:"otel_collector_image,omitempty"`
 	Replicas           *int32                         `yaml:"replicas,omitempty"`
-	ServicePort        int32                          `yaml:"service_port,omitempty"`
-	HTTPSServicePort   int32                          `yaml:"https_service_port,omitempty"`
+	ServicePort        *int32                         `yaml:"service_port,omitempty"`
+	HTTPSServicePort   *int32                         `yaml:"https_service_port,omitempty"`
 	Resources          KubernetesResourceRequirements `yaml:"resources,omitempty"`
 }
 
@@ -182,7 +200,11 @@ func Load(r io.Reader) (Config, error) {
 
 // Validate checks the public configuration contract.
 func (c Config) Validate() error {
-	c = c.withDefaults()
+	_, err := resolveConfig(c)
+	return err
+}
+
+func (c Config) validate() error {
 	if c.Version != configVersion {
 		return fmt.Errorf("version must be %d", configVersion)
 	}
@@ -192,8 +214,8 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.Node.Cluster) == "" {
 		return fmt.Errorf("node.cluster must not be empty")
 	}
-	if c.Listener.Port == 0 || c.Listener.Port > 65535 {
-		return fmt.Errorf("listener.port must be between 1 and 65535")
+	if err := c.Listener.validate(c.Kubernetes != nil); err != nil {
+		return err
 	}
 	if len(c.APIs) == 0 {
 		return fmt.Errorf("at least one API must be configured")
@@ -216,6 +238,12 @@ func (c Config) Validate() error {
 		if api.Upstream.Port == 0 || api.Upstream.Port > 65535 {
 			return fmt.Errorf("%s.upstream.port must be between 1 and 65535", name)
 		}
+		if err := api.Upstream.validate(name+".upstream", c.Kubernetes != nil); err != nil {
+			return err
+		}
+		if err := validateRouteTimeouts(name+".timeouts", api.Timeouts); err != nil {
+			return err
+		}
 
 		if len(api.Routes) == 0 {
 			return fmt.Errorf("%s.routes must contain at least one route", name)
@@ -223,6 +251,9 @@ func (c Config) Validate() error {
 		routes := make(map[string]struct{}, len(api.Routes))
 		for routeIndex, route := range api.Routes {
 			routeName := fmt.Sprintf("%s.routes[%d]", name, routeIndex)
+			if err := validateRouteTimeouts(routeName+".timeouts", route.Timeouts); err != nil {
+				return err
+			}
 			if err := validateRouteProcessing(routeName+".processing", route.Processing); err != nil {
 				return err
 			}
@@ -272,28 +303,28 @@ func (c Config) Validate() error {
 		if c.Kubernetes.Replicas != nil && *c.Kubernetes.Replicas < 0 {
 			return fmt.Errorf("kubernetes.replicas must not be negative")
 		}
-		if c.Kubernetes.ServicePort < 1 || c.Kubernetes.ServicePort > 65535 {
+		if *c.Kubernetes.ServicePort < 1 || *c.Kubernetes.ServicePort > 65535 {
 			if c.hasHTTP() {
 				return fmt.Errorf("kubernetes.service_port must be between 1 and 65535")
 			}
 		}
-		if c.hasHTTP() && c.Kubernetes.ServicePort == defaultOTelMetricsPort {
+		if c.hasHTTP() && *c.Kubernetes.ServicePort == defaultOTelMetricsPort {
 			return fmt.Errorf("kubernetes.service_port must not conflict with the metrics port")
 		}
 		if c.hasHTTPS() {
 			if err := c.validateTLSMounts(); err != nil {
 				return err
 			}
-			if c.Kubernetes.HTTPSServicePort < 1 || c.Kubernetes.HTTPSServicePort > 65535 {
+			if *c.Kubernetes.HTTPSServicePort < 1 || *c.Kubernetes.HTTPSServicePort > 65535 {
 				return fmt.Errorf("kubernetes.https_service_port must be between 1 and 65535")
 			}
-			if c.Kubernetes.HTTPSServicePort == defaultOTelMetricsPort {
+			if *c.Kubernetes.HTTPSServicePort == defaultOTelMetricsPort {
 				return fmt.Errorf("kubernetes.https_service_port must not conflict with the metrics port")
 			}
-			if c.hasHTTP() && c.Kubernetes.HTTPSServicePort == c.Kubernetes.ServicePort {
+			if c.hasHTTP() && *c.Kubernetes.HTTPSServicePort == *c.Kubernetes.ServicePort {
 				return fmt.Errorf("kubernetes.service_port and kubernetes.https_service_port must differ")
 			}
-		} else if c.Kubernetes.HTTPSServicePort != 0 {
+		} else if c.Kubernetes.HTTPSServicePort != nil {
 			return fmt.Errorf("kubernetes.https_service_port requires an HTTPS server")
 		}
 		if err := validateKubernetesResourceRequirements(c.Kubernetes.Resources); err != nil {
@@ -338,9 +369,7 @@ func (c Config) withDefaults() Config {
 	if c.Node.Cluster == "" {
 		c.Node.Cluster = defaultNodeCluster
 	}
-	if c.Listener.Port == 0 {
-		c.Listener.Port = defaultListenerPort
-	}
+	c.Listener = c.Listener.withDefaults()
 	if c.Servers != nil {
 		servers := make([]Server, len(c.Servers))
 		for i, server := range c.Servers {
@@ -359,10 +388,13 @@ func (c Config) withDefaults() Config {
 		apis := make([]API, len(c.APIs))
 		for i, api := range c.APIs {
 			apis[i] = api
+			apis[i].Upstream = api.Upstream.withDefaults()
+			apis[i].Timeouts = cloneRouteTimeouts(api.Timeouts)
 			if api.Routes != nil {
 				apis[i].Routes = make([]Route, len(api.Routes))
 				for j, route := range api.Routes {
 					apis[i].Routes[j] = route
+					apis[i].Routes[j].Timeouts = cloneRouteTimeouts(route.Timeouts)
 					apis[i].Routes[j].Methods = append([]string(nil), route.Methods...)
 					if route.Processing != nil {
 						processing := *route.Processing
@@ -395,11 +427,10 @@ func (c Config) withDefaults() Config {
 			replicas := *kubernetes.Replicas
 			c.Kubernetes.Replicas = &replicas
 		}
-		if c.Kubernetes.ServicePort == 0 {
-			c.Kubernetes.ServicePort = defaultServicePort
-		}
-		if c.hasHTTPS() && c.Kubernetes.HTTPSServicePort == 0 {
-			c.Kubernetes.HTTPSServicePort = defaultHTTPSServicePort
+		c.Kubernetes.ServicePort = defaultValue(kubernetes.ServicePort, int32(defaultServicePort))
+		c.Kubernetes.HTTPSServicePort = clonePointer(kubernetes.HTTPSServicePort)
+		if c.hasHTTPS() {
+			c.Kubernetes.HTTPSServicePort = defaultValue(kubernetes.HTTPSServicePort, int32(defaultHTTPSServicePort))
 		}
 		if c.Kubernetes.OTelCollectorImage == "" {
 			c.Kubernetes.OTelCollectorImage = defaultOTelCollectorImage

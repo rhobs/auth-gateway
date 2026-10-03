@@ -114,7 +114,7 @@ func generatedGatewayManifest(namespace string, useTLS bool) []byte {
 			}
 		}
 		gatewayConfig.Servers = servers
-		gatewayConfig.Kubernetes.HTTPSServicePort = 0
+		gatewayConfig.Kubernetes.HTTPSServicePort = nil
 	}
 	resources, err := config.GenerateKubernetes(gatewayConfig)
 	Expect(err).NotTo(HaveOccurred())

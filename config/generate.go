@@ -26,6 +26,7 @@ import (
 	inspector "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	upstreamhttp "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 	matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"go.yaml.in/yaml/v3"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -51,11 +52,19 @@ const (
 
 // Generate builds Envoy bootstrap files from the high-level gateway configuration.
 func Generate(c Config) (map[string][]byte, error) {
-	c = c.withDefaults()
-	if err := c.Validate(); err != nil {
+	effective, err := resolveConfig(c)
+	if err != nil {
 		return nil, err
 	}
-	clusters := apiClusters(c.APIs)
+	return generate(effective)
+}
+
+func generate(effective effectiveConfig) (map[string][]byte, error) {
+	c := effective.Config
+	clusters, err := apiClusters(c.APIs)
+	if err != nil {
+		return nil, err
+	}
 	jwks, err := jwksClusters(c.Authenticators, c.Servers)
 	if err != nil {
 		return nil, err
@@ -107,6 +116,7 @@ func Generate(c Config) (map[string][]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("servers[%d] downstream TLS context: %w", i, err)
 		}
+		chain.TransportSocketConnectTimeout = c.Listener.TLSHandshakeTimeout.protobuf()
 		filterChains = append(filterChains, chain)
 	}
 	if len(httpHosts) > 0 {
@@ -137,8 +147,8 @@ func Generate(c Config) (map[string][]byte, error) {
 		StaticResources: &bootstrap.Bootstrap_StaticResources{
 			Listeners: []*listener.Listener{{
 				Name:                          "ingestion",
-				Address:                       socket(envoyListenerAddress, c.Listener.Port),
-				PerConnectionBufferLimitBytes: wrapperspb.UInt32(1048576),
+				Address:                       socket(envoyListenerAddress, *c.Listener.Port),
+				PerConnectionBufferLimitBytes: optionalUint32(c.Listener.PerConnectionBufferLimitBytes),
 				ListenerFilters:               listenerFilters,
 				FilterChains:                  filterChains,
 			}},
@@ -199,7 +209,11 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 	if err != nil {
 		return nil, err
 	}
-	filters := make([]*hcm.HttpFilter, 0, 8)
+	controls, err := packEnvoy(requestControlMutations())
+	if err != nil {
+		return nil, fmt.Errorf("encode request-control header removal: %w", err)
+	}
+	filters := []*hcm.HttpFilter{{Name: requestControlsFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: controls}}}
 	if hasProtectedHosts(hosts) {
 		jwtConfig, err := jwtFilterConfig(c)
 		if err != nil {
@@ -250,15 +264,19 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 	return &hcm.HttpConnectionManager{
 		StatPrefix:            "ingress",
 		CodecType:             hcm.HttpConnectionManager_AUTO,
-		MaxRequestHeadersKb:   wrapperspb.UInt32(32),
-		RequestHeadersTimeout: durationpb.New(5 * time.Second),
-		StreamIdleTimeout:     durationpb.New(time.Minute),
+		MaxRequestHeadersKb:   optionalUint32(c.Listener.MaxRequestHeadersKB),
+		RequestHeadersTimeout: c.Listener.RequestHeadersTimeout.protobuf(),
+		StreamIdleTimeout:     c.Listener.StreamIdleTimeout.protobuf(),
+		StreamFlushTimeout:    c.Listener.StreamFlushTimeout.protobuf(),
+		DrainTimeout:          durationpb.New(5 * time.Second),
+		Http2ProtocolOptions:  c.Listener.HTTP2.envoy(),
 		CommonHttpProtocolOptions: &core.HttpProtocolOptions{
-			IdleTimeout:                  durationpb.New(time.Minute),
-			MaxStreamDuration:            durationpb.New(30 * time.Second),
+			IdleTimeout:                  c.Listener.ConnectionIdleTimeout.protobuf(),
+			MaxStreamDuration:            c.Listener.MaxStreamDuration.protobuf(),
+			MaxHeadersCount:              optionalUint32(c.Listener.MaxRequestHeadersCount),
 			HeadersWithUnderscoresAction: core.HttpProtocolOptions_REJECT_REQUEST,
 		},
-		RequestTimeout:               durationpb.New(30 * time.Second),
+		RequestTimeout:               c.Listener.RequestTimeout.protobuf(),
 		NormalizePath:                wrapperspb.Bool(false),
 		PathWithEscapedSlashesAction: hcm.HttpConnectionManager_KEEP_UNCHANGED,
 		RouteSpecifier: &hcm.HttpConnectionManager_RouteConfig{RouteConfig: &route.RouteConfiguration{
@@ -782,16 +800,19 @@ func apiRoutesWithMetadata(apis []API, includeMetadata bool) []*route.Route {
 			for methodIndex, method := range apiRoute.Methods {
 				name := apiRouteName(apiIndex, api.Name, routeIndex, methodIndex)
 				action := &route.RouteAction{
-					ClusterSpecifier: &route.RouteAction_Cluster{Cluster: "api-" + api.Name},
-					Timeout:          durationpb.New(30 * time.Second),
+					ClusterSpecifier:  &route.RouteAction_Cluster{Cluster: "api-" + api.Name},
+					Timeout:           apiRoute.Timeouts.ResponseTimeout.protobuf(),
+					IdleTimeout:       apiRoute.Timeouts.IdleTimeout.protobuf(),
+					MaxStreamDuration: &route.RouteAction_MaxStreamDuration{MaxStreamDuration: apiRoute.Timeouts.MaxStreamDuration.protobuf()},
 				}
 				applyPathRewrite(action, apiRoute.Rewrite)
 				match := pathMatch(apiRoute.Path)
 				match.Headers = []*route.HeaderMatcher{methodHeader(method)}
 				routeConfig := &route.Route{
-					Name:   name,
-					Match:  match,
-					Action: &route.Route_Route{Route: action},
+					Name:       name,
+					StatPrefix: name,
+					Match:      match,
+					Action:     &route.Route_Route{Route: action},
 				}
 				if includeMetadata {
 					routeConfig.Metadata = apiRouteMetadata(api.Name)
@@ -967,15 +988,28 @@ func applyPathRewrite(action *route.RouteAction, rewrite *PathRewrite) {
 	}
 }
 
-func apiClusters(apis []API) []*cluster.Cluster {
+func apiClusters(apis []API) ([]*cluster.Cluster, error) {
 	clusters := make([]*cluster.Cluster, 0, len(apis))
 	for _, api := range apis {
 		name := "api-" + api.Name
-		clusters = append(clusters, &cluster.Cluster{
+		protocol := &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig{ProtocolConfig: &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig_HttpProtocolOptions{HttpProtocolOptions: &core.Http1ProtocolOptions{}}}
+		if api.Upstream.HTTPProtocol == "http2" {
+			http2 := api.Upstream.HTTP2.envoy()
+			if http2 == nil {
+				http2 = &core.Http2ProtocolOptions{}
+			}
+			protocol.ProtocolConfig = &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{Http2ProtocolOptions: http2}
+		}
+		options, err := packEnvoy(&upstreamhttp.HttpProtocolOptions{UpstreamProtocolOptions: &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig_{ExplicitHttpConfig: protocol}})
+		if err != nil {
+			return nil, fmt.Errorf("API %q upstream protocol: %w", api.Name, err)
+		}
+		upstream := &cluster.Cluster{
 			Name:                          name,
-			ConnectTimeout:                durationpb.New(5 * time.Second),
+			ConnectTimeout:                api.Upstream.ConnectTimeout.protobuf(),
 			ClusterDiscoveryType:          &cluster.Cluster_Type{Type: cluster.Cluster_STRICT_DNS},
-			PerConnectionBufferLimitBytes: wrapperspb.UInt32(1048576),
+			PerConnectionBufferLimitBytes: optionalUint32(api.Upstream.PerConnectionBufferLimitBytes),
+			TypedExtensionProtocolOptions: map[string]*anypb.Any{"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": options},
 			CircuitBreakers:               envoyCircuitBreakers(api.CircuitBreakers),
 			LoadAssignment: &endpoint.ClusterLoadAssignment{
 				ClusterName: name,
@@ -987,9 +1021,24 @@ func apiClusters(apis []API) []*cluster.Cluster {
 					}},
 				}},
 			},
-		})
+		}
+		if tls := api.Upstream.TLSConfig; tls != nil {
+			identity := tls.ServerName
+			if identity == "" {
+				identity = api.Upstream.Address
+			}
+			alpn := []string{"http/1.1"}
+			if api.Upstream.HTTPProtocol == "http2" {
+				alpn = []string{"h2"}
+			}
+			upstream.TransportSocket, err = verifiedTLS(identity, tls.TrustedCA, alpn)
+			if err != nil {
+				return nil, fmt.Errorf("API %q upstream TLS: %w", api.Name, err)
+			}
+		}
+		clusters = append(clusters, upstream)
 	}
-	return clusters
+	return clusters, nil
 }
 
 func socket(address string, port uint32) *core.Address {
