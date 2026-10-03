@@ -141,9 +141,14 @@ func generate(effective effectiveConfig) (map[string][]byte, error) {
 		}}
 	}
 
+	overload, err := overloadManager(c.Overload)
+	if err != nil {
+		return nil, err
+	}
 	bootstrapConfig := &bootstrap.Bootstrap{
-		Node:  &core.Node{Id: c.Node.ID, Cluster: c.Node.Cluster},
-		Admin: &bootstrap.Admin{Address: socket(envoyAdminAddress, envoyAdminPort)},
+		OverloadManager: overload,
+		Node:            &core.Node{Id: c.Node.ID, Cluster: c.Node.Cluster},
+		Admin:           &bootstrap.Admin{Address: socket(envoyAdminAddress, envoyAdminPort)},
 		StaticResources: &bootstrap.Bootstrap_StaticResources{
 			Listeners: []*listener.Listener{{
 				Name:                          "ingestion",

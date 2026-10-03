@@ -445,6 +445,7 @@ data:
           scrape_configs:
             - job_name: auth-gateway
               scrape_interval: 30s
+              scrape_timeout: 10s
               metrics_path: /stats/prometheus
               static_configs:
                 - targets:

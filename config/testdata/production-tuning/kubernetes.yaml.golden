@@ -10,6 +10,28 @@ data:
     node:
         cluster: auth-gateway
         id: auth-gateway
+    overload_manager:
+        actions:
+            - name: envoy.overload_actions.shrink_heap
+              triggers:
+                - name: envoy.resource_monitors.fixed_heap
+                  threshold:
+                    value: 0.9
+            - name: envoy.overload_actions.stop_accepting_requests
+              triggers:
+                - name: envoy.resource_monitors.fixed_heap
+                  threshold:
+                    value: 0.95
+        refresh_interval: 0.250s
+        resource_monitors:
+            - name: envoy.resource_monitors.fixed_heap
+              typed_config:
+                '@type': type.googleapis.com/envoy.extensions.resource_monitors.fixed_heap.v3.FixedHeapConfig
+                max_heap_size_bytes: "201326592"
+            - name: envoy.resource_monitors.global_downstream_max_connections
+              typed_config:
+                '@type': type.googleapis.com/envoy.extensions.resource_monitors.downstream_connections.v3.DownstreamConnectionsConfig
+                max_active_downstream_connections: "2048"
     static_resources:
         clusters:
             - circuit_breakers:
@@ -391,7 +413,8 @@ data:
         config:
           scrape_configs:
             - job_name: auth-gateway
-              scrape_interval: 30s
+              scrape_interval: 1500ms
+              scrape_timeout: 250ms
               metrics_path: /stats/prometheus
               static_configs:
                 - targets:
@@ -449,6 +472,8 @@ spec:
         - /etc/auth-gateway/envoy.yaml
         - --log-level
         - info
+        - --concurrency
+        - "2"
         image: envoyproxy/envoy:v1.39.1
         imagePullPolicy: IfNotPresent
         name: envoy
@@ -501,9 +526,9 @@ spec:
           protocol: TCP
         resources:
           limits:
-            memory: 256Mi
+            memory: 128Mi
           requests:
-            cpu: 20m
+            cpu: 30m
             memory: 64Mi
         volumeMounts:
         - mountPath: /etc/collector

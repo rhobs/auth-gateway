@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"time"
 )
 
 const otelCollectorConfigTemplate = `receivers:
@@ -11,7 +12,8 @@ const otelCollectorConfigTemplate = `receivers:
     config:
       scrape_configs:
         - job_name: auth-gateway
-          scrape_interval: 30s
+          scrape_interval: %s
+          scrape_timeout: %s
           metrics_path: /stats/prometheus
           static_configs:
             - targets:
@@ -28,8 +30,15 @@ service:
         - prometheus
 `
 
-func generateOTelCollectorConfig() []byte {
-	return []byte(fmt.Sprintf(otelCollectorConfigTemplate, envoyAdminPort, defaultOTelMetricsPort))
+func generateOTelCollectorConfig(metrics KubernetesMetrics) []byte {
+	return []byte(fmt.Sprintf(otelCollectorConfigTemplate, prometheusDuration(*metrics.ScrapeInterval), prometheusDuration(*metrics.ScrapeTimeout), envoyAdminPort, defaultOTelMetricsPort))
+}
+
+func prometheusDuration(d Duration) string {
+	if time.Duration(d)%time.Second == 0 {
+		return fmt.Sprintf("%ds", time.Duration(d)/time.Second)
+	}
+	return fmt.Sprintf("%dms", time.Duration(d)/time.Millisecond)
 }
 
 func metricsResourceName(name string) string {

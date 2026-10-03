@@ -24,6 +24,13 @@ version: 1
 #     initial_stream_window_size: 16777216
 #     initial_connection_window_size: 25165824
 
+# Optional overload protection, disabled by default. Choose both capacity budgets.
+# overload:
+#   max_heap_bytes: 201326592 # Example budget, must be below Envoy's memory limit.
+#   max_downstream_connections: 2048 # Example cap, no default.
+#   heap_shrink_threshold: 0.90 # Optional, default shown.
+#   request_reject_threshold: 0.95 # Optional, default shown.
+
 authenticators:
   - name: internal-jwt
     jwt:
@@ -178,6 +185,7 @@ kubernetes:
   # Optional Kubernetes settings, defaults shown.
   # otel_collector_image: otel/opentelemetry-collector-contrib:0.135.0
   # replicas: 2
+  # envoy_concurrency: 2 # Optional example; omitted lets Envoy choose workers.
   # service_port: 80
   # https_service_port: 443 # Only emitted when HTTPS servers exist.
   # resources:
@@ -187,3 +195,12 @@ kubernetes:
   #   limits:
   #     cpu: "1"
   #     memory: 256Mi
+  # metrics:
+  #   scrape_interval: 30s
+  #   scrape_timeout: 10s
+  #   resources:
+  #     requests:
+  #       cpu: 20m
+  #       memory: 64Mi
+  #     limits:
+  #       memory: 256Mi # No CPU limit by default.

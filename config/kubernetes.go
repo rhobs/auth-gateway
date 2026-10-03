@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"sort"
+	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -88,9 +89,13 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 			Data: map[string]string{processingConfigFilename: string(processingData)},
 		}
 	}
-	otelConfig := generateOTelCollectorConfig()
+	otelConfig := generateOTelCollectorConfig(c.Kubernetes.Metrics)
 
 	k := c.Kubernetes
+	envoyArgs := []string{"-c", path.Join(configDirectory, "envoy.yaml"), "--log-level", "info"}
+	if k.EnvoyConcurrency != nil {
+		envoyArgs = append(envoyArgs, "--concurrency", strconv.FormatUint(uint64(*k.EnvoyConcurrency), 10))
+	}
 	configName := k.Name + "-config"
 	metricsName := metricsResourceName(k.Name)
 	labels := func() map[string]string {
@@ -141,10 +146,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 						Name:            "envoy",
 						Image:           k.Image,
 						ImagePullPolicy: corev1.PullIfNotPresent,
-						Args: []string{
-							"-c", path.Join(configDirectory, "envoy.yaml"),
-							"--log-level", "info",
-						},
+						Args:            envoyArgs,
 						Ports: []corev1.ContainerPort{
 							{Name: "http", ContainerPort: int32(*c.Listener.Port), Protocol: corev1.ProtocolTCP},
 							{Name: "admin", ContainerPort: envoyAdminPort, Protocol: corev1.ProtocolTCP},
@@ -180,13 +182,8 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 							Name: "metrics", ContainerPort: defaultOTelMetricsPort, Protocol: corev1.ProtocolTCP,
 						}},
 						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("20m"),
-								corev1.ResourceMemory: resource.MustParse("64Mi"),
-							},
-							Limits: corev1.ResourceList{
-								corev1.ResourceMemory: resource.MustParse("256Mi"),
-							},
+							Requests: kubernetesResourceList(k.Metrics.Resources.Requests),
+							Limits:   kubernetesResourceList(k.Metrics.Resources.Limits),
 						},
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "metrics-config",

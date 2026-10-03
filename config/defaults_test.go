@@ -23,6 +23,9 @@ func TestAuthExampleAppliesAllDefaults(t *testing.T) {
 	if !reflect.DeepEqual(c.Listener, wantListener) {
 		t.Fatalf("listener defaults = %#v, want %#v", c.Listener, wantListener)
 	}
+	if c.Overload != nil {
+		t.Fatal("overload must be opt-in")
+	}
 	wantBreakers := &CircuitBreakerConfig{MaxConnections: new(uint32(1024)), MaxPendingRequests: new(uint32(1024)), MaxRequests: new(uint32(1024)), MaxRetries: new(uint32(0))}
 	for _, a := range c.Authenticators {
 		want := JWKSConfig{URI: a.JWT.JWKS.URI, CacheDuration: duration(5 * time.Minute), FetchTimeout: duration(5 * time.Second), ConnectTimeout: duration(5 * time.Second), CircuitBreakers: wantBreakers}
@@ -51,6 +54,7 @@ func TestAuthExampleAppliesAllDefaults(t *testing.T) {
 		Name: "auth-gateway", Namespace: "observability", Image: c.Kubernetes.Image,
 		OTelCollectorImage: "otel/opentelemetry-collector-contrib:0.135.0", Replicas: new(int32(2)), ServicePort: new(int32(80)), HTTPSServicePort: new(int32(443)),
 		Resources: KubernetesResourceRequirements{Requests: map[string]string{"cpu": "50m", "memory": "64Mi"}, Limits: map[string]string{"cpu": "1", "memory": "256Mi"}},
+		Metrics:   KubernetesMetrics{ScrapeInterval: duration(30 * time.Second), ScrapeTimeout: duration(10 * time.Second), Resources: KubernetesResourceRequirements{Requests: map[string]string{"cpu": "20m", "memory": "64Mi"}, Limits: map[string]string{"memory": "256Mi"}}},
 	}
 	if !reflect.DeepEqual(c.Kubernetes, wantKubernetes) {
 		t.Fatalf("Kubernetes defaults = %#v, want %#v", c.Kubernetes, wantKubernetes)
@@ -73,5 +77,18 @@ func TestAuthExampleAppliesAllDefaults(t *testing.T) {
 	}
 	if _, err := GenerateKubernetes(c); err != nil {
 		t.Fatalf("generate defaulted example: %v", err)
+	}
+}
+
+func TestOptInOverloadDefaults(t *testing.T) {
+	c := loadAuthExample(t)
+	c.Overload = &OverloadConfig{MaxHeapBytes: 201326592, MaxDownstreamConnections: 2048}
+	resolved, err := resolveConfig(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &OverloadConfig{MaxHeapBytes: 201326592, MaxDownstreamConnections: 2048, HeapShrinkThreshold: new(0.90), RequestRejectThreshold: new(0.95)}
+	if !reflect.DeepEqual(resolved.Overload, want) || c.Overload.HeapShrinkThreshold != nil || c.Overload.RequestRejectThreshold != nil {
+		t.Fatalf("overload defaults = %#v, input = %#v", resolved.Overload, c.Overload)
 	}
 }

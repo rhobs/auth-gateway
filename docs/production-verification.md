@@ -32,3 +32,14 @@ checked-in plan and handover. No Jira issue was changed.
   `--mode validate` and validates the collector configuration. All eight fixture
   outputs pass on the pinned images. This checks configuration compatibility;
   it does not send requests through Envoy.
+
+## Capacity and metrics
+
+- Unit tests cover explicit overload budgets and thresholds, exact memory
+  comparisons (including uint64 budgets), resource-map replacement, worker
+  arguments and collector timing/resources. No worker count is inferred from CPU.
+- Scrape durations use whole milliseconds, matching the collector's Prometheus
+  format. Fractional seconds such as 1.5s render as 1500ms.
+- `make test`, `go vet ./...` and all pinned-image configuration validations
+  pass. Reference outputs were regenerated. No load or HTTP behavior tests were
+  added.

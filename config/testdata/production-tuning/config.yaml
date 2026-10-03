@@ -7,6 +7,9 @@ listener:
     max_concurrent_streams: 100
     initial_stream_window_size: 1048576
     initial_connection_window_size: 1048576
+overload:
+  max_heap_bytes: 201326592
+  max_downstream_connections: 2048
 authenticators:
   - name: issuer
     jwt:
@@ -69,3 +72,10 @@ kubernetes:
   name: auth-gateway
   namespace: observability
   image: envoyproxy/envoy:v1.39.1
+  envoy_concurrency: 2
+  metrics:
+    scrape_interval: 1500ms
+    scrape_timeout: 250ms
+    resources:
+      requests: {cpu: 30m, memory: 64Mi}
+      limits: {memory: 128Mi}

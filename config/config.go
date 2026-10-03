@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"go.yaml.in/yaml/v3"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -51,6 +50,7 @@ type Config struct {
 	Version               int                   `yaml:"version"`
 	Node                  EnvoyNode             `yaml:"node,omitempty"`
 	Listener              Listener              `yaml:"listener"`
+	Overload              *OverloadConfig       `yaml:"overload,omitempty"`
 	Authenticators        []Authenticator       `yaml:"authenticators,omitempty"`
 	AuthorizationPolicies []AuthorizationPolicy `yaml:"authorization_policies,omitempty"`
 	Processing            []Processor           `yaml:"processing,omitempty"`
@@ -149,9 +149,11 @@ type Kubernetes struct {
 	ServicePort        *int32                         `yaml:"service_port,omitempty"`
 	HTTPSServicePort   *int32                         `yaml:"https_service_port,omitempty"`
 	Resources          KubernetesResourceRequirements `yaml:"resources,omitempty"`
+	EnvoyConcurrency   *uint32                        `yaml:"envoy_concurrency,omitempty"`
+	Metrics            KubernetesMetrics              `yaml:"metrics,omitempty"`
 }
 
-// KubernetesResourceRequirements configures resources for the Envoy container.
+// KubernetesResourceRequirements configures resources for a container.
 // Values use Kubernetes resource quantity notation.
 type KubernetesResourceRequirements struct {
 	Requests map[string]string `yaml:"requests,omitempty"`
@@ -327,36 +329,18 @@ func (c Config) validate() error {
 		} else if c.Kubernetes.HTTPSServicePort != nil {
 			return fmt.Errorf("kubernetes.https_service_port requires an HTTPS server")
 		}
-		if err := validateKubernetesResourceRequirements(c.Kubernetes.Resources); err != nil {
+		if c.Kubernetes.EnvoyConcurrency != nil && *c.Kubernetes.EnvoyConcurrency == 0 {
+			return fmt.Errorf("kubernetes.envoy_concurrency must be positive")
+		}
+		if err := validateKubernetesResourceRequirements("kubernetes.resources", c.Kubernetes.Resources); err != nil {
+			return err
+		}
+		if err := c.Kubernetes.Metrics.validate(); err != nil {
 			return err
 		}
 	}
 
-	return nil
-}
-
-func validateKubernetesResourceRequirements(requirements KubernetesResourceRequirements) error {
-	for _, list := range []struct {
-		name   string
-		values map[string]string
-	}{
-		{name: "requests", values: requirements.Requests},
-		{name: "limits", values: requirements.Limits},
-	} {
-		for name, value := range list.values {
-			if problems := validation.IsQualifiedName(name); len(problems) > 0 {
-				return fmt.Errorf("kubernetes.resources.%s contains invalid resource name %q", list.name, name)
-			}
-			quantity, err := resource.ParseQuantity(value)
-			if err != nil {
-				return fmt.Errorf("kubernetes.resources.%s.%s must be a valid Kubernetes resource quantity: %w", list.name, name, err)
-			}
-			if quantity.Cmp(resource.Quantity{}) < 0 {
-				return fmt.Errorf("kubernetes.resources.%s.%s must not be negative", list.name, name)
-			}
-		}
-	}
-	return nil
+	return c.Overload.validate(c.Kubernetes)
 }
 
 func (c Config) withDefaults() Config {
@@ -370,6 +354,7 @@ func (c Config) withDefaults() Config {
 		c.Node.Cluster = defaultNodeCluster
 	}
 	c.Listener = c.Listener.withDefaults()
+	c.Overload = c.Overload.withDefaults()
 	if c.Servers != nil {
 		servers := make([]Server, len(c.Servers))
 		for i, server := range c.Servers {
@@ -445,6 +430,8 @@ func (c Config) withDefaults() Config {
 			"memory": defaultKubernetesMemoryLimit,
 		})
 		c.Kubernetes.Resources = resources
+		c.Kubernetes.EnvoyConcurrency = clonePointer(kubernetes.EnvoyConcurrency)
+		c.Kubernetes.Metrics = kubernetes.Metrics.withDefaults()
 	}
 	return c
 }
