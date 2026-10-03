@@ -1,5 +1,5 @@
-# Proposed future mTLS configuration. See AUTH-PLAN.md.
-# The current config loader does not yet support the auth fields in this file.
+# Future mTLS configuration sketch. The loader rejects this schema today.
+# See README.md for the supported capabilities and configuration.
 # Replace example issuer URLs, backend Services, and the existing Secrets.
 # The client CA Secret contains ca.crt; server TLS Secrets contain tls.crt and tls.key.
 # Client TLS must reach Envoy directly or through TLS passthrough.

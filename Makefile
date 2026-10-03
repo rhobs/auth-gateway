@@ -7,7 +7,7 @@ test:
 	go test ./...
 
 lint:
-	@unformatted=$$(gofmt -l config e2e); \
+	@unformatted=$$(gofmt -l config e2e examples); \
 	if [ -n "$$unformatted" ]; then printf '%s\n' "$$unformatted"; exit 1; fi
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run
 
