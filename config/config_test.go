@@ -244,16 +244,20 @@ func TestValidateServers(t *testing.T) {
 }
 
 func TestRootExampleGeneratesKubernetes(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "config.example.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	config, err := Load(strings.NewReader(string(data)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := GenerateKubernetes(config); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"config.example.yaml", "config.production.example.yaml"} {
+		t.Run(name, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("..", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			config, err := Load(strings.NewReader(string(data)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := GenerateKubernetes(config); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

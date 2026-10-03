@@ -40,6 +40,10 @@ A certificate update does not require an Envoy Pod restart. Each certificate mus
 
 Secrets are mounted as directory volumes, without `subPath`, so Kubernetes can refresh their projected files.
 
+Backend and JWKS trust bundles use a separate CA reference and require an
+explicit rollout after updates. Their mount tree, `/etc/auth-gateway-ca`, is
+reserved and cannot overlap server certificate paths.
+
 ## Rotation test
 
 cert-manager renews the `Certificate` according to its policy and updates the referenced Secret. The Kind end-to-end test uses `cmctl renew` to trigger that update path, then checks that a new TLS connection sees a different certificate and public key. The other server's certificate and gateway Pod UID must stay unchanged.

@@ -142,7 +142,6 @@ static_resources:
                         idle_timeout: 60s
                         max_headers_count: 100
                         max_stream_duration: 30s
-                    drain_timeout: 5s
                     http_filters:
                         - name: auth_gateway.request_controls
                           typed_config:

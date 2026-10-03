@@ -40,6 +40,12 @@ authenticators:
         # cache_duration: 5m # Optional, default shown.
         # fetch_timeout: 5s # Optional, default shown.
         # connect_timeout: 5s # Optional, default shown.
+        # Optional per-provider circuit breakers, same defaults as API clusters.
+        # circuit_breakers:
+        #   max_connections: 1024
+        #   max_pending_requests: 1024
+        #   max_requests: 1024
+        #   max_retries: 0
         # Custom trust replaces the image's system CA bundle.
         # trusted_ca: {config_map: {name: internal-issuer-ca, key: ca.crt}}
       audiences: [observability-ingestion]

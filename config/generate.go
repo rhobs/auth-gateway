@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	bootstrap "github.com/envoyproxy/go-control-plane/envoy/config/bootstrap/v3"
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
@@ -32,7 +31,6 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
-	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
@@ -273,7 +271,6 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 		RequestHeadersTimeout: c.Listener.RequestHeadersTimeout.protobuf(),
 		StreamIdleTimeout:     c.Listener.StreamIdleTimeout.protobuf(),
 		StreamFlushTimeout:    c.Listener.StreamFlushTimeout.protobuf(),
-		DrainTimeout:          durationpb.New(5 * time.Second),
 		Http2ProtocolOptions:  c.Listener.HTTP2.envoy(),
 		CommonHttpProtocolOptions: &core.HttpProtocolOptions{
 			IdleTimeout:                  c.Listener.ConnectionIdleTimeout.protobuf(),

@@ -199,7 +199,7 @@ func TestCapacityDefaultsCloneInputs(t *testing.T) {
 
 func TestCapacityYAMLOptions(t *testing.T) {
 	base, _, _ := strings.Cut(readFixture(t, "public-routing/config.yaml"), "kubernetes:\n")
-	base += "kubernetes:\n  name: gateway\n  namespace: observability\n  image: auth-gateway-envoy:local\n"
+	base += "kubernetes:\n  name: gateway\n  namespace: observability\n  image: envoyproxy/envoy:v1.39.1\n"
 	for _, settings := range []string{"", "  metrics: null\n", "  metrics: {}\n", "  metrics:\n    scrape_interval: null\n    scrape_timeout: null\n    resources: {requests: null, limits: null}\n"} {
 		c, err := Load(strings.NewReader(base + settings + "overload: null\n"))
 		if err != nil {

@@ -72,5 +72,5 @@ var _ = Describe("HTTP routing and metrics", Label("gateway", "routing", "metric
 		Eventually(func() error {
 			return checkPrometheusMetrics(ctx, metricsAddress)
 		}).WithContext(ctx).WithTimeout(70 * time.Second).WithPolling(500 * time.Millisecond).Should(Succeed())
-	}, SpecTimeout(90*time.Second))
+	}, NodeTimeout(90*time.Second))
 })

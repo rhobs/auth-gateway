@@ -1,5 +1,42 @@
 # Handover: RHOBS-1782
 
+## Production configuration handoff (2026-10-03)
+
+- Implementation is on `production-configuration`, based on `RHOBS-1784` at
+  `6d2c389`. No remote push was made.
+- The typed API now covers listener/route timeouts, backend TLS/HTTP/2,
+  `jwt.jwks`, CA references, overload budgets, workers and metrics.
+  Both generators share defaults and timeout resolution. The old `jwks_uri`
+  field is rejected. Caller-owned configuration stays unchanged.
+- `config.auth.example.yaml` comments out optional defaults. Unit tests check
+  defaults, invalid combinations and generated resources.
+  `config.production.example.yaml` demonstrates workload-specific overrides.
+- Kubernetes output uses the configured Envoy image with a TCP readiness probe
+  and the existing 30s termination grace. Static settings and CA
+  updates require rollout; mapping-only ECDS and downstream certificate SDS
+  reload remain supported. There is still no checksum annotation.
+- The added production HTTP/2 and hardening e2e scenarios were removed. Existing
+  JWT tests use supported JWKS cache and CA input settings, without rewriting
+  generated bootstrap or replacing the system CA mount. Keep the test scope
+  below when continuing this work.
+- `make update-golden` updates generated references through the config package's
+  `go test -update` flag. `make test-runtime` optionally validates generated
+  Envoy and Collector configs in their pinned images.
+
+## Test scope
+
+- Gateway e2e tests focus on authentication, authorization, routing and request
+  transforms. Use httpbin to verify the method, path, headers and body sent to
+  the backend, including credential removal and trusted identity outputs.
+- Do not add e2e tests for Envoy's HTTP semantics, such as HTTP/2 flow control,
+  timeout enforcement, retries, overload behavior or connection draining. Those
+  belong to Envoy's e2e suite, not this gateway's.
+- Validate production settings with unit tests for defaults, invalid
+  combinations and generated Envoy/Kubernetes configuration. Optional image
+  checks may validate generated config.
+- Keep existing gateway integration coverage. Any new e2e case needs a distinct
+  gateway-owned behavior; production hardening alone is not a reason to add one.
+  This scope supersedes the production plan's original runtime-test proposals.
 ## RHOBS-1784 current handoff (2026-10-03)
 
 - Work is on the `RHOBS-1784` feature branch. The native JWT implementation is

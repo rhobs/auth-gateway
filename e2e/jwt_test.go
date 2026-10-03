@@ -118,7 +118,7 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 			Expect(err).NotTo(HaveOccurred(), test.name)
 			Expect(after).To(Equal(before), test.name+" reached the upstream")
 		}
-	}, SpecTimeout(60*time.Second))
+	}, NodeTimeout(60*time.Second))
 })
 
 var _ = Describe("Direct JWT headers", Label("gateway", "jwt", "authentication", "authorization"), Ordered, func() {
@@ -165,7 +165,7 @@ var _ = Describe("Direct JWT headers", Label("gateway", "jwt", "authentication",
 		after, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(after).To(Equal(before), "the missing verified header attribute reached the upstream")
-	}, SpecTimeout(60*time.Second))
+	}, NodeTimeout(60*time.Second))
 })
 
 var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "authentication", "authorization"), Ordered, func() {
@@ -234,7 +234,7 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
 		Expect(headerValue(jwtEchoHeaders(body), "X-Scope-OrgID")).To(Equal("customer-pass"))
-	}, SpecTimeout(60*time.Second))
+	}, NodeTimeout(60*time.Second))
 
 	It("rejects invalid credentials, missing required attributes, and denied original claims", func(ctx SpecContext) {
 		adminAddress, stop, err := env.Forward(ctx, jwtNamespace, "deployment/auth-gateway", 9901)
@@ -295,7 +295,7 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 			Expect(err).NotTo(HaveOccurred(), test.name)
 			Expect(after).To(Equal(before), test.name+" reached the upstream")
 		}
-	}, SpecTimeout(60*time.Second))
+	}, NodeTimeout(60*time.Second))
 
 	It("isolates JWT issuers by server", func(ctx SpecContext) {
 		for _, test := range []struct {
@@ -308,7 +308,7 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 			Expect(err).NotTo(HaveOccurred())
 			Expect(status).To(Equal(test.status), test.issuer+" at "+test.host+": "+string(body))
 		}
-	}, SpecTimeout(60*time.Second))
+	}, NodeTimeout(60*time.Second))
 
 	It("reloads mapping changes through ECDS without changing authorization or the Pod", func(ctx SpecContext) {
 		claims := jwtTestClaims("customer-a")
@@ -327,6 +327,7 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		updatedConfig, err := config.Load(bytes.NewReader(fixture))
 		Expect(err).NotTo(HaveOccurred())
 		updatedConfig.Kubernetes.Namespace = jwtNamespace
+		setGatewayImage(&updatedConfig)
 		for i := range updatedConfig.Authenticators {
 			updatedConfig.Authenticators[i].JWT.JWKS.URI = "https://jwks." + jwtNamespace + ".svc.cluster.local/" + updatedConfig.Authenticators[i].Name
 			updatedConfig.Authenticators[i].JWT.JWKS.TrustedCA = jwtTrustedCA()
@@ -498,6 +499,7 @@ func setupJWTGateway(ctx SpecContext, namespace, fixtureName string) (*jwtE2E, e
 		return nil, err
 	}
 	gatewayConfig.Kubernetes.Namespace = namespace
+	setGatewayImage(&gatewayConfig)
 	for i := range gatewayConfig.Authenticators {
 		gatewayConfig.Authenticators[i].JWT.JWKS.URI = "https://jwks." + namespace + ".svc.cluster.local/" + gatewayConfig.Authenticators[i].Name
 		gatewayConfig.Authenticators[i].JWT.JWKS.TrustedCA = jwtTrustedCA()

@@ -82,6 +82,10 @@ authorization, direct request headers, and ordered attribute mappings. Mapping
 changes are delivered through ECDS from a separate processing ConfigMap, so they
 reload without changing the Envoy bootstrap or replacing the gateway Pod.
 
+See [config.production.example.yaml](config.production.example.yaml) for a
+production-oriented example. Optional defaults are commented out in the auth
+example and covered by unit tests.
+
 Each API entry defines one upstream and must include one or more routes. A
 route must list one or more HTTP methods and match an exact path, a prefix, or
 an Envoy safe RE2 regular expression against the full path. A route with no
@@ -96,6 +100,11 @@ Run `make test` for unit tests. Run `make e2e` for the local Kind test. The e2e
 test needs Docker, Kind, Go, curl, and network access. It downloads cmctl
 v2.6.1 on first use, creates or reuses the `auth-gateway-e2e` cluster, and
 deletes its test namespaces when it ends.
+
+E2e tests focus on authentication, authorization, routing and request transforms,
+using httpbin to verify what reaches the backend. Production settings use unit
+tests for defaults, validation and generated resources. `make test-runtime`
+optionally validates generated files with the pinned Envoy/collector images.
 
 ## Servers
 
@@ -139,10 +148,12 @@ duration, response details, and upstream information.
 
 Generated Kubernetes resources include an OpenTelemetry Collector sidecar. It
 scrapes Envoy's loopback admin endpoint at `127.0.0.1:9901/stats/prometheus`
-every 30 seconds and exposes Prometheus metrics on the `metrics` port (`8889`)
+every 30 seconds by default, with a 10-second timeout, and exposes Prometheus
+metrics on the `metrics` port (`8889`)
 of the existing `<name>` Service at path `/metrics`. The Envoy admin endpoint
 stays bound to loopback and is not exposed by the Service.
 
 The collector image defaults to
 `otel/opentelemetry-collector-contrib:0.135.0`. Set
 `kubernetes.otel_collector_image` to use a mirrored or different image.
+Set `kubernetes.metrics` to configure scrape timing and collector resources.

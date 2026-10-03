@@ -3,6 +3,9 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,6 +19,77 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/anypb"
 )
+
+var updateGoldens = flag.Bool("update", false, "update generated reference files")
+
+func TestGeneratedReferenceFiles(t *testing.T) {
+	cases, err := filepath.Glob(filepath.Join("testdata", "*", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, inputPath := range cases {
+		inputPath := inputPath
+		name := filepath.Base(filepath.Dir(inputPath))
+		t.Run(name, func(t *testing.T) {
+			input, err := os.Open(inputPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gatewayConfig, err := Load(input)
+			closeErr := input.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if closeErr != nil {
+				t.Fatal(closeErr)
+			}
+
+			caseDir := filepath.Dir(inputPath)
+			envoyFiles, err := Generate(gatewayConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkReference(t, filepath.Join(caseDir, "envoy.yaml.golden"), envoyFiles["envoy.yaml"])
+			processingPath := filepath.Join(caseDir, "processing.yaml.golden")
+			if data, ok := envoyFiles[processingConfigFilename]; ok {
+				checkReference(t, processingPath, data)
+			} else if *updateGoldens {
+				if err := os.Remove(processingPath); err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+			} else if _, err := os.Stat(processingPath); !os.IsNotExist(err) {
+				t.Errorf("unexpected processing reference %s", processingPath)
+			}
+
+			resources, err := GenerateKubernetes(gatewayConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest, err := resources.YAML()
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkReference(t, filepath.Join(caseDir, "kubernetes.yaml.golden"), manifest)
+		})
+	}
+}
+
+func checkReference(t *testing.T, path string, want []byte) {
+	t.Helper()
+	if *updateGoldens {
+		if err := os.WriteFile(path, want, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("%s is out of date; run make update-golden", path)
+	}
+}
 
 func TestGenerateBuildsNamedAPIClustersAndRoutes(t *testing.T) {
 	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))

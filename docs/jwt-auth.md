@@ -22,7 +22,8 @@ hosts. Each protected host selects its own JWT requirement and authorization
 rules, keeping issuer trust and API grants scoped to that host:
 
 ```text
-envoy.filters.http.jwt_authn
+auth_gateway.request_controls
+  -> envoy.filters.http.jwt_authn
   -> envoy.filters.http.rbac
   -> [envoy.filters.http.set_filter_state]
   -> [auth_gateway.required_headers]
@@ -30,7 +31,9 @@ envoy.filters.http.jwt_authn
   -> envoy.filters.http.router
 ```
 
-The JWT filter reads the bearer token, validates it with the configured
+The fixed prelude removes caller-supplied Envoy retry, deadline and alternate
+stats controls on public and protected chains. These headers cannot be selected
+as identity outputs. The JWT filter reads the bearer token, validates it with the configured
 provider and JWKS, then stores the verified claims in authenticator-specific
 dynamic metadata. The first RBAC filter authorizes the original claims and
 selected API before any attribute mapping runs. The bracketed filters are
