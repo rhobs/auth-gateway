@@ -2,15 +2,10 @@
 
 Updated: 2026-10-03.
 
-This document is the detailed implementation plan for the follow-on agent. It
-records the review findings, the required changes, the behavior to preserve, and
-the checks needed to finish the work. [HANDOVER.md](HANDOVER.md) contains the
-shorter handoff summary.
-
-This task produces the plan and commits the current workspace changes at the
-user's request. Implementation of the remaining plan belongs to the follow-on
-agent. Some code changes were made earlier, before the scope was corrected.
-The user asked to keep those changes. Their status is recorded below.
+This is the approved implementation plan for repository cleanup. It records the
+review findings, required changes, behavior to preserve, and verification
+criteria. The implementation status and actual check results are in Section 9.
+[HANDOVER.md](HANDOVER.md) contains the shorter status summary.
 
 ## 1. Outcome and constraints
 
@@ -46,6 +41,9 @@ These decisions replace the older permission to make breaking API changes and
 the instruction in `AUTH-PLAN.md` to avoid whole-file golden comparisons.
 
 ## 2. Starting state and work already done
+
+This section records the state when the plan was drafted. Its interim
+verification notes are superseded by Section 9.
 
 The working branch is `code-quality-cleanup`, based on
 `production-configuration` at `8be60ba` (`Consolidate request controls config`).
@@ -528,10 +526,70 @@ The implementation is complete when:
 - This plan and `HANDOVER.md` record completed work, surviving-test decisions,
   actual check results, pending work, and separate API recommendations.
 
-For this document-only preparation, the earlier code changes remain unverified.
-The implementation phases above are pending.
+The original planning snapshot in Section 2 is historical. The completed
+implementation, test consolidation decisions, and actual verification results
+follow.
 
-Document checks passed for ASCII text, whitespace, heading spacing, and local
-links. The existing implementation diff, lint configuration, and handover match
-their saved checksums. No Go tests or lint runs were performed for this
-document-only preparation.
+## 9. Completed implementation record
+
+Updated: 2026-10-03.
+
+Implementation is complete on branch `code-quality-cleanup`. The code and test
+cleanup is committed as `409b346` (`Refactor config and e2e test code`); the
+documentation and runnable example are committed as `96bcc20`
+(`Document gateway generation and operations`). No public Go signatures, YAML
+fields, defaults, generated resource names, or runtime behavior were
+intentionally changed. No API recommendations were identified during this
+cleanup.
+
+### Final test coverage inventory
+
+| Owner | Scenario | Expected result |
+| --- | --- | --- |
+| `config/config_test.go` | Strict one-document YAML loading, duration parsing, root and route validation, supported examples, listener limits, timeout inheritance/reuse, and upstream TLS/protocol settings. | Valid inputs load and generate; invalid inputs report the intended field; resolved settings preserve override order and caller input. |
+| `config/defaults_test.go` | Auth example defaults, opt-in overload thresholds, file/Secret TLS paths, nested maps/slices/pointers, public operations, and omitted/null/empty Kubernetes options. | Defaults match the documented values; explicit empty resource maps stay empty; defaulting, validation, and generation do not mutate caller-owned data. |
+| `config/servers_test.go` | Required servers, exact hostnames, API bindings, server-scoped route conflicts, unbound API validation, and TLS mount paths. | Invalid binding or mount combinations fail with the relevant field; valid HTTP/HTTPS and shared-mount cases remain valid. |
+| `config/auth_test.go` | Supported auth example shape, literal claim keys, JWT `all_of`, unsupported mTLS schema, authentication/policy validation, optional attributes, and per-server issuer uniqueness. | Original claim paths and grant values remain exact; unsupported or inconsistent auth reports the relevant field; issuers stay server-scoped. |
+| `config/jwks_test.go` | Null defaults, legacy `jwks_uri` rejection, endpoint identity and CA trust, provider separation, and validation of unused providers. | Each provider keeps its own trusted cluster; DNS/IP identity checks and schema errors remain explicit. |
+| `config/generate_test.go` | Eight complete reference families, named API clusters, routing/method fallbacks, rewrites, HTTPS/SNI selection, server API scope/order, and deterministic generation. | Generated files match reviewed references; local 404/405 behavior, `Allow`, order, and map-order stability are preserved. |
+| `config/jwt_generate_test.go` | Provider identity, original-claim authorization, public/plain/direct/mapped filter order, route-required headers, ECDS output, CEL claim guards, and API-scoped policy combinations. | Only required native filters/resources appear; authorization uses the named provider's original claims; missing required headers fail before forwarding. |
+| `config/kubernetes_test.go` | Processing ConfigMap isolation, conditional processing resources, Service/metrics ports, TLS Secret mount reuse/projection, generator preconditions, overload budgets, resource quantities, and Envoy worker count. | Mapping changes leave bootstrap and Pod template unchanged; TLS projection and service exposure remain correct; invalid capacity settings fail at their boundaries. |
+| `config/runtime_test.go` | Optional validation of generated files with the pinned Envoy and collector images. | Runtime parsers accept the generated resources. This check was not run separately; the full live e2e suite used the pinned Envoy image. |
+| `e2e/internal/framework/forward_test.go` | Ready-Pod selection, named target-port resolution, and exclusion of terminating Pods. | Port forwarding selects only a ready, non-terminating target and the requested service port. |
+| `e2e` Ginkgo suite | HTTP routing and metrics; plain JWT; direct headers; original-claim authorization; processed headers; issuer isolation; mapping reload; JWKS rotation/outage recovery; TLS host isolation and renewal. | HTTP responses and httpbin observations prove forwarding, denial, and update behavior; mapping and certificate reloads preserve the Pod identity. |
+
+### Test consolidation and removal map
+
+| Consolidated or removed check | Surviving coverage and reason |
+| --- | --- |
+| `TestLoadAuthExample`, `TestLoadAppliesDefaults`, and `TestRootExampleGeneratesKubernetes` | `TestAuthExampleContainsExpectedJWTConfiguration`, `TestAuthExampleAppliesAllDefaults`, and `TestSupportedExamplesGenerate` own example shape, defaults, and generation. The supported-example test now covers all three supported root examples. |
+| `TestDefaultsDoNotMutateInput`, `TestAuthenticationDefaultsDoNotMutateInput`, `TestServerDefaultsDoNotMutateInput`, and `TestKubernetesDefaultsCloneInputs` | `TestDefaultsCloneInputs` keeps named cases for route, auth, JWKS, server, and resource ownership. `TestPublicOperationsPreserveConfiguration` covers `Validate`, `Generate`, `GenerateKubernetes`, and YAML serialization through the public path. |
+| Duplicate `public server with authorization` validation case | Removed because it made the same mutation and asserted the same error as `authorization without authentication`. The latter remains in `TestValidateRejectsInvalidAuthenticationAndAuthorization`. |
+| `TestGenerateIncludesAuthenticationAuthorizationAndProcessing` and `TestJWTProcessingAndHeaderFilterOrder` | `TestConditionalJWTFilterOrder` checks exact order for public, plain JWT, direct-header, and mapped-header cases. Provider, ECDS, and required-header behavior remains in focused tests. |
+| Count-only `TestGenerateJWKSProviderClusterCount` | The provider test checks provider names and cluster associations, endpoint trust, selection, and the related count. The standalone total-only assertion added no distinct contract. |
+| `TestJWTProcessingIsDeterministic` and repeated same-input determinism loops | `TestGenerationIsDeterministic` compares complete generated file maps and Kubernetes manifests across distinct mapping/resource map insertion orders and multiple CA mounts. |
+| `assertNoLuaResources` helper and negative Lua-name scans | Exact conditional filter chains and expected generated-file lists positively assert the supported native filter output and exclude obsolete resources from those cases. |
+| `TestKubernetesDefaultsCloneInputs` and its string-built `TestKubernetesYAMLOptions` cases | `defaults_test.go` owns the copy/default contract. Explicit fixtures cover omitted, null, empty, nested-null, and empty-resource-map semantics; Kubernetes generation tests keep the output behavior. |
+| `TestServerTLSDefaults`, `TestValidateServers`, and `TestValidateRejectsInvalidUnboundAPI` locations | These checks were moved to the owning `defaults_test.go` or `servers_test.go`; their distinct defaulting and validation behavior remains covered. |
+| General `TestDurationYAMLContract` location in `jwks_test.go` | The general duration syntax and field-path cases now live in `config_test.go`; JWKS-specific null defaults, limits, and legacy schema rejection stay in `jwks_test.go`. |
+| YAML replacement in mTLS and JWKS tests; validation tests that accepted any error | Unsupported-schema and JWKS cases now use explicit input or fixtures. Validation tables assert the intended field or error text instead of accepting an unrelated failure. |
+
+### Verification results
+
+| Check | Result |
+| --- | --- |
+| `make test` | Passed, including compilation of `examples/generate-kubernetes`. |
+| Cached golangci-lint `v2.14.0` with `./...` | Passed with `0 issues`; the configured `e2e` and `envoyruntime` build tags were active. |
+| `make lint` | The formatting check passed, but its pinned `go run` could not download the tool because DNS resolution for `proxy.golang.org` is unavailable. The cached binary of the same version passed as above. |
+| `go test -tags=e2e,envoyruntime -run '^$' ./...` | Passed; all tagged packages compiled without executing live e2e tests. |
+| `go test -tags=e2e ./e2e/internal/framework` | Passed. |
+| `make e2e` | Passed: 21 specs, 21 passed, 0 failed, 0 pending, 0 skipped. It ran against the pinned Envoy image in the local Kind cluster. |
+| Documented Go example | Passed: `go run ./examples/generate-kubernetes config.example.yaml auth-gateway.yaml` generated a Kubernetes manifest; the temporary output file was removed after inspection. |
+| Local documentation links and ASCII check | Passed for `README.md`, `CONTRIBUTING.md`, and `docs/envoy.md`. |
+| `gofmt -l config e2e examples` and `git diff --check` | Passed with no formatting or whitespace findings. |
+| `make test-runtime` | Not run separately; it is optional, and the complete e2e suite ran against the pinned Envoy image. |
+
+The `make lint` limitation is environmental: the standard target uses the
+version-pinned Go module command and the module proxy is unreachable here. No
+lint findings remain. The complete live suite ran successfully, so there are no
+pending required checks.
