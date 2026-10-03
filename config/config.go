@@ -449,6 +449,301 @@ func (c Config) withDefaults() Config {
 	return c
 }
 
+func (c Config) apisByName() map[string]API {
+	apis := make(map[string]API, len(c.APIs))
+	for _, api := range c.APIs {
+		apis[api.Name] = api
+	}
+	return apis
+}
+
+func (c Config) validateServers(apis map[string]API) error {
+	if len(c.Servers) == 0 {
+		return fmt.Errorf("servers must contain at least one server")
+	}
+	hosts := make(map[string]int, len(c.Servers))
+	for i, server := range c.Servers {
+		name := fmt.Sprintf("servers[%d]", i)
+		if !validDNSHost(server.Hostname) {
+			return fmt.Errorf("%s.hostname must be an exact DNS hostname", name)
+		}
+		if previous, exists := hosts[server.Hostname]; exists {
+			return fmt.Errorf("%s.hostname %q is already used by servers[%d]", name, server.Hostname, previous)
+		}
+		hosts[server.Hostname] = i
+		if server.TLSConfig != nil {
+			if err := validateServerTLS(name+".tls_config", *server.TLSConfig); err != nil {
+				return err
+			}
+		}
+		bound, err := server.boundAPIs(apis)
+		if err != nil {
+			return fmt.Errorf("%s.apis: %w", name, err)
+		}
+		routes := make(map[string]struct{})
+		for _, api := range bound {
+			for _, route := range api.Routes {
+				for _, method := range route.Methods {
+					if err := addRouteKey(routes, route.Path, method); err != nil {
+						return fmt.Errorf("%s.apis: %w", name, err)
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (c Config) tlsMounts() []serverTLSMount {
+	var mounts []serverTLSMount
+	seen := make(map[ServerTLS]struct{})
+	for i, server := range c.Servers {
+		if server.TLSConfig == nil {
+			continue
+		}
+		binding := *server.TLSConfig
+		if _, exists := seen[binding]; exists {
+			continue
+		}
+		seen[binding] = struct{}{}
+		mounts = append(mounts, serverTLSMount{serverIndex: i, config: binding})
+	}
+	return mounts
+}
+
+func (c Config) validateTLSMounts() error {
+	mounts := c.tlsMounts()
+	for i, mount := range mounts {
+		name := fmt.Sprintf("servers[%d].tls_config", mount.serverIndex)
+		if mount.config.Secret == "" {
+			return fmt.Errorf("%s.secret is required when generating Kubernetes resources", name)
+		}
+		directory := path.Dir(mount.config.Certificate)
+		for _, reserved := range []string{configDirectory, collectorConfigDirectory, caDirectory} {
+			if directoriesOverlap(directory, reserved) {
+				return fmt.Errorf("%s certificate directory %q overlaps configuration directory %q", name, directory, reserved)
+			}
+		}
+		for _, previous := range mounts[:i] {
+			if directoriesOverlap(directory, path.Dir(previous.config.Certificate)) {
+				return fmt.Errorf("%s certificate directory overlaps servers[%d].tls_config", name, previous.serverIndex)
+			}
+		}
+	}
+	return nil
+}
+
+func (c Config) hasHTTP() bool {
+	for _, server := range c.Servers {
+		if server.TLSConfig == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (c Config) hasHTTPS() bool {
+	for _, server := range c.Servers {
+		if server.TLSConfig != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (c Config) validateAuthentication(apis map[string]API) error {
+	authenticators := make(map[string]Authenticator, len(c.Authenticators))
+	for i, authenticator := range c.Authenticators {
+		name := fmt.Sprintf("authenticators[%d]", i)
+		if !apiNamePattern.MatchString(authenticator.Name) {
+			return fmt.Errorf("%s.name must start with a lowercase letter and contain only lowercase letters, numbers, or hyphens", name)
+		}
+		if _, exists := authenticators[authenticator.Name]; exists {
+			return fmt.Errorf("duplicate authenticator name %q", authenticator.Name)
+		}
+		if authenticator.JWT == nil {
+			return fmt.Errorf("%s.jwt is required; only JWT authenticators are supported", name)
+		}
+		if err := validateJWTAuthenticator(name+".jwt", *authenticator.JWT); err != nil {
+			return err
+		}
+		if err := authenticator.JWT.JWKS.validate(name+".jwt.jwks", c.Kubernetes != nil); err != nil {
+			return err
+		}
+		authenticators[authenticator.Name] = authenticator
+	}
+
+	policies := make(map[string]AuthorizationPolicy, len(c.AuthorizationPolicies))
+	for i, policy := range c.AuthorizationPolicies {
+		name := fmt.Sprintf("authorization_policies[%d]", i)
+		if !apiNamePattern.MatchString(policy.Name) {
+			return fmt.Errorf("%s.name must start with a lowercase letter and contain only lowercase letters, numbers, or hyphens", name)
+		}
+		if _, exists := policies[policy.Name]; exists {
+			return fmt.Errorf("duplicate authorization policy name %q", policy.Name)
+		}
+		policies[policy.Name] = policy
+	}
+
+	apiNames := make(map[string]struct{}, len(apis))
+	for name := range apis {
+		apiNames[name] = struct{}{}
+	}
+	for i, policy := range c.AuthorizationPolicies {
+		for j, grant := range policy.Grants {
+			name := fmt.Sprintf("authorization_policies[%d].grants[%d]", i, j)
+			authenticator, exists := authenticators[grant.Authenticator]
+			if !exists {
+				return fmt.Errorf("%s.authenticator references unknown authenticator %q", name, grant.Authenticator)
+			}
+			if len(grant.APIs) == 0 {
+				return fmt.Errorf("%s.apis must contain at least one API", name)
+			}
+			if err := validateUniqueReferences(name+".apis", grant.APIs, apiNames); err != nil {
+				return err
+			}
+			if len(grant.Attributes) == 0 {
+				return fmt.Errorf("%s.attributes must contain at least one attribute allowlist", name)
+			}
+			for _, attribute := range sortedKeys(grant.Attributes) {
+				if !attributeNamePattern.MatchString(attribute) {
+					return fmt.Errorf("%s.attributes contains invalid attribute name %q", name, attribute)
+				}
+				if _, exists := authenticator.JWT.Attributes[attribute]; !exists {
+					return fmt.Errorf("%s.attributes references attribute %q not provided by authenticator %q", name, attribute, grant.Authenticator)
+				}
+				values := grant.Attributes[attribute]
+				if len(values) == 0 {
+					return fmt.Errorf("%s.attributes.%s must contain at least one allowed value", name, attribute)
+				}
+				seenValues := make(map[string]struct{}, len(values))
+				for _, value := range values {
+					if value == "" || strings.TrimSpace(value) != value {
+						return fmt.Errorf("%s.attributes.%s values must not be empty or have surrounding whitespace", name, attribute)
+					}
+					if _, exists := seenValues[value]; exists {
+						return fmt.Errorf("%s.attributes.%s contains duplicate value %q", name, attribute, value)
+					}
+					seenValues[value] = struct{}{}
+				}
+			}
+		}
+	}
+
+	for i, server := range c.Servers {
+		name := fmt.Sprintf("servers[%d]", i)
+		if server.Authentication != nil {
+			selected, err := validateSelection(name+".authentication", server.Authentication.AnyOf, server.Authentication.AllOf, authenticatorNames(authenticators))
+			if err != nil {
+				return err
+			}
+			if len(server.Authentication.AllOf) > 1 {
+				return fmt.Errorf("%s.authentication.all_of cannot contain more than one JWT authenticator", name)
+			}
+			if err := validateUniqueIssuerBindings(name+".authentication", selected, authenticators); err != nil {
+				return err
+			}
+		}
+		if server.Authorization != nil {
+			if server.Authentication == nil {
+				return fmt.Errorf("%s.authorization requires authentication", name)
+			}
+			if _, err := validateSelection(name+".authorization", server.Authorization.AnyOf, server.Authorization.AllOf, policyNames(policies)); err != nil {
+				return err
+			}
+		}
+		if err := validateRouteAttributeSources(name, server, apis, authenticators); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c Config) validateProcessing() error {
+	seen := make(map[string]struct{}, len(c.Processing))
+	for i, processor := range c.Processing {
+		name := fmt.Sprintf("processing[%d]", i)
+		if !apiNamePattern.MatchString(processor.Name) {
+			return fmt.Errorf("%s.name must start with a lowercase letter and contain only lowercase letters, numbers, or hyphens", name)
+		}
+		if _, exists := seen[processor.Name]; exists {
+			return fmt.Errorf("duplicate processing name %q", processor.Name)
+		}
+		seen[processor.Name] = struct{}{}
+		if processor.Type != "attribute-mapper" {
+			return fmt.Errorf("%s.type must be %q", name, "attribute-mapper")
+		}
+		for _, attribute := range sortedKeys(processor.Attributes) {
+			attributeName := name + ".attributes." + attribute
+			if !attributeNamePattern.MatchString(attribute) {
+				return fmt.Errorf("%s is not a valid attribute name", attributeName)
+			}
+			for _, source := range sortedKeys(processor.Attributes[attribute].Mappings) {
+				target := processor.Attributes[attribute].Mappings[source]
+				if source == "" || strings.TrimSpace(source) != source || target == "" || strings.TrimSpace(target) != target {
+					return fmt.Errorf("%s.mappings keys and values must not be empty or have surrounding whitespace", attributeName)
+				}
+				if strings.ContainsAny(target, "\r\n\x00") {
+					return fmt.Errorf("%s.mappings values must not contain line breaks or NUL", attributeName)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (c Config) hasAttributeMappings() bool {
+	for _, processor := range c.Processing {
+		for _, attribute := range processor.Attributes {
+			if len(attribute.Mappings) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (c Config) hasAuthenticationConfig() bool {
+	if len(c.Authenticators) != 0 || len(c.AuthorizationPolicies) != 0 {
+		return true
+	}
+	for _, server := range c.Servers {
+		if server.Authentication != nil || server.Authorization != nil {
+			return true
+		}
+	}
+	for _, api := range c.APIs {
+		for _, route := range api.Routes {
+			if route.Processing != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (c Config) caMounts() []CAConfigMap {
+	var mounts []CAConfigMap
+	seen := map[CAConfigMap]bool{}
+	add := func(ca *TrustedCA) {
+		if ca != nil && ca.ConfigMap != nil && !seen[*ca.ConfigMap] {
+			mounts = append(mounts, *ca.ConfigMap)
+			seen[*ca.ConfigMap] = true
+		}
+	}
+	for _, authenticator := range c.Authenticators {
+		if authenticator.JWT != nil && authenticatorUsed(c.Servers, authenticator.Name) {
+			add(authenticator.JWT.JWKS.TrustedCA)
+		}
+	}
+	for _, api := range c.APIs {
+		if api.Upstream.TLSConfig != nil {
+			add(api.Upstream.TLSConfig.TrustedCA)
+		}
+	}
+	return mounts
+}
+
 func copyResourcesOrDefault(values, defaults map[string]string) map[string]string {
 	if values == nil {
 		values = defaults

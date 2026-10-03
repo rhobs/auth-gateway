@@ -1,0 +1,25 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  build-tags: [e2e, envoyruntime]
+  modules-download-mode: readonly
+
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - goconst
+    - dupl
+  settings:
+    goconst:
+      min-occurrences: 2
+      ignore-calls: false
+      exclude-types: []
+    dupl:
+      threshold: 150

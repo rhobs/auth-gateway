@@ -327,7 +327,6 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		updatedConfig, err := config.Load(bytes.NewReader(fixture))
 		Expect(err).NotTo(HaveOccurred())
 		updatedConfig.Kubernetes.Namespace = jwtNamespace
-		setGatewayImage(&updatedConfig)
 		for i := range updatedConfig.Authenticators {
 			updatedConfig.Authenticators[i].JWT.JWKS.URI = "https://jwks." + jwtNamespace + ".svc.cluster.local/" + updatedConfig.Authenticators[i].Name
 			updatedConfig.Authenticators[i].JWT.JWKS.TrustedCA = jwtTrustedCA()
@@ -499,7 +498,6 @@ func setupJWTGateway(ctx SpecContext, namespace, fixtureName string) (*jwtE2E, e
 		return nil, err
 	}
 	gatewayConfig.Kubernetes.Namespace = namespace
-	setGatewayImage(&gatewayConfig)
 	for i := range gatewayConfig.Authenticators {
 		gatewayConfig.Authenticators[i].JWT.JWKS.URI = "https://jwks." + namespace + ".svc.cluster.local/" + gatewayConfig.Authenticators[i].Name
 		gatewayConfig.Authenticators[i].JWT.JWKS.TrustedCA = jwtTrustedCA()

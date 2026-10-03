@@ -83,28 +83,6 @@ func (ca *TrustedCA) filename() string {
 	return ca.Filename
 }
 
-func (c Config) caMounts() []CAConfigMap {
-	var mounts []CAConfigMap
-	seen := map[CAConfigMap]bool{}
-	add := func(ca *TrustedCA) {
-		if ca != nil && ca.ConfigMap != nil && !seen[*ca.ConfigMap] {
-			mounts = append(mounts, *ca.ConfigMap)
-			seen[*ca.ConfigMap] = true
-		}
-	}
-	for _, authenticator := range c.Authenticators {
-		if authenticator.JWT != nil && authenticatorUsed(c.Servers, authenticator.Name) {
-			add(authenticator.JWT.JWKS.TrustedCA)
-		}
-	}
-	for _, api := range c.APIs {
-		if api.Upstream.TLSConfig != nil {
-			add(api.Upstream.TLSConfig.TrustedCA)
-		}
-	}
-	return mounts
-}
-
 func verifiedTLS(identity string, ca *TrustedCA, alpn []string) (*core.TransportSocket, error) {
 	sanType := tls.SubjectAltNameMatcher_DNS
 	sni := identity
