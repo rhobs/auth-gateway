@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+const serverTLSSecretDirectory = "/etc"
+
 // Server binds an exact hostname and protocol to named APIs and optional access policies.
 type Server struct {
 	Hostname       string          `yaml:"hostname"`
@@ -25,8 +27,8 @@ type ServerTLS struct {
 func (s ServerTLS) withDefaults() ServerTLS {
 	certificate, privateKey := defaultServerTLSCertificate, defaultServerTLSPrivateKey
 	if s.Secret != "" {
-		certificate = path.Join("/etc", s.Secret, "tls.crt")
-		privateKey = path.Join("/etc", s.Secret, "tls.key")
+		certificate = path.Join(serverTLSSecretDirectory, s.Secret, tlsCertificateSecretKey)
+		privateKey = path.Join(serverTLSSecretDirectory, s.Secret, tlsPrivateKeySecretKey)
 	}
 	if s.Certificate == "" {
 		s.Certificate = certificate
@@ -62,7 +64,7 @@ func validateServerTLS(name string, serverTLS ServerTLS) error {
 		{name: "certificate", value: serverTLS.Certificate},
 		{name: "private_key", value: serverTLS.PrivateKey},
 	} {
-		if !path.IsAbs(file.value) || path.Clean(file.value) != file.value || file.value == "/" || strings.ContainsAny(file.value, "\r\n\x00") {
+		if !path.IsAbs(file.value) || path.Clean(file.value) != file.value || file.value == "/" || strings.ContainsAny(file.value, invalidControlCharacters) {
 			return fmt.Errorf("%s.%s must be a clean absolute file path", name, file.name)
 		}
 	}

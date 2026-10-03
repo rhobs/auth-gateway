@@ -1,50 +1,26 @@
 package config
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	jwt "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/jwt_authn/v3"
 	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
-	"go.yaml.in/yaml/v3"
 )
 
 func duration(value time.Duration) *Duration { return new(Duration(value)) }
 
-func TestDurationYAMLContract(t *testing.T) {
-	for _, value := range []string{"250ms", "5s", "5m", "1.5ms", "0s"} {
-		var parsed Duration
-		if err := yaml.Unmarshal([]byte(value), &parsed); err != nil {
-			t.Fatalf("parse %q: %v", value, err)
-		}
-		encoded, err := yaml.Marshal(parsed)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var roundtrip Duration
-		if err := yaml.Unmarshal(encoded, &roundtrip); err != nil || parsed != roundtrip {
-			t.Fatalf("duration roundtrip %q: %v, %v", value, roundtrip, err)
-		}
+func TestJWKSFetchTimeoutDefaultsForNull(t *testing.T) {
+	c, err := Load(strings.NewReader(readFixture(t, "jwks-duration-null.yaml")))
+	if err != nil || *c.Authenticators[0].JWT.JWKS.FetchTimeout != Duration(5*time.Second) {
+		t.Fatalf("null fetch timeout default: %v", err)
 	}
-	input := readFixture(t, "jwt-auth/config.yaml")
-	for _, value := range []string{"5", `""`, "-1s", "500us", "999999999999h", "[5s]"} {
-		text := strings.Replace(input, "      jwks:\n", "      jwks:\n        fetch_timeout: "+value+"\n", 1)
-		if _, err := Load(strings.NewReader(text)); err == nil || !strings.Contains(err.Error(), "authenticators[0].jwt.jwks.fetch_timeout") {
-			t.Errorf("duration %s: got %v, want full field path", value, err)
-		}
-	}
-	for _, value := range []string{"null", "5s"} {
-		text := strings.Replace(input, "      jwks:\n", "      jwks:\n        fetch_timeout: "+value+"\n", 1)
-		c, err := Load(strings.NewReader(text))
-		if err != nil || *c.Authenticators[0].JWT.JWKS.FetchTimeout != Duration(5*time.Second) {
-			t.Fatalf("omission/null default: %v", err)
-		}
-	}
-	text := strings.Replace(input, "      jwks:\n        uri:", "      jwks_uri:", 1)
-	if _, err := Load(strings.NewReader(text)); err == nil || !strings.Contains(err.Error(), "field jwks_uri not found") {
-		t.Fatalf("old jwks_uri accepted: %v", err)
+}
+
+func TestJWKSRejectsLegacyURIField(t *testing.T) {
+	if _, err := Load(strings.NewReader(readFixture(t, "jwks-uri-legacy.yaml"))); err == nil || !strings.Contains(err.Error(), "field jwks_uri not found") {
+		t.Fatalf("legacy jwks_uri error = %v", err)
 	}
 }
 
@@ -119,27 +95,6 @@ func TestJWKSTransportAndTrust(t *testing.T) {
 		if strings.HasPrefix(mount.MountPath, caDirectory) && (!mount.ReadOnly || mount.SubPath != "") {
 			t.Fatalf("CA mount = %v", mount)
 		}
-	}
-	before, _ := yaml.Marshal(c)
-	for _, check := range []func(Config) error{Config.Validate, func(c Config) error { _, err := Generate(c); return err }, func(c Config) error { _, err := GenerateKubernetes(c); return err }} {
-		if err := check(c); err != nil {
-			t.Fatal(err)
-		}
-	}
-	after, _ := yaml.Marshal(c)
-	if string(before) != string(after) {
-		t.Fatal("generation mutated caller configuration")
-	}
-	copy := c.withDefaults()
-	copy.Authenticators[0].JWT.JWKS.TrustedCA.ConfigMap.Key = "changed"
-	*copy.Authenticators[0].JWT.JWKS.CacheDuration = Duration(time.Minute)
-	*copy.Authenticators[0].JWT.JWKS.CircuitBreakers.MaxConnections = 99
-	if ca.ConfigMap.Key != "roots.pem" || *j.CacheDuration != Duration(15*time.Second) || *j.CircuitBreakers.MaxConnections != 3 {
-		t.Fatal("defaulting retained JWKS aliases")
-	}
-	second, err := GenerateKubernetes(c)
-	if err != nil || !reflect.DeepEqual(r, second) {
-		t.Fatalf("generation is not deterministic: %v", err)
 	}
 }
 

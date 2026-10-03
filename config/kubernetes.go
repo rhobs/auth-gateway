@@ -6,7 +6,6 @@ import (
 	"maps"
 	"path"
 	"slices"
-	"sort"
 	"strconv"
 	"time"
 
@@ -18,6 +17,17 @@ import (
 	kjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/validation"
+)
+
+const kubernetesConfigMapKind = "ConfigMap"
+
+const (
+	httpPortName               = "http"
+	httpsPortName              = "https"
+	metricsPortName            = "metrics"
+	gatewayConfigVolumeName    = "config"
+	metricsConfigVolumeName    = "metrics-config"
+	processingConfigVolumeName = "processing-config"
 )
 
 const (
@@ -85,7 +95,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 			}
 		}
 		processingConfigMap = &corev1.ConfigMap{
-			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: kubernetesConfigMapKind},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      processingResourceName(c.Kubernetes.Name),
 				Namespace: c.Kubernetes.Namespace,
@@ -109,14 +119,14 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 		}
 	}
 	configMap := corev1.ConfigMap{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: kubernetesConfigMapKind},
 		ObjectMeta: metav1.ObjectMeta{Name: configName, Namespace: k.Namespace},
 		Data:       stringFiles(configFiles),
 	}
 	otelConfigMap := corev1.ConfigMap{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: kubernetesConfigMapKind},
 		ObjectMeta: metav1.ObjectMeta{Name: metricsName, Namespace: k.Namespace},
-		Data:       map[string]string{"config.yaml": string(otelConfig)},
+		Data:       map[string]string{collectorConfigFilename: string(otelConfig)},
 	}
 	serviceAccount := corev1.ServiceAccount{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ServiceAccount"},
@@ -152,11 +162,11 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 						ImagePullPolicy: corev1.PullIfNotPresent,
 						Args:            envoyArgs,
 						Ports: []corev1.ContainerPort{
-							{Name: "http", ContainerPort: int32(*c.Listener.Port), Protocol: corev1.ProtocolTCP},
+							{Name: httpPortName, ContainerPort: int32(*c.Listener.Port), Protocol: corev1.ProtocolTCP},
 							{Name: "admin", ContainerPort: envoyAdminPort, Protocol: corev1.ProtocolTCP},
 						},
 						ReadinessProbe: &corev1.Probe{
-							ProbeHandler:     corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString("http")}},
+							ProbeHandler:     corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString(httpPortName)}},
 							PeriodSeconds:    5,
 							FailureThreshold: 12,
 						},
@@ -173,36 +183,36 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 							Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 						},
 						VolumeMounts: []corev1.VolumeMount{{
-							Name:      "config",
+							Name:      gatewayConfigVolumeName,
 							MountPath: configDirectory,
 							ReadOnly:  true,
 						}},
 					}, {
-						Name:            "metrics",
+						Name:            metricsPortName,
 						Image:           k.OTelCollectorImage,
 						ImagePullPolicy: corev1.PullIfNotPresent,
-						Args:            []string{"--config=" + path.Join(collectorConfigDirectory, "config.yaml")},
+						Args:            []string{"--config=" + path.Join(collectorConfigDirectory, collectorConfigFilename)},
 						Ports: []corev1.ContainerPort{{
-							Name: "metrics", ContainerPort: defaultOTelMetricsPort, Protocol: corev1.ProtocolTCP,
+							Name: metricsPortName, ContainerPort: defaultOTelMetricsPort, Protocol: corev1.ProtocolTCP,
 						}},
 						Resources: corev1.ResourceRequirements{
 							Requests: kubernetesResourceList(k.Metrics.Resources.Requests),
 							Limits:   kubernetesResourceList(k.Metrics.Resources.Limits),
 						},
 						VolumeMounts: []corev1.VolumeMount{{
-							Name:      "metrics-config",
+							Name:      metricsConfigVolumeName,
 							MountPath: collectorConfigDirectory,
 							ReadOnly:  true,
 						}},
 					}},
 					Volumes: []corev1.Volume{{
-						Name: "config",
+						Name: gatewayConfigVolumeName,
 						VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
 							LocalObjectReference: corev1.LocalObjectReference{Name: configName},
 							Items:                configMapItems(configFiles),
 						}},
 					}, {
-						Name: "metrics-config",
+						Name: metricsConfigVolumeName,
 						VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
 							LocalObjectReference: corev1.LocalObjectReference{Name: metricsName},
 						}},
@@ -213,7 +223,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	}
 	if processingConfigMap != nil {
 		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
-			Name: "processing-config",
+			Name: processingConfigVolumeName,
 			VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
 				LocalObjectReference: corev1.LocalObjectReference{Name: processingConfigMap.Name},
 				Items:                []corev1.KeyToPath{{Key: processingConfigFilename, Path: processingConfigFilename}},
@@ -238,8 +248,8 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 				SecretName:  tlsConfig.Secret,
 				DefaultMode: &defaultMode,
 				Items: []corev1.KeyToPath{
-					{Key: "tls.crt", Path: certificateFilename},
-					{Key: "tls.key", Path: privateKeyFilename},
+					{Key: tlsCertificateSecretKey, Path: certificateFilename},
+					{Key: tlsPrivateKeySecretKey, Path: privateKeyFilename},
 				},
 			}},
 		})
@@ -257,7 +267,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 			VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
 				LocalObjectReference: corev1.LocalObjectReference{Name: ref.Name},
 				DefaultMode:          new(int32(0o444)),
-				Items:                []corev1.KeyToPath{{Key: ref.Key, Path: "ca.crt"}},
+				Items:                []corev1.KeyToPath{{Key: ref.Key, Path: caCertificateFilename}},
 			}},
 		})
 		envoy := &deployment.Spec.Template.Spec.Containers[0]
@@ -268,24 +278,24 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	servicePorts := make([]corev1.ServicePort, 0, 3)
 	if c.hasHTTP() {
 		servicePorts = append(servicePorts, corev1.ServicePort{
-			Name:       "http",
+			Name:       httpPortName,
 			Port:       *k.ServicePort,
-			TargetPort: intstr.FromString("http"),
+			TargetPort: intstr.FromString(httpPortName),
 			Protocol:   corev1.ProtocolTCP,
 		})
 	}
 	if c.hasHTTPS() {
 		servicePorts = append(servicePorts, corev1.ServicePort{
-			Name:       "https",
+			Name:       httpsPortName,
 			Port:       *k.HTTPSServicePort,
-			TargetPort: intstr.FromString("http"),
+			TargetPort: intstr.FromString(httpPortName),
 			Protocol:   corev1.ProtocolTCP,
 		})
 	}
 	servicePorts = append(servicePorts, corev1.ServicePort{
-		Name:       "metrics",
+		Name:       metricsPortName,
 		Port:       defaultOTelMetricsPort,
-		TargetPort: intstr.FromString("metrics"),
+		TargetPort: intstr.FromString(metricsPortName),
 		Protocol:   corev1.ProtocolTCP,
 	})
 	service := corev1.Service{
@@ -312,15 +322,6 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	}, nil
 }
 
-func sortedFileNames(files map[string][]byte) []string {
-	names := make([]string, 0, len(files))
-	for name := range files {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
 func stringFiles(files map[string][]byte) map[string]string {
 	data := make(map[string]string, len(files))
 	for filename, contents := range files {
@@ -331,7 +332,7 @@ func stringFiles(files map[string][]byte) map[string]string {
 
 func configMapItems(files map[string][]byte) []corev1.KeyToPath {
 	items := make([]corev1.KeyToPath, 0, len(files))
-	for _, name := range sortedFileNames(files) {
+	for _, name := range slices.Sorted(maps.Keys(files)) {
 		items = append(items, corev1.KeyToPath{Key: name, Path: name})
 	}
 	return items
@@ -358,8 +359,8 @@ type KubernetesMetrics struct {
 func (m KubernetesMetrics) withDefaults() KubernetesMetrics {
 	m.ScrapeInterval = defaultDuration(m.ScrapeInterval, 30*time.Second)
 	m.ScrapeTimeout = defaultDuration(m.ScrapeTimeout, 10*time.Second)
-	m.Resources.Requests = copyResourcesOrDefault(m.Resources.Requests, map[string]string{"cpu": "20m", "memory": "64Mi"})
-	m.Resources.Limits = copyResourcesOrDefault(m.Resources.Limits, map[string]string{"memory": "256Mi"})
+	m.Resources.Requests = copyResourcesOrDefault(m.Resources.Requests, map[string]string{kubernetesCPUResourceName: "20m", kubernetesMemoryResourceName: "64Mi"})
+	m.Resources.Limits = copyResourcesOrDefault(m.Resources.Limits, map[string]string{kubernetesMemoryResourceName: "256Mi"})
 	return m
 }
 

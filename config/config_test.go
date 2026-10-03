@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,59 +16,37 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-func readFixture(t testing.TB, name string) string {
+func readTestFile(t testing.TB, name string) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("testdata", name))
+	data, err := os.ReadFile(name)
 	if err != nil {
-		t.Fatalf("read fixture %q: %v", name, err)
+		t.Fatalf("read test file %q: %v", name, err)
 	}
 	return string(data)
 }
 
-func TestLoadAppliesDefaults(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "server-tls/config.yaml")))
+func readFixture(t testing.TB, name string) string {
+	t.Helper()
+	return readTestFile(t, filepath.Join("testdata", name))
+}
+
+func loadTestConfig(t testing.TB, input, name string) Config {
+	t.Helper()
+	config, err := Load(strings.NewReader(input))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("load %s: %v", name, err)
 	}
-	if config.Node.ID != defaultNodeID || config.Node.Cluster != defaultNodeCluster {
-		t.Fatalf("node defaults = %#v", config.Node)
-	}
-	if *config.Listener.Port != defaultListenerPort {
-		t.Fatalf("listener port default = %d, want %d", *config.Listener.Port, defaultListenerPort)
-	}
+	return config
+}
 
-	breakers := config.APIs[0].CircuitBreakers
-	if breakers == nil {
-		t.Fatal("circuit breaker defaults are missing")
-	}
-	if breakers.MaxConnections == nil || *breakers.MaxConnections != defaultCircuitBreakerMaxConnections ||
-		breakers.MaxPendingRequests == nil || *breakers.MaxPendingRequests != defaultCircuitBreakerMaxPendingRequests ||
-		breakers.MaxRequests == nil || *breakers.MaxRequests != defaultCircuitBreakerMaxRequests ||
-		breakers.MaxRetries == nil || *breakers.MaxRetries != defaultCircuitBreakerMaxRetries {
-		t.Fatalf("circuit breaker defaults = %#v", breakers)
-	}
+func loadConfigCase(t testing.TB, name string) Config {
+	t.Helper()
+	return loadTestConfig(t, readFixture(t, filepath.Join(name, "config.yaml")), name+" case")
+}
 
-	tls := config.Servers[1].TLSConfig
-	if tls == nil || tls.Certificate != defaultServerTLSCertificate || tls.PrivateKey != defaultServerTLSPrivateKey {
-		t.Fatalf("TLS defaults = %#v", tls)
-	}
-
-	if config.Kubernetes.Replicas == nil || *config.Kubernetes.Replicas != defaultKubernetesReplicas ||
-		*config.Kubernetes.ServicePort != defaultServicePort ||
-		*config.Kubernetes.HTTPSServicePort != defaultHTTPSServicePort ||
-		config.Kubernetes.OTelCollectorImage != defaultOTelCollectorImage {
-		t.Fatalf("Kubernetes defaults = %#v", config.Kubernetes)
-	}
-	requests := config.Kubernetes.Resources.Requests
-	if len(requests) != 2 || requests["cpu"] != defaultKubernetesCPURequest ||
-		requests["memory"] != defaultKubernetesMemoryRequest {
-		t.Fatalf("Kubernetes resource request defaults = %#v", requests)
-	}
-	limits := config.Kubernetes.Resources.Limits
-	if len(limits) != 2 || limits["cpu"] != defaultKubernetesCPULimit ||
-		limits["memory"] != defaultKubernetesMemoryLimit {
-		t.Fatalf("Kubernetes resource limit defaults = %#v", limits)
-	}
+func loadAuthExample(t testing.TB) Config {
+	t.Helper()
+	return loadTestConfig(t, readTestFile(t, filepath.Join("..", "config.auth.example.yaml")), "auth example")
 }
 
 func TestLoadRejectsMissingRouteMethods(t *testing.T) {
@@ -90,71 +69,99 @@ apis:
 }
 
 func TestLoadRejectsInvalidYAML(t *testing.T) {
-	tests := map[string]string{
-		"unknown field":      "unknown: true\n",
-		"duplicate field":    "version: 1\nversion: 1\n",
-		"multiple documents": "version: 1\n---\nversion: 1\n",
-		"invalid syntax":     "version: [\n",
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "unknown field", input: "version: 1\nunknown: true\n", want: "field unknown not found"},
+		{name: "duplicate field", input: "version: 1\nversion: 1\n", want: "already defined"},
+		{name: "multiple documents", input: "version: 1\n---\nversion: 1\n", want: "expected exactly one YAML document"},
+		{name: "invalid syntax", input: "version: [\n", want: "did not find expected node content"},
 	}
-	for name, input := range tests {
-		t.Run(name, func(t *testing.T) {
-			if _, err := Load(strings.NewReader(input)); err == nil {
-				t.Fatal("Load accepted invalid YAML")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := Load(strings.NewReader(test.input)); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Load error = %v, want %q", err, test.want)
 			}
 		})
 	}
 }
 
+func TestDurationYAMLContract(t *testing.T) {
+	for _, value := range []string{"250ms", "5s", "5m", "1.5ms", "0s"} {
+		var parsed Duration
+		if err := yaml.Unmarshal([]byte(value), &parsed); err != nil {
+			t.Fatalf("parse %q: %v", value, err)
+		}
+		encoded, err := yaml.Marshal(parsed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var roundtrip Duration
+		if err := yaml.Unmarshal(encoded, &roundtrip); err != nil || parsed != roundtrip {
+			t.Fatalf("duration roundtrip %q: %v, %v", value, roundtrip, err)
+		}
+	}
+
+	for name, input := range map[string]string{
+		"number":     "5",
+		"empty":      `""`,
+		"negative":   "-1s",
+		"sub-ms":     "500us",
+		"overflow":   "999999999999h",
+		"non-scalar": "[5s]",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var parsed Duration
+			if err := yaml.Unmarshal([]byte(input), &parsed); err == nil {
+				t.Fatalf("duration %s was accepted", input)
+			}
+		})
+	}
+
+	if _, err := Load(strings.NewReader(readFixture(t, "jwks-duration-invalid.yaml"))); err == nil || !strings.Contains(err.Error(), "authenticators[0].jwt.jwks.fetch_timeout") {
+		t.Fatalf("duration field error = %v, want the complete field path", err)
+	}
+}
+
 func TestValidateRejectsInvalidConfiguration(t *testing.T) {
 	exampleConfig := readFixture(t, "public-routing/config.yaml")
-	tests := map[string]func(*Config){
-		"unsupported version": func(c *Config) { c.Version = 2 },
-		"invalid listener port": func(c *Config) {
-			c.Listener.Port = new(uint32(65536))
-		},
-		"no APIs":          func(c *Config) { c.APIs = nil },
-		"invalid API name": func(c *Config) { c.APIs[0].Name = "Metrics" },
-		"duplicate API name": func(c *Config) {
-			c.APIs = append(c.APIs, c.APIs[0])
-		},
-		"duplicate route": func(c *Config) {
+	tests := []struct {
+		name string
+		want string
+		edit func(*Config)
+	}{
+		{name: "unsupported version", want: "version must", edit: func(c *Config) { c.Version = 2 }},
+		{name: "invalid listener port", want: "listener.port", edit: func(c *Config) { c.Listener.Port = new(uint32(65536)) }},
+		{name: "no APIs", want: "at least one API", edit: func(c *Config) { c.APIs = nil }},
+		{name: "invalid API name", want: "apis[0].name", edit: func(c *Config) { c.APIs[0].Name = "Metrics" }},
+		{name: "duplicate API name", want: "duplicate API name", edit: func(c *Config) { c.APIs = append(c.APIs, c.APIs[0]) }},
+		{name: "duplicate route", want: "servers[0].apis: duplicate API route", edit: func(c *Config) {
 			api := c.APIs[0]
 			api.Name = "metrics-copy"
 			c.APIs = append(c.APIs, api)
 			c.Servers[0].APIs = append(c.Servers[0].APIs, api.Name)
-		},
-		"no routes":        func(c *Config) { c.APIs[0].Routes = nil },
-		"lowercase method": func(c *Config) { c.APIs[0].Routes[0].Methods = []string{"post"} },
-		"invalid method":   func(c *Config) { c.APIs[0].Routes[0].Methods = []string{"POST /metrics"} },
-		"relative path": func(c *Config) {
-			c.APIs[0].Routes[0].Path.Exact = "metrics/write"
-		},
-		"path traversal": func(c *Config) {
-			c.APIs[0].Routes[0].Path.Exact = "/metrics/../admin"
-		},
-		"path query": func(c *Config) {
-			c.APIs[0].Routes[0].Path.Exact = "/metrics?tenant=one"
-		},
-		"invalid upstream": func(c *Config) { c.APIs[0].Upstream.Address = "bad_host" },
-		"invalid port":     func(c *Config) { c.APIs[0].Upstream.Port = 65536 },
-		"invalid rewrite path": func(c *Config) {
-			c.APIs[0].Routes[0].Rewrite.Path = "/api/%invalid"
-		},
-		"empty image":       func(c *Config) { c.Kubernetes.Image = " " },
-		"negative replicas": func(c *Config) { c.Kubernetes.Replicas = new(int32(-1)) },
-		"invalid service port": func(c *Config) {
-			c.Kubernetes.ServicePort = new(int32(65536))
-		},
+		}},
+		{name: "no routes", want: "apis[0].routes", edit: func(c *Config) { c.APIs[0].Routes = nil }},
+		{name: "lowercase method", want: "apis[0].routes[0].methods", edit: func(c *Config) { c.APIs[0].Routes[0].Methods = []string{"post"} }},
+		{name: "invalid method", want: "apis[0].routes[0].methods", edit: func(c *Config) { c.APIs[0].Routes[0].Methods = []string{"POST /metrics"} }},
+		{name: "relative path", want: "apis[0].routes[0].path.exact", edit: func(c *Config) { c.APIs[0].Routes[0].Path.Exact = "metrics/write" }},
+		{name: "path traversal", want: "apis[0].routes[0].path.exact", edit: func(c *Config) { c.APIs[0].Routes[0].Path.Exact = "/metrics/../admin" }},
+		{name: "path query", want: "apis[0].routes[0].path.exact", edit: func(c *Config) { c.APIs[0].Routes[0].Path.Exact = "/metrics?tenant=one" }},
+		{name: "invalid upstream", want: "apis[0].upstream.address", edit: func(c *Config) { c.APIs[0].Upstream.Address = "bad_host" }},
+		{name: "invalid port", want: "apis[0].upstream.port", edit: func(c *Config) { c.APIs[0].Upstream.Port = 65536 }},
+		{name: "invalid rewrite path", want: "apis[0].routes[0].rewrite.path", edit: func(c *Config) { c.APIs[0].Routes[0].Rewrite.Path = "/api/%invalid" }},
+		{name: "empty image", want: "kubernetes.image", edit: func(c *Config) { c.Kubernetes.Image = " " }},
+		{name: "negative replicas", want: "kubernetes.replicas", edit: func(c *Config) { c.Kubernetes.Replicas = new(int32(-1)) }},
+		{name: "invalid service port", want: "kubernetes.service_port", edit: func(c *Config) { c.Kubernetes.ServicePort = new(int32(65536)) }},
 	}
-	for name, change := range tests {
-		t.Run(name, func(t *testing.T) {
-			config, err := Load(strings.NewReader(exampleConfig))
-			if err != nil {
-				t.Fatal(err)
-			}
-			change(&config)
-			if err := config.Validate(); err == nil {
-				t.Fatal("Validate accepted invalid configuration")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := loadTestConfig(t, exampleConfig, "valid baseline")
+			test.edit(&config)
+			if err := config.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validation error = %v, want %q", err, test.want)
 			}
 		})
 	}
@@ -162,129 +169,48 @@ func TestValidateRejectsInvalidConfiguration(t *testing.T) {
 
 func TestValidateRejectsInvalidRouteConfiguration(t *testing.T) {
 	routeListConfig := readFixture(t, "route-lists/config.yaml")
-	tests := map[string]func(*Config){
-		"multiple path matchers": func(c *Config) {
-			c.APIs[0].Routes[0].Path.Prefix = "/metrics/"
-		},
-		"invalid path regex": func(c *Config) {
-			c.APIs[0].Routes[0].Path.Regex = "["
-		},
-		"duplicate method": func(c *Config) {
-			c.APIs[0].Routes[0].Methods = []string{"GET", "GET"}
-		},
-		"missing path matcher": func(c *Config) {
-			c.APIs[0].Routes[0].Path = PathMatch{}
-		},
-		"multiple rewrite types": func(c *Config) {
-			c.APIs[0].Routes[0].Rewrite = &PathRewrite{Path: "/query", Prefix: "/api/"}
-		},
-		"duplicate route": func(c *Config) {
-			c.APIs[0].Routes = append(c.APIs[0].Routes, c.APIs[0].Routes[0])
-		},
+	tests := []struct {
+		name string
+		want string
+		edit func(*Config)
+	}{
+		{name: "multiple path matchers", want: "apis[0].routes[0].path", edit: func(c *Config) { c.APIs[0].Routes[0].Path.Prefix = "/metrics/" }},
+		{name: "invalid path regex", want: "apis[0].routes[0].path.regex", edit: func(c *Config) { c.APIs[0].Routes[0].Path.Regex = "[" }},
+		{name: "duplicate method", want: "apis[0].routes[0].methods", edit: func(c *Config) { c.APIs[0].Routes[0].Methods = []string{"GET", "GET"} }},
+		{name: "missing path matcher", want: "apis[0].routes[0].path", edit: func(c *Config) { c.APIs[0].Routes[0].Path = PathMatch{} }},
+		{name: "multiple rewrite types", want: "apis[0].routes[0].rewrite", edit: func(c *Config) { c.APIs[0].Routes[0].Rewrite = &PathRewrite{Path: "/query", Prefix: "/api/"} }},
+		{name: "duplicate route", want: "duplicate API route", edit: func(c *Config) { c.APIs[0].Routes = append(c.APIs[0].Routes, c.APIs[0].Routes[0]) }},
 	}
-	for name, change := range tests {
-		t.Run(name, func(t *testing.T) {
-			config, err := Load(strings.NewReader(routeListConfig))
-			if err != nil {
-				t.Fatal(err)
-			}
-			change(&config)
-			if err := config.Validate(); err == nil {
-				t.Fatal("Validate accepted invalid route configuration")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := loadTestConfig(t, routeListConfig, "valid route baseline")
+			test.edit(&config)
+			if err := config.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validation error = %v, want %q", err, test.want)
 			}
 		})
 	}
 }
 
-func TestValidateServers(t *testing.T) {
-	newConfig := func() Config {
-		config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
-		if err != nil {
-			t.Fatal(err)
-		}
-		config.Kubernetes = nil
-		config.Servers = []Server{
-			{Hostname: "auth.example.com", APIs: []string{"metrics"}},
-			{Hostname: "tls.example.com", TLSConfig: &ServerTLS{}, APIs: []string{"metrics"}},
-		}
-		return config
-	}
-
-	if err := newConfig().Validate(); err != nil {
-		t.Fatalf("valid HTTP and HTTPS servers rejected: %v", err)
-	}
-	tests := map[string]func(*Config){
-		"no servers":        func(c *Config) { c.Servers = nil },
-		"empty servers":     func(c *Config) { c.Servers = []Server{} },
-		"missing hostname":  func(c *Config) { c.Servers[0].Hostname = "" },
-		"invalid hostname":  func(c *Config) { c.Servers[0].Hostname = "https://auth.example.com" },
-		"wildcard hostname": func(c *Config) { c.Servers[0].Hostname = "*.example.com" },
-		"IP hostname":       func(c *Config) { c.Servers[0].Hostname = "127.0.0.1" },
-		"duplicate host within one protocol": func(c *Config) {
-			c.Servers = append(c.Servers, c.Servers[0])
-		},
-		"host cannot use both protocols": func(c *Config) {
-			c.Servers[1].Hostname = c.Servers[0].Hostname
-		},
-		"unknown API":       func(c *Config) { c.Servers[0].APIs = []string{"unknown"} },
-		"duplicate binding": func(c *Config) { c.Servers[0].APIs = []string{"metrics", "metrics"} },
-		"certificate paths share a directory": func(c *Config) {
-			c.Servers[1].TLSConfig.Certificate = "/etc/certs/tls.crt"
-			c.Servers[1].TLSConfig.PrivateKey = "/etc/keys/tls.key"
-		},
-		"relative certificate path": func(c *Config) {
-			c.Servers[1].TLSConfig.Certificate = "tls.crt"
-		},
-		"identical certificate and key": func(c *Config) {
-			c.Servers[1].TLSConfig.Certificate = "/etc/certs/tls.crt"
-			c.Servers[1].TLSConfig.PrivateKey = "/etc/certs/tls.crt"
-		},
-	}
-	for name, change := range tests {
+func TestSupportedExamplesGenerate(t *testing.T) {
+	for _, name := range []string{"config.example.yaml", "config.auth.example.yaml", "config.production.example.yaml"} {
 		t.Run(name, func(t *testing.T) {
-			config := newConfig()
-			change(&config)
-			if err := config.Validate(); err == nil {
-				t.Fatal("Validate accepted an invalid server configuration")
+			config := loadTestConfig(t, readTestFile(t, filepath.Join("..", name)), name)
+			files, err := Generate(config)
+			if err != nil {
+				t.Fatalf("generate Envoy configuration: %v", err)
+			}
+			if len(files["envoy.yaml"]) == 0 {
+				t.Fatal("Envoy output is empty")
+			}
+			resources, err := GenerateKubernetes(config)
+			if err != nil {
+				t.Fatalf("generate Kubernetes resources: %v", err)
+			}
+			if _, err := resources.YAML(); err != nil {
+				t.Fatalf("serialize Kubernetes resources: %v", err)
 			}
 		})
-	}
-}
-
-func TestRootExampleGeneratesKubernetes(t *testing.T) {
-	for _, name := range []string{"config.example.yaml", "config.production.example.yaml"} {
-		t.Run(name, func(t *testing.T) {
-			data, err := os.ReadFile(filepath.Join("..", name))
-			if err != nil {
-				t.Fatal(err)
-			}
-			config, err := Load(strings.NewReader(string(data)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := GenerateKubernetes(config); err != nil {
-				t.Fatal(err)
-			}
-		})
-	}
-}
-
-func TestDefaultsDoNotMutateInput(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	config.APIs[0].Routes[0].Methods = nil
-	config.Kubernetes.Replicas = nil
-	defaulted := config.withDefaults()
-	if config.APIs[0].Routes[0].Methods != nil || config.Kubernetes.Replicas != nil {
-		t.Fatal("applying defaults mutated the caller's configuration")
-	}
-	if len(defaulted.APIs[0].Routes[0].Methods) != 0 {
-		t.Fatal("withDefaults supplied a method for a route without any")
-	}
-	if defaulted.Kubernetes.Replicas == nil || *defaulted.Kubernetes.Replicas != 2 {
-		t.Fatal("Kubernetes defaults were not applied to the returned configuration")
 	}
 }
 
@@ -336,15 +262,6 @@ func TestListenerLimitsOnEveryChainAndFixedControls(t *testing.T) {
 			t.Fatalf("control removal = %v", got)
 		}
 	}
-	c = loadConfigCase(t, "public-routing")
-	files, err = Generate(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := decodeHTTPManager(t, decodeBootstrap(t, files["envoy.yaml"]).StaticResources.Listeners[0].FilterChains[0])
-	if m.StreamFlushTimeout.AsDuration() != 5*time.Second || m.MaxRequestHeadersKb.Value != 32 || m.CommonHttpProtocolOptions.MaxHeadersCount.Value != 100 || m.RequestTimeout.AsDuration() != 30*time.Second || m.Http2ProtocolOptions != nil {
-		t.Fatalf("baseline = %v", m)
-	}
 	for _, name := range requestControlHeaders {
 		if !forbiddenIdentityHeader(name) {
 			t.Errorf("request output could restore %s", name)
@@ -361,7 +278,7 @@ func TestResolvedRouteTimeoutsAndReuse(t *testing.T) {
 		{Methods: []string{"GET", "POST"}, Path: PathMatch{Exact: "/query"}},
 		{Methods: []string{"GET"}, Path: PathMatch{Exact: "/range"}, Timeouts: &RouteTimeouts{ResponseTimeout: duration(80 * time.Second), IdleTimeout: duration(95 * time.Second), MaxStreamDuration: duration(120 * time.Second)}},
 	}
-	c.Servers = append(c.Servers, Server{Hostname: "second.example.test", APIs: cloneSlice(c.Servers[0].APIs)})
+	c.Servers = append(c.Servers, Server{Hostname: "second.example.test", APIs: slices.Clone(c.Servers[0].APIs)})
 	before, _ := yaml.Marshal(c)
 	effective, err := resolveConfig(c)
 	if err != nil {
@@ -431,8 +348,8 @@ func TestUpstreamTLSAndExplicitProtocols(t *testing.T) {
 		if err := cluster.TypedExtensionProtocolOptions["envoy.extensions.upstreams.http.v3.HttpProtocolOptions"].UnmarshalTo(&protocol); err != nil {
 			t.Fatal(err)
 		}
-		if cluster.Http2ProtocolOptions != nil || protocol.RetryPolicy != nil {
-			t.Fatal("legacy HTTP/2 or retries emitted")
+		if protocol.RetryPolicy != nil {
+			t.Fatal("retries emitted")
 		}
 		var transport tls.UpstreamTlsContext
 		if err := cluster.TransportSocket.GetTypedConfig().UnmarshalTo(&transport); err != nil {

@@ -50,10 +50,10 @@ func defaultCircuitBreakers(c *CircuitBreakerConfig) *CircuitBreakerConfig {
 		c = &CircuitBreakerConfig{}
 	}
 	return &CircuitBreakerConfig{
-		MaxConnections:     defaultUint32(c.MaxConnections, defaultCircuitBreakerMaxConnections),
-		MaxPendingRequests: defaultUint32(c.MaxPendingRequests, defaultCircuitBreakerMaxPendingRequests),
-		MaxRequests:        defaultUint32(c.MaxRequests, defaultCircuitBreakerMaxRequests),
-		MaxRetries:         defaultUint32(c.MaxRetries, defaultCircuitBreakerMaxRetries),
+		MaxConnections:     defaultValue(c.MaxConnections, defaultCircuitBreakerMaxConnections),
+		MaxPendingRequests: defaultValue(c.MaxPendingRequests, defaultCircuitBreakerMaxPendingRequests),
+		MaxRequests:        defaultValue(c.MaxRequests, defaultCircuitBreakerMaxRequests),
+		MaxRetries:         defaultValue(c.MaxRetries, defaultCircuitBreakerMaxRetries),
 	}
 }
 

@@ -6,9 +6,14 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
+)
+
+const (
+	invalidJWTTextCharacters           = "\r\n\t"
+	attributeNameValidationErrorFormat = "%s.attributes contains invalid attribute name %q"
+	attributeMapperType                = "attribute-mapper"
 )
 
 var attributeNamePattern = regexp.MustCompile("^[a-z][a-z0-9_-]{0,63}$")
@@ -93,11 +98,11 @@ func validateUniqueIssuerBindings(name string, selected []string, authenticators
 }
 
 func validateJWTAuthenticator(name string, jwt JWTAuthenticator) error {
-	if jwt.Issuer == "" || strings.TrimSpace(jwt.Issuer) != jwt.Issuer || strings.ContainsAny(jwt.Issuer, "\r\n\t") {
+	if jwt.Issuer == "" || strings.TrimSpace(jwt.Issuer) != jwt.Issuer || strings.ContainsAny(jwt.Issuer, invalidJWTTextCharacters) {
 		return fmt.Errorf("%s.issuer must be a nonempty issuer identifier without surrounding whitespace", name)
 	}
 	parsed, err := url.Parse(jwt.JWKS.URI)
-	if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" || parsed.Opaque != "" {
+	if err != nil || !strings.EqualFold(parsed.Scheme, httpsProtocolToken) || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" || parsed.Opaque != "" {
 		return fmt.Errorf("%s.jwks.uri must be an absolute HTTPS URL without user information or a fragment", name)
 	}
 	if !validHost(strings.ToLower(parsed.Hostname())) || strings.HasSuffix(parsed.Host, ":") {
@@ -114,7 +119,7 @@ func validateJWTAuthenticator(name string, jwt JWTAuthenticator) error {
 	}
 	seenAudiences := make(map[string]struct{}, len(jwt.Audiences))
 	for _, audience := range jwt.Audiences {
-		if audience == "" || strings.TrimSpace(audience) != audience || strings.ContainsAny(audience, "\r\n\t") {
+		if audience == "" || strings.TrimSpace(audience) != audience || strings.ContainsAny(audience, invalidJWTTextCharacters) {
 			return fmt.Errorf("%s.audiences must not contain empty values or surrounding whitespace", name)
 		}
 		if _, exists := seenAudiences[audience]; exists {
@@ -122,9 +127,9 @@ func validateJWTAuthenticator(name string, jwt JWTAuthenticator) error {
 		}
 		seenAudiences[audience] = struct{}{}
 	}
-	for _, attribute := range sortedKeys(jwt.Attributes) {
+	for _, attribute := range slices.Sorted(maps.Keys(jwt.Attributes)) {
 		if !attributeNamePattern.MatchString(attribute) {
-			return fmt.Errorf("%s.attributes contains invalid attribute name %q", name, attribute)
+			return fmt.Errorf(attributeNameValidationErrorFormat, name, attribute)
 		}
 		mapping := jwt.Attributes[attribute]
 		if len(mapping.ClaimPath) == 0 {
@@ -155,7 +160,7 @@ func validateRouteProcessing(name string, processing *RouteProcessing) error {
 			return fmt.Errorf("%s.name %q is reserved for credentials, routing, connection, or message framing", mappingName, mapping.Name)
 		}
 		if _, exists := seen[lowerName]; exists {
-			return fmt.Errorf("%s.name %q is duplicated", name, mapping.Name)
+			return fmt.Errorf("%s.name %q is duplicated", mappingName, mapping.Name)
 		}
 		seen[lowerName] = struct{}{}
 		if !attributeNamePattern.MatchString(mapping.FromAttribute) {
@@ -285,15 +290,6 @@ func mapKeys[V any](values map[string]V) map[string]struct{} {
 	return keys
 }
 
-func sortedKeys[V any](values map[string]V) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 func cloneAuthenticators(values []Authenticator) []Authenticator {
 	if values == nil {
 		return nil
@@ -304,11 +300,11 @@ func cloneAuthenticators(values []Authenticator) []Authenticator {
 		if value.JWT != nil {
 			jwt := *value.JWT
 			jwt.JWKS = jwt.JWKS.withDefaults()
-			jwt.Audiences = cloneSlice(value.JWT.Audiences)
+			jwt.Audiences = slices.Clone(value.JWT.Audiences)
 			if value.JWT.Attributes != nil {
 				jwt.Attributes = make(map[string]JWTAttribute, len(value.JWT.Attributes))
 				for name, attribute := range value.JWT.Attributes {
-					attribute.ClaimPath = cloneSlice(attribute.ClaimPath)
+					attribute.ClaimPath = slices.Clone(attribute.ClaimPath)
 					jwt.Attributes[name] = attribute
 				}
 			}
@@ -328,7 +324,7 @@ func cloneProcessors(values []Processor) []Processor {
 		if value.Attributes != nil {
 			out[i].Attributes = make(map[string]AttributeMappings, len(value.Attributes))
 			for name, attribute := range value.Attributes {
-				attribute.Mappings = cloneMap(attribute.Mappings)
+				attribute.Mappings = maps.Clone(attribute.Mappings)
 				out[i].Attributes[name] = attribute
 			}
 		}
@@ -343,13 +339,13 @@ func cloneAuthorizationPolicies(values []AuthorizationPolicy) []AuthorizationPol
 	out := make([]AuthorizationPolicy, len(values))
 	for i, value := range values {
 		out[i] = value
-		out[i].Grants = cloneSlice(value.Grants)
+		out[i].Grants = slices.Clone(value.Grants)
 		for j := range out[i].Grants {
-			out[i].Grants[j].APIs = cloneSlice(value.Grants[j].APIs)
+			out[i].Grants[j].APIs = slices.Clone(value.Grants[j].APIs)
 			if value.Grants[j].Attributes != nil {
 				out[i].Grants[j].Attributes = make(map[string][]string, len(value.Grants[j].Attributes))
 				for name, allowed := range value.Grants[j].Attributes {
-					out[i].Grants[j].Attributes[name] = cloneSlice(allowed)
+					out[i].Grants[j].Attributes[name] = slices.Clone(allowed)
 				}
 			}
 		}
@@ -362,8 +358,8 @@ func cloneAuthentication(value *Authentication) *Authentication {
 		return nil
 	}
 	cloned := *value
-	cloned.AnyOf = cloneSlice(value.AnyOf)
-	cloned.AllOf = cloneSlice(value.AllOf)
+	cloned.AnyOf = slices.Clone(value.AnyOf)
+	cloned.AllOf = slices.Clone(value.AllOf)
 	return &cloned
 }
 
@@ -372,25 +368,7 @@ func cloneAuthorization(value *Authorization) *Authorization {
 		return nil
 	}
 	cloned := *value
-	cloned.AnyOf = cloneSlice(value.AnyOf)
-	cloned.AllOf = cloneSlice(value.AllOf)
+	cloned.AnyOf = slices.Clone(value.AnyOf)
+	cloned.AllOf = slices.Clone(value.AllOf)
 	return &cloned
-}
-
-func cloneMap[K comparable, V any](values map[K]V) map[K]V {
-	if values == nil {
-		return nil
-	}
-	out := make(map[K]V, len(values))
-	maps.Copy(out, values)
-	return out
-}
-
-func cloneSlice[V any](values []V) []V {
-	if values == nil {
-		return nil
-	}
-	out := make([]V, len(values))
-	copy(out, values)
-	return out
 }

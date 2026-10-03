@@ -173,13 +173,6 @@ func TestGenerateBuildsNamedAPIClustersAndRoutes(t *testing.T) {
 		t.Fatalf("not found status = %d", status)
 	}
 
-	second, err := Generate(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(files["envoy.yaml"], second["envoy.yaml"]) {
-		t.Fatal("generation is not deterministic")
-	}
 }
 
 func TestGenerateAllowsMethodsOnOnePath(t *testing.T) {
@@ -362,8 +355,8 @@ func TestGenerateRejectsInvalidConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	config.Version = 2
-	if _, err := Generate(config); err == nil {
-		t.Fatal("Generate accepted an unsupported config version")
+	if _, err := Generate(config); err == nil || !strings.Contains(err.Error(), "version must") {
+		t.Fatalf("Generate error = %v, want unsupported config version", err)
 	}
 }
 
@@ -463,13 +456,113 @@ func TestGenerateScopesAPIExposureToServers(t *testing.T) {
 			t.Fatalf("SDS file %s does not reference the shared certificate with a distinct name", filename)
 		}
 	}
-	second, err := Generate(config)
-	if err != nil {
-		t.Fatal(err)
+}
+
+func TestGenerationIsDeterministic(t *testing.T) {
+	buildMapped := func(t *testing.T, reverse bool) Config {
+		t.Helper()
+		c := loadConfigCase(t, "jwt-auth-with-mappings")
+		entries := []struct{ source, target string }{
+			{source: "client-123", target: "team-a"},
+			{source: "client-456", target: "team-b"},
+			{source: "customer-456", target: "team-a"},
+			{source: "customer-789", target: "team-b"},
+		}
+		mappings := make(map[string]string, len(entries))
+		for i := range entries {
+			index := i
+			if reverse {
+				index = len(entries) - i - 1
+			}
+			mappings[entries[index].source] = entries[index].target
+		}
+		attributes := c.Processing[0].Attributes
+		attribute := attributes["tenant_id"]
+		attribute.Mappings = mappings
+		attributes["tenant_id"] = attribute
+		return c
 	}
-	for filename, data := range files {
-		if !bytes.Equal(data, second[filename]) {
-			t.Fatalf("%s generation is not deterministic", filename)
+	buildMultipleCAs := func(t *testing.T, reverse bool) Config {
+		t.Helper()
+		c := loadConfigCase(t, "jwt-auth-multiple-issuers")
+		c.Authenticators[0].JWT.JWKS.TrustedCA = &TrustedCA{ConfigMap: &CAConfigMap{Name: "issuer-one-ca", Key: "ca.crt"}}
+		c.Authenticators[1].JWT.JWKS.TrustedCA = &TrustedCA{ConfigMap: &CAConfigMap{Name: "issuer-two-ca", Key: "ca.crt"}}
+		c.APIs[0].Upstream.TLSConfig = &UpstreamTLS{
+			ServerName: "backend.example.test",
+			TrustedCA:  &TrustedCA{ConfigMap: &CAConfigMap{Name: "backend-ca", Key: "ca.crt"}},
+		}
+		requests := []struct{ name, value string }{{name: "cpu", value: "50m"}, {name: "memory", value: "64Mi"}}
+		limits := []struct{ name, value string }{{name: "cpu", value: "1"}, {name: "memory", value: "256Mi"}}
+		c.Kubernetes.Resources.Requests = resourceMap(requests, reverse)
+		c.Kubernetes.Resources.Limits = resourceMap(limits, reverse)
+		return c
+	}
+	tests := []struct {
+		name  string
+		build func(*testing.T, bool) Config
+	}{
+		{name: "public routing", build: func(t *testing.T, _ bool) Config { return loadConfigCase(t, "public-routing") }},
+		{name: "mapping insertion order", build: buildMapped},
+		{name: "multiple CA mounts", build: buildMultipleCAs},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			firstConfig := test.build(t, false)
+			secondConfig := test.build(t, true)
+			firstFiles, err := Generate(firstConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			secondFiles, err := Generate(secondConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertGeneratedFilesEqual(t, firstFiles, secondFiles)
+
+			firstResources, err := GenerateKubernetes(firstConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			secondResources, err := GenerateKubernetes(secondConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			firstManifest, err := firstResources.YAML()
+			if err != nil {
+				t.Fatal(err)
+			}
+			secondManifest, err := secondResources.YAML()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(firstManifest, secondManifest) {
+				t.Fatal("Kubernetes manifest changed with map insertion order")
+			}
+		})
+	}
+}
+
+func resourceMap(entries []struct{ name, value string }, reverse bool) map[string]string {
+	values := make(map[string]string, len(entries))
+	for i := range entries {
+		index := i
+		if reverse {
+			index = len(entries) - i - 1
+		}
+		values[entries[index].name] = entries[index].value
+	}
+	return values
+}
+
+func assertGeneratedFilesEqual(t testing.TB, left, right map[string][]byte) {
+	t.Helper()
+	if len(left) != len(right) {
+		t.Fatalf("generated file counts differ: %d and %d", len(left), len(right))
+	}
+	for name, contents := range left {
+		other, ok := right[name]
+		if !ok || !bytes.Equal(contents, other) {
+			t.Fatalf("generated file %q differs", name)
 		}
 	}
 }

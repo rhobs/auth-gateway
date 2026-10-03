@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	caDirectory    = "/etc/auth-gateway-ca"
-	systemCABundle = "/etc/ssl/certs/ca-certificates.crt"
+	caDirectory            = "/etc/auth-gateway-ca"
+	systemCABundle         = "/etc/ssl/certs/ca-certificates.crt"
+	tlsTransportSocketName = "envoy.transport_sockets.tls"
 )
 
 // TrustedCA selects a replacement trust bundle. Omission uses the system bundle.
@@ -62,7 +63,7 @@ func validateTrustedCA(name string, ca *TrustedCA, kubernetes bool) error {
 	if kubernetes {
 		return fmt.Errorf("%s.filename is supported only without kubernetes settings; use config_map", name)
 	}
-	if !path.IsAbs(ca.Filename) || path.Clean(ca.Filename) != ca.Filename || ca.Filename == "/" || strings.ContainsAny(ca.Filename, "\r\n\x00") {
+	if !path.IsAbs(ca.Filename) || path.Clean(ca.Filename) != ca.Filename || ca.Filename == "/" || strings.ContainsAny(ca.Filename, invalidControlCharacters) {
 		return fmt.Errorf("%s.filename must be a clean absolute file path", name)
 	}
 	return nil
@@ -78,7 +79,7 @@ func (ca *TrustedCA) filename() string {
 		return systemCABundle
 	}
 	if ca.ConfigMap != nil {
-		return path.Join(caDirectory, ca.ConfigMap.id(), "ca.crt")
+		return path.Join(caDirectory, ca.ConfigMap.id(), caCertificateFilename)
 	}
 	return ca.Filename
 }
@@ -111,5 +112,5 @@ func verifiedTLS(identity string, ca *TrustedCA, alpn []string) (*core.Transport
 	if err != nil {
 		return nil, err
 	}
-	return &core.TransportSocket{Name: "envoy.transport_sockets.tls", ConfigType: &core.TransportSocket_TypedConfig{TypedConfig: packed}}, nil
+	return &core.TransportSocket{Name: tlsTransportSocketName, ConfigType: &core.TransportSocket_TypedConfig{TypedConfig: packed}}, nil
 }

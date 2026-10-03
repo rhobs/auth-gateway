@@ -7,8 +7,10 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -133,8 +135,7 @@ func checkUpstream(ctx context.Context, address, host string) error {
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	body, err := readAndCloseResponseBody(response, 1<<20)
 	if err != nil {
 		return err
 	}
@@ -171,8 +172,7 @@ func requestHTTPSWithMethod(ctx context.Context, address, serverName, requestHos
 	if err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
-	if _, err := io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20)); err != nil {
+	if _, err := readAndCloseResponseBody(response, 1<<20); err != nil {
 		return nil, err
 	}
 	if response.TLS == nil || len(response.TLS.PeerCertificates) == 0 {
@@ -198,8 +198,7 @@ func checkPrometheusMetrics(ctx context.Context, address string) error {
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	body, err := readAndCloseResponseBody(response, 1<<20)
 	if err != nil {
 		return err
 	}
@@ -207,4 +206,23 @@ func checkPrometheusMetrics(ctx context.Context, address string) error {
 		return fmt.Errorf("HTTP %d did not include Envoy metrics", response.StatusCode)
 	}
 	return nil
+}
+
+func readAndCloseResponseBody(response *http.Response, limit int64) ([]byte, error) {
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, limit))
+	if readErr != nil {
+		readErr = fmt.Errorf("read response body: %w", readErr)
+	}
+	closeErr := response.Body.Close()
+	if closeErr != nil {
+		closeErr = fmt.Errorf("close response body: %w", closeErr)
+	}
+	return body, errors.Join(readErr, closeErr)
+}
+
+func writeTestOutput(format string, args ...any) {
+	if _, err := fmt.Fprintf(GinkgoWriter, format, args...); err != nil {
+		log.Printf(format, args...)
+		log.Printf("write Ginkgo output: %v", err)
+	}
 }

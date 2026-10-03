@@ -10,9 +10,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 )
 
 type requestContextTransport struct {
@@ -70,7 +67,7 @@ func resolveTargetPort(targetPort intstr.IntOrString, servicePort int32, pod *co
 				}
 			}
 		}
-		return 0, fmt.Errorf("Pod %q has no container port named %q", pod.Name, targetPort.StrVal)
+		return 0, fmt.Errorf("pod %q has no container port named %q", pod.Name, targetPort.StrVal)
 	default:
 		return 0, fmt.Errorf("invalid target port type %d", targetPort.Type)
 	}

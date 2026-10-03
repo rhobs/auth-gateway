@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"io"
 	"math/big"
 	"net/http"
 	"sort"
@@ -193,7 +192,7 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 				status, responseBody, err := jwtGateway.request(ctx, target.address, target.host, target.tls, token, true)
 				Expect(err).NotTo(HaveOccurred())
 				if status != http.StatusOK {
-					fmt.Fprintf(GinkgoWriter, "valid %s request status=%d body=%s\n", test.issuer, status, responseBody)
+					writeTestOutput("valid %s request status=%d body=%s\n", test.issuer, status, responseBody)
 					env.Diagnostics(jwtNamespace)
 				}
 				Expect(status).To(Equal(http.StatusOK), string(responseBody))
@@ -287,7 +286,7 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 			status, body, err := jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, test.token, false)
 			Expect(err).NotTo(HaveOccurred(), test.name)
 			if status != test.status {
-				fmt.Fprintf(GinkgoWriter, "%s response status=%d body=%s\n", test.name, status, body)
+				writeTestOutput("%s response status=%d body=%s\n", test.name, status, body)
 				env.Diagnostics(jwtNamespace)
 			}
 			Expect(status).To(Equal(test.status), test.name+": "+string(body))
@@ -695,7 +694,7 @@ static_resources:
 		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
 		ObjectMeta: metav1.ObjectMeta{Name: "jwt-jwks", Namespace: namespace},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: ptrInt32(1), Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Replicas: new(int32(1)), Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: map[string]string{}}, Spec: corev1.PodSpec{Containers: []corev1.Container{container}, Volumes: volumes}},
 		},
 	}
@@ -718,7 +717,7 @@ func jwtSetBytes(keys map[string]*rsa.PrivateKey, issuer string) ([]byte, error)
 	for _, keyID := range keyIDs {
 		key := keys[keyID]
 		eBytes := big.NewInt(int64(key.PublicKey.E)).Bytes()
-		publicKeys = append(publicKeys, map[string]string{"kty": "RSA", "kid": keyID, "use": "sig", "alg": "RS256", "n": base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes()), "e": base64.RawURLEncoding.EncodeToString(eBytes)})
+		publicKeys = append(publicKeys, map[string]string{"kty": "RSA", "kid": keyID, "use": "sig", "alg": "RS256", "n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()), "e": base64.RawURLEncoding.EncodeToString(eBytes)})
 	}
 	return json.Marshal(map[string]any{"keys": publicKeys})
 }
@@ -748,8 +747,6 @@ func yamlDocuments(objects ...any) ([]byte, error) {
 	}
 	return []byte(output.String()), nil
 }
-
-func ptrInt32(value int32) *int32 { return &value }
 
 func jwtTestClaims(tenant string) map[string]any {
 	return map[string]any{
@@ -783,8 +780,7 @@ func jwtUpstreamRequests(ctx context.Context, adminAddress, clusterName string) 
 	if err != nil {
 		return 0, err
 	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	body, err := readAndCloseResponseBody(response, 1<<20)
 	if err != nil {
 		return 0, err
 	}
@@ -855,8 +851,7 @@ func (e *jwtE2E) requestPath(ctx context.Context, address, host string, useTLS b
 	if err != nil {
 		return 0, nil, err
 	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	body, err := readAndCloseResponseBody(response, 1<<20)
 	return response.StatusCode, body, err
 }
 

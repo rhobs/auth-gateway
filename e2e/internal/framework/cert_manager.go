@@ -4,6 +4,7 @@ package framework
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,7 +16,7 @@ import (
 
 const defaultCertManagerManifest = "https://github.com/cert-manager/cert-manager/releases/download/v1.18.2/cert-manager.yaml"
 
-func readManifest(ctx context.Context, source string) ([]byte, error) {
+func readManifest(ctx context.Context, source string) (manifest []byte, resultErr error) {
 	parsed, err := url.Parse(source)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return os.ReadFile(source)
@@ -28,11 +29,15 @@ func readManifest(ctx context.Context, source string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("download cert-manager manifest: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close cert-manager manifest response: %w", err))
+		}
+	}()
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("download cert-manager manifest: HTTP %s", response.Status)
 	}
-	manifest, err := io.ReadAll(io.LimitReader(response.Body, 64<<20))
+	manifest, err = io.ReadAll(io.LimitReader(response.Body, 64<<20))
 	if err != nil {
 		return nil, fmt.Errorf("read cert-manager manifest: %w", err)
 	}

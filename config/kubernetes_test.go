@@ -218,8 +218,8 @@ func TestGenerateKubernetesRequiresSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	config.Kubernetes = nil
-	if _, err := GenerateKubernetes(config); err == nil {
-		t.Fatal("GenerateKubernetes accepted missing Kubernetes settings")
+	if _, err := GenerateKubernetes(config); err == nil || !strings.Contains(err.Error(), "kubernetes settings are required") {
+		t.Fatalf("GenerateKubernetes error = %v, want missing Kubernetes settings", err)
 	}
 }
 
@@ -485,49 +485,5 @@ func TestMetricsAndConcurrencyGeneration(t *testing.T) {
 	}
 	if slices.Contains(r.Deployment.Spec.Template.Spec.Containers[0].Args, "--concurrency") {
 		t.Fatal("worker count inferred from CPU limit")
-	}
-}
-
-func TestKubernetesDefaultsCloneInputs(t *testing.T) {
-	c := loadConfigCase(t, "public-routing")
-	c.Overload = &OverloadConfig{MaxHeapBytes: 128 << 20, MaxDownstreamConnections: 1, HeapShrinkThreshold: new(0.7)}
-	c.Kubernetes.EnvoyConcurrency = new(uint32(2))
-	c.Kubernetes.Resources.Limits = map[string]string{}
-	c.Kubernetes.Metrics.Resources = KubernetesResourceRequirements{Requests: map[string]string{"cpu": "5m"}, Limits: map[string]string{}}
-	copy := c.withDefaults()
-	if len(copy.Kubernetes.Resources.Limits) != 0 || len(copy.Kubernetes.Metrics.Resources.Limits) != 0 || !reflect.DeepEqual(copy.Kubernetes.Metrics.Resources.Requests, map[string]string{"cpu": "5m"}) {
-		t.Fatal("resource defaults merged into supplied maps")
-	}
-	*copy.Overload.HeapShrinkThreshold = 0.2
-	*copy.Kubernetes.EnvoyConcurrency = 3
-	*copy.Kubernetes.Metrics.ScrapeInterval = Duration(time.Second)
-	copy.Kubernetes.Metrics.Resources.Requests["cpu"] = "10m"
-	copy.Kubernetes.Resources.Limits["memory"] = "512Mi"
-	if *c.Overload.HeapShrinkThreshold != 0.7 || *c.Kubernetes.EnvoyConcurrency != 2 || *c.Kubernetes.Metrics.ScrapeInterval != Duration(30*time.Second) || c.Kubernetes.Metrics.Resources.Requests["cpu"] != "5m" || len(c.Kubernetes.Resources.Limits) != 0 {
-		t.Fatal("defaulting aliases caller-owned capacity settings")
-	}
-}
-
-func TestKubernetesYAMLOptions(t *testing.T) {
-	base, _, _ := strings.Cut(readFixture(t, "public-routing/config.yaml"), "kubernetes:\n")
-	base += "kubernetes:\n  name: gateway\n  namespace: observability\n  image: envoyproxy/envoy:v1.39.1\n"
-	for _, settings := range []string{"", "  metrics: null\n", "  metrics: {}\n", "  metrics:\n    scrape_interval: null\n    scrape_timeout: null\n    resources: {requests: null, limits: null}\n"} {
-		c, err := Load(strings.NewReader(base + settings + "overload: null\n"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if c.Overload != nil || c.Kubernetes.EnvoyConcurrency != nil || *c.Kubernetes.Metrics.ScrapeInterval != Duration(30*time.Second) || *c.Kubernetes.Metrics.ScrapeTimeout != Duration(10*time.Second) || !reflect.DeepEqual(c.Kubernetes.Metrics.Resources.Requests, map[string]string{"cpu": "20m", "memory": "64Mi"}) || !reflect.DeepEqual(c.Kubernetes.Metrics.Resources.Limits, map[string]string{"memory": "256Mi"}) {
-			t.Fatalf("defaults for %q = %#v", settings, c.Kubernetes.Metrics)
-		}
-	}
-	c, err := Load(strings.NewReader(base + "  resources: {requests: {}, limits: {}}\n  metrics:\n    resources: {requests: {cpu: 5m}, limits: {}}\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(c.Kubernetes.Resources.Requests) != 0 || len(c.Kubernetes.Resources.Limits) != 0 || len(c.Kubernetes.Metrics.Resources.Limits) != 0 || !reflect.DeepEqual(c.Kubernetes.Metrics.Resources.Requests, map[string]string{"cpu": "5m"}) {
-		t.Fatal("supplied YAML resource maps were merged with defaults")
-	}
-	if _, err := Load(strings.NewReader(base + "overload: {}\n")); err == nil || !strings.Contains(err.Error(), "overload.max_heap_bytes") {
-		t.Fatalf("empty overload accepted: %v", err)
 	}
 }

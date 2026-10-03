@@ -1,0 +1,19 @@
+version: 1
+servers:
+  - hostname: auth.example.com
+    apis: [metrics]
+apis:
+  - name: metrics
+    upstream:
+      address: thanos-receive
+      port: 19291
+    routes:
+      - methods: [POST]
+        path:
+          exact: /metrics/api/v1/receive
+kubernetes:
+  name: auth-gateway
+  namespace: observability
+  image: envoyproxy/envoy:v1.39.1
+  metrics: {}
+overload: null

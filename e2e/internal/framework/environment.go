@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,8 +17,9 @@ import (
 	"sync"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -39,7 +41,16 @@ import (
 	"k8s.io/client-go/transport/spdy"
 )
 
-const defaultClusterContext = "kind-auth-gateway-e2e"
+const (
+	defaultClusterContext              = "kind-auth-gateway-e2e"
+	fieldManager                       = "auth-gateway-e2e"
+	e2eDirectoryName                   = "e2e"
+	fixtureDirectoryName               = "fixtures"
+	certManagerNamespaceName           = "cert-manager"
+	httpbinEndpointsDiagnosticFilename = "httpbin-endpoints.json"
+	envoyClusterDiagnosticFilename     = "envoy-clusters.json"
+	envoyClusterDiagnosticErrorFormat  = "Envoy cluster state: %v\n"
+)
 
 // Environment scopes Kubernetes clients and fixture paths to one cluster.
 type Environment struct {
@@ -104,7 +115,7 @@ func Root() (string, error) {
 		return "", err
 	}
 	for {
-		fixture := filepath.Join(dir, "e2e", "fixtures", "gateway.yaml")
+		fixture := filepath.Join(dir, e2eDirectoryName, fixtureDirectoryName, "gateway.yaml")
 		if info, err := os.Stat(fixture); err == nil && !info.IsDir() {
 			return dir, nil
 		}
@@ -124,11 +135,11 @@ func (e *Environment) KubeContext() string {
 }
 
 func (e *Environment) Fixture(name string) ([]byte, error) {
-	return os.ReadFile(filepath.Join(e.Root, "e2e", "fixtures", name))
+	return os.ReadFile(filepath.Join(e.Root, e2eDirectoryName, fixtureDirectoryName, name))
 }
 
 func (e *Environment) StatePath(parts ...string) string {
-	return filepath.Join(append([]string{e.Root, "e2e", ".state", e.KubeContext()}, parts...)...)
+	return filepath.Join(append([]string{e.Root, e2eDirectoryName, ".state", e.KubeContext()}, parts...)...)
 }
 
 // Apply decodes YAML documents and applies each object with server-side apply.
@@ -268,6 +279,17 @@ func (e *Environment) WaitForResourceCondition(ctx context.Context, namespace st
 	return nil
 }
 
+func deploymentFailed(deployment *appsv1.Deployment) bool {
+	for _, condition := range deployment.Status.Conditions {
+		if condition.Type == appsv1.DeploymentProgressing &&
+			condition.Status == corev1.ConditionFalse &&
+			condition.Reason == "ProgressDeadlineExceeded" {
+			return true
+		}
+	}
+	return false
+}
+
 // WaitForDeployment waits until the requested Deployment generation is available.
 func (e *Environment) WaitForDeployment(ctx context.Context, namespace, name string, timeout time.Duration) error {
 	err := utilwait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
@@ -276,7 +298,7 @@ func (e *Environment) WaitForDeployment(ctx context.Context, namespace, name str
 			return false, err
 		}
 		if deploymentFailed(deployment) {
-			return false, fmt.Errorf("Deployment %q exceeded its progress deadline", name)
+			return false, fmt.Errorf("deployment %q exceeded its progress deadline", name)
 		}
 		desired := int32(1)
 		if deployment.Spec.Replicas != nil {
@@ -341,8 +363,8 @@ func (e *Environment) EnsureCertManager(ctx context.Context, manifestSource stri
 	if err := e.ApplyWithForce(ctx, "", manifest); err != nil {
 		return fmt.Errorf("apply cert-manager manifest: %w", err)
 	}
-	for _, deployment := range []string{"cert-manager", "cert-manager-cainjector", "cert-manager-webhook"} {
-		if err := e.WaitForDeployment(ctx, "cert-manager", deployment, 4*time.Minute); err != nil {
+	for _, deployment := range []string{certManagerNamespaceName, "cert-manager-cainjector", "cert-manager-webhook"} {
+		if err := e.WaitForDeployment(ctx, certManagerNamespaceName, deployment, 4*time.Minute); err != nil {
 			return err
 		}
 	}
@@ -469,10 +491,10 @@ func (e *Environment) resolvePortForwardTarget(ctx context.Context, namespace, r
 			}
 		}
 		if servicePort == nil {
-			return nil, 0, fmt.Errorf("Service %q has no port %d", name, remotePort)
+			return nil, 0, fmt.Errorf("service %q has no port %d", name, remotePort)
 		}
 		if len(service.Spec.Selector) == 0 {
-			return nil, 0, fmt.Errorf("Service %q has no Pod selector", name)
+			return nil, 0, fmt.Errorf("service %q has no Pod selector", name)
 		}
 		pods, err := e.client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labels.Set(service.Spec.Selector).AsSelector().String()})
 		if err != nil {
@@ -513,7 +535,7 @@ func (e *Environment) resolvePortForwardTarget(ctx context.Context, namespace, r
 			return nil, 0, fmt.Errorf("get Pod %q: %w", name, err)
 		}
 		if pod.Status.Phase != corev1.PodRunning {
-			return nil, 0, fmt.Errorf("Pod %q is %s, not Running", name, pod.Status.Phase)
+			return nil, 0, fmt.Errorf("pod %q is %s, not running", name, pod.Status.Phase)
 		}
 		return pod, int32(remotePort), nil
 
@@ -524,10 +546,10 @@ func (e *Environment) resolvePortForwardTarget(ctx context.Context, namespace, r
 
 // ForwardWithCleanup registers the port forward for Ginkgo cleanup.
 func (e *Environment) ForwardWithCleanup(ctx context.Context, namespace, resource string, remotePort int) string {
-	GinkgoHelper()
+	ginkgo.GinkgoHelper()
 	address, stop, err := e.Forward(ctx, namespace, resource, remotePort)
-	Expect(err).NotTo(HaveOccurred())
-	DeferCleanup(stop)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	ginkgo.DeferCleanup(stop)
 	return address
 }
 
@@ -538,7 +560,7 @@ func (e *Environment) Diagnostics(namespace string) {
 	}
 	dir := e.StatePath("artifacts", time.Now().UTC().Format("20060102T150405.000000000"))
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		fmt.Fprintln(GinkgoWriter, err)
+		writeGinkgo("%v\n", err)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -561,16 +583,16 @@ func (e *Environment) Diagnostics(namespace string) {
 	services, err := core.Services(namespace).List(ctx, metav1.ListOptions{})
 	writeDiagnostic(dir, "services.json", services, err)
 	if endpoints, err := core.Endpoints(namespace).Get(ctx, "httpbin", metav1.GetOptions{}); err == nil {
-		writeDiagnostic(dir, "httpbin-endpoints.json", endpoints, nil)
+		writeDiagnostic(dir, httpbinEndpointsDiagnosticFilename, endpoints, nil)
 	} else {
-		writeDiagnostic(dir, "httpbin-endpoints.json", nil, err)
+		writeDiagnostic(dir, httpbinEndpointsDiagnosticFilename, nil, err)
 	}
 	deployments, err := e.client.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
 	writeDiagnostic(dir, "deployments.json", deployments, err)
 	events, err := core.Events(namespace).List(ctx, metav1.ListOptions{})
 	writeDiagnostic(dir, "events.json", events, err)
 	e.envoyClusterDiagnostics(namespace, dir)
-	fmt.Fprintf(GinkgoWriter, "Failure diagnostics: %s\n", dir)
+	writeGinkgo("Failure diagnostics: %s\n", dir)
 }
 
 func (e *Environment) envoyClusterDiagnostics(namespace, dir string) {
@@ -579,34 +601,34 @@ func (e *Environment) envoyClusterDiagnostics(namespace, dir string) {
 	address, stop, err := e.Forward(ctx, namespace, "deployment/auth-gateway", 9901)
 	if err != nil {
 		diagnosticErr := fmt.Errorf("start Envoy cluster diagnostics port-forward: %w", err)
-		writeDiagnostic(dir, "envoy-clusters.json", nil, diagnosticErr)
-		fmt.Fprintf(GinkgoWriter, "Envoy cluster state: %v\n", diagnosticErr)
+		writeDiagnostic(dir, envoyClusterDiagnosticFilename, nil, diagnosticErr)
+		writeGinkgo(envoyClusterDiagnosticErrorFormat, diagnosticErr)
 		return
 	}
 	defer stop()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+"/clusters?format=json", nil)
 	if err != nil {
 		diagnosticErr := fmt.Errorf("create Envoy cluster diagnostics request: %w", err)
-		writeDiagnostic(dir, "envoy-clusters.json", nil, diagnosticErr)
-		fmt.Fprintf(GinkgoWriter, "Envoy cluster state: %v\n", diagnosticErr)
+		writeDiagnostic(dir, envoyClusterDiagnosticFilename, nil, diagnosticErr)
+		writeGinkgo(envoyClusterDiagnosticErrorFormat, diagnosticErr)
 		return
 	}
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		diagnosticErr := fmt.Errorf("request Envoy cluster diagnostics: %w", err)
-		writeDiagnostic(dir, "envoy-clusters.json", nil, diagnosticErr)
-		fmt.Fprintf(GinkgoWriter, "Envoy cluster state: %v\n", diagnosticErr)
+		writeDiagnostic(dir, envoyClusterDiagnosticFilename, nil, diagnosticErr)
+		writeGinkgo(envoyClusterDiagnosticErrorFormat, diagnosticErr)
 		return
 	}
-	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
+	closeErr := response.Body.Close()
+	if err := errors.Join(err, closeErr); err != nil {
 		diagnosticErr := fmt.Errorf("read Envoy cluster diagnostics: %w", err)
-		writeDiagnostic(dir, "envoy-clusters.json", nil, diagnosticErr)
-		fmt.Fprintf(GinkgoWriter, "Envoy cluster state: %v\n", diagnosticErr)
+		writeDiagnostic(dir, envoyClusterDiagnosticFilename, nil, diagnosticErr)
+		writeGinkgo(envoyClusterDiagnosticErrorFormat, diagnosticErr)
 		return
 	}
-	writeDiagnostic(dir, "envoy-clusters.json", data, nil)
-	fmt.Fprintf(GinkgoWriter, "Envoy cluster state (HTTP %d):\n%s\n", response.StatusCode, data)
+	writeDiagnostic(dir, envoyClusterDiagnosticFilename, data, nil)
+	writeGinkgo("Envoy cluster state (HTTP %d):\n%s\n", response.StatusCode, data)
 	writeEnvoyAdminDiagnostic(ctx, dir, address, "envoy-stats.txt", "/stats?filter=http.ingress")
 }

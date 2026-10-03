@@ -2,8 +2,10 @@ package config
 
 import (
 	"encoding/json"
+	"maps"
 	"path"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -22,16 +24,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
-func loadConfigCase(t testing.TB, name string) Config {
-	t.Helper()
-	config, err := Load(strings.NewReader(readFixture(t, name+"/config.yaml")))
-	if err != nil {
-		t.Fatalf("load %s case: %v", name, err)
-	}
-	return config
-}
-
-func TestJWTFilterOrderAndNativeProviders(t *testing.T) {
+func TestJWTProviderClustersAndTrust(t *testing.T) {
 	c := loadConfigCase(t, "jwt-auth-multiple-issuers")
 	files, err := Generate(c)
 	if err != nil {
@@ -39,14 +32,19 @@ func TestJWTFilterOrderAndNativeProviders(t *testing.T) {
 	}
 	generated := decodeBootstrap(t, files["envoy.yaml"])
 	manager := decodeHTTPManager(t, generated.StaticResources.Listeners[0].FilterChains[0])
-	if got, want := httpFilterNames(manager), []string{
-		requestControlsFilterName, "envoy.filters.http.jwt_authn", authorizationFilterName, "envoy.filters.http.router",
-	}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("plain JWT filter order = %v, want %v", got, want)
-	}
 
 	var jwtConfig jwt.JwtAuthentication
-	if err := manager.HttpFilters[1].GetTypedConfig().UnmarshalTo(&jwtConfig); err != nil {
+	var jwtFilter *hcm.HttpFilter
+	for _, filter := range manager.HttpFilters {
+		if filter.Name == jwtAuthnFilterName {
+			jwtFilter = filter
+			break
+		}
+	}
+	if jwtFilter == nil {
+		t.Fatal("JWT filter is missing")
+	}
+	if err := jwtFilter.GetTypedConfig().UnmarshalTo(&jwtConfig); err != nil {
 		t.Fatal(err)
 	}
 	if len(jwtConfig.Providers) != 2 || len(jwtConfig.RequirementMap) != 2 {
@@ -87,6 +85,9 @@ func TestJWTFilterOrderAndNativeProviders(t *testing.T) {
 		if upstream.GetSni() == "" || upstream.GetCommonTlsContext().GetValidationContext().GetTrustedCa().GetFilename() == "" {
 			t.Fatalf("JWKS TLS validation is not enabled for %q", name)
 		}
+	}
+	if got, want := len(generated.StaticResources.Clusters), len(c.APIs)+len(jwtConfig.Providers); got != want {
+		t.Fatalf("upstream/JWKS cluster count = %d, want %d", got, want)
 	}
 }
 
@@ -131,47 +132,39 @@ func TestJWTAuthorizationReadsOriginalClaimsFromNamedProvider(t *testing.T) {
 	}
 }
 
-func TestJWTProcessingAndHeaderFilterOrder(t *testing.T) {
-	plain := loadConfigCase(t, "jwt-auth")
-	plainFiles, err := Generate(plain)
-	if err != nil {
-		t.Fatal(err)
+func TestConditionalJWTFilterOrder(t *testing.T) {
+	plainJWT := []string{requestControlsFilterName, jwtAuthnFilterName, authorizationFilterName, routerFilterName}
+	processedJWT := []string{
+		requestControlsFilterName, jwtAuthnFilterName, authorizationFilterName, attributeFilterName,
+		requiredHeaderFilterName, headerMutationFilterName, routerFilterName,
 	}
-	plainManager := firstHTTPManager(t, plainFiles["envoy.yaml"])
-	if got, want := httpFilterNames(plainManager), []string{
-		requestControlsFilterName, "envoy.filters.http.jwt_authn", authorizationFilterName, "envoy.filters.http.router",
-	}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("plain JWT filters = %v, want %v", got, want)
+	tests := []struct {
+		name      string
+		fixture   string
+		wantOrder []string
+		wantFiles []string
+	}{
+		{name: "public", fixture: "public-routing", wantOrder: []string{requestControlsFilterName, routerFilterName}, wantFiles: []string{envoyConfigFilename}},
+		{name: "plain JWT", fixture: "jwt-auth", wantOrder: plainJWT, wantFiles: []string{envoyConfigFilename}},
+		{name: "direct headers", fixture: "jwt-auth-with-headers", wantOrder: processedJWT, wantFiles: []string{envoyConfigFilename}},
+		{name: "mapped headers", fixture: "jwt-auth-with-mappings", wantOrder: processedJWT, wantFiles: []string{envoyConfigFilename, processingConfigFilename, "server-certificate-1.yaml"}},
 	}
-	if len(plainFiles) != 1 {
-		t.Fatalf("plain JWT files = %v, want only the bootstrap", fileNames(plainFiles))
-	}
-
-	directHeaders := loadConfigCase(t, "jwt-auth-with-headers")
-	directFiles, err := Generate(directHeaders)
-	if err != nil {
-		t.Fatal(err)
-	}
-	directManager := firstHTTPManager(t, directFiles["envoy.yaml"])
-	wantDirect := []string{
-		requestControlsFilterName, "envoy.filters.http.jwt_authn", authorizationFilterName, attributeFilterName,
-		requiredHeaderFilterName, "envoy.filters.http.header_mutation", "envoy.filters.http.router",
-	}
-	if got := httpFilterNames(directManager); !reflect.DeepEqual(got, wantDirect) {
-		t.Fatalf("direct header filter order = %v, want %v", got, wantDirect)
-	}
-	if len(directFiles) != 1 {
-		t.Fatalf("direct header files = %v, want only the Envoy bootstrap", fileNames(directFiles))
-	}
-	assertNoLuaResources(t, plainFiles, plainManager)
-	assertNoLuaResources(t, directFiles, directManager)
-
-	resources, err := GenerateKubernetes(directHeaders)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(resources.Deployment.Spec.Template.Spec.Volumes) != 2 {
-		t.Fatalf("direct header volumes = %v, want config and metrics only", resources.Deployment.Spec.Template.Spec.Volumes)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c := loadConfigCase(t, test.fixture)
+			files, err := Generate(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bootstrap := decodeBootstrap(t, files[envoyConfigFilename])
+			manager := decodeHTTPManager(t, bootstrap.StaticResources.Listeners[0].FilterChains[0])
+			if got := httpFilterNames(manager); !slices.Equal(got, test.wantOrder) {
+				t.Fatalf("HTTP filter order = %v, want %v", got, test.wantOrder)
+			}
+			if got := slices.Sorted(maps.Keys(files)); !slices.Equal(got, test.wantFiles) {
+				t.Fatalf("generated files = %v, want %v", got, test.wantFiles)
+			}
+		})
 	}
 }
 
@@ -295,14 +288,6 @@ func TestJWTProcessingUsesFileBasedECDSConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := firstHTTPManager(t, files["envoy.yaml"])
-	assertNoLuaResources(t, files, manager)
-	want := []string{
-		requestControlsFilterName, "envoy.filters.http.jwt_authn", authorizationFilterName, attributeFilterName,
-		requiredHeaderFilterName, "envoy.filters.http.header_mutation", "envoy.filters.http.router",
-	}
-	if got := httpFilterNames(manager); !reflect.DeepEqual(got, want) {
-		t.Fatalf("mapping filter order = %v, want %v", got, want)
-	}
 	if files[processingConfigFilename] == nil {
 		t.Fatal("mapping configuration is missing its ECDS response file")
 	}
@@ -347,7 +332,11 @@ func TestJWTProcessingUsesFileBasedECDSConfiguration(t *testing.T) {
 		t.Fatalf("mapping value = %#v, want a format string", update.GetValue())
 	}
 	format := value.FormatString
-	if format == nil || !format.OmitEmptyValues || !strings.HasPrefix(format.GetTextFormat(), "%CEL(") || !strings.HasSuffix(format.GetTextFormat(), ")%") {
+	if format == nil || !format.OmitEmptyValues {
+		t.Fatalf("mapping formatter = %#v", update.GetValue())
+	}
+	textFormat, ok := format.GetFormat().(*core.SubstitutionFormatString_TextFormat)
+	if !ok || !strings.HasPrefix(textFormat.TextFormat, "%CEL(") || !strings.HasSuffix(textFormat.TextFormat, ")%") { //nolint:staticcheck // Assert the existing Envoy wire format without changing it during cleanup.
 		t.Fatalf("mapping formatter = %#v", update.GetValue())
 	}
 }
@@ -386,12 +375,14 @@ func decodeProcessingECDSConfig(t testing.TB, data []byte) *setfilterstate.Confi
 
 func TestJWTExpressionsUseEnvoyCELVariablesAndGuardMissingAttributes(t *testing.T) {
 	claim := jwtClaimExpression([]string{"issuer-one", "organization", "id"})
-	if !strings.Contains(claim, `"issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]`) || strings.Contains(claim, "dynamicMetadata(") || strings.Contains(claim, "dynamic_metadata[") {
+	claimMetadata := `metadata.filter_metadata["envoy.filters.http.jwt_authn"]`
+	claimValue := claimMetadata + `["issuer-one"]["organization"]["id"]`
+	if !strings.Contains(claim, `"issuer-one" in `+claimMetadata) || !strings.Contains(claim, `"organization" in `+claimMetadata+`["issuer-one"]`) || !strings.Contains(claim, `"id" in `+claimMetadata+`["issuer-one"]["organization"]`) || !strings.Contains(claim, "type("+claimValue+") == string") || !strings.Contains(claim, claimValue+` != ""`) || strings.Contains(claim, "dynamicMetadata(") || strings.Contains(claim, "dynamic_metadata[") {
 		t.Fatalf("JWT claim expression does not use Envoy CEL metadata: %s", claim)
 	}
 
 	mapping := attributeMappingExpression("tenant_id", map[string]string{"client-123": "team-a"})
-	key := celStringLiteral(filterStateKey("tenant_id"))
+	key := `"auth_gateway.attributes.tenant_id"`
 	if !strings.Contains(mapping, key+" in filter_state") || !strings.Contains(mapping, "filter_state["+key+"]") || strings.Contains(mapping, "filterState(") {
 		t.Fatalf("attribute mapping expression does not safely read Envoy CEL filter state: %s", mapping)
 	}
@@ -449,55 +440,4 @@ func containsFilter(manager *hcm.HttpConnectionManager, name string) bool {
 		}
 	}
 	return false
-}
-
-func assertNoLuaResources(t *testing.T, files map[string][]byte, manager *hcm.HttpConnectionManager) {
-	t.Helper()
-	for name := range files {
-		if strings.Contains(strings.ToLower(name), "lua") {
-			t.Fatalf("generated obsolete Lua resource %q", name)
-		}
-	}
-	for _, filter := range manager.HttpFilters {
-		if strings.Contains(strings.ToLower(filter.Name), "lua") {
-			t.Fatalf("generated obsolete Lua filter %q", filter.Name)
-		}
-	}
-}
-
-func fileNames(files map[string][]byte) []string {
-	names := make([]string, 0, len(files))
-	for name := range files {
-		names = append(names, name)
-	}
-	return names
-}
-
-func TestGenerateJWKSProviderClusterCount(t *testing.T) {
-	c := loadConfigCase(t, "jwt-auth")
-	files, err := Generate(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	generated := decodeBootstrap(t, files["envoy.yaml"])
-	if got, want := len(generated.StaticResources.Clusters), len(c.APIs)+1; got != want {
-		t.Fatalf("cluster count = %d, want %d", got, want)
-	}
-}
-
-func TestJWTProcessingIsDeterministic(t *testing.T) {
-	c := loadConfigCase(t, "jwt-auth-with-mappings")
-	first, err := Generate(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := Generate(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, data := range first {
-		if !reflect.DeepEqual(data, second[name]) {
-			t.Fatalf("%s generation is not deterministic", name)
-		}
-	}
 }

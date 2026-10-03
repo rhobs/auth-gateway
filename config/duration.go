@@ -42,14 +42,6 @@ func defaultDuration(value *Duration, fallback time.Duration) *Duration {
 	return defaultValue(value, Duration(fallback))
 }
 
-func defaultValue[T any](value *T, fallback T) *T {
-	if value == nil {
-		return &fallback
-	}
-	copy := *value
-	return &copy
-}
-
 func clonePointer[T any](value *T) *T {
 	if value == nil {
 		return nil

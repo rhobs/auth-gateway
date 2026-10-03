@@ -1,0 +1,21 @@
+version: 1
+authenticators:
+  - name: internal-jwt
+    jwt:
+      issuer: https://issuer.example.test
+      jwks_uri: https://issuer.example.test/jwks
+      audiences: [gateway-test]
+servers:
+  - hostname: writer.example.test
+    authentication:
+      any_of: [internal-jwt]
+    apis: [metrics]
+apis:
+  - name: metrics
+    upstream:
+      address: backend.example.test
+      port: 8080
+    routes:
+      - methods: [POST]
+        path:
+          exact: /write

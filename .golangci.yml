@@ -16,6 +16,12 @@ linters:
     - unused
     - goconst
     - dupl
+  exclusions:
+    rules:
+      # Tests keep expected strings literal so they stay independent of generator constants.
+      - path: _test\.go$
+        linters:
+          - goconst
   settings:
     goconst:
       min-occurrences: 2

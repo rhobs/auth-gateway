@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net"
 	"net/http"
@@ -52,6 +53,23 @@ const (
 	defaultCircuitBreakerMaxPendingRequests = 1024
 	defaultCircuitBreakerMaxRequests        = 1024
 	defaultCircuitBreakerMaxRetries         = 0
+	readGatewayConfigErrorFormat            = "read gateway configuration: %w"
+	fieldWrapErrorFormat                    = "%s: %w"
+	apiBindingErrorFormat                   = "%s.apis: %w"
+	apiNameValidationErrorFormat            = "%s.name must start with a lowercase letter and contain only lowercase letters, numbers, or hyphens"
+	imageWhitespaceCharacters               = " \t\r\n"
+	invalidControlCharacters                = "\r\n\x00"
+	serverFieldPathFormat                   = "servers[%d]"
+	maxStreamDurationFieldName              = "max_stream_duration"
+	http1Protocol                           = "http1"
+	http2Protocol                           = "http2"
+	httpsProtocolToken                      = "https"
+	kubernetesCPUResourceName               = "cpu"
+	kubernetesMemoryResourceName            = "memory"
+	collectorConfigFilename                 = "config.yaml"
+	caCertificateFilename                   = "ca.crt"
+	tlsCertificateSecretKey                 = "tls.crt"
+	tlsPrivateKeySecretKey                  = "tls.key"
 )
 
 const defaultKubernetesReplicas int32 = 2
@@ -181,7 +199,7 @@ func Load(r io.Reader) (Config, error) {
 
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return Config{}, fmt.Errorf("read gateway configuration: %w", err)
+		return Config{}, fmt.Errorf(readGatewayConfigErrorFormat, err)
 	}
 	var c Config
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
@@ -192,18 +210,18 @@ func Load(r io.Reader) (Config, error) {
 			var document yaml.Node
 			if yaml.Unmarshal(data, &document) == nil {
 				if field := yamlPathAtPosition(&document, durationError.line, durationError.column, ""); field != "" {
-					return Config{}, fmt.Errorf("%s: %w", field, err)
+					return Config{}, fmt.Errorf(fieldWrapErrorFormat, field, err)
 				}
 			}
 		}
-		return Config{}, fmt.Errorf("read gateway configuration: %w", err)
+		return Config{}, fmt.Errorf(readGatewayConfigErrorFormat, err)
 	}
 
 	var extra any
 	if err := decoder.Decode(&extra); err == nil {
 		return Config{}, fmt.Errorf("read gateway configuration: expected exactly one YAML document")
 	} else if err != io.EOF {
-		return Config{}, fmt.Errorf("read gateway configuration: %w", err)
+		return Config{}, fmt.Errorf(readGatewayConfigErrorFormat, err)
 	}
 
 	c = c.withDefaults()
@@ -240,7 +258,7 @@ func (c Config) validate() error {
 	for i, api := range c.APIs {
 		name := fmt.Sprintf("apis[%d]", i)
 		if !apiNamePattern.MatchString(api.Name) {
-			return fmt.Errorf("%s.name must start with a lowercase letter and contain only lowercase letters, numbers, or hyphens", name)
+			return fmt.Errorf(apiNameValidationErrorFormat, name)
 		}
 		if _, exists := names[api.Name]; exists {
 			return fmt.Errorf("duplicate API name %q", api.Name)
@@ -309,10 +327,10 @@ func (c Config) validate() error {
 	}
 
 	if c.Kubernetes != nil {
-		if strings.TrimSpace(c.Kubernetes.Image) == "" || strings.ContainsAny(c.Kubernetes.Image, " \t\r\n") {
+		if strings.TrimSpace(c.Kubernetes.Image) == "" || strings.ContainsAny(c.Kubernetes.Image, imageWhitespaceCharacters) {
 			return fmt.Errorf("kubernetes.image must be an image reference")
 		}
-		if strings.TrimSpace(c.Kubernetes.OTelCollectorImage) == "" || strings.ContainsAny(c.Kubernetes.OTelCollectorImage, " \t\r\n") {
+		if strings.TrimSpace(c.Kubernetes.OTelCollectorImage) == "" || strings.ContainsAny(c.Kubernetes.OTelCollectorImage, imageWhitespaceCharacters) {
 			return fmt.Errorf("kubernetes.otel_collector_image must be an image reference")
 		}
 		if c.Kubernetes.Replicas != nil && *c.Kubernetes.Replicas < 0 {
@@ -435,12 +453,12 @@ func (c Config) withDefaults() Config {
 		}
 		resources := kubernetes.Resources
 		resources.Requests = copyResourcesOrDefault(resources.Requests, map[string]string{
-			"cpu":    defaultKubernetesCPURequest,
-			"memory": defaultKubernetesMemoryRequest,
+			kubernetesCPUResourceName:    defaultKubernetesCPURequest,
+			kubernetesMemoryResourceName: defaultKubernetesMemoryRequest,
 		})
 		resources.Limits = copyResourcesOrDefault(resources.Limits, map[string]string{
-			"cpu":    defaultKubernetesCPULimit,
-			"memory": defaultKubernetesMemoryLimit,
+			kubernetesCPUResourceName:    defaultKubernetesCPULimit,
+			kubernetesMemoryResourceName: defaultKubernetesMemoryLimit,
 		})
 		c.Kubernetes.Resources = resources
 		c.Kubernetes.EnvoyConcurrency = clonePointer(kubernetes.EnvoyConcurrency)
@@ -463,7 +481,7 @@ func (c Config) validateServers(apis map[string]API) error {
 	}
 	hosts := make(map[string]int, len(c.Servers))
 	for i, server := range c.Servers {
-		name := fmt.Sprintf("servers[%d]", i)
+		name := fmt.Sprintf(serverFieldPathFormat, i)
 		if !validDNSHost(server.Hostname) {
 			return fmt.Errorf("%s.hostname must be an exact DNS hostname", name)
 		}
@@ -478,14 +496,14 @@ func (c Config) validateServers(apis map[string]API) error {
 		}
 		bound, err := server.boundAPIs(apis)
 		if err != nil {
-			return fmt.Errorf("%s.apis: %w", name, err)
+			return fmt.Errorf(apiBindingErrorFormat, name, err)
 		}
 		routes := make(map[string]struct{})
 		for _, api := range bound {
 			for _, route := range api.Routes {
 				for _, method := range route.Methods {
 					if err := addRouteKey(routes, route.Path, method); err != nil {
-						return fmt.Errorf("%s.apis: %w", name, err)
+						return fmt.Errorf(apiBindingErrorFormat, name, err)
 					}
 				}
 			}
@@ -556,7 +574,7 @@ func (c Config) validateAuthentication(apis map[string]API) error {
 	for i, authenticator := range c.Authenticators {
 		name := fmt.Sprintf("authenticators[%d]", i)
 		if !apiNamePattern.MatchString(authenticator.Name) {
-			return fmt.Errorf("%s.name must start with a lowercase letter and contain only lowercase letters, numbers, or hyphens", name)
+			return fmt.Errorf(apiNameValidationErrorFormat, name)
 		}
 		if _, exists := authenticators[authenticator.Name]; exists {
 			return fmt.Errorf("duplicate authenticator name %q", authenticator.Name)
@@ -577,7 +595,7 @@ func (c Config) validateAuthentication(apis map[string]API) error {
 	for i, policy := range c.AuthorizationPolicies {
 		name := fmt.Sprintf("authorization_policies[%d]", i)
 		if !apiNamePattern.MatchString(policy.Name) {
-			return fmt.Errorf("%s.name must start with a lowercase letter and contain only lowercase letters, numbers, or hyphens", name)
+			return fmt.Errorf(apiNameValidationErrorFormat, name)
 		}
 		if _, exists := policies[policy.Name]; exists {
 			return fmt.Errorf("duplicate authorization policy name %q", policy.Name)
@@ -605,9 +623,9 @@ func (c Config) validateAuthentication(apis map[string]API) error {
 			if len(grant.Attributes) == 0 {
 				return fmt.Errorf("%s.attributes must contain at least one attribute allowlist", name)
 			}
-			for _, attribute := range sortedKeys(grant.Attributes) {
+			for _, attribute := range slices.Sorted(maps.Keys(grant.Attributes)) {
 				if !attributeNamePattern.MatchString(attribute) {
-					return fmt.Errorf("%s.attributes contains invalid attribute name %q", name, attribute)
+					return fmt.Errorf(attributeNameValidationErrorFormat, name, attribute)
 				}
 				if _, exists := authenticator.JWT.Attributes[attribute]; !exists {
 					return fmt.Errorf("%s.attributes references attribute %q not provided by authenticator %q", name, attribute, grant.Authenticator)
@@ -631,7 +649,7 @@ func (c Config) validateAuthentication(apis map[string]API) error {
 	}
 
 	for i, server := range c.Servers {
-		name := fmt.Sprintf("servers[%d]", i)
+		name := fmt.Sprintf(serverFieldPathFormat, i)
 		if server.Authentication != nil {
 			selected, err := validateSelection(name+".authentication", server.Authentication.AnyOf, server.Authentication.AllOf, authenticatorNames(authenticators))
 			if err != nil {
@@ -670,20 +688,20 @@ func (c Config) validateProcessing() error {
 			return fmt.Errorf("duplicate processing name %q", processor.Name)
 		}
 		seen[processor.Name] = struct{}{}
-		if processor.Type != "attribute-mapper" {
-			return fmt.Errorf("%s.type must be %q", name, "attribute-mapper")
+		if processor.Type != attributeMapperType {
+			return fmt.Errorf("%s.type must be %q", name, attributeMapperType)
 		}
-		for _, attribute := range sortedKeys(processor.Attributes) {
+		for _, attribute := range slices.Sorted(maps.Keys(processor.Attributes)) {
 			attributeName := name + ".attributes." + attribute
 			if !attributeNamePattern.MatchString(attribute) {
 				return fmt.Errorf("%s is not a valid attribute name", attributeName)
 			}
-			for _, source := range sortedKeys(processor.Attributes[attribute].Mappings) {
+			for _, source := range slices.Sorted(maps.Keys(processor.Attributes[attribute].Mappings)) {
 				target := processor.Attributes[attribute].Mappings[source]
 				if source == "" || strings.TrimSpace(source) != source || target == "" || strings.TrimSpace(target) != target {
 					return fmt.Errorf("%s.mappings keys and values must not be empty or have surrounding whitespace", attributeName)
 				}
-				if strings.ContainsAny(target, "\r\n\x00") {
+				if strings.ContainsAny(target, invalidControlCharacters) {
 					return fmt.Errorf("%s.mappings values must not contain line breaks or NUL", attributeName)
 				}
 			}
@@ -755,7 +773,7 @@ func copyResourcesOrDefault(values, defaults map[string]string) map[string]strin
 	return copy
 }
 
-func defaultUint32(value *uint32, fallback uint32) *uint32 {
+func defaultValue[T any](value *T, fallback T) *T {
 	if value == nil {
 		return &fallback
 	}
@@ -952,10 +970,10 @@ func resolveConfig(input Config) (effectiveConfig, error) {
 }
 
 func (l Listener) withDefaults() Listener {
-	l.Port = defaultUint32(l.Port, defaultListenerPort)
-	l.PerConnectionBufferLimitBytes = defaultUint32(l.PerConnectionBufferLimitBytes, 1048576)
-	l.MaxRequestHeadersKB = defaultUint32(l.MaxRequestHeadersKB, 32)
-	l.MaxRequestHeadersCount = defaultUint32(l.MaxRequestHeadersCount, 100)
+	l.Port = defaultValue(l.Port, defaultListenerPort)
+	l.PerConnectionBufferLimitBytes = defaultValue(l.PerConnectionBufferLimitBytes, 1048576)
+	l.MaxRequestHeadersKB = defaultValue(l.MaxRequestHeadersKB, 32)
+	l.MaxRequestHeadersCount = defaultValue(l.MaxRequestHeadersCount, 100)
 	l.RequestHeadersTimeout = defaultDuration(l.RequestHeadersTimeout, 5*time.Second)
 	l.RequestTimeout = defaultDuration(l.RequestTimeout, 30*time.Second)
 	l.ConnectionIdleTimeout = defaultDuration(l.ConnectionIdleTimeout, time.Minute)
@@ -993,7 +1011,7 @@ func (l Listener) validate(kubernetes bool) error {
 	}{
 		{"request_headers_timeout", l.RequestHeadersTimeout}, {"request_timeout", l.RequestTimeout},
 		{"connection_idle_timeout", l.ConnectionIdleTimeout}, {"stream_idle_timeout", l.StreamIdleTimeout},
-		{"max_stream_duration", l.MaxStreamDuration}, {"stream_flush_timeout", l.StreamFlushTimeout},
+		{maxStreamDurationFieldName, l.MaxStreamDuration}, {"stream_flush_timeout", l.StreamFlushTimeout},
 		{"tls_handshake_timeout", l.TLSHandshakeTimeout},
 	} {
 		if err := validateDuration("listener."+value.name, value.value, false); err != nil {
@@ -1008,9 +1026,9 @@ func (l Listener) validate(kubernetes bool) error {
 
 func (u Upstream) withDefaults() Upstream {
 	u.ConnectTimeout = defaultDuration(u.ConnectTimeout, 5*time.Second)
-	u.PerConnectionBufferLimitBytes = defaultUint32(u.PerConnectionBufferLimitBytes, 1048576)
+	u.PerConnectionBufferLimitBytes = defaultValue(u.PerConnectionBufferLimitBytes, 1048576)
 	if u.HTTPProtocol == "" {
-		u.HTTPProtocol = "http1"
+		u.HTTPProtocol = http1Protocol
 	}
 	u.HTTP2 = cloneHTTP2(u.HTTP2)
 	if u.TLSConfig != nil {
@@ -1028,10 +1046,10 @@ func (u Upstream) validate(name string, kubernetes bool) error {
 	if *u.PerConnectionBufferLimitBytes == 0 {
 		return fmt.Errorf("%s.per_connection_buffer_limit_bytes must be positive", name)
 	}
-	if u.HTTPProtocol != "http1" && u.HTTPProtocol != "http2" {
+	if u.HTTPProtocol != http1Protocol && u.HTTPProtocol != http2Protocol {
 		return fmt.Errorf("%s.http_protocol must be http1 or http2", name)
 	}
-	if u.HTTP2 != nil && u.HTTPProtocol != "http2" {
+	if u.HTTP2 != nil && u.HTTPProtocol != http2Protocol {
 		return fmt.Errorf("%s.http2 requires http_protocol: http2", name)
 	}
 	if err := u.HTTP2.validate(name + ".http2"); err != nil {
@@ -1061,7 +1079,7 @@ func validateRouteTimeouts(name string, t *RouteTimeouts) error {
 		name  string
 		value *Duration
 	}{
-		{"response_timeout", t.ResponseTimeout}, {"idle_timeout", t.IdleTimeout}, {"max_stream_duration", t.MaxStreamDuration},
+		{"response_timeout", t.ResponseTimeout}, {"idle_timeout", t.IdleTimeout}, {maxStreamDurationFieldName, t.MaxStreamDuration},
 	} {
 		if err := validateDuration(name+"."+value.name, value.value, false); err != nil {
 			return err
@@ -1118,7 +1136,7 @@ func (h *HTTP2Options) validate(name string) error {
 		}
 	}
 	if err := h.envoy().ValidateAll(); err != nil {
-		return fmt.Errorf("%s: %w", name, err)
+		return fmt.Errorf(fieldWrapErrorFormat, name, err)
 	}
 	return nil
 }
@@ -1181,7 +1199,7 @@ func (o *OverloadConfig) validate(k *Kubernetes) error {
 		return fmt.Errorf("overload.heap_shrink_threshold must be less than overload.request_reject_threshold")
 	}
 	if k != nil {
-		limit, err := resource.ParseQuantity(k.Resources.Limits["memory"])
+		limit, err := resource.ParseQuantity(k.Resources.Limits[kubernetesMemoryResourceName])
 		if err != nil || limit.Sign() <= 0 {
 			return fmt.Errorf("overload requires a positive kubernetes.resources.limits.memory")
 		}

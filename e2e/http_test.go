@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"io"
 	"net/http"
 	"time"
 
@@ -35,13 +34,13 @@ var _ = Describe("HTTP routing and metrics", Label("gateway", "routing", "metric
 		request.Header.Set("Content-Type", "application/octet-stream")
 		response, err := testClient.Do(request)
 		Expect(err).NotTo(HaveOccurred())
-		defer response.Body.Close()
-		responseBody, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		responseBody, err := readAndCloseResponseBody(response, 1<<20)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(response.StatusCode).To(Equal(test.wantStatus), string(responseBody))
-		if test.wantStatus == http.StatusMethodNotAllowed {
+		switch test.wantStatus {
+		case http.StatusMethodNotAllowed:
 			Expect(response.Header.Get("Allow")).To(Equal("POST"))
-		} else if test.wantStatus == http.StatusNotFound {
+		case http.StatusNotFound:
 			Expect(response.Header.Get("Allow")).To(BeEmpty())
 		}
 		if !test.inspectEcho {

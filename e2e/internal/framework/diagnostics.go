@@ -5,13 +5,15 @@ package framework
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 
-	. "github.com/onsi/ginkgo/v2"
+	"github.com/onsi/ginkgo/v2"
 )
 
 func writeEnvoyAdminDiagnostic(ctx context.Context, dir, address, filename, path string) {
@@ -25,14 +27,14 @@ func writeEnvoyAdminDiagnostic(ctx context.Context, dir, address, filename, path
 		writeDiagnostic(dir, filename, nil, err)
 		return
 	}
-	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
-		writeDiagnostic(dir, filename, nil, err)
+	closeErr := response.Body.Close()
+	if err := errors.Join(err, closeErr); err != nil {
+		writeDiagnostic(dir, filename, nil, fmt.Errorf("read Envoy admin response: %w", err))
 		return
 	}
 	writeDiagnostic(dir, filename, data, nil)
-	fmt.Fprintf(GinkgoWriter, "Envoy auth stats (HTTP %d):\n%s\n", response.StatusCode, data)
+	writeGinkgo("Envoy auth stats (HTTP %d):\n%s\n", response.StatusCode, data)
 }
 
 func writeDiagnostic(dir, name string, value any, err error) {
@@ -51,6 +53,13 @@ func writeDiagnostic(dir, name string, value any, err error) {
 		}
 	}
 	if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
-		fmt.Fprintf(GinkgoWriter, "write diagnostic %s: %v\n", name, err)
+		writeGinkgo("write diagnostic %s: %v\n", name, err)
+	}
+}
+
+func writeGinkgo(format string, args ...any) {
+	if _, err := fmt.Fprintf(ginkgo.GinkgoWriter, format, args...); err != nil {
+		log.Printf(format, args...)
+		log.Printf("write Ginkgo output: %v", err)
 	}
 }
