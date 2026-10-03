@@ -10,7 +10,7 @@ servers:
     apis: [metrics]
 ```
 
-The Secret is type `kubernetes.io/tls` and contains `tls.crt` and `tls.key`. Paths default to `/etc/<secret>/tls.crt` and `/etc/<secret>/tls.key`. Optional `certificate` and `private_key` paths can override them; both files must be in the same directory. Distinct mounts need non-overlapping directories outside the gateway and collector configuration directories. See [`config.example.yaml`](../config.example.yaml) and the [TLS test fixture](../config/testdata/tls.yaml).
+The Secret is type `kubernetes.io/tls` and contains `tls.crt` and `tls.key`. Paths default to `/etc/<secret>/tls.crt` and `/etc/<secret>/tls.key`. Optional `certificate` and `private_key` paths can override them; both files must be in the same directory. Distinct mounts need non-overlapping directories outside the gateway and collector configuration directories. See [`config.example.yaml`](../config.example.yaml) and the [TLS test fixture](../config/testdata/server-tls/config.yaml).
 
 For file-only Envoy output, the Secret name is optional. Without a Secret name, paths default to `/etc/auth-gateway-tls/tls.crt` and `/etc/auth-gateway-tls/tls.key`. Kubernetes output requires a Secret name for every HTTPS server.
 
@@ -18,7 +18,7 @@ For file-only Envoy output, the Secret name is optional. Without a Secret name, 
 
 The generated `<name>-config` ConfigMap contains `envoy.yaml` and one `server-certificate-<index>.yaml` SDS file per HTTPS server. The index is its position in the server list. The SDS resource contains certificate file paths. The Deployment mounts these files at `/etc/auth-gateway` and each Secret read-only at its certificate directory. Envoy's bootstrap reads the SDS resource, which points to the mounted certificate and key. Envoy watches both directories.
 
-When JWT is enabled, the generated `<name>-lua` ConfigMap contains a file-based ECDS response with the identity-mapping script embedded. Envoy watches `/etc/auth-gateway/lua` and applies projected ConfigMap updates to the Lua filter without restarting the Pod. The generator does not add a checksum to the Deployment. Changes to the static Envoy bootstrap, including listeners, routes, and JWT provider settings, still require an explicit rolling restart because Envoy does not watch `envoy.yaml`.
+JWT attribute mappings use a separate processing ConfigMap and Envoy's file-based ECDS reload. See [JWT authentication and request processing](jwt-auth.md) for the filter chain and mapping behavior.
 
 ```mermaid
 sequenceDiagram

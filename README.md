@@ -77,12 +77,10 @@ The `config` package loads one strict YAML document, applies defaults, and
 validates it. It generates Envoy config and Kubernetes resources. See
 [config.example.yaml](config.example.yaml) for a complete example.
 JWT configuration is shown in [config.auth.example.yaml](config.auth.example.yaml).
-For protected servers, Kubernetes output stores the identity-mapping script in
-its own `<name>-lua` ConfigMap as a file-based ECDS resource. Envoy watches the
-projected ConfigMap directory and reloads the Lua filter when its mapping
-changes, without restarting the Pod. The generator does not add a checksum to
-the Deployment. Envoy still requires an explicit rolling restart for changes to
-its static bootstrap, such as listeners, routes, or JWT provider settings.
+See [JWT authentication and request processing](docs/jwt-auth.md) for plain JWT
+authorization, direct request headers, and ordered attribute mappings. Mapping
+changes are delivered through ECDS from a separate processing ConfigMap, so they
+reload without changing the Envoy bootstrap or replacing the gateway Pod.
 
 Each API entry defines one upstream and must include one or more routes. A
 route must list one or more HTTP methods and match an exact path, a prefix, or

@@ -1,333 +1,297 @@
-# Authentication design and implementation plan
+# JWT processing implementation
 
-Proposal for [RHOBS-1784](https://redhat.atlassian.net/browse/RHOBS-1784), part of
-[RHOBS-1782](https://redhat.atlassian.net/browse/RHOBS-1782).
+Implementation plan for [RHOBS-1784](https://redhat.atlassian.net/browse/RHOBS-1784),
+part of [RHOBS-1782](https://redhat.atlassian.net/browse/RHOBS-1782).
 
-The first implementation adds JWT authentication, identity mapping, server-bound
-authorization policies with per-API grants, and optional upstream headers. Other
-authentication methods and external processors will use the same stages.
+## Goal and current scope
 
-See [config.auth.example.yaml](config.auth.example.yaml) for the JWT configuration
-schema and [config.mtls.example.yaml](config.mtls.example.yaml) for a complete
-future mTLS example. JWT validation, Envoy verification, identity mapping,
-per-API authorization, and optional route header processing are implemented.
-mTLS and other authentication methods remain future work.
-[config.example.yaml](config.example.yaml) describes the current supported format.
+The `RHOBS-1784` implementation provides JWT authentication, authorization
+against original claims, and optional ordered attribute processing. It uses
+native Envoy filters throughout. Keep code quality and valuable testing as
+acceptance requirements, not follow-up work.
 
-## Design
+This document replaces the earlier design that translated attributes before
+authorization. The revised runtime behavior is implemented on this branch.
 
-Authentication produces verified identity attributes. Authorization and request
-processing consume those attributes independently.
+Scope is JWT only. mTLS remains future work; preserve its example without
+expanding its implementation or designing combined authentication flows.
+Existing routing and server TLS behavior remain covered by regression tests.
+
+Isolated probes against `envoyproxy/envoy:v1.39.1` confirmed native support for
+nested claim extraction, literal dotted keys, optional values, ordered mappings,
+unmatched-value passthrough, and required-header rejection. These probes establish
+feasibility. They do not replace generator-backed JWT e2e tests.
+
+## Behavior and implementation
+
+The logical request flow is:
 
 ```text
-Server -> Authentication -> Identity mapping -> Authorization for the requested API -> Route processing -> Upstream
+Verify JWT
+  -> Authorize using original claims
+  -> Populate working attributes
+  -> Apply processors in declaration order
+  -> Check required header attributes
+  -> Set route headers
+  -> Forward upstream
 ```
 
-| Configuration | Responsibility |
+### Authentication and authorization
+
+- Retain native JWT verification for signature, issuer, audience, expiration, and
+  not-before constraints. Accept bearer tokens from the Authorization header and
+  remove the credential before forwarding.
+- Keep each provider's verified payload in its own JWT metadata entry. Compile
+  authorization attribute names into paths within that provider's payload.
+  Authorization must never read transformed attributes or caller-supplied
+  identity headers.
+- `claim_path` remains a list of literal object keys. Missing, empty, null, or
+  non-string application claims leave attributes unset. Do not coerce values or
+  invalidate an otherwise valid JWT because an application claim is unavailable.
+- Authorization conditions requiring absent attributes do not match. Preserve
+  per-authenticator grants, per-API permissions, server policy combinations,
+  default denial, and server isolation. An authorization denial never retries
+  another identity.
+- Support alternative JWT authenticators with distinct issuers on each server.
+  Reject duplicate issuer bindings within a server, including bindings with
+  different audiences. The same issuer may be configured on separate servers.
+  Keep the existing single-JWT restriction for authentication `all_of`.
+- Preserve local 404/405 behavior after successful authentication and existing
+  native credential-failure responses. Missing required header attributes return
+  403 at the later header check.
+
+### Processing configuration
+
+Add an optional ordered `processing` list to `Config`. Initially support only
+`type: attribute-mapper`, with a name and attribute lookup tables:
+
+```yaml
+processing:
+  - name: upstream-tenants
+    type: attribute-mapper
+    attributes:
+      tenant_id:
+        mappings:
+          client-123: team-a
+          client-456: team-b
+```
+
+Remove authenticator-level value mappings without a compatibility layer. Keep
+strict YAML decoding and update the examples, fixtures, and public Go types
+alongside the implementation.
+
+- The processor list applies globally after authorization and before route header
+  processing. It does not introduce server-specific processor bindings.
+- Each processor performs one exact lookup per configured attribute. Entries in
+  one lookup table must not chain into each other.
+- Missing attributes are skipped. Unmatched values remain unchanged.
+- Later processors consume earlier results and may overwrite the same attribute.
+  Preserve declaration order. Lookup-table entry order has no meaning.
+- Attributes and lookup values remain strings. Quote numeric-looking keys in
+  examples. Do not add collision rejection or override warnings.
+- Leave `routes[].processing.request_headers` as the explicit selection of
+  upstream headers and their `from_attribute` sources.
+
+### Native Envoy generation
+
+Use native filters with separate responsibilities:
+
+1. `jwt_authn` verifies the credential and exposes the original payload.
+2. RBAC evaluates raw claims using the named authenticator's metadata and the
+   selected API. Attribute aliases can be resolved during generation; no runtime
+   extraction script is needed for authorization.
+3. `set_filter_state` populates working attributes from the verified payload.
+   Scope initialization to the server's bound authenticators.
+4. An optional, separately named `set_filter_state` instance applies the ordered
+   mappings after authorization.
+5. A separate native RBAC instance checks the selected route's required header
+   values after all processors have run.
+6. Native header mutation removes caller-supplied managed headers and writes
+   only the outputs declared by the selected route. The router forwards the
+   request.
+
+Use `auth_gateway.attributes.<name>` as the working filter-state keys and
+`envoy.string` as their factory. Header output reads the final values through
+`%FILTER_STATE(auth_gateway.attributes.<name>:PLAIN)%`. Keep original JWT metadata
+unchanged throughout processing.
+
+Generate guarded CEL expressions for literal claim-path traversal and mapping.
+Missing or unsuitable claims must yield no working attribute. Set
+`skip_if_empty: true` and omit empty formatter values so absent values do not
+become placeholder strings such as `-`.
+
+In the pinned Envoy version, CEL exposes `envoy.string` filter-state values as
+bytes. Compare mapping sources using correctly escaped byte literals. Keep
+string and byte-literal encoding in small, focused helpers. Generate one update
+per attribute per processor so later processors see earlier updates without
+chaining entries within a single lookup table.
+
+A required header source must contain a usable value after processing. Return
+403 before forwarding if it is absent or unsuitable for an HTTP header. Derive
+these checks from the selected route's configuration. Routes without header
+outputs have no such requirement. Retain validation of reserved header names.
+
+Relax validation that requires every `any_of` authenticator to provide every
+route header attribute. A referenced attribute must be declared by at least one
+bound authenticator; availability for the actual request is checked at runtime.
+Processing tables may mention attributes absent from a request or configuration.
+
+Preserve the selected route throughout authorization and processing. Do not clear
+the route cache. Include filters and resources only where needed: plain JWT
+authorization must not acquire processing machinery unnecessarily.
+
+### Envoy bootstrap and ECDS configuration
+
+Keep JWT verification, authorization, route configuration, and attribute
+extraction in native Envoy filters. When mappings are configured, load the
+`set_filter_state` filter config through file-based ECDS. The config contains
+both claim extraction and ordered mapping updates, so later processors consume
+earlier results without depending on changes to the bootstrap.
+
+Write the ECDS discovery response to `processing.yaml` in a separate
+`<name>-processing` ConfigMap mounted at `/etc/auth-gateway/processing`. Envoy
+watches the mounted directory. A mapping update changes only this ConfigMap; it
+does not change `envoy.yaml`, the Deployment template, or the Pod identity.
+Attribute initialization without mappings remains typed filter config in the
+bootstrap. Do not attach a checksum annotation to the Deployment template.
+
+Static bootstrap changes still need a Deployment rollout to take effect. A
+similar ECDS delivery pattern may be evaluated for future API-key processing,
+after selecting a filter and a secure source and rotation design for key
+material. Do not add speculative API-key support to this implementation.
+
+## Testing strategy
+
+Test meaningful contracts at the layer that owns them. Unit tests check
+configuration and generation decisions. E2e tests prove request behavior in the
+pinned Envoy version. Do not implement a second processor inside tests.
+
+### Case-based fixtures and reference output
+
+Reorganize all configuration test data by case, including the existing routing
+and server TLS cases:
+
+```text
+config/testdata/
+  public-routing/
+  route-lists/
+  server-tls/
+  jwt-auth/
+  jwt-auth-with-headers/
+  jwt-auth-with-mappings/
+  jwt-auth-multiple-issuers/
+```
+
+Each case contains `config.yaml`, its supporting fixtures, and applicable
+reference files such as `envoy.yaml.golden`, `kubernetes.yaml.golden`, and
+`processing.yaml.golden`. Keep related inputs and outputs together rather than
+using shared output-format directories. Use table-driven variations for small
+validation differences instead of creating a folder for every assertion.
+
+- Golden files are review artifacts. Remove whole-file equality assertions
+  against generated YAML, manifests, and scripts.
+- Keep `make update-golden` as an explicit regeneration command backed by a small
+  dedicated generator. Remove the test `-update` flag and test-side file writes.
+- Normal tests must not rewrite fixtures or reference files.
+- Unit tests load their own case inputs. Keep a separate smoke test for the
+  supported root example rather than using it as every test's fixture.
+- E2e tests generate fresh configuration from inputs; they must not deploy
+  checked-in golden output.
+
+### Focused unit tests
+
+Use case-driven assertions on decoded configuration and typed generated
+resources. Cover:
+
+- Configuration validation, references, defaults, and input immutability.
+- Duplicate issuer bindings rejected per server, without a global issuer ban.
+- Correct provider and literal claim-path references in authorization.
+- Required filter ordering, route-specific header requirements, static
+  attribute initialization, and the ECDS `set_filter_state` resource.
+- No Lua filters or Lua resources in JWT cases; add the `set_filter_state`
+  filter only when attributes or mappings require it.
+- Mapping updates changing only the processing ConfigMap while leaving the
+  bootstrap and Deployment template unchanged.
+- Relevant routing, server TLS, Kubernetes mount, and service-port contracts
+  currently covered by structural assertions.
+
+Avoid exact generated-expression comparisons, source substring checks, exhaustive
+assertions on incidental defaults, and large helpers that hide what a case
+proves. Preserve useful existing assertions when removing snapshot comparisons.
+
+### E2e behavior
+
+Use real signed JWTs, controllable local JWKS endpoints, and
+`envoyproxy/envoy:v1.39.1`. Cover these distinct behaviors:
+
+| Case | What it must prove |
 | --- | --- |
-| `authenticators` | Define named credential validators. Each JWT authenticator defines one issuer and its mappings. |
-| `servers[].authentication` | Bind authenticators to a server using `any_of` or `all_of`. |
-| Authenticator `attributes` | Extract verified credential values into named attributes, with optional value translation. |
-| `authorization_policies` | Define named grants for APIs against verified identities. |
-| `servers[].authorization` | Bind authorization policies to a server using `any_of` or `all_of`. |
-| `routes[].processing` | Configure optional processing, starting with upstream request headers. |
+| Plain JWT authorization | Valid credentials can access an allowed API without mappings or header output; invalid credentials and denied grants fail. |
+| Direct headers | Verified raw attributes reach the upstream only as the configured headers. |
+| Mappings | Authorization evaluates the original identifier while the upstream receives the transformed value. |
+| Ordered processors | Later processors observe earlier changes; intentional overwrites work; each processor performs one lookup. |
+| Unmatched values | An authorized value with no mapping entry reaches the upstream unchanged. |
+| Missing attributes | Unused missing claims succeed; missing authorization attributes deny; missing required header attributes return 403. |
+| Literal values and paths | Nested paths, literal dotted keys, and escaped mapping values work without coercion. |
+| Multiple issuers | The same raw value cannot borrow another issuer's grant or attribute source; server trust remains isolated. |
+| Managed headers | Caller-supplied and duplicate managed headers are replaced or removed; bearer credentials are removed. |
+| Mapping update | Applying a changed processing ConfigMap reloads the mapping through ECDS without replacing the Pod; authorization still uses the original claim and the upstream receives the new mapped value. |
 
-TLS checks happen before this HTTP pipeline. Where a server enables mTLS, those
-checks always require a valid client certificate. Within authentication, each
-method must verify its credential and map its attributes before it can succeed.
+For the mapping update case, change an output value to one that would not
+satisfy the raw grant if authorization accidentally read transformed values.
+Apply the changed processing ConfigMap, then verify the request remains
+authorized, emits the new value, and keeps the same Pod identity.
 
-Keep identity in internal request metadata, including each selected
-authenticator, its credential provenance, and mapped attributes. JWT provenance
-includes the issuer. Headers are an output of this process. They are never the
-source of trusted identity.
+Assert HTTP outcomes and backend observations, including that denied requests do
+not reach the backend. Retain the useful existing JWT failure, HTTP/HTTPS,
+JWKS rotation, cache, outage-isolation, and recovery coverage. Keep lifecycle
+scenarios isolated from access/processing scenarios so failures are diagnosable.
 
-Future client-certificate and API-key authenticators can produce the same
-identity attributes. An `ext_authz` integration can consume them during
-authorization, and `ext_proc` can consume them during request processing. Use
-defined stages; an arbitrary ordered pipeline is outside this first step.
+## Code quality and documentation
 
-## Configuration behavior
+Keep configuration validation, native filter generation, and resource packaging
+focused and readable. Use typed Envoy configuration and small helpers with clear
+ownership. Preserve declared list order and deterministic serialization of
+unordered maps. Avoid speculative processor frameworks and mTLS abstractions.
 
-### Server authentication
+Remove obsolete Lua generation, resource handling, snapshot assertions, fixtures,
+and documentation as their replacements land. Do not retain two implementations
+of the same JWT flow. Keep comments concise and explain only non-obvious
+behavior.
 
-- Each authenticator defines one credential type. Each JWT authenticator has
-  one issuer value, JWKS endpoint, audience list, and set of attribute mappings.
-- A server explicitly selects `any_of` or `all_of` over authenticator names.
-  With one authenticator, both have the same result.
-- `any_of` uses declaration order. Select the first method that verifies its
-  credential and maps its attributes successfully. Missing or invalid credentials
-  and failed mappings let the next method try. Only the selected identity
-  proceeds to authorization; an authorization denial never retries another
-  method. Do not merge attributes from unselected methods.
-- `all_of` requires every method to verify and map its credential. Reject
-  conflicting values for shared attributes and combine nonconflicting values,
-  while preserving each credential's provenance.
-- More than one JWT authenticator in `all_of` is a configuration error: this
-  version accepts only one bearer token. Use `any_of` for alternative issuers.
-- An omitted `authentication` block permits public access. A present block must
-  select exactly one combination with a nonempty list of distinct, known names.
-  Nested combinations are outside this version.
-- Authentication applies to the whole server. HTTP uses the selected hostname;
-  HTTPS also requires matching SNI. An issuer bound only to another server must
-  not authenticate a request here.
-- Accept JWTs from `Authorization: Bearer`. Validate signatures, issuer,
-  audience, expiration, and any not-before constraint. Require expiration and
-  an explicit audience list. Remove the bearer credential before forwarding.
-  Query parameters and cookies are not token sources in this first version.
+Update the JWT example's policies to allow original identifiers and move all
+translations into processing. Supply mappings for both example issuers. Remove
+comments that imply mapping is part of authentication or authorization.
 
-Selection order is a gateway contract. Envoy's native JWT `any_of` can complete
-asynchronously and does not guarantee that the first configured verifier wins.
-Enforce selection independently of verifier completion timing. A single bearer
-token from one of two distinct issuers can match only its issuer.
+Keep `docs/jwt-auth.md` linked from the README. Document plain JWT
+authorization, direct headers, mappings, multiple issuers, missing attributes,
+and ECDS reload behavior for mapping changes. Include concise flow diagrams and
+working examples. Keep
+user documentation aligned with the implementation and distinct from this
+handoff plan. Mention mTLS only as future work.
 
-### Future mTLS
+## Completion status and follow-up
 
-An mTLS authenticator defines a `client_ca_secret` and certificate attribute
-mappings. The Secret contains the trusted client CA bundle in `ca.crt`; it is
-separate from the server TLS Secret containing `tls.crt` and `tls.key`.
+The implementation reorganizes fixtures by case, generates reviewable reference
+files, uses native JWT/RBAC/`set_filter_state`/header filters, and removes the
+superseded Lua path. The focused JWT and complete e2e suites remain required for
+handoff after changes to filter generation or Kubernetes packaging.
 
-Any server that binds this authenticator must have `tls_config` and require a
-valid, trusted client certificate at the TLS handshake. Missing, expired, or
-untrusted client certificates fail the handshake, even if a valid JWT is
-supplied and authentication uses `any_of`. Client TLS must reach Envoy directly
-or through TLS passthrough.
+Completion requires:
 
-With `any_of: [internal-jwt, writers-mtls]`, the certificate is mandatory, but
-a successfully verified and mapped JWT supplies the identity first. Only if
-that method fails does the gateway try the certificate's attribute mapping.
-The certificate's attributes need not agree with a selected JWT identity.
-With `all_of`, both mapped identities are required and shared attributes must
-agree.
-
-For the future example, `certificate_field: uri_san` selects exactly one URI
-SAN from the validated peer certificate. Zero or multiple URI SANs make this
-mapping unusable. The same nonempty string and value-translation rules apply
-as for JWT attributes. These mTLS fields describe future behavior; the initial
-runtime work remains JWT-only.
-
-### Identity mapping
-
-- Attribute names are configurable; `tenant_id` is an example, not a reserved
-  requirement. An issuer can produce several attributes.
-- `claim_path` is a nonempty list of literal object keys. `[x, y, z, claim]`
-  selects `x.y.z.claim`; `[x, "y.z", claim]` selects a key containing a dot.
-  Array traversal and JSONPath expressions are outside this first version.
-- Each configured path must resolve to a nonempty string in the verified
-  payload. Missing paths, nulls, numbers, booleans, arrays, and objects are
-  rejected. Do not coerce values into strings.
-- Without `mappings`, use the extracted string. When `mappings` is present,
-  require an exact lookup match and use its nonempty string value. An unknown
-  value is rejected rather than passed through. Translation happens once.
-- Keep lookup tables per authenticator. Equal attribute values from different
-  authenticators do not grant equal permissions unless the server's policies
-  explicitly allow them.
-
-### Server authorization
-
-The server's `authorization` block references named policies using exactly one
-of `any_of` or `all_of`, with a nonempty list of distinct, known names:
-
-- `any_of` allows the request if any referenced policy grants access to the
-  requested API.
-- `all_of` allows the request only if every referenced policy grants access to
-  that same API. Combining a metrics-only policy and a logs-only policy this way
-  grants no access.
-
-Policies contain allow grants; a policy with no matching grant does not allow
-access. Policy order has no effect, and nested combinations are outside this
-version.
-
-Each grant identifies an `authenticator`, a nonempty `apis` list, and one or
-more attribute allowlists. The authenticator name identifies the JWT issuer,
-so grants have no separate `issuer` qualifier. The requested API must be in
-the grant's list, and every attribute condition must match. Values within an
-allowlist are alternatives; any matching grant makes that policy allow access.
-
-Each grant evaluates the named credential's mapped attributes. Under
-authentication `any_of`, only the selected credential can satisfy a grant.
-Under `all_of`, each successful credential can satisfy its own grants. Policies
-never evaluate unverified claims or request headers.
-
-APIs contain upstreams, routes, and optional processing. Authorization bindings
-belong to servers, and grants apply to every route in the named API. Different
-servers can expose the same APIs with different authentication and permissions.
-Use separate APIs when route permissions differ; there are no route policy
-overrides. A grant cannot expose an API absent from the server's `apis` list.
-
-| Server | Server authorization | Result |
-| --- | --- | --- |
-| Public | Omitted | Public access. |
-| Authenticated | Policy list | Authenticate, map identity, then apply the policy combination for the requested API. |
-| Authenticated | Omitted or combination does not allow access | Deny API access. |
-| Public | Present | Reject the configuration. |
-
-Unknown policy, authenticator, or API references are configuration errors.
-Unsatisfied JWT credential requirements are rejected before identity mapping.
-Envoy 1.39.1 returns 401 for missing, malformed, expired, wrongly signed, and
-wrong-issuer tokens; a correctly signed token with an untrusted audience returns
-403. Verified credentials that cannot produce a required mapped identity,
-conflicting `all_of` attributes, and identities denied by authorization also
-receive 403. An unsuccessful `any_of` method does not reject the request if a
-later method succeeds. Local 404/405 responses remain local responses after
-successful authentication on a protected server. mTLS handshake failures
-happen before any HTTP response.
-
-### Route processing
-
-`processing.request_headers` maps attribute names to arbitrary application
-headers using `name` and `from_attribute`. Omit processing when a route needs no
-header output. The server's authorization rules still apply. Under `any_of`,
-processing reads the selected identity; under `all_of`, it reads the combined
-attributes.
-
-Treat configured identity-header names as gateway-managed names. Remove
-caller-supplied values before authentication and processing, then set one value
-only on routes that declare the output. Reject missing source attributes and
-unsafe header values. Validate header names and prevent identity output from
-changing credential, routing, connection, or message-framing headers.
-
-Keep the selected route stable through authorization and processing. Header
-output must not cause a second route selection with different permissions.
-
-The identity-mapping Lua source is generated as `lua/jwt.lua` and embedded in a
-file-based ECDS response in the separate `<name>-lua` ConfigMap. Envoy watches
-the projected ConfigMap directory and applies mapping changes to the Lua filter
-without restarting the Pod. The Deployment has no generated checksum
-annotation. Changes to the static Envoy bootstrap, including listeners, routes,
-and JWT provider settings, still require an explicit rolling restart.
-
-## Complete examples
-
-### JWT
-
-The JWT example defines two authenticators, `internal-jwt` and `external-jwt`,
-two authorization policies, and HTTP and HTTPS servers that expose the same
-metrics and logs APIs. Each server uses `authentication.any_of` for the two
-issuers and `authorization.any_of` for `metrics-writers` and `logs-writers`.
-It uses placeholder issuer URLs, backend Services, and a pre-existing Kubernetes
-TLS Secret. Gateway generation does not create those dependencies.
-
-Both issuers map different external values into a shared tenant namespace:
-
-| Authenticator | Extracted claim value | Mapped `tenant_id` | Metrics | Logs |
-| --- | --- | --- | --- | --- |
-| `internal-jwt` | `client-123` | `team-a` | Allow | Allow |
-| `internal-jwt` | `client-456` | `team-b` | Allow | Deny |
-| `external-jwt` | `customer-456` | `team-a` | Allow | Allow |
-| `external-jwt` | `customer-789` | `team-b` | Deny | Allow |
-
-Internal tokens use `[x, y, z, claim]`; external tokens use `[organization, id]`.
-Both also extract a nonempty `sub` into `writer_id` without translation. The
-metrics route sends `tenant_id` as `X-Scope-OrgID` and `writer_id` as
-`X-Writer-ID`. The logs route sends only `X-Scope-OrgID`.
-
-The HTTP server is suitable for the internal hop after an ingress terminates
-TLS. The HTTPS server terminates TLS at the gateway using `write-gateway-tls`.
-Both accept either JWT issuer and apply the permission table above.
-
-### Future mTLS and combined methods
-
-The mTLS example is a separate complete configuration with three HTTPS servers,
-the same metrics and logs APIs, an `internal-jwt` authenticator, and a
-`writers-mtls` authenticator. Each server has its own server TLS Secret and
-requires a client certificate trusted by `writers-client-ca`.
-
-Both methods map external values into `tenant_id`. JWT uses the same nested
-claim as the JWT example; mTLS maps `urn:example:writer:client-123` to `team-a`
-and `urn:example:writer:client-456` to `team-b`. Their other attributes,
-`jwt_subject` and `certificate_id`, have distinct names and can combine under
-`all_of`. The shared routes emit only `tenant_id` as `X-Scope-OrgID`.
-
-| Server | Authentication | Authorization | Allowed APIs |
-| --- | --- | --- | --- |
-| `mtls.auth.example.com` | Certificate identity | `certificate-writers` | Metrics for either tenant; logs denied. |
-| `jwt-preferred.auth.example.com` | JWT first, then certificate identity | Any of `jwt-writers`, `certificate-writers` | Metrics for either tenant; logs only for a selected JWT mapped to `team-a`. |
-| `jwt-and-mtls.auth.example.com` | Both identities, with matching `tenant_id` | All of `jwt-writers`, `certificate-writers` | Metrics for either tenant; logs denied because the certificate policy does not allow them. |
-
-A JWT for `team-a` with a valid certificate mapped to `team-b` selects the JWT
-on the JWT-first server but fails identity agreement on the combined server.
-All three servers reject a missing or invalid client certificate at the TLS
-handshake, regardless of JWT validity.
-
-## Implementation stages
-
-1. Add the public configuration types, defaults, and validation. Cover named
-   references, server authentication and authorization combinations, invalid
-   two-JWT `all_of`, claim paths, mappings, API grants, and route processing
-   before generating filters. Keep strict YAML decoding and avoid mutating
-   caller-owned configuration.
-2. Generate issuer-specific JWKS clusters and native Envoy JWT requirements.
-   Use verified HTTPS for JWKS, scoped server requirements, and separate verified
-   payload metadata for each issuer. HTTP servers share a connection manager,
-   so issuer trust must be selected per virtual host.
-3. Add an identity-mapping and selection stage that reads verified payload
-   metadata and enforces configured order. Pass mapping settings as structured
-   data. Publish trusted identity only after the required extraction,
-   translation, and selection succeed. Mapping errors, including script errors,
-   must never publish a usable identity for the failed method.
-4. Generate native RBAC policies from each server's policy combination and API
-   grants, plus a separate header-processing stage. Enforce the server's rules
-   on every generated method route. Cover default denial, header sanitization,
-   routes without header output, and reuse of APIs across servers with different
-   permissions.
-5. Add isolated e2e use cases, review the generated output, and update supported
-   examples and operator documentation. Record checks in the handover and
-   commit each tested implementation step on a feature branch.
-
-Re-read RHOBS-1784 before runtime implementation. Keep RHOBS-1783 open until its
-authentication-policy API requirement is resolved and tested. Mixed auth types
-and external processors follow in later work.
-
-## Testing
-
-Start with focused unit tests and goldens, then exercise the generated gateway:
-
-- Configuration and generation: invalid references and bindings, literal nested
-  keys, mapping and grant validation, invalid two-JWT `all_of`, deterministic
-  output, unchanged inputs, filter order, issuer isolation, server policy
-  scoping, and Kubernetes configuration projection.
-- Selection contract: the first verified and mapped method wins regardless of
-  verifier completion timing; verification or mapping failure permits the next
-  method; unselected identities cannot supply attributes or grants; and an
-  authorization denial never retries another identity.
-- JWT access: real signed tokens from two local issuers over HTTP and HTTPS;
-  missing, malformed, expired, wrongly signed, wrong-audience, and wrong-issuer
-  tokens; missing expiration; server and SNI/authority isolation.
-- Identity and authorization: nested extraction, literal dots, direct values,
-  translation, missing or wrong-type claims, unknown mappings, per-authenticator
-  API grants, and denial without a grant. Cover authorization `any_of` and
-  `all_of`, including disjoint API policies, and different grants for the same
-  API on different servers. Verify rejected requests never reach the upstream.
-- Processing: distinct headers per route, an authenticated route without header
-  output, spoofed and duplicate managed headers, invalid header values, and
-  removal of bearer credentials.
-- JWKS lifecycle: key rotation without a gateway Pod restart; unavailable or
-  invalid JWKS with cold and warm caches; cache lifetime and refresh behavior;
-  and continued access through a healthy issuer when another issuer fails.
-- Lua ECDS reload: changing a mapped identity updates the Lua ConfigMap and
-  applies the new mapping to requests without replacing the Envoy Pod.
-- Future mTLS: reject an HTTP binding; reject missing, expired, or untrusted
-  certificates during TLS under both operators, including with a valid JWT;
-  exercise single URI SAN extraction and mapping failures. Cover ordered JWT
-  and certificate selection, `all_of` agreement and conflicts, combined
-  nonconflicting attributes, and per-credential authorization provenance.
-  Confirm mTLS on one server does not require client certificates on other
-  servers. Add these runtime cases with the mTLS implementation.
-
-Use local signing keys and controllable JWKS endpoints, with no dependency on
-production SSO. The access and identity group uses
-`e2e/fixtures/jwt-gateway.yaml`; the JWKS lifecycle group uses
-`e2e/fixtures/jwt-jwks-lifecycle.yaml`. Keep these scenarios in separate Ginkgo
-`Ordered` containers, each with its own namespace, setup, cleanup, and label.
-The lifecycle test shortens the generated JWKS cache duration only in its test
-deployment to check expiry and refresh without a multi-minute wait. Keep
-Kubernetes lifecycle and diagnostics in `e2e/internal/framework`; keep token
-helpers and protocol assertions in the e2e package. Test each distinct behavior
-at the layer that owns it.
-
-For runtime implementation, run `make test`, `go vet ./...`, e2e compilation and
-vet checks, and `make -C e2e test` with the default two processes. Review updated
-goldens and run `git diff --check`. For this documentation step, check both
-example files for YAML syntax, duplicate keys, configuration references,
-attribute sources, and agreement with this document's permissions. Check local
-links, ASCII content, and whitespace.
+- The updated JWT example loads and generates valid configuration.
+- Fixtures and reference outputs are grouped by case, with no whole-file golden
+  comparisons in tests.
+- JWT behavior uses native Envoy filters and has meaningful e2e coverage.
+- Mapping updates reload through ECDS without changing the bootstrap, Deployment
+  template, or Pod identity, while authorization continues to use the original
+  claim.
+- Documentation describes the implemented JWT flows and their failure behavior.
+- `make test` and `go vet ./...` pass.
+- During development, use the focused JWT e2e group:
+  `make -C e2e test GINKGO_ARGS='--label-filter=jwt'`.
+- Before implementation handoff, run the complete existing suite with
+  `make -C e2e test`, because generation changes affect shared infrastructure.
+- Regenerate and review reference output, run `git diff --check`, and record the
+  checks actually run and any remaining limitations. Do not claim a runtime check
+  passed on the strength of generated configuration or a golden file.

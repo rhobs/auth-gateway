@@ -65,7 +65,7 @@ Start with unit tests and goldens, then run live e2e coverage.
 - Live e2e: two HTTP hosts with different API sets; two HTTPS hosts with different bindings and certificates; unknown hosts, unbound paths, wrong protocols, unknown SNI, and mismatched SNI/authority. Renew one certificate and check that it changes while the other certificate and gateway Pod UID stay unchanged.
 - Keep namespace isolation and `Ordered` Ginkgo groups. Keep Kubernetes lifecycle operations in the framework and scenario helpers in the test package.
 
-Regenerate goldens with `go test ./config -run Golden -update`, review changes, format modified Go files, and run:
+Regenerate reference outputs with `make update-golden`, review changes, format modified Go files, and run:
 
 ```sh
 make test

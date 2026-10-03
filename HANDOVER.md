@@ -1,5 +1,32 @@
 # Handover: RHOBS-1782
 
+## RHOBS-1784 current handoff (2026-10-03)
+
+- Work is on the `RHOBS-1784` feature branch. The native JWT implementation is
+  committed in separate config/runtime, e2e, and documentation batches. Do not
+  push to `main`.
+- Keep the Envoy filter chain native: `jwt_authn`, RBAC on original claims,
+  `set_filter_state`, route-specific required-header RBAC, header mutation, and
+  router. Do not restore Lua. Envoy 1.39.1 exposes `envoy.string` filter-state
+  values as bytes; unmatched mappings return empty and rely on `skip_if_empty`
+  to preserve passthrough. Do not reintroduce `string(bytes)` in CEL.
+- When mappings exist, the `set_filter_state` config is a file-based ECDS
+  resource in `processing.yaml`, supplied by a separate `<name>-processing`
+  ConfigMap mounted at `/etc/auth-gateway/processing`. Mapping updates change
+  that ConfigMap only; the bootstrap, Deployment template, and Pod identity stay
+  the same. Authorization continues to use the original verified claim.
+- There is no generated checksum annotation. Static bootstrap changes still
+  need an explicit Deployment rollout to take effect. Keep this behavior visible
+  in docs and revisit only if deployment owners want a different rollout
+  mechanism.
+- mTLS remains future work. Preserve `config.mtls.example.yaml` as an example;
+  do not implement mTLS here. Retain coverage for both JWT issuers and their
+  server isolation.
+- Mapping updates must be tested by applying only the processing ConfigMap,
+  checking the changed upstream value, and confirming the Pod UID is unchanged.
+  The focused JWT e2e label is `jwt`; the complete e2e suite is also required
+  before handoff. Record any local Kind or Docker limitation accurately.
+
 ## Goal and rules
 
 - Implement the epic in small, tested steps. This branch contains the completed bootstrap implementation for RHOBS-1783.
@@ -31,20 +58,20 @@
 - The required `servers` list binds exact DNS hostnames to named APIs on one Envoy port. Each hostname appears once across HTTP and HTTPS. An absent `tls_config` selects HTTP; a non-nil `tls_config` selects HTTPS. There is no wildcard fallback.
 - A server exposes only its `apis` bindings. Missing or empty bindings serve 404 for every path. Unknown or repeated bindings are errors. APIs can be reused across servers or remain unbound. Duplicate path/method matches are rejected within an API and across APIs bound to the same server; separate servers can use the same route.
 - Each HTTPS server has its own SNI-selected TLS chain, HTTP authority match, and file-based SDS resource. Servers can use separate Kubernetes TLS Secrets or share a certificate. Paths default to `/etc/<secret>/tls.crt` and `tls.key`; file-only TLS without a Secret retains `/etc/auth-gateway-tls` defaults. Identical Secret/path bindings share a mount; conflicting or overlapping mount directories are rejected. Client certificates are not required.
-- `config/testdata/tls.yaml` covers one HTTP and two HTTPS servers, including an empty API binding and distinct Secrets. HTTP and HTTPS share port 8080; the generated Service exposes ports 80 and 443 when those protocols exist. If a proxy terminates caller TLS and forwards plain HTTP, Envoy matches the HTTP `Host`. TLS passthrough or re-encryption must use a configured HTTPS server's SNI hostname.
+- `config/testdata/server-tls/config.yaml` covers one HTTP and two HTTPS servers, including an empty API binding and distinct Secrets. HTTP and HTTPS share port 8080; the generated Service exposes ports 80 and 443 when those protocols exist. If a proxy terminates caller TLS and forwards plain HTTP, Envoy matches the HTTP `Host`. TLS passthrough or re-encryption must use a configured HTTPS server's SNI hostname.
 - The generated HTTP connection manager writes structured JSON access logs to stdout for HTTP status codes of 400 or higher (`config/access_log.go`). RHOBS-1798 tracks this work.
 - Each API has one upstream and must define one or more `routes`. Each route must list one or more supported HTTP methods and select exactly one exact path, prefix, or safe RE2 regex match. Missing or empty method lists are configuration errors. An optional path, prefix, or regex rewrite transforms the request path.
 - Envoy checks APIs in server binding order, then routes in each API's declaration order. It returns 405 with an `Allow` header only for bound routes with the wrong method, and 404 for unbound or unknown paths.
-- Kubernetes output includes Envoy and collector ConfigMaps, an optional separate JWT Lua ConfigMap, a ServiceAccount, a Deployment, and one Service with ports for configured protocols and metrics. HTTP and HTTPS target the same Envoy listener. All generated SDS files are projected into the Envoy container. Envoy runs as UID and GID 101. The Envoy image entrypoint fails when it runs as root.
+- Kubernetes output includes the Envoy and collector ConfigMaps, an optional processing ConfigMap when mappings are configured, a ServiceAccount, a Deployment without a checksum annotation, and one Service with ports for configured protocols and metrics. HTTP and HTTPS target the same Envoy listener. SDS and ECDS files are projected into the Envoy container. Envoy runs as UID and GID 101. The Envoy image entrypoint fails when it runs as root.
 - The Deployment includes an OpenTelemetry Collector sidecar. It scrapes Envoy's loopback `/stats/prometheus` endpoint on port 9901 every 30 seconds and exposes Prometheus metrics on port 8889. The scrape path is fixed in the generated Collector config. The image is configurable with `kubernetes.otel_collector_image` and defaults to `otel/opentelemetry-collector-contrib:0.135.0`.
 - The local Kind fixture defines two HTTP and two HTTPS servers with different API bindings. The Ginkgo suite has HTTP routing/metrics and server TLS groups, each with its own namespace (`auth-gateway-routing-e2e` and `auth-gateway-tls-e2e`). The TLS group checks certificate trust, unknown SNI, mismatched SNI/authority, and API isolation. It renews one of two certificates with `cmctl renew`, then checks that the other certificate and gateway Pod UID stay unchanged. Unknown SNI uses a separate port-forward because the expected TLS reset can close client-go's tunnel. Images remain Envoy 1.39.1, HTTPBin 2.25.0, OpenTelemetry Collector 0.135.0, and cert-manager 1.18.2. Both namespaces are removed at the end; cert-manager remains in the reusable Kind cluster.
 - The local e2e suite uses Ginkgo and Gomega. Each use-case group is an `Ordered` container with its own `BeforeAll` setup, fixtures, port forwards, and cleanup. The HTTP group tests routing and metrics; the TLS group also installs cert-manager. Gomega `Eventually` handles readiness, metrics, and certificate rotation polling. The Makefile runs two Ginkgo processes by default; set `GINKGO_PROCS=1` to run serially.
 - `e2e/internal/framework` uses client-go with the configured kubeconfig context for server-side manifest apply, namespace lifecycle, readiness checks, Secret and Pod reads, Envoy and Kubernetes diagnostics, and loopback port forwarding. Each Ginkgo process creates its own framework client in `BeforeSuite`. The TLS group installs cert-manager with `Environment.EnsureCertManager` and waits for its Deployments. The framework wraps `cmctl renew` for certificate rotation. The Makefile downloads cmctl v2.6.1 and writes a Ginkgo JSON report under `.state/reports`. `certificates.yaml` remains the cert-manager fixture applied during TLS group setup. Fixture shaping and protocol-specific request helpers remain in `e2e/support_test.go`.
 - Config tests load the default, route-list, and TLS fixtures and the root `config.example.yaml`. Tests cover server bindings, route isolation/order, scoped conflicts, TLS defaults, input immutability, and mount conflicts/sharing. TLS ConfigMap and Deployment goldens include multiple SDS files and Secret mounts.
 - `docs/tls-secrets.md` describes the Kubernetes Secret projection and Envoy file-based SDS rotation flow, with upstream Envoy and Kubernetes references.
-- The PoC's JWT, mTLS, SPIFFE, tenant policy, and other gateway features were not ported.
+- The PoC's mTLS, SPIFFE, tenant policy, and other gateway features were not ported. JWT support is implemented on RHOBS-1784 below.
 - `SERVER-CONFIG-PLAN.md` records the server configuration design and implementation plan. The README and TLS documentation describe the current format and certificate rotation.
-- JWT work belongs on a separate feature branch for RHOBS-1784. Do not start JWT implementation on the bootstrap branch.
+- JWT implementation is on the separate RHOBS-1784 feature branch; its current design and checks follow below.
 
 ## Checks
 
@@ -85,7 +112,7 @@ For the e2e suite organization and framework diagnostics, `gofmt` and `git diff 
 
 ## RHOBS-1784 design and initial config implementation (2026-10-02)
 
-- The active branch is `RHOBS-1784`. `AUTH-PLAN.md` records the approved auth design and implementation stages. `config.auth.example.yaml` is the complete JWT configuration and now loads and validates. `config.mtls.example.yaml` is a future mTLS configuration; its auth fields remain unsupported. Envoy auth generation has not started. `Generate` and `GenerateKubernetes` reject configs containing auth, authorization, or route processing so these settings cannot be silently omitted from generated deployments.
+- At this initial config stage, `AUTH-PLAN.md` recorded the approved auth design and implementation stages. `config.auth.example.yaml` loaded and validated, while `config.mtls.example.yaml` remained a future mTLS configuration. Envoy auth generation had not started, and `Generate` and `GenerateKubernetes` rejected auth settings so they could not be silently omitted. The completed runtime implementation is described below.
 - The initial config step adds public JWT authenticator and claim-mapping types, server authentication and authorization combinations, named policy grants, and per-route request-header mappings. Validation checks HTTPS JWKS URLs, explicit audiences, literal claim paths, mapping values, named references, JWT-only `all_of` limits, header safety, and processing attribute availability for each server binding. Defaults deep-copy the new config fields.
 - Each named JWT authenticator now defines one issuer directly. Servers bind authentication and authorization independently using explicit `any_of` or `all_of` lists. Named authorization policies grant access to APIs for named authenticators and mapped attributes; APIs no longer bind policies, and grants no longer need an issuer qualifier.
 - Authentication `any_of` selects the first method in declaration order that verifies and maps its credential. Only that identity supplies attributes and grants; authorization denial never retries another method. Envoy's native JWT OR can complete asynchronously, so the gateway must enforce this order independently of completion timing. `all_of` requires every credential, agreement on shared attributes, and preserves provenance when combining other attributes. Requiring two JWT authenticators through `all_of` with the single bearer-token source is a configuration error.
@@ -98,20 +125,20 @@ For the e2e suite organization and framework diagnostics, `gofmt` and `git diff 
 
 ## Current status
 
-JWT verification, identity mapping, per-API RBAC authorization, route header processing, and isolated access and JWKS lifecycle e2e groups are implemented on `RHOBS-1784`. The details and current validation results follow below. mTLS and mixed authentication methods remain future work. Keep RHOBS-1783 open until its authentication-policy API requirement is resolved. No Jira issue was changed.
+The revised `AUTH-PLAN.md` is implemented on `RHOBS-1784`. JWT verification,
+original-claim authorization, ordered attribute mapping, route-specific header
+checks, documentation, and JWT lifecycle coverage use native Envoy filters.
+Mapping values use a separate ECDS ConfigMap and reload without a rollout. There
+is no checksum annotation; static bootstrap changes require an explicit rollout.
+mTLS remains future work, and the RHOBS-1783 authentication-policy API question
+is still open. The config/runtime and e2e changes are committed; this handover
+and the related docs are in the final documentation batch. No Jira issue was
+changed, and nothing was pushed.
 
-## RHOBS-1784 JWT verification generation (2026-10-02)
+## RHOBS-1784 native JWT implementation (2026-10-03)
 
-- `Generate` now emits Envoy's native JWT filter for servers with authentication. Each server selects its requirement by virtual host, so HTTP hosts sharing one connection manager keep issuer trust scoped. JWT providers require expiration, check the configured issuer and audiences, read only the bearer Authorization header, remove accepted credentials before forwarding, and retain each verified payload under its authenticator name for the mapping stage.
-- Each referenced issuer gets a dedicated HTTPS JWKS cluster with SNI and CA validation against the Envoy image's system certificate bundle. Unreferenced authenticators do not add clusters. Authorization and route processing still fail closed because their runtime stages are not implemented.
-- `config/testdata/jwt-auth.yaml` isolates public and protected virtual hosts with two possible issuers. Its generated Envoy bootstrap is compared with `config/testdata/kubernetes/jwt-envoy.yaml.golden`; the test also checks filter order, per-host requirement scoping, expiration, credential removal, payload metadata, and JWKS TLS validation.
-- `GOCACHE=/private/tmp/auth-gateway-go-cache make test`, `go vet ./...`, e2e compile and vet checks, and `git diff --check` pass. `make -C e2e test` passes all 11 existing Kind specs across the default two Ginkgo processes. These e2e cases cover the existing routing and TLS use cases; JWT-specific request behavior is not yet covered.
-- Jira MCP and CLI were unavailable in this workspace. The checked-in RHOBS-1784 design remains the implementation scope; Jira was not changed.
-
-## RHOBS-1784 JWT identity, authorization, processing, and lifecycle (2026-10-02)
-
-- Envoy now runs native JWT verification, Lua identity mapping, native HTTP RBAC, and route-scoped native header mutation in that order. Virtual-host JWT requirements keep issuer validation scoped to each server. Lua reads only verified payload metadata, selects the configured identity, maps its attributes, and publishes trusted identity metadata. Header mutation removes caller-supplied managed headers and adds configured values only after authorization. RBAC scopes named policy grants to each API and preserves local 404/405 handling.
-- Envoy loads `lua/jwt.lua` from a filename. Kubernetes output stores that script in a separate `<name>-lua` ConfigMap mounted at `/etc/auth-gateway/lua`. A SHA-256 annotation over generated Envoy and Lua files triggers a rolling Deployment update when generated configuration changes; Envoy loads the new script in replacement Pods. This is not an in-process Lua hot reload. `config/testdata/jwt-auth.yaml` and the full `config.auth.example.yaml` exercise different scopes; their bootstrap goldens are in `config/testdata/kubernetes/`, and `jwt-lua.lua.golden` checks the generated identity script.
-- JWT access and identity tests use `e2e/fixtures/jwt-gateway.yaml` in `auth-gateway-jwt-e2e`. A separate `e2e/fixtures/jwt-jwks-lifecycle.yaml` group uses `auth-gateway-jwt-lifecycle-e2e`. Both create local RSA keys and an in-cluster Envoy JWKS endpoint; no external IdP is deployed. Cases cover HTTP and HTTPS access, nested claim mapping, spoofed and duplicate headers, a route with no header output, credential removal, invalid and expired credentials, denied mappings and grants, Lua ConfigMap changes rolling Envoy and changing the authorization result, key rotation without a gateway restart, warm cache during an issuer outage, cold cache failure, a healthy issuer during peer failure, and recovery after the endpoint returns.
-- The lifecycle test shortens the generated JWKS cache duration only in its test deployment to exercise expiration and refresh quickly. For the pinned Envoy v1.39.1 image, a wrong-audience token increments JWT auth denial and returns 403; the test documents that observed status. The expired-token fixture is more than the default 60-second clock skew.
-- Current checks: `GOCACHE=/private/tmp/auth-gateway-go-cache go test ./...`, `go vet ./...`, `go mod tidy -diff`, e2e compile and vet, and `git diff --check` pass. The full Kind suite passes all 15 specs with the default two Ginkgo processes, including the Lua ConfigMap rollout case.
+- `jwt_authn` verifies bearer tokens, scopes issuer requirements to each server, and keeps verified payloads in authenticator-specific dynamic metadata. Native RBAC authorizes original claims and APIs before processing, so transformed attributes cannot grant access.
+- Native `set_filter_state` extracts configured claims to `auth_gateway.attributes.<name>` and applies ordered mappings after authorization. It compares the `envoy.string` bytes with escaped byte literals. An unmatched lookup returns empty and uses `skip_if_empty` to preserve the existing value, supporting passthrough without Envoy 1.39.1's unsupported CEL `string(bytes)` conversion.
+- Route-scoped RBAC checks that required output attributes exist and are safe before native header mutation removes caller-supplied managed headers, adds only the configured headers, and strips the bearer credential. Mapping tables live in `processing.yaml` in a separate processing ConfigMap and load through ECDS. Updating that ConfigMap does not change the bootstrap or Deployment template.
+- JWT e2e groups cover plain authorization, direct headers, ordered mappings and passthrough, required-attribute denials, HTTP and HTTPS, issuer isolation, mapping updates through ECDS without replacing the Pod, and JWKS key rotation, outage, cache, and recovery behavior. The tests use signed local JWTs and an in-cluster JWKS endpoint.
+- After restoring native ECDS, `GOCACHE=/private/tmp/auth-gateway-go-cache go test ./...`, `go vet ./...`, e2e compile/vet checks, `make update-golden`, the focused JWT Kind suite (10 specs), and the full Kind suite (21 specs) pass. `git diff --check` passes. The e2e mapping update applies only the processing ConfigMap, verifies the changed output, and confirms the Pod UID remains stable.
