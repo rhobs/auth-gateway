@@ -11,6 +11,7 @@ import (
 	connections "github.com/envoyproxy/go-control-plane/envoy/extensions/resource_monitors/downstream_connections/v3"
 	heap "github.com/envoyproxy/go-control-plane/envoy/extensions/resource_monitors/fixed_heap/v3"
 	"go.yaml.in/yaml/v3"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
@@ -72,6 +73,68 @@ func TestGenerateKubernetesKeepsProcessingConfigOutsidePodTemplate(t *testing.T)
 	}
 	if !reflect.DeepEqual(resources.Deployment.Spec.Template, updated.Deployment.Spec.Template) {
 		t.Fatal("mapping update changed the Deployment template")
+	}
+}
+
+func TestGenerateKubernetesMountsOneExternalAPIKeySecret(t *testing.T) {
+	c := loadConfigCase(t, "api-key-auth")
+	resources, err := GenerateKubernetes(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, object := range resources.Objects() {
+		if _, ok := object.(*corev1.Secret); ok {
+			t.Fatal("generated gateway resources included API-key credentials")
+		}
+	}
+	pod := resources.Deployment.Spec.Template.Spec
+	var secretVolume, secretMount int
+	for _, volume := range pod.Volumes {
+		if volume.Name != apiKeySecretVolumeName {
+			continue
+		}
+		secretVolume++
+		if volume.Secret == nil || volume.Secret.SecretName != "gateway-api-keys" ||
+			len(volume.Secret.Items) != 1 || volume.Secret.Items[0].Key != apiKeySecretFilename ||
+			volume.Secret.Items[0].Path != apiKeySecretFilename {
+			t.Fatalf("API-key Secret volume = %#v", volume)
+		}
+	}
+	for _, mount := range pod.Containers[0].VolumeMounts {
+		if mount.Name != apiKeySecretVolumeName {
+			continue
+		}
+		secretMount++
+		if mount.MountPath != apiKeyDirectory || !mount.ReadOnly || mount.SubPath != "" || mount.SubPathExpr != "" {
+			t.Fatalf("API-key Secret mount cannot reload the projected directory: %#v", mount)
+		}
+	}
+	if secretVolume != 1 || secretMount != 1 {
+		t.Fatalf("API-key Secret volumes/mounts = %d/%d, want one shared by all servers", secretVolume, secretMount)
+	}
+	if len(resources.Deployment.Spec.Template.Annotations) != 0 {
+		t.Fatalf("Secret updates must not require Pod checksum changes: %#v", resources.Deployment.Spec.Template.Annotations)
+	}
+}
+
+func TestAPIKeyMappingUpdateChangesOnlyProcessingConfigMap(t *testing.T) {
+	c := loadConfigCase(t, "api-key-auth")
+	before, err := GenerateKubernetes(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Processing[0].Attributes["tenant_id"].Mappings["client-a"] = "team-c"
+	after, err := GenerateKubernetes(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before.ConfigMap.Data, after.ConfigMap.Data) ||
+		!reflect.DeepEqual(before.Deployment.Spec.Template, after.Deployment.Spec.Template) {
+		t.Fatal("API-key mapping update changed static bootstrap or Pod template")
+	}
+	if before.ProcessingConfigMap == nil || after.ProcessingConfigMap == nil ||
+		reflect.DeepEqual(before.ProcessingConfigMap.Data, after.ProcessingConfigMap.Data) {
+		t.Fatal("API-key mapping update did not change the processing ECDS resource")
 	}
 }
 

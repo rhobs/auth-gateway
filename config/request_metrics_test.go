@@ -28,7 +28,7 @@ func TestAPIMetricsConfigurationAndValidation(t *testing.T) {
 		{name: "reserved Prometheus prefix", want: "apis[0].metrics.labels", edit: func(c *Config) { c.APIs[0].Metrics.Labels["__internal"] = "tenant_id" }},
 		{name: "reserved Envoy label", want: "apis[0].metrics.labels", edit: func(c *Config) { c.APIs[0].Metrics.Labels["envoy_http_conn_manager_prefix"] = "tenant_id" }},
 		{name: "invalid attribute name", want: "apis[0].metrics.labels.tenant", edit: func(c *Config) { c.APIs[0].Metrics.Labels["tenant"] = "TenantID" }},
-		{name: "unknown attribute", want: "apis[0].metrics.labels.tenant references unknown JWT attribute", edit: func(c *Config) { c.APIs[0].Metrics.Labels["tenant"] = "unknown" }},
+		{name: "unknown attribute", want: "apis[0].metrics.labels.tenant references unknown authenticator attribute", edit: func(c *Config) { c.APIs[0].Metrics.Labels["tenant"] = "unknown" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

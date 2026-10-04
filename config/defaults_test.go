@@ -31,6 +31,9 @@ func TestAuthExampleAppliesAllDefaults(t *testing.T) {
 	}
 	wantBreakers := &CircuitBreakerConfig{MaxConnections: new(uint32(1024)), MaxPendingRequests: new(uint32(1024)), MaxRequests: new(uint32(1024)), MaxRetries: new(uint32(0))}
 	for _, a := range c.Authenticators {
+		if a.JWT == nil {
+			continue
+		}
 		want := JWKSConfig{URI: a.JWT.JWKS.URI, CacheDuration: duration(5 * time.Minute), FetchTimeout: duration(5 * time.Second), ConnectTimeout: duration(5 * time.Second), CircuitBreakers: wantBreakers}
 		if !reflect.DeepEqual(a.JWT.JWKS, want) {
 			t.Fatalf("%s JWKS defaults = %#v, want %#v", a.Name, a.JWT.JWKS, want)
@@ -142,6 +145,7 @@ func TestDefaultsCloneInputs(t *testing.T) {
 		defaulted := c.withDefaults()
 		defaulted.Authenticators[0].JWT.Audiences[0] = "changed"
 		defaulted.Authenticators[0].JWT.Attributes["tenant_id"].ClaimPath[0] = "changed"
+		defaulted.Authenticators[2].APIKey.Attributes[0] = "changed"
 		defaulted.Processing[0].Attributes["tenant_id"].Mappings["client-123"] = "changed"
 		defaulted.AuthorizationPolicies[0].Grants[0].APIs[0] = "changed"
 		defaulted.AuthorizationPolicies[0].Grants[0].Attributes["tenant_id"][0] = "changed"
@@ -153,6 +157,7 @@ func TestDefaultsCloneInputs(t *testing.T) {
 
 		if c.Authenticators[0].JWT.Audiences[0] == "changed" ||
 			c.Authenticators[0].JWT.Attributes["tenant_id"].ClaimPath[0] == "changed" ||
+			c.Authenticators[2].APIKey.Attributes[0] == "changed" ||
 			c.Processing[0].Attributes["tenant_id"].Mappings["client-123"] == "changed" ||
 			c.AuthorizationPolicies[0].Grants[0].APIs[0] == "changed" ||
 			c.AuthorizationPolicies[0].Grants[0].Attributes["tenant_id"][0] == "changed" ||

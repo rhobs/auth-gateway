@@ -20,7 +20,7 @@ import (
 
 func TestPinnedImagesValidateGeneratedFiles(t *testing.T) {
 	certificate, key := runtimeCertificate(t)
-	for _, name := range []string{"public-routing", "route-lists", "server-tls", "jwt-auth", "jwt-auth-with-headers", "jwt-auth-with-mappings", "jwt-auth-multiple-issuers", "production-tuning"} {
+	for _, name := range []string{"public-routing", "route-lists", "server-tls", "jwt-auth", "jwt-auth-with-headers", "jwt-auth-with-mappings", "jwt-auth-multiple-issuers", "api-key-auth", "production-tuning"} {
 		t.Run(name, func(t *testing.T) {
 			c := loadConfigCase(t, name)
 			files, err := Generate(c)
@@ -33,12 +33,24 @@ func TestPinnedImagesValidateGeneratedFiles(t *testing.T) {
 			if err := os.Mkdir(processingDir, 0o755); err != nil {
 				t.Fatal(err)
 			}
+			if _, exists := c.apiKeyAuthenticator(); exists {
+				if err := os.Mkdir(filepath.Join(configDir, "api-keys"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
 			for name, data := range files {
 				dir := configDir
 				if name == processingConfigFilename {
 					dir = processingDir
 				}
 				runtimeWrite(t, filepath.Join(dir, name), data)
+			}
+			if authenticator, exists := c.apiKeyAuthenticator(); exists {
+				secret, err := APIKeySecret(c.Kubernetes.Namespace, authenticator, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				runtimeWrite(t, filepath.Join(configDir, "api-keys", apiKeySecretFilename), secret.Data[apiKeySecretFilename])
 			}
 			args = append(args, "-v", configDir+":"+configDirectory+":ro")
 			for _, mount := range c.tlsMounts() {

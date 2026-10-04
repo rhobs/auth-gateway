@@ -34,6 +34,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
@@ -64,6 +65,9 @@ const (
 	googleHTTP11ALPN            = "http/1.1"
 	localResponsePolicyName     = "local-responses"
 	protoValidationErrorFormat  = "validate %s: %w"
+	envoyResourcesFieldName     = "resources"
+	celAndSeparator             = " && "
+	enableAttributesErrorFormat = "servers[%d] enable attributes: %w"
 )
 
 // Generate builds Envoy bootstrap files from the high-level gateway configuration.
@@ -104,12 +108,27 @@ func generate(effective effectiveConfig) (map[string][]byte, error) {
 			Routes:  routes,
 		}
 		if server.Authentication != nil {
-			requirementName := serverJWTRequirementName(i)
-			perRoute, err := packEnvoy(&jwt.PerRouteConfig{RequirementSpecifier: &jwt.PerRouteConfig_RequirementName{RequirementName: requirementName}})
-			if err != nil {
-				return nil, fmt.Errorf("servers[%d] JWT requirement: %w", i, err)
+			host.TypedPerFilterConfig = map[string]*anypb.Any{}
+			if serverUsesJWT(c, server) {
+				requirementName := serverJWTRequirementName(i)
+				perRoute, err := packEnvoy(&jwt.PerRouteConfig{RequirementSpecifier: &jwt.PerRouteConfig_RequirementName{RequirementName: requirementName}})
+				if err != nil {
+					return nil, fmt.Errorf("servers[%d] JWT requirement: %w", i, err)
+				}
+				host.TypedPerFilterConfig[jwtAuthnFilterName] = perRoute
 			}
-			host.TypedPerFilterConfig = map[string]*anypb.Any{jwtAuthnFilterName: perRoute}
+			if serverUsesAPIKey(c, server) {
+				perRoute, err := apiKeyPerRouteConfig(c, server)
+				if err != nil {
+					return nil, fmt.Errorf("servers[%d] API-key matcher: %w", i, err)
+				}
+				host.TypedPerFilterConfig[apiKeyFilterName] = perRoute
+				authentication, err := packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: serverAuthenticationRBACRules(c, server)}})
+				if err != nil {
+					return nil, fmt.Errorf("servers[%d] authentication rules: %w", i, err)
+				}
+				host.TypedPerFilterConfig[authenticationFilterName] = authentication
+			}
 			rbacConfig, err := packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: serverRBACRules(c, server)}})
 			if err != nil {
 				return nil, fmt.Errorf("servers[%d] RBAC rules: %w", i, err)
@@ -225,6 +244,15 @@ func httpFilterChain(hosts []*route.VirtualHost, c Config) (*listener.FilterChai
 }
 
 func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManager, error) {
+	serverIndexes := make([]int, 0, len(hosts))
+	for _, host := range hosts {
+		for index, server := range c.Servers {
+			if server.Hostname == host.Name {
+				serverIndexes = append(serverIndexes, index)
+				break
+			}
+		}
+	}
 	routerConfig, err := packEnvoy(&router.Router{SuppressEnvoyHeaders: true})
 	if err != nil {
 		return nil, err
@@ -233,7 +261,16 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 	if err != nil {
 		return nil, err
 	}
-	controls, err := packEnvoy(requestControlMutations())
+	var identityHeaders []string
+	if c.usesAPIKeys() {
+		identityHeaders = append(identityHeaders, apiKeyClientHeader)
+		for _, authenticator := range c.Authenticators {
+			if authenticator.JWT != nil {
+				identityHeaders = append(identityHeaders, jwtVerifiedHeaderName(authenticator.Name))
+			}
+		}
+	}
+	controls, err := packEnvoy(requestControlMutations(identityHeaders...))
 	if err != nil {
 		return nil, fmt.Errorf("encode request-control header removal: %w", err)
 	}
@@ -248,30 +285,82 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 		filters = append(filters, &hcm.HttpFilter{Name: requestMetricsFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: metricConfig}})
 	}
 	if hasProtectedHosts(hosts) {
-		jwtConfig, err := jwtFilterConfig(c)
-		if err != nil {
-			return nil, err
+		usesJWT, usesKey := false, false
+		for _, index := range serverIndexes {
+			usesJWT = usesJWT || serverUsesJWT(c, c.Servers[index])
+			usesKey = usesKey || serverUsesAPIKey(c, c.Servers[index])
 		}
-		packed, err := packEnvoy(jwtConfig)
-		if err != nil {
-			return nil, fmt.Errorf("encode JWT authentication filter: %w", err)
+		if usesJWT {
+			var jwtConfig *jwt.JwtAuthentication
+			if c.usesAPIKeys() {
+				jwtConfig, err = jwtFilterConfig(c, serverIndexes...)
+			} else {
+				jwtConfig, err = jwtFilterConfig(c)
+			}
+			if err != nil {
+				return nil, err
+			}
+			packed, err := packEnvoy(jwtConfig)
+			if err != nil {
+				return nil, fmt.Errorf("encode JWT authentication filter: %w", err)
+			}
+			filters = append(filters, &hcm.HttpFilter{Name: jwtAuthnFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: packed}})
 		}
-		filters = append(filters, &hcm.HttpFilter{Name: jwtAuthnFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: packed}})
+		if usesKey {
+			filters = append(filters, apiKeyFilter())
+			metadata, err := apiKeyMetadataFilter()
+			if err != nil {
+				return nil, fmt.Errorf("encode API-key metadata filter: %w", err)
+			}
+			filters = append(filters, metadata)
+			authentication, err := packEnvoy(&httpRBAC.RBAC{})
+			if err != nil {
+				return nil, fmt.Errorf("encode authentication RBAC filter: %w", err)
+			}
+			filters = append(filters, &hcm.HttpFilter{Name: authenticationFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: authentication}})
+		}
 		if needsWorkingAttributes(c) {
-			attributeFilter := &hcm.HttpFilter{Name: attributeFilterName}
+			if c.usesAPIKeys() {
+				for hostIndex, serverIndex := range serverIndexes {
+					attributes := serverAttributeInitializationConfig(c, c.Servers[serverIndex])
+					if len(attributes.OnRequestHeaders) == 0 {
+						continue
+					}
+					packed, err := packEnvoy(attributes)
+					if err != nil {
+						return nil, fmt.Errorf("servers[%d] attribute initialization: %w", serverIndex, err)
+					}
+					name := attributeInitializationFilterName(serverIndex)
+					filters = append(filters, &hcm.HttpFilter{Name: name, Disabled: true, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: packed}})
+					enableConfig, err := packEnvoy(&setfilterstate.Config{})
+					if err != nil {
+						return nil, fmt.Errorf(enableAttributesErrorFormat, serverIndex, err)
+					}
+					enabled, err := packEnvoy(&route.FilterConfig{Config: enableConfig})
+					if err != nil {
+						return nil, fmt.Errorf(enableAttributesErrorFormat, serverIndex, err)
+					}
+					hosts[hostIndex].TypedPerFilterConfig[name] = enabled
+				}
+			} else {
+				attributeFilter := &hcm.HttpFilter{Name: attributeFilterName}
+				if !c.hasAttributeMappings() {
+					attributeConfig, err := packEnvoy(attributeInitializationConfig(c))
+					if err != nil {
+						return nil, fmt.Errorf("encode attribute initialization filter: %w", err)
+					}
+					attributeFilter.ConfigType = &hcm.HttpFilter_TypedConfig{TypedConfig: attributeConfig}
+				}
+				if !c.hasAttributeMappings() {
+					filters = append(filters, attributeFilter)
+				}
+			}
 			if c.hasAttributeMappings() {
-				attributeFilter.ConfigType = &hcm.HttpFilter_ConfigDiscovery{ConfigDiscovery: &core.ExtensionConfigSource{
+				filters = append(filters, &hcm.HttpFilter{Name: attributeFilterName, ConfigType: &hcm.HttpFilter_ConfigDiscovery{ConfigDiscovery: &core.ExtensionConfigSource{
 					ConfigSource: fileConfigSource(path.Join(processingDirectory, processingConfigFilename)),
 					TypeUrls:     []string{string((&setfilterstate.Config{}).ProtoReflect().Descriptor().FullName())},
-				}}
-			} else {
-				attributeConfig, err := packEnvoy(attributeInitializationConfig(c))
-				if err != nil {
-					return nil, fmt.Errorf("encode attribute initialization filter: %w", err)
-				}
-				attributeFilter.ConfigType = &hcm.HttpFilter_TypedConfig{TypedConfig: attributeConfig}
+				}}})
 			}
-			filters = append(filters, attributeFilter)
 		}
 		rbacConfig, err := packEnvoy(&httpRBAC.RBAC{})
 		if err != nil {
@@ -285,6 +374,13 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 			}
 			filters = append(filters, &hcm.HttpFilter{Name: requiredHeaderFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: headerRBACConfig}})
 		}
+		if c.usesAPIKeys() {
+			cleanup, err := credentialCleanupFilter(c)
+			if err != nil {
+				return nil, err
+			}
+			filters = append(filters, cleanup)
+		}
 		if hasRequestHeaderProcessing(c.APIs) {
 			headerMutationConfig, err := packEnvoy(requestHeaderMutationConfig(c.APIs))
 			if err != nil {
@@ -292,6 +388,13 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 			}
 			filters = append(filters, &hcm.HttpFilter{Name: headerMutationFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: headerMutationConfig}})
 		}
+	}
+	if c.usesAPIKeys() && !hasProtectedHosts(hosts) {
+		cleanup, err := credentialCleanupFilter(c)
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, cleanup)
 	}
 	filters = append(filters, &hcm.HttpFilter{Name: routerFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: routerConfig}})
 	return &hcm.HttpConnectionManager{
@@ -322,7 +425,7 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 
 func hasProtectedHosts(hosts []*route.VirtualHost) bool {
 	for _, host := range hosts {
-		if host.TypedPerFilterConfig[jwtAuthnFilterName] != nil {
+		if host.TypedPerFilterConfig[authorizationFilterName] != nil {
 			return true
 		}
 	}
@@ -342,13 +445,30 @@ func hasRequestMetricRoutes(hosts []*route.VirtualHost) bool {
 
 func serverJWTRequirementName(index int) string { return "server-" + strconv.Itoa(index) }
 
-func jwtFilterConfig(c Config) (*jwt.JwtAuthentication, error) {
+func jwtFilterConfig(c Config, serverIndexes ...int) (*jwt.JwtAuthentication, error) {
 	config := &jwt.JwtAuthentication{Providers: map[string]*jwt.JwtProvider{}, RequirementMap: map[string]*jwt.JwtRequirement{}, StripFailureResponse: true}
+	if len(serverIndexes) == 0 {
+		for index := range c.Servers {
+			serverIndexes = append(serverIndexes, index)
+		}
+	}
+	used := make(map[string]struct{})
+	permissive := false
+	for _, index := range serverIndexes {
+		server := c.Servers[index]
+		permissive = permissive || mixedAnyOf(c, server)
+		for _, name := range selectedAuthenticatorNames(server) {
+			used[name] = struct{}{}
+		}
+	}
 	for _, authenticator := range c.Authenticators {
-		if !authenticatorUsed(c.Servers, authenticator.Name) {
+		if authenticator.JWT == nil {
 			continue
 		}
-		config.Providers[authenticator.Name] = &jwt.JwtProvider{
+		if _, exists := used[authenticator.Name]; !exists {
+			continue
+		}
+		provider := &jwt.JwtProvider{
 			Issuer:            authenticator.JWT.Issuer,
 			Audiences:         authenticator.JWT.Audiences,
 			RequireExpiration: true,
@@ -359,28 +479,34 @@ func jwtFilterConfig(c Config) (*jwt.JwtAuthentication, error) {
 			FromHeaders:       []*jwt.JwtHeader{{Name: "Authorization", ValuePrefix: "Bearer "}},
 			PayloadInMetadata: authenticator.Name,
 		}
+		if permissive {
+			provider.ClaimToHeaders = []*jwt.JwtClaimToHeader{{HeaderName: jwtVerifiedHeaderName(authenticator.Name), ClaimName: "iss"}}
+		}
+		config.Providers[authenticator.Name] = provider
 	}
-	for i, server := range c.Servers {
-		if server.Authentication == nil {
+	for _, index := range serverIndexes {
+		server := c.Servers[index]
+		if server.Authentication == nil || !serverUsesJWT(c, server) {
 			continue
 		}
-		names := server.Authentication.AnyOf
-		if len(server.Authentication.AllOf) > 0 {
-			names = server.Authentication.AllOf
-		}
+		names := selectedAuthenticatorNames(server)
 		requirements := make([]*jwt.JwtRequirement, 0, len(names))
 		for _, name := range names {
-			requirements = append(requirements, &jwt.JwtRequirement{RequiresType: &jwt.JwtRequirement_ProviderName{ProviderName: name}})
+			if findAuthenticator(c, name).JWT != nil {
+				requirements = append(requirements, &jwt.JwtRequirement{RequiresType: &jwt.JwtRequirement_ProviderName{ProviderName: name}})
+			}
 		}
 		var requirement *jwt.JwtRequirement
-		if len(requirements) == 1 {
+		if mixedAnyOf(c, server) {
+			requirement = &jwt.JwtRequirement{RequiresType: &jwt.JwtRequirement_AllowMissingOrFailed{AllowMissingOrFailed: &emptypb.Empty{}}}
+		} else if len(requirements) == 1 {
 			requirement = requirements[0]
 		} else if len(server.Authentication.AllOf) > 0 {
 			requirement = &jwt.JwtRequirement{RequiresType: &jwt.JwtRequirement_RequiresAll{RequiresAll: &jwt.JwtRequirementAndList{Requirements: requirements}}}
 		} else {
 			requirement = &jwt.JwtRequirement{RequiresType: &jwt.JwtRequirement_RequiresAny{RequiresAny: &jwt.JwtRequirementOrList{Requirements: requirements}}}
 		}
-		config.RequirementMap[serverJWTRequirementName(i)] = requirement
+		config.RequirementMap[serverJWTRequirementName(index)] = requirement
 	}
 	return config, nil
 }
@@ -399,8 +525,8 @@ func serverRBACRules(c Config, server Server) *rbac.RBAC {
 				var grants []*rbac.Principal
 				for _, policyName := range server.Authorization.AnyOf {
 					for _, grant := range authorizationPolicy(c, policyName).Grants {
-						if slices.Contains(grant.APIs, apiName) {
-							grants = append(grants, grantPrincipal(c, grant))
+						if slices.Contains(grant.APIs, apiName) && (!c.usesAPIKeys() || serverSelectsAuthenticator(server, grant.Authenticator)) {
+							grants = append(grants, grantPrincipalForServer(c, server, grant))
 						}
 					}
 				}
@@ -413,8 +539,8 @@ func serverRBACRules(c Config, server Server) *rbac.RBAC {
 				for _, policyName := range server.Authorization.AllOf {
 					var grants []*rbac.Principal
 					for _, grant := range authorizationPolicy(c, policyName).Grants {
-						if slices.Contains(grant.APIs, apiName) {
-							grants = append(grants, grantPrincipal(c, grant))
+						if slices.Contains(grant.APIs, apiName) && (!c.usesAPIKeys() || serverSelectsAuthenticator(server, grant.Authenticator)) {
+							grants = append(grants, grantPrincipalForServer(c, server, grant))
 						}
 					}
 					if len(grants) == 0 {
@@ -452,10 +578,13 @@ func apiPermission(api string) *rbac.Permission {
 }
 
 func grantPrincipal(c Config, grant AuthorizationGrant) *rbac.Principal {
+	authenticator := findAuthenticator(c, grant.Authenticator)
+	if authenticator.APIKey != nil {
+		return keyGrantPrincipal(grant)
+	}
 	conditions := make([]*rbac.Principal, 0, len(grant.Attributes))
 	for _, attribute := range slices.Sorted(maps.Keys(grant.Attributes)) {
 		valueMatcher := claimValueMatcher(grant.Attributes[attribute])
-		authenticator := findAuthenticator(c, grant.Authenticator)
 		claimPath := append([]string{grant.Authenticator}, authenticator.JWT.Attributes[attribute].ClaimPath...)
 		conditions = append(conditions, jwtClaimPrincipal(claimPath, valueMatcher))
 	}
@@ -523,7 +652,10 @@ func attributeInitializationConfig(c Config) *setfilterstate.Config {
 }
 
 func attributeProcessingConfig(c Config) *setfilterstate.Config {
-	config := attributeInitializationConfig(c)
+	config := &setfilterstate.Config{}
+	if !c.usesAPIKeys() {
+		config = attributeInitializationConfig(c)
+	}
 	if c.hasAttributeMappings() {
 		config.OnRequestHeaders = append(config.OnRequestHeaders, processingMappingConfig(c).OnRequestHeaders...)
 	}
@@ -576,7 +708,7 @@ func jwtClaimExpression(claimPath []string) string {
 		checks = append(checks, literal+" in "+current)
 		current += "[" + literal + "]"
 	}
-	return "((" + strings.Join(checks, " && ") + ") && type(" + current + ") == string && " + current + " != \"\") ? " + current + " : \"\""
+	return "((" + strings.Join(checks, celAndSeparator) + ") && type(" + current + ") == string && " + current + " != \"\") ? " + current + " : \"\""
 }
 
 func attributeMappingExpression(attribute string, mappings map[string]string) string {
@@ -971,7 +1103,7 @@ func marshalEnvoyFileDiscoveryResponse(resource proto.Message) ([]byte, error) {
 	if err := yaml.Unmarshal(resourceData, &document); err != nil {
 		return nil, fmt.Errorf("decode packed discovery resource: %w", err)
 	}
-	data, err := yaml.Marshal(map[string]any{"resources": []any{document}})
+	data, err := yaml.Marshal(map[string]any{envoyResourcesFieldName: []any{document}})
 	if err != nil {
 		return nil, fmt.Errorf("encode file discovery response: %w", err)
 	}

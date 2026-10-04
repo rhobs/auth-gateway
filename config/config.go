@@ -588,6 +588,8 @@ func (c Config) hasHTTPS() bool {
 
 func (c Config) validateAuthentication(apis map[string]API) error {
 	authenticators := make(map[string]Authenticator, len(c.Authenticators))
+	apiKeyCount := 0
+	apiKeyHeader := ""
 	for i, authenticator := range c.Authenticators {
 		name := fmt.Sprintf("authenticators[%d]", i)
 		if !apiNamePattern.MatchString(authenticator.Name) {
@@ -596,16 +598,41 @@ func (c Config) validateAuthentication(apis map[string]API) error {
 		if _, exists := authenticators[authenticator.Name]; exists {
 			return fmt.Errorf("duplicate authenticator name %q", authenticator.Name)
 		}
-		if authenticator.JWT == nil {
-			return fmt.Errorf("%s.jwt is required; only JWT authenticators are supported", name)
+		if (authenticator.JWT == nil) == (authenticator.APIKey == nil) {
+			return fmt.Errorf("%s must set exactly one of jwt or api_key", name)
 		}
-		if err := validateJWTAuthenticator(name+".jwt", *authenticator.JWT); err != nil {
-			return err
-		}
-		if err := authenticator.JWT.JWKS.validate(name+".jwt.jwks", c.Kubernetes != nil); err != nil {
-			return err
+		if authenticator.JWT != nil {
+			if err := validateJWTAuthenticator(name+".jwt", *authenticator.JWT); err != nil {
+				return err
+			}
+			if err := authenticator.JWT.JWKS.validate(name+".jwt.jwks", c.Kubernetes != nil); err != nil {
+				return err
+			}
+		} else {
+			apiKeyCount++
+			if apiKeyCount > 1 {
+				return fmt.Errorf("%s.api_key: only one API-key authenticator is supported", name)
+			}
+			if err := validateAPIKeyAuthenticator(name+".api_key", *authenticator.APIKey); err != nil {
+				return err
+			}
+			apiKeyHeader = authenticator.APIKey.Header
 		}
 		authenticators[authenticator.Name] = authenticator
+	}
+	if apiKeyHeader != "" {
+		for i, api := range c.APIs {
+			for j, route := range api.Routes {
+				if route.Processing == nil {
+					continue
+				}
+				for k, header := range route.Processing.RequestHeaders {
+					if strings.EqualFold(header.Name, apiKeyHeader) {
+						return fmt.Errorf("apis[%d].routes[%d].processing.request_headers[%d].name is reserved for API-key credentials", i, j, k)
+					}
+				}
+			}
+		}
 	}
 	if err := validateMetricAttributeReferences(c.APIs, authenticators); err != nil {
 		return err
@@ -647,7 +674,7 @@ func (c Config) validateAuthentication(apis map[string]API) error {
 				if !attributeNamePattern.MatchString(attribute) {
 					return fmt.Errorf(attributeNameValidationErrorFormat, name, attribute)
 				}
-				if _, exists := authenticator.JWT.Attributes[attribute]; !exists {
+				if !authenticator.providesAttribute(attribute) {
 					return fmt.Errorf("%s.attributes references attribute %q not provided by authenticator %q", name, attribute, grant.Authenticator)
 				}
 				values := grant.Attributes[attribute]
@@ -675,7 +702,13 @@ func (c Config) validateAuthentication(apis map[string]API) error {
 			if err != nil {
 				return err
 			}
-			if len(server.Authentication.AllOf) > 1 {
+			jwtCount := 0
+			for _, selectedName := range server.Authentication.AllOf {
+				if authenticators[selectedName].JWT != nil {
+					jwtCount++
+				}
+			}
+			if jwtCount > 1 {
 				return fmt.Errorf("%s.authentication.all_of cannot contain more than one JWT authenticator", name)
 			}
 			if err := validateUniqueIssuerBindings(name+".authentication", selected, authenticators); err != nil {
@@ -693,6 +726,9 @@ func (c Config) validateAuthentication(apis map[string]API) error {
 		if err := validateRouteAttributeSources(name, server, apis, authenticators); err != nil {
 			return err
 		}
+	}
+	if err := validatePermissiveJWTIssuerBindings(c.Servers, authenticators); err != nil {
+		return err
 	}
 	return nil
 }
@@ -774,6 +810,20 @@ func (c Config) hasAuthenticationConfig() bool {
 		}
 	}
 	return false
+}
+
+func (c Config) apiKeyAuthenticator() (Authenticator, bool) {
+	for _, authenticator := range c.Authenticators {
+		if authenticator.APIKey != nil {
+			return authenticator, true
+		}
+	}
+	return Authenticator{}, false
+}
+
+func (c Config) usesAPIKeys() bool {
+	authenticator, exists := c.apiKeyAuthenticator()
+	return exists && authenticatorUsed(c.Servers, authenticator.Name)
 }
 
 func (c Config) caMounts() []CAConfigMap {
@@ -1299,9 +1349,9 @@ var requestControlHeaders = []string{
 
 func isRequestControlHeader(name string) bool { return slices.Contains(requestControlHeaders, name) }
 
-func requestControlMutations() *headermutation.HeaderMutation {
-	mutations := make([]*mutationrules.HeaderMutation, 0, len(requestControlHeaders))
-	for _, name := range requestControlHeaders {
+func requestControlMutations(extra ...string) *headermutation.HeaderMutation {
+	mutations := make([]*mutationrules.HeaderMutation, 0, len(requestControlHeaders)+len(extra))
+	for _, name := range append(slices.Clone(requestControlHeaders), extra...) {
 		mutations = append(mutations, &mutationrules.HeaderMutation{Action: &mutationrules.HeaderMutation_Remove{Remove: name}})
 	}
 	return &headermutation.HeaderMutation{Mutations: &headermutation.Mutations{RequestMutations: mutations}}

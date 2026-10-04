@@ -28,11 +28,13 @@ const (
 	gatewayConfigVolumeName    = "config"
 	metricsConfigVolumeName    = "metrics-config"
 	processingConfigVolumeName = "processing-config"
+	apiKeySecretVolumeName     = "api-keys"
 )
 
 const (
 	configDirectory          = "/etc/auth-gateway"
 	processingDirectory      = "/etc/auth-gateway/processing"
+	apiKeyDirectory          = "/etc/auth-gateway/api-keys"
 	collectorConfigDirectory = "/etc/collector"
 )
 
@@ -234,6 +236,19 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 			Name:      "processing-config",
 			MountPath: processingDirectory,
 			ReadOnly:  true,
+		})
+	}
+	if authenticator, exists := c.apiKeyAuthenticator(); exists && c.usesAPIKeys() {
+		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
+			Name: apiKeySecretVolumeName,
+			VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+				SecretName: authenticator.APIKey.Secret,
+				Items:      []corev1.KeyToPath{{Key: apiKeySecretFilename, Path: apiKeySecretFilename}},
+			}},
+		})
+		envoy := &deployment.Spec.Template.Spec.Containers[0]
+		envoy.VolumeMounts = append(envoy.VolumeMounts, corev1.VolumeMount{
+			Name: apiKeySecretVolumeName, MountPath: apiKeyDirectory, ReadOnly: true,
 		})
 	}
 	for _, mount := range c.tlsMounts() {

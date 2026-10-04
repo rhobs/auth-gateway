@@ -8,20 +8,25 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
 	invalidJWTTextCharacters           = "\r\n\t"
 	attributeNameValidationErrorFormat = "%s.attributes contains invalid attribute name %q"
 	attributeMapperType                = "attribute-mapper"
+	defaultAPIKeyHeader                = "X-API-Key"
+	authorizationHeaderName            = "authorization"
 )
 
 var attributeNamePattern = regexp.MustCompile("^[a-z][a-z0-9_-]{0,63}$")
 
 // Authenticator defines one named credential validator.
 type Authenticator struct {
-	Name string            `yaml:"name"`
-	JWT  *JWTAuthenticator `yaml:"jwt,omitempty"`
+	Name   string               `yaml:"name"`
+	JWT    *JWTAuthenticator    `yaml:"jwt,omitempty"`
+	APIKey *APIKeyAuthenticator `yaml:"api_key,omitempty"`
 }
 
 // JWTAuthenticator validates one issuer, optionally restricts audiences, and declares attributes from verified claims.
@@ -35,6 +40,28 @@ type JWTAuthenticator struct {
 // JWTAttribute selects a literal object path in the verified JWT payload.
 type JWTAttribute struct {
 	ClaimPath []string `yaml:"claim_path"`
+}
+
+// APIKeyAuthenticator reads keys from one Kubernetes Secret and declares their attributes.
+type APIKeyAuthenticator struct {
+	Secret     string   `yaml:"secret"`
+	Header     string   `yaml:"header,omitempty"`
+	Attributes []string `yaml:"attributes,omitempty"`
+}
+
+func (a APIKeyAuthenticator) withDefaults() APIKeyAuthenticator {
+	if a.Header == "" {
+		a.Header = defaultAPIKeyHeader
+	}
+	return a
+}
+
+func (a Authenticator) providesAttribute(name string) bool {
+	if a.JWT != nil {
+		_, exists := a.JWT.Attributes[name]
+		return exists
+	}
+	return a.APIKey != nil && slices.Contains(a.APIKey.Attributes, name)
 }
 
 // Processor transforms working attributes after JWT verification.
@@ -88,11 +115,69 @@ type RequestHeaderMapping struct {
 func validateUniqueIssuerBindings(name string, selected []string, authenticators map[string]Authenticator) error {
 	seen := make(map[string]string, len(selected))
 	for _, authenticatorName := range selected {
-		issuer := authenticators[authenticatorName].JWT.Issuer
+		jwt := authenticators[authenticatorName].JWT
+		if jwt == nil {
+			continue
+		}
+		issuer := jwt.Issuer
 		if previous, exists := seen[issuer]; exists {
 			return fmt.Errorf("%s binds authenticators %q and %q with the same issuer %q", name, previous, authenticatorName, issuer)
 		}
 		seen[issuer] = authenticatorName
+	}
+	return nil
+}
+
+func validatePermissiveJWTIssuerBindings(servers []Server, authenticators map[string]Authenticator) error {
+	selected := make([]string, 0, len(authenticators))
+	seen := make(map[string]struct{}, len(authenticators))
+	mixedServer := -1
+	for index, server := range servers {
+		if server.TLSConfig != nil || server.Authentication == nil {
+			continue
+		}
+		names := server.Authentication.AnyOf
+		if names == nil {
+			names = server.Authentication.AllOf
+		}
+		hasKey, hasJWT := false, false
+		for _, name := range names {
+			if authenticators[name].APIKey != nil {
+				hasKey = true
+			} else {
+				hasJWT = true
+				if _, exists := seen[name]; !exists {
+					selected = append(selected, name)
+					seen[name] = struct{}{}
+				}
+			}
+		}
+		if server.Authentication.AnyOf != nil && hasKey && hasJWT {
+			mixedServer = index
+		}
+	}
+	if mixedServer < 0 {
+		return nil
+	}
+	return validateUniqueIssuerBindings(fmt.Sprintf("servers[%d].authentication.any_of", mixedServer), selected, authenticators)
+}
+
+func validateAPIKeyAuthenticator(name string, apiKey APIKeyAuthenticator) error {
+	if len(validation.IsDNS1123Subdomain(apiKey.Secret)) != 0 {
+		return fmt.Errorf("%s.secret must be a Kubernetes Secret name", name)
+	}
+	if !validHeaderFieldName(apiKey.Header) || strings.Contains(apiKey.Header, "_") || forbiddenIdentityHeader(strings.ToLower(apiKey.Header)) {
+		return fmt.Errorf("%s.header must be a safe HTTP credential header name", name)
+	}
+	seen := make(map[string]struct{}, len(apiKey.Attributes))
+	for _, attribute := range apiKey.Attributes {
+		if !attributeNamePattern.MatchString(attribute) {
+			return fmt.Errorf(attributeNameValidationErrorFormat, name, attribute)
+		}
+		if _, exists := seen[attribute]; exists {
+			return fmt.Errorf("%s.attributes contains duplicate attribute %q", name, attribute)
+		}
+		seen[attribute] = struct{}{}
 	}
 	return nil
 }
@@ -223,7 +308,7 @@ func validateRouteAttributeSources(serverName string, server Server, apis map[st
 			for _, header := range route.Processing.RequestHeaders {
 				provided := false
 				for _, name := range selected {
-					if _, exists := authenticators[name].JWT.Attributes[header.FromAttribute]; exists {
+					if authenticators[name].providesAttribute(header.FromAttribute) {
 						provided = true
 						break
 					}
@@ -261,13 +346,13 @@ func forbiddenIdentityHeader(name string) bool {
 		return true
 	}
 	switch name {
-	case "authorization", "proxy-authorization", "cookie", "host", "connection", "keep-alive", "proxy-connection",
+	case authorizationHeaderName, "proxy-authorization", "cookie", "host", "connection", "keep-alive", "proxy-connection",
 		"transfer-encoding", "content-length", "trailer", "te", "upgrade", "forwarded", "x-forwarded-for",
 		"x-forwarded-host", "x-forwarded-proto", "x-forwarded-port", "x-envoy-original-path", "x-envoy-original-host",
 		"x-envoy-upstream-cluster", "x-envoy-decorator-operation":
 		return true
 	default:
-		return strings.HasPrefix(name, "proxy-")
+		return strings.HasPrefix(name, "proxy-") || strings.HasPrefix(name, "x-auth-gateway-")
 	}
 }
 
@@ -306,6 +391,11 @@ func cloneAuthenticators(values []Authenticator) []Authenticator {
 				}
 			}
 			out[i].JWT = &jwt
+		}
+		if value.APIKey != nil {
+			apiKey := value.APIKey.withDefaults()
+			apiKey.Attributes = slices.Clone(value.APIKey.Attributes)
+			out[i].APIKey = &apiKey
 		}
 	}
 	return out

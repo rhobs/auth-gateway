@@ -72,6 +72,13 @@ authenticators:
         writer_id:
           claim_path: [sub]
 
+  - name: partner-key
+    api_key:
+      # One Secret holds every key used by this gateway's servers.
+      secret: auth-gateway-api-keys
+      header: X-Partner-Key # Optional. Defaults to X-API-Key.
+      attributes: [tenant_id, writer_id]
+
 authorization_policies:
   - name: metrics-writers
     grants:
@@ -94,6 +101,14 @@ authorization_policies:
         apis: [logs]
         attributes:
           tenant_id: [customer-456, customer-789]
+
+  - name: partner-metrics-writers
+    grants:
+      - authenticator: partner-key
+        apis: [metrics-write]
+        attributes:
+          tenant_id: [client-123]
+          writer_id: [writer-17]
 
 # Optional. All metered APIs share this counter name. Envoy adds envoy_http_lua_.
 request_metrics:
@@ -193,6 +208,29 @@ servers:
     authorization:
       any_of: [metrics-writers, logs-writers]
     apis: [metrics-write, logs]
+
+  - hostname: partner.auth.example.com
+    authentication:
+      any_of: [partner-key]
+    authorization:
+      any_of: [partner-metrics-writers]
+    apis: [metrics-write]
+
+  - hostname: either.auth.example.com
+    authentication:
+      # A valid JWT wins when both credentials are present.
+      any_of: [internal-jwt, partner-key]
+    authorization:
+      any_of: [metrics-writers, partner-metrics-writers]
+    apis: [metrics-write]
+
+  - hostname: both.auth.example.com
+    authentication:
+      # Both credentials are required. Shared raw attributes must match.
+      all_of: [internal-jwt, partner-key]
+    authorization:
+      all_of: [metrics-writers, partner-metrics-writers]
+    apis: [metrics-write]
 
 kubernetes:
   name: auth-gateway

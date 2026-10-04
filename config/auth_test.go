@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-func TestAuthExampleContainsExpectedJWTConfiguration(t *testing.T) {
+func TestAuthExampleContainsExpectedAuthenticationConfiguration(t *testing.T) {
 	c := loadAuthExample(t)
-	if len(c.Authenticators) != 2 || len(c.AuthorizationPolicies) != 2 || len(c.Processing) != 1 {
+	if len(c.Authenticators) != 3 || len(c.AuthorizationPolicies) != 3 || len(c.Processing) != 1 {
 		t.Fatalf("auth example counts = %d authenticators, %d policies, %d processors", len(c.Authenticators), len(c.AuthorizationPolicies), len(c.Processing))
 	}
 	if c.Processing[0].Type != "attribute-mapper" {
@@ -19,6 +19,10 @@ func TestAuthExampleContainsExpectedJWTConfiguration(t *testing.T) {
 	}
 	if got, want := c.AuthorizationPolicies[0].Grants[0].Attributes["tenant_id"], []string{"client-123", "client-456"}; !slices.Equal(got, want) {
 		t.Fatalf("authorization values = %v, want original claim values %v", got, want)
+	}
+	if key := c.Authenticators[2].APIKey; key == nil || key.Secret != "auth-gateway-api-keys" || key.Header != "X-Partner-Key" ||
+		!slices.Equal(key.Attributes, []string{"tenant_id", "writer_id"}) {
+		t.Fatalf("example API-key authenticator = %#v", key)
 	}
 	headers := c.APIs[0].Routes[0].Processing.RequestHeaders
 	if len(headers) != 2 || headers[0].Name != "X-Scope-OrgID" || headers[1].Name != "X-Writer-ID" {
@@ -68,7 +72,7 @@ func TestValidateRejectsInvalidAuthenticationAndAuthorization(t *testing.T) {
 		edit func(*Config)
 	}{
 		{name: "duplicate authenticator", want: "duplicate authenticator name", edit: func(c *Config) { c.Authenticators[1].Name = c.Authenticators[0].Name }},
-		{name: "missing JWT type", want: "authenticators[0].jwt", edit: func(c *Config) { c.Authenticators[0].JWT = nil }},
+		{name: "missing authenticator type", want: "authenticators[0] must set exactly one of jwt or api_key", edit: func(c *Config) { c.Authenticators[0].JWT = nil }},
 		{name: "missing issuer", want: "authenticators[0].jwt.issuer", edit: func(c *Config) { c.Authenticators[0].JWT.Issuer = "" }},
 		{name: "non-HTTPS JWKS", want: "authenticators[0].jwt.jwks.uri", edit: func(c *Config) { c.Authenticators[0].JWT.JWKS.URI = "http://sso.example.com/jwks" }},
 		{name: "JWKS user information", want: "authenticators[0].jwt.jwks.uri", edit: func(c *Config) { c.Authenticators[0].JWT.JWKS.URI = "https://user@sso.example.com/jwks" }},
@@ -142,6 +146,7 @@ func TestDuplicateJWTIssuersAreRejectedPerServer(t *testing.T) {
 
 	config = loadAuthExample(t)
 	config.Authenticators[1].JWT.Issuer = config.Authenticators[0].JWT.Issuer
+	config.Servers = config.Servers[:2]
 	config.Servers[0].Authentication = &Authentication{AnyOf: []string{"internal-jwt"}}
 	config.Servers[1].Authentication = &Authentication{AnyOf: []string{"external-jwt"}}
 	if err := config.Validate(); err != nil {

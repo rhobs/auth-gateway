@@ -56,8 +56,14 @@ func validateAPIMetrics(name string, value *APIMetrics) error {
 func validateMetricAttributeReferences(apis []API, authenticators map[string]Authenticator) error {
 	known := make(map[string]struct{})
 	for _, authenticator := range authenticators {
-		for attribute := range authenticator.JWT.Attributes {
-			known[attribute] = struct{}{}
+		if authenticator.JWT != nil {
+			for attribute := range authenticator.JWT.Attributes {
+				known[attribute] = struct{}{}
+			}
+		} else {
+			for _, attribute := range authenticator.APIKey.Attributes {
+				known[attribute] = struct{}{}
+			}
 		}
 	}
 	for i, api := range apis {
@@ -67,7 +73,7 @@ func validateMetricAttributeReferences(apis []API, authenticators map[string]Aut
 		for _, label := range slices.Sorted(maps.Keys(api.Metrics.Labels)) {
 			attribute := api.Metrics.Labels[label]
 			if _, exists := known[attribute]; !exists {
-				return fmt.Errorf("apis[%d].metrics.labels.%s references unknown JWT attribute %q", i, label, attribute)
+				return fmt.Errorf("apis[%d].metrics.labels.%s references unknown authenticator attribute %q", i, label, attribute)
 			}
 		}
 	}
