@@ -2,7 +2,7 @@
 
 RHOBS Auth Gateway is a Go configuration library. It loads one YAML document and generates Envoy configuration files or Kubernetes resources. It does not run a controller or provide a command-line gateway.
 
-The current implementation supports exact-host routing, HTTP and HTTPS listeners, upstream HTTP/1 and HTTP/2, optional JSON Web Token (JWT) authentication and authorization, route-selected request headers, ordered attribute mappings, per-API request counters, Kubernetes packaging, error access logs, and Prometheus metrics. Mutual TLS (mTLS) client-certificate authentication is future work. [config.mtls.example.yaml](config.mtls.example.yaml) is an unsupported design sketch and is rejected by the loader.
+The current implementation supports exact-host routing, HTTP and HTTPS listeners, upstream HTTP/1 and HTTP/2, optional JSON Web Token (JWT) and API-key authentication and authorization, route-selected request headers, ordered attribute mappings, per-API request counters, Kubernetes packaging, error access logs, and Prometheus metrics. Mutual TLS (mTLS) client-certificate authentication is future work. [config.mtls.example.yaml](config.mtls.example.yaml) is an unsupported design sketch and is rejected by the loader.
 
 ## Generate and deploy
 
@@ -12,7 +12,7 @@ The [runnable Go example](examples/generate-kubernetes/main.go) reads a configur
 go run ./examples/generate-kubernetes config.example.yaml auth-gateway.yaml
 ```
 
-The generator does not connect to Kubernetes or create referenced credentials. Create the target namespace and any referenced Transport Layer Security (TLS) Secrets and certificate authority (CA) ConfigMaps first. TLS Secrets must contain `tls.crt` and `tls.key`; CA ConfigMaps must contain the configured key. Then apply the generated manifest:
+The generator does not connect to Kubernetes or create referenced credentials. Create the target namespace and any referenced Transport Layer Security (TLS) Secrets, API-key Secret, and certificate authority (CA) ConfigMaps first. TLS Secrets must contain `tls.crt` and `tls.key`; CA ConfigMaps must contain the configured key. Then apply the generated manifest:
 
 ```sh
 kubectl apply -f auth-gateway.yaml
@@ -25,7 +25,7 @@ The library also exposes two output paths:
 - `config.Generate(cfg)` returns a map of Envoy filenames to file contents. Use it for file-based Envoy deployments. It does not require Kubernetes settings.
 - `config.GenerateKubernetes(cfg)` requires the `kubernetes` section and returns typed resources. Call `resources.YAML()` for a multi-document manifest, or `resources.Objects()` when a Kubernetes client needs typed objects.
 
-The loader applies defaults, validates references, rejects unknown YAML fields, and requires exactly one document. See [config.example.yaml](config.example.yaml) for routing, [config.auth.example.yaml](config.auth.example.yaml) for JWT and request processing, and [config.production.example.yaml](config.production.example.yaml) for capacity settings.
+The loader applies defaults, validates references, rejects unknown YAML fields, and requires exactly one document. See [config.example.yaml](config.example.yaml) for routing, [config.auth.example.yaml](config.auth.example.yaml) for JWT, API keys, and request processing, and [config.production.example.yaml](config.production.example.yaml) for capacity settings.
 
 ## Routing
 
@@ -59,19 +59,40 @@ Kubernetes output exposes Service port `80` when HTTP servers exist and port `44
 
 Upstreams use HTTP/1 by default. Set `upstream.http_protocol: http2` only when the backend supports HTTP/2. For TLS upstreams, configure `upstream.tls_config` with the expected DNS name and, when needed, a trusted CA. JSON Web Key Set (JWKS) endpoints use HTTPS and validate the endpoint identity.
 
-## JWT authentication and request processing
+## Authentication and request processing
 
 JWT authentication is optional. Configure named JWT authenticators, bind them to a server, and define authorization policies that grant access to named APIs using claims from a specific authenticator. Authorization reads the original verified claims, so attribute mappings cannot change a grant. Each issuer stays isolated from the others.
 
+API keys use one named `api_key` authenticator per gateway configuration. It names a Kubernetes Secret, an optional request header (default `X-API-Key`), and the attribute names that credentials may provide. All servers selecting that authenticator share one Secret. The Secret must be in the gateway Deployment's namespace; separate namespace deployments can use the same Secret name with independent contents. Authorization grants match the key's original attribute values, using the same policy layout as JWT grants.
+
+Keep key values and their attributes in a local credentials file and generate the Secret separately. For example:
+
+```yaml
+credentials:
+  - key: "<random-opaque-key>"
+    attributes:
+      tenant_id: client-123
+      writer_id: writer-17
+```
+
+```sh
+go run ./examples/generate-api-key-secret config.auth.example.yaml credentials.yaml api-key-secret.yaml
+kubectl apply -f api-key-secret.yaml
+```
+
+The [Secret generator](examples/generate-api-key-secret/main.go) writes the manifest with mode `0600`. Keep both local files private and out of version control. `config.APIKeySecret` provides the same generation path for Go callers. The Secret has one `api-keys.yaml` ECDS resource; `credentials: []` explicitly revokes every key.
+
+On `authentication.any_of` with JWT and API key, a valid JWT wins when both credentials are present. If JWT verification fails or the bearer token is absent, a valid key can authenticate. On mixed `all_of`, both credentials are required. Every attribute declared by both authenticators must be a nonempty scalar string with exactly the same raw value. At most one JWT authenticator and one API-key authenticator may be selected by `all_of`.
+
 Choose request processing per route:
 
-- With no route header mappings, JWT authorization can run without attribute processing.
-- Use `routes[].processing.request_headers` to set selected upstream headers from verified attributes.
+- With no route header mappings, authorization can run without attribute processing.
+- Use `routes[].processing.request_headers` to set selected upstream headers from verified JWT or API-key attributes.
 - Add top-level `processing` attribute-mapper entries to translate attribute values before the configured headers are written. Processors run in declaration order. Each mapping table performs one exact lookup; an unmatched value passes through.
 
-The gateway replaces caller-supplied values for managed headers and removes the bearer credential before forwarding. A missing claim does not invalidate an otherwise valid token. A missing claim needed for authorization denies the request. A missing or unsafe attribute required by a route header returns `403` before the request reaches the backend.
+The gateway replaces caller-supplied values for managed headers and removes bearer tokens and API keys before forwarding. A missing claim does not invalidate an otherwise valid token. A missing attribute needed for authorization denies the request. A missing or unsafe attribute required by a route header returns `403` before the request reaches the backend.
 
-See [config.auth.example.yaml](config.auth.example.yaml) for a complete two-issuer example and [docs/envoy.md](docs/envoy.md) for the native Envoy filter behavior.
+See [config.auth.example.yaml](config.auth.example.yaml) for JWT-only, key-only, and mixed servers, and [docs/envoy.md](docs/envoy.md) for the native Envoy filter behavior.
 
 ## Timeouts and capacity
 
@@ -88,6 +109,7 @@ Kubernetes metrics scrape Envoy every `30s` by default with a `10s` timeout. Set
 | Change | Required action and effect |
 | --- | --- |
 | Values in existing attribute mapping tables | Regenerate and apply the processing ConfigMap. Envoy's Extension Config Discovery Service (ECDS) reloads the mappings and request metric label values without a Pod restart. |
+| API-key values or their attribute values | Regenerate and apply the same namespace Secret. ECDS reloads the complete key set without a Pod restart. An invalid update leaves the last accepted set active; use `credentials: []` for revocation. |
 | Downstream certificate or key in a mounted TLS Secret | Update the Secret. Envoy's Secret Discovery Service (SDS) reloads it for new TLS connections. |
 | Routes, providers, the request metric name or label bindings, other static configuration, or deployment settings | Regenerate and apply the resources. Roll out the gateway when the static Envoy configuration changes. |
 | Upstream or JWKS CA bundle | Update the referenced bundle and explicitly roll out the gateway. |
@@ -100,7 +122,7 @@ Envoy writes structured JSON access logs to stdout for responses with status `40
 
 Kubernetes output includes an OpenTelemetry Collector sidecar. It scrapes Envoy's admin endpoint at `127.0.0.1:9901/stats/prometheus` and serves Prometheus metrics at `/metrics` on port `8889` of the gateway Service. The admin endpoint remains bound to loopback and is not exposed through the Service.
 
-Set `apis[].metrics` to count responses for an API. `metrics: {}` records `api` and the exact downstream `http_status_code`. Use `metrics.labels` to bind more Prometheus labels to processed attributes, for example `tenant: tenant_id`. Enabled APIs share the union of configured label names; missing, unavailable, or unsafe values use `__unattributed__`. The default metric is `envoy_http_lua_auth_gateway_http_requests_total`. Set top-level `request_metrics.name` to change the shared name after Envoy's `envoy_http_lua_` prefix. The counter includes responses handled by Lua, such as JWT and RBAC denials and upstream responses. Gateway 404 and 405 fallback routes have no custom counter.
+Set `apis[].metrics` to count responses for an API. `metrics: {}` records `api` and the exact downstream `http_status_code`. Use `metrics.labels` to bind more Prometheus labels to processed JWT or API-key attributes, for example `tenant: tenant_id`. Enabled APIs share the union of configured label names; missing, unavailable, or unsafe values use `__unattributed__`. The default metric is `envoy_http_lua_auth_gateway_http_requests_total`. Set top-level `request_metrics.name` to change the shared name after Envoy's `envoy_http_lua_` prefix. The counter includes responses handled by the existing stats-only Lua filter, such as authentication and RBAC denials and upstream responses. Gateway 404 and 405 fallback routes have no custom counter.
 
 Label values must be 1 to 128 printable ASCII bytes and cannot contain `|`. Label names use Prometheus ASCII syntax and cannot be `api`, `http_status_code`, `envoy_http_conn_manager_prefix`, or start with `__`. Each distinct label combination stays in Envoy memory until the process restarts, so choose labels with bounded values.
 
