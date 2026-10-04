@@ -24,11 +24,11 @@ type Authenticator struct {
 	JWT  *JWTAuthenticator `yaml:"jwt,omitempty"`
 }
 
-// JWTAuthenticator validates one issuer and declares attributes from its verified claims.
+// JWTAuthenticator validates one issuer, optionally restricts audiences, and declares attributes from verified claims.
 type JWTAuthenticator struct {
 	Issuer     string                  `yaml:"issuer"`
 	JWKS       JWKSConfig              `yaml:"jwks"`
-	Audiences  []string                `yaml:"audiences"`
+	Audiences  []string                `yaml:"audiences,omitempty"`
 	Attributes map[string]JWTAttribute `yaml:"attributes,omitempty"`
 }
 
@@ -113,9 +113,6 @@ func validateJWTAuthenticator(name string, jwt JWTAuthenticator) error {
 		if err != nil || value < 1 || value > 65535 {
 			return fmt.Errorf("%s.jwks.uri must use a valid port", name)
 		}
-	}
-	if len(jwt.Audiences) == 0 {
-		return fmt.Errorf("%s.audiences must contain at least one audience", name)
 	}
 	seenAudiences := make(map[string]struct{}, len(jwt.Audiences))
 	for _, audience := range jwt.Audiences {

@@ -75,6 +75,38 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 		Expect(err).NotTo(HaveOccurred())
 	}, NodeTimeout(12*time.Minute))
 
+	It("skips audience validation when none is configured", func(ctx SpecContext) {
+		for _, test := range []struct {
+			name     string
+			audience string
+		}{
+			{name: "missing aud claim"},
+			{name: "unlisted aud claim", audience: "other-service"},
+		} {
+			claims := map[string]any{
+				"x":   map[string]any{"my_list": []string{"y", "z"}},
+				"exp": time.Now().Add(5 * time.Minute).Unix(),
+			}
+			if test.audience != "" {
+				claims["aud"] = test.audience
+			}
+			token := jwtPlainGateway.token("issuer-one", claims, nil)
+			status, body, err := jwtPlainGateway.request(ctx, jwtPlainGateway.httpAddr, jwtPlainHost, false, token, false)
+			Expect(err).NotTo(HaveOccurred(), test.name)
+			Expect(status).To(Equal(http.StatusOK), test.name+": "+string(body))
+
+			var echo struct {
+				Method  string              `json:"method"`
+				URL     string              `json:"url"`
+				Headers map[string][]string `json:"headers"`
+			}
+			Expect(json.Unmarshal(body, &echo)).To(Succeed(), test.name)
+			Expect(echo.Method).To(Equal(http.MethodGet), test.name)
+			Expect(echo.URL).To(HaveSuffix("/anything"), test.name)
+			Expect(headerValue(echo.Headers, "Authorization")).To(BeEmpty(), test.name)
+		}
+	}, NodeTimeout(60*time.Second))
+
 	It("authorizes when any list member matches the grant", func(ctx SpecContext) {
 		for _, test := range []struct {
 			name   string

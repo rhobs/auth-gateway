@@ -48,6 +48,7 @@ authenticators:
         #   max_retries: 0
         # Custom trust replaces the image's system CA bundle.
         # trusted_ca: {config_map: {name: internal-issuer-ca, key: ca.crt}}
+      # Optional. Omit to skip JWT audience validation.
       audiences: [observability-ingestion]
       attributes:
         tenant_id:
@@ -63,6 +64,7 @@ authenticators:
         # cache_duration: 5m # Optional, default shown.
         # fetch_timeout: 5s # Optional, default shown.
         # connect_timeout: 5s # Optional, default shown.
+      # Optional. Omit to skip JWT audience validation.
       audiences: [observability-ingestion]
       attributes:
         tenant_id:

@@ -10,7 +10,7 @@ authenticators:
       issuer: https://issuer-one.jwt.test
       jwks:
         uri: https://jwks.jwt.test/issuer-one
-      audiences: [gateway-test]
+      # Deliberately omitted to exercise tokens without an aud claim.
       attributes:
         my_list:
           claim_path: [x, my_list]

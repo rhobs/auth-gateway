@@ -40,7 +40,7 @@ auth_gateway.request_controls
 
 The request-control filter removes fixed Envoy retry, timeout, and alternate-stat headers on both public and protected chains. These controls cannot be passed through as identity headers.
 
-The JWT filter validates signature, issuer, audience, expiration, and not-before values. It reads the bearer token from `Authorization` and stores each provider's verified claims in separate Envoy dynamic metadata. RBAC then authorizes the selected API against the named provider's original metadata. It does not read transformed attributes or caller-supplied headers.
+The JWT filter validates signature, issuer, expiration, and not-before values. If an authenticator sets `audiences`, the filter also requires the token's `aud` claim to match one of them. It reads the bearer token from `Authorization` and stores each provider's verified claims in separate Envoy dynamic metadata. RBAC then authorizes the selected API against the named provider's original metadata. It does not read transformed attributes or caller-supplied headers.
 
 Attribute initialization runs only when a route or policy needs JWT attributes. Mapping updates run in the same `set_filter_state` stage after authorization. Required-header checks run after processing and before header mutation. Header mutation removes caller values for managed names, then sets the selected route's outputs. The router forwards only after these filters allow the request.
 

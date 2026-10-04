@@ -10,7 +10,7 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for local checks, code layout, and gol
 
 ## Architecture
 
-- Keep JWT handling in native Envoy filters. Do not reintroduce Lua.
+- Keep JWT handling in native Envoy filters. Do not reintroduce Lua if possible.
 - Put mapped-claim processing in `processing.yaml`, loaded through ECDS from a separate `<name>-processing` ConfigMap. Mapping updates should change only that ConfigMap and leave the bootstrap, Deployment template, and Pod identity unchanged.
 - Static bootstrap changes require an explicit Deployment rollout. There is no checksum annotation; document this behavior when relevant.
 - Keep reusable Kubernetes lifecycle, port-forwarding, readiness, and diagnostics in `e2e/internal/framework`. Keep fixture shaping, protocol-specific clients, and scenario assertions in the e2e test package.

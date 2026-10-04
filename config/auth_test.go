@@ -72,7 +72,6 @@ func TestValidateRejectsInvalidAuthenticationAndAuthorization(t *testing.T) {
 		{name: "missing issuer", want: "authenticators[0].jwt.issuer", edit: func(c *Config) { c.Authenticators[0].JWT.Issuer = "" }},
 		{name: "non-HTTPS JWKS", want: "authenticators[0].jwt.jwks.uri", edit: func(c *Config) { c.Authenticators[0].JWT.JWKS.URI = "http://sso.example.com/jwks" }},
 		{name: "JWKS user information", want: "authenticators[0].jwt.jwks.uri", edit: func(c *Config) { c.Authenticators[0].JWT.JWKS.URI = "https://user@sso.example.com/jwks" }},
-		{name: "missing audiences", want: "authenticators[0].jwt.audiences", edit: func(c *Config) { c.Authenticators[0].JWT.Audiences = nil }},
 		{name: "duplicate audience", want: "authenticators[0].jwt.audiences", edit: func(c *Config) { c.Authenticators[0].JWT.Audiences = []string{"same", "same"} }},
 		{name: "empty claim path", want: "authenticators[0].jwt.attributes.tenant_id.claim_path", edit: func(c *Config) {
 			c.Authenticators[0].JWT.Attributes["tenant_id"] = JWTAttribute{ClaimPath: []string{""}}
