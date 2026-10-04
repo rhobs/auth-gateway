@@ -75,6 +75,50 @@ func TestGenerateKubernetesKeepsProcessingConfigOutsidePodTemplate(t *testing.T)
 	}
 }
 
+func TestRequestMetricBindingChangesBootstrapOnly(t *testing.T) {
+	c := loadConfigCase(t, "jwt-auth-with-mappings")
+	before, err := GenerateKubernetes(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.APIs[0].Metrics.Labels["tenant"] = "writer_id"
+	after, err := GenerateKubernetes(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.ConfigMap.Data[envoyConfigFilename] == after.ConfigMap.Data[envoyConfigFilename] {
+		t.Fatal("changing a metric label binding did not change the static Envoy bootstrap")
+	}
+	if !reflect.DeepEqual(before.ProcessingConfigMap.Data, after.ProcessingConfigMap.Data) {
+		t.Fatal("changing a metric label binding changed the ECDS processing resource")
+	}
+	if !reflect.DeepEqual(before.Deployment.Spec.Template, after.Deployment.Spec.Template) {
+		t.Fatal("changing a metric label binding changed the Deployment template")
+	}
+}
+
+func TestRequestMetricNameChangesBootstrapOnly(t *testing.T) {
+	c := loadConfigCase(t, "jwt-auth-with-mappings")
+	before, err := GenerateKubernetes(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.RequestMetrics.Name = "renamed_gateway_requests_total"
+	after, err := GenerateKubernetes(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.ConfigMap.Data[envoyConfigFilename] == after.ConfigMap.Data[envoyConfigFilename] {
+		t.Fatal("changing the request metric name did not change the static Envoy bootstrap")
+	}
+	if !reflect.DeepEqual(before.ProcessingConfigMap.Data, after.ProcessingConfigMap.Data) {
+		t.Fatal("changing the request metric name changed the ECDS processing resource")
+	}
+	if !reflect.DeepEqual(before.Deployment.Spec.Template, after.Deployment.Spec.Template) {
+		t.Fatal("changing the request metric name changed the Deployment template")
+	}
+}
+
 func TestGenerateKubernetesOmitsProcessingConfigWithoutMappings(t *testing.T) {
 	config := loadConfigCase(t, "jwt-auth-with-headers")
 	resources, err := GenerateKubernetes(config)

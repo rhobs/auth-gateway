@@ -2,7 +2,7 @@
 
 RHOBS Auth Gateway is a Go configuration library. It loads one YAML document and generates Envoy configuration files or Kubernetes resources. It does not run a controller or provide a command-line gateway.
 
-The current implementation supports exact-host routing, HTTP and HTTPS listeners, upstream HTTP/1 and HTTP/2, optional JSON Web Token (JWT) authentication and authorization, route-selected request headers, ordered attribute mappings, Kubernetes packaging, error access logs, and Prometheus metrics. Mutual TLS (mTLS) client-certificate authentication is future work. [config.mtls.example.yaml](config.mtls.example.yaml) is an unsupported design sketch and is rejected by the loader.
+The current implementation supports exact-host routing, HTTP and HTTPS listeners, upstream HTTP/1 and HTTP/2, optional JSON Web Token (JWT) authentication and authorization, route-selected request headers, ordered attribute mappings, per-API request counters, Kubernetes packaging, error access logs, and Prometheus metrics. Mutual TLS (mTLS) client-certificate authentication is future work. [config.mtls.example.yaml](config.mtls.example.yaml) is an unsupported design sketch and is rejected by the loader.
 
 ## Generate and deploy
 
@@ -61,7 +61,7 @@ Upstreams use HTTP/1 by default. Set `upstream.http_protocol: http2` only when t
 
 ## JWT authentication and request processing
 
-JWT authentication is optional. Configure named JWT authenticators, bind them to a server, and define authorization policies that grant access to named APIs using claims from a specific authenticator. Authorization reads the original verified claims before any attribute mapping runs. Each issuer stays isolated from the others.
+JWT authentication is optional. Configure named JWT authenticators, bind them to a server, and define authorization policies that grant access to named APIs using claims from a specific authenticator. Authorization reads the original verified claims, so attribute mappings cannot change a grant. Each issuer stays isolated from the others.
 
 Choose request processing per route:
 
@@ -87,9 +87,9 @@ Kubernetes metrics scrape Envoy every `30s` by default with a `10s` timeout. Set
 
 | Change | Required action and effect |
 | --- | --- |
-| Values in existing attribute mapping tables | Regenerate and apply the processing ConfigMap. Envoy's Extension Config Discovery Service (ECDS) reloads the mappings without a Pod restart. |
+| Values in existing attribute mapping tables | Regenerate and apply the processing ConfigMap. Envoy's Extension Config Discovery Service (ECDS) reloads the mappings and request metric label values without a Pod restart. |
 | Downstream certificate or key in a mounted TLS Secret | Update the Secret. Envoy's Secret Discovery Service (SDS) reloads it for new TLS connections. |
-| Routes, providers, other static configuration, or deployment settings | Regenerate and apply the resources. Roll out the gateway when the static Envoy configuration changes. |
+| Routes, providers, the request metric name or label bindings, other static configuration, or deployment settings | Regenerate and apply the resources. Roll out the gateway when the static Envoy configuration changes. |
 | Upstream or JWKS CA bundle | Update the referenced bundle and explicitly roll out the gateway. |
 
 The Deployment has no generated checksum annotation. A changed ConfigMap alone does not restart Pods for static configuration.
@@ -99,5 +99,9 @@ The Deployment has no generated checksum annotation. A changed ConfigMap alone d
 Envoy writes structured JSON access logs to stdout for responses with status `400` or higher. Entries include the route, method, status, duration, response details, and upstream information.
 
 Kubernetes output includes an OpenTelemetry Collector sidecar. It scrapes Envoy's admin endpoint at `127.0.0.1:9901/stats/prometheus` and serves Prometheus metrics at `/metrics` on port `8889` of the gateway Service. The admin endpoint remains bound to loopback and is not exposed through the Service.
+
+Set `apis[].metrics` to count responses for an API. `metrics: {}` records `api` and the exact downstream `http_status_code`. Use `metrics.labels` to bind more Prometheus labels to processed attributes, for example `tenant: tenant_id`. Enabled APIs share the union of configured label names; missing, unavailable, or unsafe values use `__unattributed__`. The default metric is `envoy_http_lua_auth_gateway_http_requests_total`. Set top-level `request_metrics.name` to change the shared name after Envoy's `envoy_http_lua_` prefix. The counter includes responses handled by Lua, such as JWT and RBAC denials and upstream responses. Gateway 404 and 405 fallback routes have no custom counter.
+
+Label values must be 1 to 128 printable ASCII bytes and cannot contain `|`. Label names use Prometheus ASCII syntax and cannot be `api`, `http_status_code`, `envoy_http_conn_manager_prefix`, or start with `__`. Each distinct label combination stays in Envoy memory until the process restarts, so choose labels with bounded values.
 
 For generator details, filter order, trust, and reload mechanics, see [docs/envoy.md](docs/envoy.md). For local checks, test ownership, and golden updates, see [CONTRIBUTING.md](CONTRIBUTING.md).

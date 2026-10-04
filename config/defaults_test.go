@@ -148,6 +148,8 @@ func TestDefaultsCloneInputs(t *testing.T) {
 		defaulted.Servers[0].Authentication.AnyOf[0] = "changed"
 		defaulted.Servers[0].Authorization.AnyOf[0] = "changed"
 		defaulted.APIs[0].Routes[0].Processing.RequestHeaders[0].Name = "changed"
+		defaulted.APIs[0].Metrics.Labels["tenant"] = "writer_id"
+		defaulted.RequestMetrics.Name = "changed_requests_total"
 
 		if c.Authenticators[0].JWT.Audiences[0] == "changed" ||
 			c.Authenticators[0].JWT.Attributes["tenant_id"].ClaimPath[0] == "changed" ||
@@ -156,7 +158,9 @@ func TestDefaultsCloneInputs(t *testing.T) {
 			c.AuthorizationPolicies[0].Grants[0].Attributes["tenant_id"][0] == "changed" ||
 			c.Servers[0].Authentication.AnyOf[0] == "changed" ||
 			c.Servers[0].Authorization.AnyOf[0] == "changed" ||
-			c.APIs[0].Routes[0].Processing.RequestHeaders[0].Name == "changed" {
+			c.APIs[0].Routes[0].Processing.RequestHeaders[0].Name == "changed" ||
+			c.APIs[0].Metrics.Labels["tenant"] == "writer_id" ||
+			c.RequestMetrics.Name == "changed_requests_total" {
 			t.Fatal("defaulting aliases authentication configuration")
 		}
 	})

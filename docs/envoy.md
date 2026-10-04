@@ -26,13 +26,14 @@ Each server exposes only the APIs in its `apis` list. The list order controls AP
 
 ## Conditional HTTP filter chain
 
-Public requests use request-control header removal and the router. Protected requests add only the filters required by their configuration. The JSON Web Token (JWT) filter validates credentials, and the role-based access control (RBAC) filter enforces authorization:
+Public requests use request-control header removal and the router. Metered routes add Lua for response counting. Protected requests add the JSON Web Token (JWT) filter for credentials and role-based access control (RBAC) for authorization:
 
 ```text
 auth_gateway.request_controls
+  -> [envoy.filters.http.lua]                (response counter)
   -> envoy.filters.http.jwt_authn
-  -> envoy.filters.http.rbac                 (original-claim authorization)
   -> [envoy.filters.http.set_filter_state]   (working attributes and mappings)
+  -> envoy.filters.http.rbac                 (original-claim authorization)
   -> [auth_gateway.required_headers]         (route-specific checks)
   -> [envoy.filters.http.header_mutation]    (managed upstream headers)
   -> envoy.filters.http.router
@@ -40,9 +41,9 @@ auth_gateway.request_controls
 
 The request-control filter removes fixed Envoy retry, timeout, and alternate-stat headers on both public and protected chains. These controls cannot be passed through as identity headers.
 
-The JWT filter validates signature, issuer, expiration, and not-before values. If an authenticator sets `audiences`, the filter also requires the token's `aud` claim to match one of them. It reads the bearer token from `Authorization` and stores each provider's verified claims in separate Envoy dynamic metadata. RBAC then authorizes the selected API against the named provider's original metadata. It does not read transformed attributes or caller-supplied headers.
+The JWT filter validates signature, issuer, expiration, and not-before values. If an authenticator sets `audiences`, the filter also requires the token's `aud` claim to match one of them. It reads the bearer token from `Authorization` and stores each provider's verified claims in separate Envoy dynamic metadata. RBAC authorizes the selected API against the named provider's original metadata. It does not read transformed attributes or caller-supplied headers.
 
-Attribute initialization runs only when a route or policy needs JWT attributes. Mapping updates run in the same `set_filter_state` stage after authorization. Required-header checks run after processing and before header mutation. Header mutation removes caller values for managed names, then sets the selected route's outputs. The router forwards only after these filters allow the request.
+Attribute initialization runs when request headers or metric labels need JWT attributes. Mapping updates run in the same `set_filter_state` stage before RBAC. RBAC still reads only the original verified JWT metadata. Required-header checks run after authorization and before header mutation. Header mutation removes caller values for managed names, then sets the selected route's outputs. The router forwards only after these filters allow the request.
 
 ## Original claims and working attributes
 
@@ -50,7 +51,7 @@ A JWT attribute's `claim_path` is a list of literal object keys. For example, `[
 
 Working attributes used for processing require a scalar string. Missing, null, empty, non-string, or list-valued claims leave the corresponding working attribute unset; they do not invalidate an otherwise valid JWT.
 
-Authorization grants are tied to a named authenticator and use its original claim values. The optional top-level `processing` list changes working attributes only after authorization. Each processor performs one exact lookup per configured attribute. Entries in one table do not chain. Later processors see earlier results and may replace them. Unmatched values pass through.
+Authorization grants are tied to a named authenticator and use its original claim values. The optional top-level `processing` list changes working attributes after JWT verification and before RBAC. Each processor performs one exact lookup per configured attribute. Entries in one table do not chain. Later processors see earlier results and may replace them. Unmatched values pass through.
 
 Envoy `v1.39.1` exposes `envoy.string` filter-state values as bytes in Common Expression Language (CEL). The generator compares mapping inputs with byte literals and uses `skip_if_empty` so unmatched values pass through and missing values do not become placeholder strings. It emits one update per attribute per processor to preserve processor order.
 
@@ -68,7 +69,9 @@ Upstreams use HTTP/1 unless `http_protocol: http2` is set. HTTP/2 connection opt
 
 The Envoy bootstrap and SDS resource files are projected from the main ConfigMap. TLS Secrets are mounted as read-only directories without `subPath`, so Kubernetes can refresh their projected files. Identical Secret and path bindings share a volume mount; different server chains keep separate SDS resources. File-only generation returns those SDS files but does not create or mount the certificate material.
 
-When mappings exist, the generator puts `processing.yaml` in the separate processing ConfigMap and mounts it at `/etc/auth-gateway/processing`. Envoy reads it with file-based Extension Config Discovery Service (ECDS) and watches the mounted directory. Updating mapping values changes only that ConfigMap. The bootstrap, Deployment template, and Pod identity remain unchanged.
+When mappings exist, the generator puts `processing.yaml` in the separate processing ConfigMap and mounts it at `/etc/auth-gateway/processing`. This file is an ECDS resource for `envoy.filters.http.set_filter_state`: it extracts verified JWT claims into working attributes, then applies the mapping table. Envoy watches the mounted directory. Updating mapping values changes only that ConfigMap. The bootstrap, Deployment template, and Pod identity remain unchanged.
+
+The static bootstrap embeds the shared request metric name, Lua's label names, and each API's label-to-attribute bindings in route metadata. Attribute mapping tables stay in the ECDS-loaded `set_filter_state` filter. Lua reads its processed values. For example, `tenant: tenant_id` with a `client-123: team-a` mapping emits `tenant="team-a"`, while RBAC checks the original `client-123`. Changing the metric name or a binding requires a rollout; changing a mapping value updates only the processing ConfigMap and changes subsequent metric labels without a Pod restart.
 
 SDS reloads updated downstream certificates and keys for new TLS connections. ECDS reloads mapping configuration. Routes, providers, other bootstrap data, deployment settings, and upstream/JWKS CA bundles require the documented regeneration and rollout steps. The generator does not add a checksum annotation.
 
@@ -81,3 +84,7 @@ The request-control filter strips client-supplied Envoy timeout and retry header
 Overload protection is opt-in. Its fixed heap monitor and global downstream-connection monitor use the configured budgets. The default heap-shrink threshold is `0.90`; the default request-reject threshold is `0.95`. Kubernetes generation requires the heap budget to be below the Envoy memory limit.
 
 The Envoy access logger writes structured JSON to stdout for HTTP responses with status `400` or higher. The Kubernetes metrics sidecar scrapes `127.0.0.1:9901/stats/prometheus` every `30s` by default, with a `10s` timeout, and exposes metrics at `/metrics` on port `8889`. The Envoy admin endpoint stays on loopback and is not published by the Service.
+
+For each API with `metrics` configured, a stats-only Lua filter counts responses by `api`, exact downstream `http_status_code`, and the union of configured label names. `metrics: {}` enables the counter without attribute bindings. Lua runs before JWT so it sees JWT and RBAC local replies; it reads processed filter state in its response callback. Named API routes carry the metric metadata. Gateway 404 and 405 fallback routes do not, so they are excluded. A missing, unavailable, empty, non-ASCII, control-character, over-128-byte, or `|`-containing attribute becomes `__unattributed__`.
+
+Envoy exposes the series as `envoy_http_lua_<name>` after extracting stat tags. The shared `request_metrics.name` defaults to `auth_gateway_http_requests_total`. It must use ASCII letters, numbers, and underscores, start with a letter or underscore, and not start with `__`. Setting the name alone does not enable the counter; APIs still need `metrics`. The counter covers responses that reach Lua. Envoy retains each distinct label combination in memory until restart; use bounded label values.

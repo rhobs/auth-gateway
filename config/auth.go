@@ -37,7 +37,7 @@ type JWTAttribute struct {
 	ClaimPath []string `yaml:"claim_path"`
 }
 
-// Processor transforms working attributes after authorization.
+// Processor transforms working attributes after JWT verification.
 type Processor struct {
 	Name       string                       `yaml:"name"`
 	Type       string                       `yaml:"type"`

@@ -43,15 +43,21 @@ authorization_policies:
   - name: metrics-writers
     grants:
       - authenticator: issuer-one
-        apis: [metrics]
+        apis: [metrics, status-only, unmetered]
         attributes:
           tenant_id: [customer-a, customer-pass]
       - authenticator: issuer-two
-        apis: [metrics]
+        apis: [metrics, status-only, unmetered]
         attributes:
           tenant_id: [customer-b]
+request_metrics:
+  name: gateway_http_requests_total
 apis:
   - name: metrics
+    metrics:
+      labels:
+        tenant: tenant_id
+        writer: writer_id
     upstream:
       address: httpbin
       port: 8080
@@ -76,6 +82,32 @@ apis:
       - methods: [GET]
         path:
           exact: /headerless
+        rewrite:
+          path: /anything
+      - methods: [GET]
+        path:
+          exact: /upstream-status
+        rewrite:
+          path: /status/418
+  - name: status-only
+    metrics: {}
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [GET]
+        path:
+          exact: /status-only
+        rewrite:
+          path: /anything
+  - name: unmetered
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [GET]
+        path:
+          exact: /unmetered
         rewrite:
           path: /anything
 processing:
@@ -108,7 +140,7 @@ servers:
       any_of: [issuer-one, issuer-two]
     authorization:
       any_of: [metrics-writers]
-    apis: [metrics]
+    apis: [metrics, status-only, unmetered]
   - hostname: writer-tls.jwt.auth-gateway.test
     tls_config:
       secret: jwt-gateway-tls
@@ -118,13 +150,13 @@ servers:
       any_of: [issuer-one, issuer-two]
     authorization:
       any_of: [metrics-writers]
-    apis: [metrics]
+    apis: [metrics, status-only, unmetered]
   - hostname: issuer-one-only.jwt.auth-gateway.test
     authentication:
       any_of: [issuer-one]
     authorization:
       any_of: [metrics-writers]
-    apis: [metrics]
+    apis: [metrics, status-only, unmetered]
 kubernetes:
   name: auth-gateway
   namespace: default

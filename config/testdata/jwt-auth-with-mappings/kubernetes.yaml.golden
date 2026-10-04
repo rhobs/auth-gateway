@@ -189,6 +189,54 @@ data:
                                         - remove: x-envoy-upstream-rq-timeout-alt-response
                                         - remove: x-envoy-retriable-status-codes
                                         - remove: x-envoy-retriable-header-names
+                            - name: envoy.filters.http.lua
+                              typed_config:
+                                '@type': type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                                default_source_code:
+                                    inline_string: |
+                                        local labels = {"tenant"}
+                                        local counter_name = "gateway_http_requests_total"
+
+                                        local function safe_label(value)
+                                          if type(value) ~= "string" or #value == 0 or #value > 128 then
+                                            return "__unattributed__"
+                                          end
+                                          for i = 1, #value do
+                                            local byte = string.byte(value, i)
+                                            if byte < 32 or byte > 126 or byte == 124 then
+                                              return "__unattributed__"
+                                            end
+                                          end
+                                          return value
+                                        end
+
+                                        function envoy_on_response(response_handle)
+                                          local metadata = response_handle:metadata()
+                                          if metadata == nil then
+                                            return
+                                          end
+                                          local api = metadata:get("api")
+                                          if type(api) ~= "string" or api == "" then
+                                            return
+                                          end
+                                          local status = response_handle:headers():get(":status")
+                                          if type(status) ~= "string" or not string.match(status, "^%d%d%d$") then
+                                            return
+                                          end
+
+                                          local bindings = metadata:get("labels") or {}
+                                          local filter_state = response_handle:streamInfo():filterState()
+                                          local name = counter_name .. "|api=" .. api .. "|http_status_code=" .. status
+                                          for _, label in ipairs(labels) do
+                                            local attribute = bindings[label]
+                                            local value = nil
+                                            if type(attribute) == "string" then
+                                              value = filter_state:get("auth_gateway.attributes." .. attribute)
+                                            end
+                                            name = name .. "|" .. label .. "=" .. safe_label(value)
+                                          end
+                                          response_handle:stats():counter(name):inc()
+                                        end
                             - name: envoy.filters.http.jwt_authn
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
@@ -235,9 +283,6 @@ data:
                                                 - provider_name: internal-jwt
                                                 - provider_name: external-jwt
                                 strip_failure_response: true
-                            - name: envoy.filters.http.rbac
-                              typed_config:
-                                '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
                             - config_discovery:
                                 config_source:
                                     path_config_source:
@@ -248,6 +293,9 @@ data:
                                 type_urls:
                                     - envoy.extensions.filters.http.set_filter_state.v3.Config
                               name: envoy.filters.http.set_filter_state
+                            - name: envoy.filters.http.rbac
+                              typed_config:
+                                '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
                             - name: auth_gateway.required_headers
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
@@ -282,6 +330,10 @@ data:
                                         path: /metrics/api/v1/receive
                                       metadata:
                                         filter_metadata:
+                                            envoy.filters.http.lua:
+                                                api: metrics-write
+                                                labels:
+                                                    tenant: tenant_id
                                             envoy.filters.http.rbac:
                                                 api: metrics-write
                                       name: api-0-metrics-write-route-0-method-0
@@ -339,6 +391,9 @@ data:
                                         prefix: /logs/otlp/
                                       metadata:
                                         filter_metadata:
+                                            envoy.filters.http.lua:
+                                                api: logs
+                                                labels: {}
                                             envoy.filters.http.rbac:
                                                 api: logs
                                       name: api-1-logs-route-0-method-0
@@ -606,6 +661,54 @@ data:
                                         - remove: x-envoy-upstream-rq-timeout-alt-response
                                         - remove: x-envoy-retriable-status-codes
                                         - remove: x-envoy-retriable-header-names
+                            - name: envoy.filters.http.lua
+                              typed_config:
+                                '@type': type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                                default_source_code:
+                                    inline_string: |
+                                        local labels = {"tenant"}
+                                        local counter_name = "gateway_http_requests_total"
+
+                                        local function safe_label(value)
+                                          if type(value) ~= "string" or #value == 0 or #value > 128 then
+                                            return "__unattributed__"
+                                          end
+                                          for i = 1, #value do
+                                            local byte = string.byte(value, i)
+                                            if byte < 32 or byte > 126 or byte == 124 then
+                                              return "__unattributed__"
+                                            end
+                                          end
+                                          return value
+                                        end
+
+                                        function envoy_on_response(response_handle)
+                                          local metadata = response_handle:metadata()
+                                          if metadata == nil then
+                                            return
+                                          end
+                                          local api = metadata:get("api")
+                                          if type(api) ~= "string" or api == "" then
+                                            return
+                                          end
+                                          local status = response_handle:headers():get(":status")
+                                          if type(status) ~= "string" or not string.match(status, "^%d%d%d$") then
+                                            return
+                                          end
+
+                                          local bindings = metadata:get("labels") or {}
+                                          local filter_state = response_handle:streamInfo():filterState()
+                                          local name = counter_name .. "|api=" .. api .. "|http_status_code=" .. status
+                                          for _, label in ipairs(labels) do
+                                            local attribute = bindings[label]
+                                            local value = nil
+                                            if type(attribute) == "string" then
+                                              value = filter_state:get("auth_gateway.attributes." .. attribute)
+                                            end
+                                            name = name .. "|" .. label .. "=" .. safe_label(value)
+                                          end
+                                          response_handle:stats():counter(name):inc()
+                                        end
                             - name: envoy.filters.http.jwt_authn
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
@@ -652,9 +755,6 @@ data:
                                                 - provider_name: internal-jwt
                                                 - provider_name: external-jwt
                                 strip_failure_response: true
-                            - name: envoy.filters.http.rbac
-                              typed_config:
-                                '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
                             - config_discovery:
                                 config_source:
                                     path_config_source:
@@ -665,6 +765,9 @@ data:
                                 type_urls:
                                     - envoy.extensions.filters.http.set_filter_state.v3.Config
                               name: envoy.filters.http.set_filter_state
+                            - name: envoy.filters.http.rbac
+                              typed_config:
+                                '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
                             - name: auth_gateway.required_headers
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
@@ -699,6 +802,10 @@ data:
                                         path: /metrics/api/v1/receive
                                       metadata:
                                         filter_metadata:
+                                            envoy.filters.http.lua:
+                                                api: metrics-write
+                                                labels:
+                                                    tenant: tenant_id
                                             envoy.filters.http.rbac:
                                                 api: metrics-write
                                       name: api-0-metrics-write-route-0-method-0
@@ -756,6 +863,9 @@ data:
                                         prefix: /logs/otlp/
                                       metadata:
                                         filter_metadata:
+                                            envoy.filters.http.lua:
+                                                api: logs
+                                                labels: {}
                                             envoy.filters.http.rbac:
                                                 api: logs
                                       name: api-1-logs-route-0-method-0
@@ -992,6 +1102,14 @@ data:
                     '@type': type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
               name: ingestion
               per_connection_buffer_limit_bytes: 1048576
+    stats_config:
+        stats_tags:
+            - regex: ^http\.ingress\.lua\.gateway_http_requests_total(\|api=([^|]+))
+              tag_name: api
+            - regex: ^http\.ingress\.lua\.gateway_http_requests_total\|api=[^|]+(\|http_status_code=([^|]+))
+              tag_name: http_status_code
+            - regex: ^http\.ingress\.lua\.gateway_http_requests_total\|api=[^|]+\|http_status_code=[^|]+(\|tenant=([^|]+))
+              tag_name: tenant
   server-certificate-1.yaml: |
     # Generated by github.com/rhobs/auth-gateway.
     resources:

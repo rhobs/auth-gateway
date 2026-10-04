@@ -87,6 +87,7 @@ type Config struct {
 	Processing            []Processor           `yaml:"processing,omitempty"`
 	Servers               []Server              `yaml:"servers"`
 	APIs                  []API                 `yaml:"apis"`
+	RequestMetrics        *RequestMetricsConfig `yaml:"request_metrics,omitempty"`
 	Kubernetes            *Kubernetes           `yaml:"kubernetes,omitempty"`
 }
 
@@ -117,6 +118,7 @@ type API struct {
 	Name            string                `yaml:"name"`
 	Routes          []Route               `yaml:"routes"`
 	Upstream        Upstream              `yaml:"upstream"`
+	Metrics         *APIMetrics           `yaml:"metrics,omitempty"`
 	CircuitBreakers *CircuitBreakerConfig `yaml:"circuit_breakers,omitempty"`
 	Timeouts        *RouteTimeouts        `yaml:"timeouts,omitempty"`
 }
@@ -250,6 +252,9 @@ func (c Config) validate() error {
 	if err := c.Listener.validate(c.Kubernetes != nil); err != nil {
 		return err
 	}
+	if err := validateRequestMetricsConfig(c.RequestMetrics); err != nil {
+		return err
+	}
 	if len(c.APIs) == 0 {
 		return fmt.Errorf("at least one API must be configured")
 	}
@@ -275,6 +280,9 @@ func (c Config) validate() error {
 			return err
 		}
 		if err := validateRouteTimeouts(name+".timeouts", api.Timeouts); err != nil {
+			return err
+		}
+		if err := validateAPIMetrics(name+".metrics", api.Metrics); err != nil {
 			return err
 		}
 
@@ -378,6 +386,10 @@ func (c Config) withDefaults() Config {
 	c.Authenticators = cloneAuthenticators(c.Authenticators)
 	c.AuthorizationPolicies = cloneAuthorizationPolicies(c.AuthorizationPolicies)
 	c.Processing = cloneProcessors(c.Processing)
+	if c.RequestMetrics != nil {
+		requestMetrics := *c.RequestMetrics
+		c.RequestMetrics = &requestMetrics
+	}
 	if c.Node.ID == "" {
 		c.Node.ID = defaultNodeID
 	}
@@ -406,6 +418,11 @@ func (c Config) withDefaults() Config {
 			apis[i] = api
 			apis[i].Upstream = api.Upstream.withDefaults()
 			apis[i].Timeouts = cloneRouteTimeouts(api.Timeouts)
+			if api.Metrics != nil {
+				metrics := *api.Metrics
+				metrics.Labels = maps.Clone(api.Metrics.Labels)
+				apis[i].Metrics = &metrics
+			}
 			if api.Routes != nil {
 				apis[i].Routes = make([]Route, len(api.Routes))
 				for j, route := range api.Routes {
@@ -590,6 +607,9 @@ func (c Config) validateAuthentication(apis map[string]API) error {
 		}
 		authenticators[authenticator.Name] = authenticator
 	}
+	if err := validateMetricAttributeReferences(c.APIs, authenticators); err != nil {
+		return err
+	}
 
 	policies := make(map[string]AuthorizationPolicy, len(c.AuthorizationPolicies))
 	for i, policy := range c.AuthorizationPolicies {
@@ -719,6 +739,22 @@ func (c Config) hasAttributeMappings() bool {
 		}
 	}
 	return false
+}
+
+func (c Config) hasRequestMetrics() bool {
+	for _, api := range c.APIs {
+		if api.Metrics != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (c Config) requestMetricName() string {
+	if c.RequestMetrics != nil {
+		return c.RequestMetrics.Name
+	}
+	return defaultRequestMetricCounterName
 }
 
 func (c Config) hasAuthenticationConfig() bool {

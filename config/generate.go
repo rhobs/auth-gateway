@@ -21,6 +21,7 @@ import (
 	setfilterstatecommon "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
 	headermutation "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
 	jwt "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/jwt_authn/v3"
+	lua "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/lua/v3"
 	httpRBAC "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	router "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
 	setfilterstate "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
@@ -59,6 +60,7 @@ const (
 	localResponseAPIName        = "__local"
 	apiMetadataName             = "api"
 	ingestionListenerName       = "ingestion"
+	httpManagerStatPrefix       = "ingress"
 	googleHTTP11ALPN            = "http/1.1"
 	localResponsePolicyName     = "local-responses"
 	protoValidationErrorFormat  = "validate %s: %w"
@@ -174,6 +176,9 @@ func generate(effective effectiveConfig) (map[string][]byte, error) {
 			Clusters: clusters,
 		},
 	}
+	if c.hasRequestMetrics() {
+		bootstrapConfig.StatsConfig = requestMetricsStatsConfig(c.APIs, c.requestMetricName())
+	}
 
 	data, err := marshalEnvoyYAML(bootstrapConfig)
 	if err != nil {
@@ -233,6 +238,15 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 		return nil, fmt.Errorf("encode request-control header removal: %w", err)
 	}
 	filters := []*hcm.HttpFilter{{Name: requestControlsFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: controls}}}
+	if hasRequestMetricRoutes(hosts) {
+		metricConfig, err := packEnvoy(&lua.Lua{DefaultSourceCode: &core.DataSource{
+			Specifier: &core.DataSource_InlineString{InlineString: requestMetricsLuaScript(c.APIs, c.requestMetricName())},
+		}})
+		if err != nil {
+			return nil, fmt.Errorf("encode request metrics Lua filter: %w", err)
+		}
+		filters = append(filters, &hcm.HttpFilter{Name: requestMetricsFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: metricConfig}})
+	}
 	if hasProtectedHosts(hosts) {
 		jwtConfig, err := jwtFilterConfig(c)
 		if err != nil {
@@ -243,11 +257,6 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 			return nil, fmt.Errorf("encode JWT authentication filter: %w", err)
 		}
 		filters = append(filters, &hcm.HttpFilter{Name: jwtAuthnFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: packed}})
-		rbacConfig, err := packEnvoy(&httpRBAC.RBAC{})
-		if err != nil {
-			return nil, fmt.Errorf("encode RBAC filter: %w", err)
-		}
-		filters = append(filters, &hcm.HttpFilter{Name: authorizationFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: rbacConfig}})
 		if needsWorkingAttributes(c) {
 			attributeFilter := &hcm.HttpFilter{Name: attributeFilterName}
 			if c.hasAttributeMappings() {
@@ -264,6 +273,11 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 			}
 			filters = append(filters, attributeFilter)
 		}
+		rbacConfig, err := packEnvoy(&httpRBAC.RBAC{})
+		if err != nil {
+			return nil, fmt.Errorf("encode RBAC filter: %w", err)
+		}
+		filters = append(filters, &hcm.HttpFilter{Name: authorizationFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: rbacConfig}})
 		if hasRequestHeaderProcessing(c.APIs) {
 			headerRBACConfig, err := packEnvoy(&httpRBAC.RBAC{})
 			if err != nil {
@@ -281,7 +295,7 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 	}
 	filters = append(filters, &hcm.HttpFilter{Name: routerFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: routerConfig}})
 	return &hcm.HttpConnectionManager{
-		StatPrefix:            "ingress",
+		StatPrefix:            httpManagerStatPrefix,
 		CodecType:             hcm.HttpConnectionManager_AUTO,
 		MaxRequestHeadersKb:   optionalUint32(c.Listener.MaxRequestHeadersKB),
 		RequestHeadersTimeout: c.Listener.RequestHeadersTimeout.protobuf(),
@@ -310,6 +324,17 @@ func hasProtectedHosts(hosts []*route.VirtualHost) bool {
 	for _, host := range hosts {
 		if host.TypedPerFilterConfig[jwtAuthnFilterName] != nil {
 			return true
+		}
+	}
+	return false
+}
+
+func hasRequestMetricRoutes(hosts []*route.VirtualHost) bool {
+	for _, host := range hosts {
+		for _, route := range host.Routes {
+			if route.Metadata != nil && route.Metadata.FilterMetadata[requestMetricsFilterName] != nil {
+				return true
+			}
 		}
 	}
 	return false
@@ -480,7 +505,7 @@ func findAuthenticator(c Config, name string) Authenticator {
 }
 
 func needsWorkingAttributes(c Config) bool {
-	return c.hasAttributeMappings() || hasRequestHeaderProcessing(c.APIs)
+	return c.hasAttributeMappings() || hasRequestHeaderProcessing(c.APIs) || hasRequestMetricLabels(c.APIs)
 }
 
 func attributeInitializationConfig(c Config) *setfilterstate.Config {
@@ -819,6 +844,12 @@ func apiRoutesWithMetadata(apis []API, includeMetadata bool) []*route.Route {
 				}
 				if includeMetadata {
 					routeConfig.Metadata = apiRouteMetadata(api.Name)
+				}
+				if api.Metrics != nil {
+					if routeConfig.Metadata == nil {
+						routeConfig.Metadata = &core.Metadata{FilterMetadata: make(map[string]*structpb.Struct)}
+					}
+					routeConfig.Metadata.FilterMetadata[requestMetricsFilterName] = requestMetricsRouteMetadata(api)
 				}
 				routes = append(routes, routeConfig)
 				fallbacks[fallbackIndex].methods = append(fallbacks[fallbackIndex].methods, method)

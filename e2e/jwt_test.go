@@ -357,6 +357,10 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		status, body, err := jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, token, false)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), "original identity mapping should be authorized: "+string(body))
+		adminAddress := env.ForwardWithCleanup(ctx, jwtNamespace, "deployment/auth-gateway", 9901)
+		updatedMetricLabels := requestMetricLabels("metrics", http.StatusOK, "team-b", "writer-17")
+		beforeUpdatedMetric, err := requestMetricCount(ctx, adminAddress, updatedMetricLabels)
+		Expect(err).NotTo(HaveOccurred())
 
 		selector := "app.kubernetes.io/name=auth-gateway"
 		oldUID, err := env.PodUID(ctx, jwtNamespace, selector)
@@ -387,6 +391,9 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		}).WithContext(ctx).WithTimeout(3*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
 			return fmt.Sprintf("ECDS mapping update did not change the output while preserving authorization: status=%d body=%s error=%v", status, body, err)
 		})
+		afterUpdatedMetric, err := requestMetricCount(ctx, adminAddress, updatedMetricLabels)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(afterUpdatedMetric).To(BeNumerically(">", beforeUpdatedMetric), "ECDS mapping update did not change the metric label")
 		newUID, err := env.PodUID(ctx, jwtNamespace, selector)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(newUID).To(Equal(oldUID), "an ECDS processing update must not replace the gateway Pod")
@@ -871,6 +878,10 @@ func (e *jwtE2E) request(ctx context.Context, address, host string, useTLS bool,
 }
 
 func (e *jwtE2E) requestPath(ctx context.Context, address, host string, useTLS bool, path, token string, spoof bool) (int, []byte, error) {
+	return e.requestMethodPath(ctx, address, host, useTLS, http.MethodGet, path, token, spoof)
+}
+
+func (e *jwtE2E) requestMethodPath(ctx context.Context, address, host string, useTLS bool, method, path, token string, spoof bool) (int, []byte, error) {
 	scheme, client := "http", testClient
 	if useTLS {
 		scheme = "https"
@@ -878,7 +889,7 @@ func (e *jwtE2E) requestPath(ctx context.Context, address, host string, useTLS b
 		defer transport.CloseIdleConnections()
 		client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, scheme+"://"+address+path, nil)
+	request, err := http.NewRequestWithContext(ctx, method, scheme+"://"+address+path, nil)
 	if err != nil {
 		return 0, nil, err
 	}

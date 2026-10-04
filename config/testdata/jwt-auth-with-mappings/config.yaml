@@ -55,8 +55,14 @@ authorization_policies:
         attributes:
           tenant_id: [customer-456, customer-789]
 
+request_metrics:
+  name: gateway_http_requests_total
+
 apis:
   - name: metrics-write
+    metrics:
+      labels:
+        tenant: tenant_id
     upstream:
       address: thanos-receive
       port: 19291
@@ -74,6 +80,7 @@ apis:
               from_attribute: writer_id
 
   - name: logs
+    metrics: {}
     upstream:
       address: loki
       port: 3100

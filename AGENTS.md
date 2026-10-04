@@ -6,6 +6,8 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for local checks, code layout, and gol
 
 - Treat the checked-in configuration schema as the supported contract. Do not add aliases, migration code, or dedicated tests for obsolete formats unless a task explicitly requires them.
 - Keep configuration changes, examples, documentation, generated Envoy and Kubernetes resources, and tests aligned.
+- Take some inspiration from the PoC that started this project /Users/pgough/Desktop/projects/regional-observability-service but dont rely on it for code quality etc.
+- 
 - mTLS remains future work. Do not implement it until the task scope changes. Keep `config.mtls.example.yaml` as an example.
 
 ## Architecture
