@@ -75,20 +75,29 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 		Expect(err).NotTo(HaveOccurred())
 	}, NodeTimeout(12*time.Minute))
 
-	It("authorizes a valid token without processing or request header output", func(ctx SpecContext) {
-		claims := map[string]any{
-			"organization": map[string]any{"id": "customer-a"},
-			"aud":          "gateway-test",
-			"exp":          time.Now().Add(5 * time.Minute).Unix(),
+	It("authorizes when any list member matches the grant", func(ctx SpecContext) {
+		for _, test := range []struct {
+			name   string
+			values []string
+		}{
+			{name: "y member", values: []string{"y"}},
+			{name: "z member", values: []string{"z"}},
+			{name: "both members", values: []string{"y", "z"}},
+		} {
+			claims := map[string]any{
+				"x":   map[string]any{"my_list": test.values},
+				"aud": "gateway-test",
+				"exp": time.Now().Add(5 * time.Minute).Unix(),
+			}
+			token := jwtPlainGateway.token("issuer-one", claims, nil)
+			status, body, err := jwtPlainGateway.request(ctx, jwtPlainGateway.httpAddr, jwtPlainHost, false, token, false)
+			Expect(err).NotTo(HaveOccurred(), test.name)
+			Expect(status).To(Equal(http.StatusOK), test.name+": "+string(body))
+			headers := jwtEchoHeaders(body)
+			Expect(headers).NotTo(BeNil(), test.name)
+			Expect(headerValue(headers, "Authorization")).To(BeEmpty(), test.name)
+			Expect(headerValue(headers, "X-Scope-OrgID")).To(BeEmpty(), test.name)
 		}
-		token := jwtPlainGateway.token("issuer-one", claims, nil)
-		status, body, err := jwtPlainGateway.request(ctx, jwtPlainGateway.httpAddr, jwtPlainHost, false, token, false)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(status).To(Equal(http.StatusOK), string(body))
-		headers := jwtEchoHeaders(body)
-		Expect(headers).NotTo(BeNil())
-		Expect(headerValue(headers, "Authorization")).To(BeEmpty())
-		Expect(headerValue(headers, "X-Scope-OrgID")).To(BeEmpty())
 	}, SpecTimeout(12*time.Minute))
 
 	It("rejects invalid credentials and denied claims before the upstream", func(ctx SpecContext) {
@@ -96,8 +105,8 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 		Expect(err).NotTo(HaveOccurred())
 		defer stop()
 
-		allowed := map[string]any{"organization": map[string]any{"id": "customer-a"}, "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix()}
-		denied := map[string]any{"organization": map[string]any{"id": "customer-b"}, "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix()}
+		allowed := map[string]any{"x": map[string]any{"my_list": []string{"y", "z"}}, "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix()}
+		denied := map[string]any{"x": map[string]any{"my_list": []string{"unlisted"}}, "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix()}
 		cases := []struct {
 			name   string
 			token  string
@@ -549,6 +558,9 @@ func setupJWTGateway(ctx SpecContext, namespace, fixtureName string) (*jwtE2E, e
 		httpsAddress = env.ForwardWithCleanup(ctx, namespace, "service/auth-gateway", 443)
 	}
 	warmupClaims := jwtTestClaims("customer-a")
+	if fixtureName == "jwt-auth.yaml" {
+		warmupClaims["x"] = map[string]any{"my_list": []string{"y", "z"}}
+	}
 	warmupClaims["sub"] = "warmup"
 	warmupToken := (&jwtE2E{keys: keys}).token("issuer-one", warmupClaims, nil)
 	warmupHost := gatewayConfig.Servers[0].Hostname

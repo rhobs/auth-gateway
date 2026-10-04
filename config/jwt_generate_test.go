@@ -115,7 +115,19 @@ func TestJWTAuthorizationReadsOriginalClaimsFromNamedProvider(t *testing.T) {
 		if len(path) != 3 || path[1] != "organization" || path[2] != "id" {
 			t.Fatalf("grant claim path = %v, want provider.organization.id", path)
 		}
-		value := claim.GetMetadataMatcher().GetValue().GetStringMatch().GetExact()
+		valueMatcher := claim.GetMetadataMatcher().GetValue()
+		branches := valueMatcher.GetOrMatch().GetValueMatchers()
+		if len(branches) != 2 || branches[0].GetStringMatch() == nil || branches[1].GetListMatch() == nil {
+			t.Fatalf("claim matcher = %#v, want scalar and list branches", valueMatcher)
+		}
+		listValueMatcher := branches[1].GetListMatch().GetOneOf()
+		if listValueMatcher == nil || listValueMatcher.GetStringMatch() == nil {
+			t.Fatalf("list matcher = %#v, want an exact string member matcher", branches[1].GetListMatch())
+		}
+		value := branches[0].GetStringMatch().GetExact()
+		if listValueMatcher.GetStringMatch().GetExact() != value {
+			t.Fatalf("scalar and list match values = %q and %q", value, listValueMatcher.GetStringMatch().GetExact())
+		}
 		gotValues[path[0]] = value
 	}
 	if !reflect.DeepEqual(gotValues, map[string]string{"issuer-one": "customer-a", "issuer-two": "customer-b"}) {
@@ -129,6 +141,49 @@ func TestJWTAuthorizationReadsOriginalClaimsFromNamedProvider(t *testing.T) {
 	any := config.RequirementMap[serverJWTRequirementName(0)].GetRequiresAny().Requirements
 	if len(any) != 2 || any[0].GetProviderName() != "issuer-one" || any[1].GetProviderName() != "issuer-two" {
 		t.Fatalf("alternative issuer requirement = %#v", any)
+	}
+}
+
+func TestJWTAuthorizationMatchesAnyAllowedListClaimValue(t *testing.T) {
+	c := loadConfigCase(t, "jwt-auth")
+	c.Authenticators[0].JWT.Attributes["my_list"] = JWTAttribute{ClaimPath: []string{"x", "my_list"}}
+	grant := c.AuthorizationPolicies[0].Grants[0]
+	grant.Attributes = map[string][]string{"my_list": {"y", "z"}}
+
+	principal := grantPrincipal(c, grant)
+	claim := principal.GetSourcedMetadata()
+	if claim == nil {
+		t.Fatalf("grant principal = %#v, want a JWT metadata matcher", principal)
+	}
+	var gotPath []string
+	for _, segment := range claim.GetMetadataMatcher().GetPath() {
+		gotPath = append(gotPath, segment.GetKey())
+	}
+	if !slices.Equal(gotPath, []string{"internal-jwt", "x", "my_list"}) {
+		t.Fatalf("claim path = %v, want internal-jwt.x.my_list", gotPath)
+	}
+
+	valueMatcher := claim.GetMetadataMatcher().GetValue()
+	branches := valueMatcher.GetOrMatch().GetValueMatchers()
+	if len(branches) != 2 || branches[0].GetOrMatch() == nil || branches[1].GetListMatch() == nil {
+		t.Fatalf("claim matcher = %#v, want scalar allowlist and list-member branches", valueMatcher)
+	}
+	scalarValues := branches[0].GetOrMatch().GetValueMatchers()
+	listMatcher := branches[1].GetListMatch().GetOneOf()
+	if listMatcher == nil || listMatcher.GetOrMatch() == nil {
+		t.Fatalf("list matcher = %#v, want an allowlist matcher for list members", branches[1].GetListMatch())
+	}
+	listValues := listMatcher.GetOrMatch().GetValueMatchers()
+	if len(scalarValues) != 2 || len(listValues) != 2 {
+		t.Fatalf("scalar/list allowlist lengths = %d/%d, want 2/2", len(scalarValues), len(listValues))
+	}
+	for i, want := range []string{"y", "z"} {
+		if scalarValues[i].GetStringMatch() == nil || scalarValues[i].GetStringMatch().GetExact() != want {
+			t.Fatalf("scalar allowlist value %d = %#v, want %q", i, scalarValues[i], want)
+		}
+		if listValues[i].GetStringMatch() == nil || listValues[i].GetStringMatch().GetExact() != want {
+			t.Fatalf("list-member allowlist value %d = %#v, want %q", i, listValues[i], want)
+		}
 	}
 }
 

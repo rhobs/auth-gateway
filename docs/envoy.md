@@ -46,7 +46,9 @@ Attribute initialization runs only when a route or policy needs JWT attributes. 
 
 ## Original claims and working attributes
 
-A JWT attribute's `claim_path` is a list of literal object keys. For example, `[organization, id]` reads two nested keys, while `[customer.id]` reads one top-level key containing a dot. Missing, null, empty, or non-string claim values leave the corresponding working attribute unset; they do not invalidate an otherwise valid JWT.
+A JWT attribute's `claim_path` is a list of literal object keys. For example, `[organization, id]` reads two nested keys, while `[customer.id]` reads one top-level key containing a dot. To authorize `{"x":{"my_list":["y","z"]}}`, set `claim_path: [x, my_list]` and allow values with `attributes.my_list: [y, z]`. Any string member that matches an allowed value is sufficient; scalar claims still use exact matching. The path may end at a list-valued claim, but it cannot traverse into a list. Different attributes in one grant must all match.
+
+Working attributes used for processing require a scalar string. Missing, null, empty, non-string, or list-valued claims leave the corresponding working attribute unset; they do not invalidate an otherwise valid JWT.
 
 Authorization grants are tied to a named authenticator and use its original claim values. The optional top-level `processing` list changes working attributes only after authorization. Each processor performs one exact lookup per configured attribute. Entries in one table do not chain. Later processors see earlier results and may replace them. Unmatched values pass through.
 

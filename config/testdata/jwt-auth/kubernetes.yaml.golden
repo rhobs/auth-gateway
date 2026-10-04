@@ -244,8 +244,14 @@ data:
                                                                                 - key: organization
                                                                                 - key: id
                                                                             value:
-                                                                                string_match:
-                                                                                    exact: customer-a
+                                                                                or_match:
+                                                                                    value_matchers:
+                                                                                        - string_match:
+                                                                                            exact: customer-a
+                                                                                        - list_match:
+                                                                                            one_of:
+                                                                                                string_match:
+                                                                                                    exact: customer-a
                                                     local-responses:
                                                         permissions:
                                                             - sourced_metadata:

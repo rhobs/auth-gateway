@@ -429,16 +429,7 @@ func apiPermission(api string) *rbac.Permission {
 func grantPrincipal(c Config, grant AuthorizationGrant) *rbac.Principal {
 	conditions := make([]*rbac.Principal, 0, len(grant.Attributes))
 	for _, attribute := range slices.Sorted(maps.Keys(grant.Attributes)) {
-		values := make([]*matcher.ValueMatcher, 0, len(grant.Attributes[attribute]))
-		for _, value := range grant.Attributes[attribute] {
-			values = append(values, &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: value}}}})
-		}
-		var valueMatcher *matcher.ValueMatcher
-		if len(values) == 1 {
-			valueMatcher = values[0]
-		} else {
-			valueMatcher = &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_OrMatch{OrMatch: &matcher.OrMatcher{ValueMatchers: values}}}
-		}
+		valueMatcher := claimValueMatcher(grant.Attributes[attribute])
 		authenticator := findAuthenticator(c, grant.Authenticator)
 		claimPath := append([]string{grant.Authenticator}, authenticator.JWT.Attributes[attribute].ClaimPath...)
 		conditions = append(conditions, jwtClaimPrincipal(claimPath, valueMatcher))
@@ -447,6 +438,22 @@ func grantPrincipal(c Config, grant AuthorizationGrant) *rbac.Principal {
 		return conditions[0]
 	}
 	return &rbac.Principal{Identifier: &rbac.Principal_AndIds{AndIds: &rbac.Principal_Set{Ids: conditions}}}
+}
+
+// claimValueMatcher accepts a scalar claim or any allowed member of a list claim.
+func claimValueMatcher(allowedValues []string) *matcher.ValueMatcher {
+	values := make([]*matcher.ValueMatcher, 0, len(allowedValues))
+	for _, value := range allowedValues {
+		values = append(values, &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: value}}}})
+	}
+	var allowedMatcher *matcher.ValueMatcher
+	if len(values) == 1 {
+		allowedMatcher = values[0]
+	} else {
+		allowedMatcher = &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_OrMatch{OrMatch: &matcher.OrMatcher{ValueMatchers: values}}}
+	}
+	listMatcher := &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_ListMatch{ListMatch: &matcher.ListMatcher{MatchPattern: &matcher.ListMatcher_OneOf{OneOf: allowedMatcher}}}}
+	return &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_OrMatch{OrMatch: &matcher.OrMatcher{ValueMatchers: []*matcher.ValueMatcher{allowedMatcher, listMatcher}}}}
 }
 
 func jwtClaimPrincipal(claimPath []string, value *matcher.ValueMatcher) *rbac.Principal {

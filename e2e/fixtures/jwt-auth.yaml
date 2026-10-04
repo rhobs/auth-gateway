@@ -12,15 +12,15 @@ authenticators:
         uri: https://jwks.jwt.test/issuer-one
       audiences: [gateway-test]
       attributes:
-        tenant_id:
-          claim_path: [organization, id]
+        my_list:
+          claim_path: [x, my_list]
 authorization_policies:
   - name: metrics-writers
     grants:
       - authenticator: issuer-one
         apis: [metrics]
         attributes:
-          tenant_id: [customer-a]
+          my_list: [y, z]
 apis:
   - name: metrics
     upstream:

@@ -445,8 +445,14 @@ data:
                                                                                 - key: z
                                                                                 - key: claim
                                                                             value:
-                                                                                string_match:
-                                                                                    exact: client-123
+                                                                                or_match:
+                                                                                    value_matchers:
+                                                                                        - string_match:
+                                                                                            exact: client-123
+                                                                                        - list_match:
+                                                                                            one_of:
+                                                                                                string_match:
+                                                                                                    exact: client-123
                                                                     - sourced_metadata:
                                                                         metadata_matcher:
                                                                             filter: envoy.filters.http.jwt_authn
@@ -457,10 +463,20 @@ data:
                                                                             value:
                                                                                 or_match:
                                                                                     value_matchers:
-                                                                                        - string_match:
-                                                                                            exact: customer-456
-                                                                                        - string_match:
-                                                                                            exact: customer-789
+                                                                                        - or_match:
+                                                                                            value_matchers:
+                                                                                                - string_match:
+                                                                                                    exact: customer-456
+                                                                                                - string_match:
+                                                                                                    exact: customer-789
+                                                                                        - list_match:
+                                                                                            one_of:
+                                                                                                or_match:
+                                                                                                    value_matchers:
+                                                                                                        - string_match:
+                                                                                                            exact: customer-456
+                                                                                                        - string_match:
+                                                                                                            exact: customer-789
                                                     api-metrics-write:
                                                         permissions:
                                                             - sourced_metadata:
@@ -487,10 +503,20 @@ data:
                                                                             value:
                                                                                 or_match:
                                                                                     value_matchers:
-                                                                                        - string_match:
-                                                                                            exact: client-123
-                                                                                        - string_match:
-                                                                                            exact: client-456
+                                                                                        - or_match:
+                                                                                            value_matchers:
+                                                                                                - string_match:
+                                                                                                    exact: client-123
+                                                                                                - string_match:
+                                                                                                    exact: client-456
+                                                                                        - list_match:
+                                                                                            one_of:
+                                                                                                or_match:
+                                                                                                    value_matchers:
+                                                                                                        - string_match:
+                                                                                                            exact: client-123
+                                                                                                        - string_match:
+                                                                                                            exact: client-456
                                                                     - sourced_metadata:
                                                                         metadata_matcher:
                                                                             filter: envoy.filters.http.jwt_authn
@@ -499,8 +525,14 @@ data:
                                                                                 - key: organization
                                                                                 - key: id
                                                                             value:
-                                                                                string_match:
-                                                                                    exact: customer-456
+                                                                                or_match:
+                                                                                    value_matchers:
+                                                                                        - string_match:
+                                                                                            exact: customer-456
+                                                                                        - list_match:
+                                                                                            one_of:
+                                                                                                string_match:
+                                                                                                    exact: customer-456
                                                     local-responses:
                                                         permissions:
                                                             - sourced_metadata:
@@ -830,8 +862,14 @@ data:
                                                                                 - key: z
                                                                                 - key: claim
                                                                             value:
-                                                                                string_match:
-                                                                                    exact: client-123
+                                                                                or_match:
+                                                                                    value_matchers:
+                                                                                        - string_match:
+                                                                                            exact: client-123
+                                                                                        - list_match:
+                                                                                            one_of:
+                                                                                                string_match:
+                                                                                                    exact: client-123
                                                                     - sourced_metadata:
                                                                         metadata_matcher:
                                                                             filter: envoy.filters.http.jwt_authn
@@ -842,10 +880,20 @@ data:
                                                                             value:
                                                                                 or_match:
                                                                                     value_matchers:
-                                                                                        - string_match:
-                                                                                            exact: customer-456
-                                                                                        - string_match:
-                                                                                            exact: customer-789
+                                                                                        - or_match:
+                                                                                            value_matchers:
+                                                                                                - string_match:
+                                                                                                    exact: customer-456
+                                                                                                - string_match:
+                                                                                                    exact: customer-789
+                                                                                        - list_match:
+                                                                                            one_of:
+                                                                                                or_match:
+                                                                                                    value_matchers:
+                                                                                                        - string_match:
+                                                                                                            exact: customer-456
+                                                                                                        - string_match:
+                                                                                                            exact: customer-789
                                                     api-metrics-write:
                                                         permissions:
                                                             - sourced_metadata:
@@ -872,10 +920,20 @@ data:
                                                                             value:
                                                                                 or_match:
                                                                                     value_matchers:
-                                                                                        - string_match:
-                                                                                            exact: client-123
-                                                                                        - string_match:
-                                                                                            exact: client-456
+                                                                                        - or_match:
+                                                                                            value_matchers:
+                                                                                                - string_match:
+                                                                                                    exact: client-123
+                                                                                                - string_match:
+                                                                                                    exact: client-456
+                                                                                        - list_match:
+                                                                                            one_of:
+                                                                                                or_match:
+                                                                                                    value_matchers:
+                                                                                                        - string_match:
+                                                                                                            exact: client-123
+                                                                                                        - string_match:
+                                                                                                            exact: client-456
                                                                     - sourced_metadata:
                                                                         metadata_matcher:
                                                                             filter: envoy.filters.http.jwt_authn
@@ -884,8 +942,14 @@ data:
                                                                                 - key: organization
                                                                                 - key: id
                                                                             value:
-                                                                                string_match:
-                                                                                    exact: customer-456
+                                                                                or_match:
+                                                                                    value_matchers:
+                                                                                        - string_match:
+                                                                                            exact: customer-456
+                                                                                        - list_match:
+                                                                                            one_of:
+                                                                                                string_match:
+                                                                                                    exact: customer-456
                                                     local-responses:
                                                         permissions:
                                                             - sourced_metadata:

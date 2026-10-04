@@ -295,8 +295,14 @@ static_resources:
                                                                             - key: organization
                                                                             - key: id
                                                                         value:
-                                                                            string_match:
-                                                                                exact: customer-a
+                                                                            or_match:
+                                                                                value_matchers:
+                                                                                    - string_match:
+                                                                                        exact: customer-a
+                                                                                    - list_match:
+                                                                                        one_of:
+                                                                                            string_match:
+                                                                                                exact: customer-a
                                                                 - sourced_metadata:
                                                                     metadata_matcher:
                                                                         filter: envoy.filters.http.jwt_authn
@@ -305,8 +311,14 @@ static_resources:
                                                                             - key: organization
                                                                             - key: id
                                                                         value:
-                                                                            string_match:
-                                                                                exact: customer-b
+                                                                            or_match:
+                                                                                value_matchers:
+                                                                                    - string_match:
+                                                                                        exact: customer-b
+                                                                                    - list_match:
+                                                                                        one_of:
+                                                                                            string_match:
+                                                                                                exact: customer-b
                                                 local-responses:
                                                     permissions:
                                                         - sourced_metadata:
@@ -397,8 +409,14 @@ static_resources:
                                                                             - key: organization
                                                                             - key: id
                                                                         value:
-                                                                            string_match:
-                                                                                exact: customer-a
+                                                                            or_match:
+                                                                                value_matchers:
+                                                                                    - string_match:
+                                                                                        exact: customer-a
+                                                                                    - list_match:
+                                                                                        one_of:
+                                                                                            string_match:
+                                                                                                exact: customer-a
                                                                 - sourced_metadata:
                                                                     metadata_matcher:
                                                                         filter: envoy.filters.http.jwt_authn
@@ -407,8 +425,14 @@ static_resources:
                                                                             - key: organization
                                                                             - key: id
                                                                         value:
-                                                                            string_match:
-                                                                                exact: customer-b
+                                                                            or_match:
+                                                                                value_matchers:
+                                                                                    - string_match:
+                                                                                        exact: customer-b
+                                                                                    - list_match:
+                                                                                        one_of:
+                                                                                            string_match:
+                                                                                                exact: customer-b
                                                 local-responses:
                                                     permissions:
                                                         - sourced_metadata:
