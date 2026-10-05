@@ -212,6 +212,7 @@ static_resources:
                     request_headers_timeout: 2s
                     request_timeout: 45s
                     route_config:
+                        ignore_port_in_host_matching: true
                         name: ingestion
                         virtual_hosts:
                             - domains:

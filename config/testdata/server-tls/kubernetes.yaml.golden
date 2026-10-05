@@ -107,6 +107,7 @@ data:
                         request_headers_timeout: 5s
                         request_timeout: 30s
                         route_config:
+                            ignore_port_in_host_matching: true
                             name: ingestion
                             virtual_hosts:
                                 - domains:
@@ -213,6 +214,7 @@ data:
                         request_headers_timeout: 5s
                         request_timeout: 30s
                         route_config:
+                            ignore_port_in_host_matching: true
                             name: ingestion
                             virtual_hosts:
                                 - domains:
@@ -339,6 +341,7 @@ data:
                         request_headers_timeout: 5s
                         request_timeout: 30s
                         route_config:
+                            ignore_port_in_host_matching: true
                             name: ingestion
                             virtual_hosts:
                                 - domains:

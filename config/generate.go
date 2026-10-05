@@ -415,8 +415,9 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 		NormalizePath:                wrapperspb.Bool(false),
 		PathWithEscapedSlashesAction: hcm.HttpConnectionManager_KEEP_UNCHANGED,
 		RouteSpecifier: &hcm.HttpConnectionManager_RouteConfig{RouteConfig: &route.RouteConfiguration{
-			Name:         ingestionListenerName,
-			VirtualHosts: hosts,
+			Name:                     ingestionListenerName,
+			IgnorePortInHostMatching: true,
+			VirtualHosts:             hosts,
 		}},
 		AccessLog:   accessLogs,
 		HttpFilters: filters,

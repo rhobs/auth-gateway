@@ -150,6 +150,9 @@ func TestGenerateBuildsNamedAPIClustersAndRoutes(t *testing.T) {
 	if err := listener.FilterChains[0].Filters[0].GetTypedConfig().UnmarshalTo(&manager); err != nil {
 		t.Fatal(err)
 	}
+	if !manager.GetRouteConfig().GetIgnorePortInHostMatching() {
+		t.Fatal("route configuration does not ignore the listener port during virtual-host matching")
+	}
 	routes := manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()
 	if len(routes) != 5 {
 		t.Fatalf("route count = %d, want 5", len(routes))
