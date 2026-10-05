@@ -1,0 +1,37 @@
+services:
+  mock-oauth2-server:
+    image: ${MOCK_OAUTH2_IMAGE:-ghcr.io/navikt/mock-oauth2-server:6.0.4}
+    user: "0:0"
+    ports:
+      - "127.0.0.1:${OAUTH_HOST_PORT:-8443}:8443"
+    environment:
+      SERVER_PORT: "8443"
+      JSON_CONFIG_PATH: /app/config.json
+      LOG_LEVEL: info
+    volumes:
+      - ./mock-oauth2-config.json:/app/config.json:ro
+      - ./generated/mock-oauth2.p12:/app/mock-oauth2.p12:ro
+
+  envoy:
+    image: ${ENVOY_IMAGE:-envoyproxy/envoy:v1.39.1}
+    depends_on:
+      - mock-oauth2-server
+    ports:
+      - "127.0.0.1:${HOST_PORT:-8080}:${ENVOY_PORT:-8080}"
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
+    volumes:
+      - ./generated:/etc/auth-gateway:ro
+      - ./generated/ca:/etc/auth-gateway-ca:ro
+    command: ["-c", "/etc/auth-gateway/envoy.yaml", "--log-level", "info"]
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.5.0}
+    depends_on:
+      - envoy
+    network_mode: service:envoy
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.listen-address=:9090
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro

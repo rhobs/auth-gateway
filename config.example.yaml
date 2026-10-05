@@ -12,9 +12,14 @@ node:
   # Logical service cluster that this Envoy belongs to.
   cluster: auth-gateway
 
+# Optional. All metered APIs share this counter name. Envoy adds envoy_http_lua_.
+request_metrics:
+  name: gateway_http_requests_total
+
 # Each API defines one upstream and one or more routes to it.
 apis:
   - name: metrics-write
+    metrics: {}
     upstream:
       address: thanos-receive
       port: 19291
@@ -65,6 +70,7 @@ apis:
           path: /api/v1/labels
 
   - name: logs
+    metrics: {}
     upstream:
       address: loki
       port: 3100

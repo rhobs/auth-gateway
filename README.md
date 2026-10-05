@@ -25,6 +25,8 @@ The library also exposes two output paths:
 - `config.Generate(cfg)` returns a map of Envoy filenames to file contents. Use it for file-based Envoy deployments. It does not require Kubernetes settings.
 - `config.GenerateKubernetes(cfg)` requires the `kubernetes` section and returns typed resources. Call `resources.YAML()` for a multi-document manifest, or `resources.Objects()` when a Kubernetes client needs typed objects.
 
+For a local Envoy demo with unprotected, API-key, JWT, and mixed servers, see [playground/README.md](playground/README.md).
+
 The loader applies defaults, validates references, rejects unknown YAML fields, and requires exactly one document. See [config.example.yaml](config.example.yaml) for routing, [config.auth.example.yaml](config.auth.example.yaml) for JWT, API keys, and request processing, and [config.production.example.yaml](config.production.example.yaml) for capacity settings.
 
 ## Routing

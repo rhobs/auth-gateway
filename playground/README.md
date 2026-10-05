@@ -1,0 +1,73 @@
+# Local playground
+
+This playground runs Envoy, [navikt/mock-oauth2-server](https://github.com/navikt/mock-oauth2-server), and Prometheus in Docker Compose. It routes the `metrics-write` and `logs` APIs from [config.example.yaml](../config.example.yaml) to `https://httpbin.org/anything`; the query API is omitted. The two JWT issuers use [Mock OAuth JSON token callbacks](https://github.com/navikt/mock-oauth2-server#token-customization-via-json_config).
+
+Requirements: Docker Compose v2, Go, OpenSSL, `yq` v4, `jq`, and `curl`. Go is used only by `make generate` to call the repository's resource generators. No local Go server is kept running.
+
+Start the stack. This generates Envoy resources and both demo JWTs:
+
+```sh
+make start
+```
+
+The Envoy configuration is generated from [config.yaml](config.yaml). After editing it, run `make generate` and restart Envoy with `make start`. The generated bootstrap is [generated/envoy.yaml](generated/envoy.yaml); API-key ECDS data is [generated/api-keys/api-keys.yaml](generated/api-keys/api-keys.yaml). API-key values are in the ignored `credentials.yaml`, copied from [credentials.example.yaml](credentials.example.yaml) on first generation. Generation also upgrades the original one-key demo credentials to the current examples. Any other existing `credentials.yaml` is preserved, so if you customized it, add the `metrics-demo-key` and `logs-demo-key` entries from `credentials.example.yaml` to use the sample API-key commands below.
+
+The four local servers share port 8080. `unprotected.localhost` exposes the browser-friendly public route. The `api-key.localhost`, `jwt.localhost`, and `mixed.localhost` servers expose the protected write routes:
+
+- `GET /anything` on `unprotected.localhost` forwards to `https://httpbin.org/anything`.
+- `POST /metrics/api/v1/receive` rewrites to `/anything`.
+- `POST /logs/otlp/v1/logs` rewrites to `/anything/v1/logs`.
+
+The `metrics-write` and `logs` APIs have separate authorization grants. The metrics JWT and `metrics-demo-key` work only for `metrics-write`; the logs JWT and `logs-demo-key` work only for `logs`. `jwt.localhost` accepts either issuer, `api-key.localhost` accepts API keys, and `mixed.localhost` accepts either a JWT or an API key. A credential for the other API is denied with 403. `unprotected.localhost` needs no credential.
+
+Both protected write routes set `X-Authenticated-User` from the verified `user_id` attribute. httpbin echoes `metrics-writer` for metrics credentials and `logs-writer` for logs credentials. The gateway replaces any caller-supplied value for this header and strips the original API key or bearer token before forwarding.
+
+Mock OAuth issues separate JWTs from its `metrics` and `logs` issuers. Their issuer claims are `https://auth.localhost:8443/metrics` and `https://auth.localhost:8443/logs`; each has its own JWKS endpoint. `make start` requests both tokens automatically. Run `make token` to refresh them. The raw JWTs are stored with owner-only permissions in `generated/metrics.jwt` and `generated/logs.jwt`.
+
+To inspect an OAuth response as JSON or print just the raw access token, request either issuer by changing `metrics` to `logs` in the URL:
+
+```sh
+token_response=$(curl --silent --show-error --fail \
+  --resolve auth.localhost:8443:127.0.0.1 \
+  --cacert generated/mock-oauth2.crt \
+  --data-urlencode 'grant_type=client_credentials' \
+  --data-urlencode 'client_id=playground-client' \
+  --data-urlencode 'client_secret=playground-secret' \
+  https://auth.localhost:8443/metrics/token)
+printf '%s\n' "$token_response" | jq .
+printf '%s\n' "$token_response" | jq -r '.access_token'
+```
+
+The commands below send API requests through Envoy. Envoy validates the credentials, sets `X-Authenticated-User` from the verified `user_id` attribute, and removes the API-key and bearer-token headers before forwarding to httpbin:
+
+```sh
+curl --request POST \
+  --header "Authorization: Bearer $(cat generated/metrics.jwt)" \
+  --data 'sample=metrics' \
+  http://jwt.localhost:8080/metrics/api/v1/receive
+
+curl --request POST \
+  --header "Authorization: Bearer $(cat generated/logs.jwt)" \
+  --header 'Content-Type: application/json' \
+  --data '{"resourceLogs":[]}' \
+  http://jwt.localhost:8080/logs/otlp/v1/logs
+
+curl --request POST \
+  --header 'X-API-Key: metrics-demo-key' \
+  --data 'sample=metrics' \
+  http://api-key.localhost:8080/metrics/api/v1/receive
+
+curl --request POST \
+  --header 'X-API-Key: logs-demo-key' \
+  --header 'Content-Type: application/json' \
+  --data '{"resourceLogs":[]}' \
+  http://mixed.localhost:8080/logs/otlp/v1/logs
+```
+
+To see the different issuers and keys rejected by route authorization, use the metrics token or key on `/logs/otlp/v1/logs`, or the logs token or key on `/metrics/api/v1/receive`. Those requests should return 403.
+
+Prometheus is available at `http://127.0.0.1:9090`. It scrapes Envoy's built-in stats and the custom request counter every five seconds. This config sets `request_metrics.name` to `gateway_http_requests_total`, so the exported counter is `envoy_http_lua_gateway_http_requests_total` with `api`, `http_status_code`, and `user_id` labels. `envoy_http_lua_auth_gateway_http_requests_total` is the default counter name when `request_metrics.name` is omitted, so it has no series in this playground. Try `envoy_http_lua_gateway_http_requests_total{api="metrics-write"}` and `envoy_http_lua_gateway_http_requests_total{api="logs",user_id="logs-writer"}` in the Prometheus expression browser. Envoy's admin port remains loopback-only and is not published to the host. The metrics database is temporary and is removed when the stack is stopped. Set `PROMETHEUS_HOST_PORT` to change the local Prometheus port.
+
+The token issuer URLs use `auth.localhost` because that is the host used when requesting tokens. Envoy fetches the separate JWKS documents from `mock-oauth2-server` over the Compose network. The generated certificate covers both hostnames and is trusted by Envoy. `make generate` replaces an older certificate that lacks the service-name SAN. Set `HOST_PORT` to change the local Envoy port; if you change `listener.port` in the config, set `ENVOY_PORT` to the same value. `OAUTH_HOST_PORT` changes the OAuth port on your host. Tokens include that port in `iss`, so update both JWT `issuer` values in `config.yaml` if you change it. JWKS requests use the OAuth container's internal port 8443 and Compose service name. If you change the internal port, update `SERVER_PORT`, the Compose port mapping, and both JWKS URLs as well.
+
+`make run` starts the stack and follows its logs. Press Ctrl-C to stop following logs, then run `make stop` to stop the containers. `make clean` stops the stack and removes generated files; it keeps `credentials.yaml`. On the next `make start`, generation upgrades the original one-key demo credentials or uses your existing customized credentials as-is.
