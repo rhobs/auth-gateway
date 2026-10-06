@@ -48,11 +48,23 @@ func TestAPIKeyPipelineUsesFileECDSAndHostScopedFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 	rules := metadata.GetRequestRules()
-	if len(rules) != 1 || rules[0].Header != apiKeyClientHeader || !rules[0].Remove ||
+	if len(rules) != 3 || rules[0].Header != apiKeyClientHeader || rules[0].Remove ||
 		rules[0].GetOnHeaderPresent().GetMetadataNamespace() != apiKeyMetadataNamespace ||
-		rules[0].GetOnHeaderPresent().GetType() != headertometadata.Config_PROTOBUF_VALUE ||
-		rules[0].GetOnHeaderPresent().GetEncode() != headertometadata.Config_BASE64 {
+		rules[0].GetOnHeaderPresent().GetKey() != apiKeyMetadataKey ||
+		rules[0].GetOnHeaderPresent().GetType() != headertometadata.Config_STRING ||
+		rules[0].GetOnHeaderPresent().GetEncode() != headertometadata.Config_NONE {
 		t.Fatalf("API-key identity extraction = %#v", rules)
+	}
+	for index, attribute := range []string{"tenant_id", "writer_id"} {
+		rule := rules[index+1]
+		value := rule.GetOnHeaderPresent()
+		if rule.Header != apiKeyClientHeader || rule.Remove != (index == 1) ||
+			value.GetMetadataNamespace() != apiKeyMetadataNamespace ||
+			value.GetKey() != apiKeyAttributeMetadataKey(attribute) ||
+			value.GetRegexValueRewrite().GetPattern().GetRegex() != apiKeyClientPattern(c.Authenticators[1].APIKey.Attributes, attribute) ||
+			value.GetRegexValueRewrite().GetSubstitution() != `\1` {
+			t.Fatalf("API-key attribute %q extraction = %#v", attribute, rule)
+		}
 	}
 	cleanupFilter := apiKeyHTTPFilter(t, manager, credentialCleanupFilterName)
 	if cleanupFilter.Disabled {
@@ -111,8 +123,8 @@ func TestAPIKeyRawAuthorizationAndSharedAttributeEquality(t *testing.T) {
 	c := loadConfigCase(t, "api-key-auth")
 	keyOnly := serverAuthenticationRBACRules(c, c.Servers[1]).Policies["authenticated"].Principals[0]
 	if matcher := keyOnly.GetSourcedMetadata().GetMetadataMatcher(); matcher == nil || matcher.Filter != apiKeyMetadataNamespace ||
-		!slices.Equal(metadataMatcherPath(matcher.GetPath()), []string{"identity", "authenticator"}) ||
-		matcher.GetValue().GetStringMatch().GetExact() != "partner-key" {
+		!slices.Equal(metadataMatcherPath(matcher.GetPath()), []string{"identity"}) ||
+		matcher.GetValue().GetStringMatch().GetSafeRegex().GetRegex() != apiKeyClientPattern(c.Authenticators[1].APIKey.Attributes, "") {
 		t.Fatalf("key-only authentication principal = %#v", keyOnly)
 	}
 	mixed := serverAuthenticationRBACRules(c, c.Servers[2]).Policies["authenticated"].Principals[0].GetOrIds().GetIds()
@@ -138,7 +150,7 @@ func TestAPIKeyRawAuthorizationAndSharedAttributeEquality(t *testing.T) {
 	grant := grantPrincipal(c, c.AuthorizationPolicies[1].Grants[0])
 	parts := grant.GetAndIds().GetIds()
 	if len(parts) != 2 || parts[1].GetSourcedMetadata().GetMetadataMatcher().GetFilter() != apiKeyMetadataNamespace ||
-		!slices.Equal(metadataMatcherPath(parts[1].GetSourcedMetadata().GetMetadataMatcher().GetPath()), []string{"identity", "attributes", "tenant_id"}) {
+		!slices.Equal(metadataMatcherPath(parts[1].GetSourcedMetadata().GetMetadataMatcher().GetPath()), []string{"attribute.tenant_id"}) {
 		t.Fatalf("API-key grant reads unprocessed Secret attributes: %#v", grant)
 	}
 	c.Servers[1].Authorization.AnyOf = []string{"jwt-writers", "key-writers"}

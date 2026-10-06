@@ -2,7 +2,6 @@ package config
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"slices"
 	"strings"
@@ -13,9 +12,7 @@ import (
 	apikey "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/api_key_auth/v3"
 	"go.yaml.in/yaml/v3"
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
-	"google.golang.org/protobuf/types/known/structpb"
 )
 
 func TestAPIKeySecretContainsOneReloadableResource(t *testing.T) {
@@ -31,6 +28,13 @@ func TestAPIKeySecretContainsOneReloadableResource(t *testing.T) {
 	if secret.Name != "gateway-api-keys" || secret.Namespace != "gateway-test" || len(secret.Data) != 1 {
 		t.Fatalf("Secret identity or data = %#v", secret)
 	}
+	file, err := GenerateAPIKeyECDS(c.Authenticators[1], credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(file, secret.Data[apiKeySecretFilename]) {
+		t.Fatal("file-based and Secret API-key resources differ")
+	}
 	config := decodeAPIKeySecret(t, secret.Data[apiKeySecretFilename])
 	if len(config.Credentials) != 2 || config.Credentials[0].Key != "key-a" || config.Credentials[1].Key != "key-b" {
 		t.Fatalf("sorted credentials = %#v", config.Credentials)
@@ -39,19 +43,8 @@ func TestAPIKeySecretContainsOneReloadableResource(t *testing.T) {
 		config.Forwarding.Header != apiKeyClientHeader || !config.Forwarding.HideCredentials {
 		t.Fatalf("API-key input and forwarding = %#v", config)
 	}
-	client, err := base64.StdEncoding.DecodeString(config.Credentials[0].Client)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var identity structpb.Value
-	if err := proto.Unmarshal(client, &identity); err != nil {
-		t.Fatal(err)
-	}
-	fields := identity.GetStructValue().Fields
-	if fields["authenticator"].GetStringValue() != "partner-key" ||
-		fields["attributes"].GetStructValue().Fields["tenant_id"].GetStringValue() != "client-a" ||
-		fields["attributes"].GetStructValue().Fields["writer_id"].GetStringValue() != "writer-a" {
-		t.Fatalf("decoded credential identity = %#v", fields)
+	if got, want := config.Credentials[0].Client, "tenant_id=client-a;writer_id=writer-a"; got != want {
+		t.Fatalf("readable credential identity = %q, want %q", got, want)
 	}
 	reversed, err := APIKeySecret("gateway-test", c.Authenticators[1], []APIKeyCredential{credentials[1], credentials[0]})
 	if err != nil {
@@ -66,6 +59,51 @@ func TestAPIKeySecretContainsOneReloadableResource(t *testing.T) {
 	}
 	if !bytes.Contains(empty.Data[apiKeySecretFilename], []byte("credentials: []")) || len(decodeAPIKeySecret(t, empty.Data[apiKeySecretFilename]).Credentials) != 0 {
 		t.Fatalf("empty key list did not emit a deny-all resource: %s", empty.Data[apiKeySecretFilename])
+	}
+}
+
+func TestAPIKeyClientIncludesMissingAttributesInNameOrder(t *testing.T) {
+	c := loadConfigCase(t, "api-key-auth")
+	authenticator := c.Authenticators[1]
+	authenticator.APIKey.Attributes = []string{"writer_id", "tenant_id"}
+	file, err := GenerateAPIKeyECDS(authenticator, []APIKeyCredential{{
+		Key: "key-a", Attributes: map[string]string{"writer_id": "writer-a"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentials := decodeAPIKeySecret(t, file).Credentials
+	if len(credentials) != 1 || credentials[0].Client != "tenant_id=;writer_id=writer-a" {
+		t.Fatalf("client with a missing attribute = %#v", credentials)
+	}
+}
+
+func TestLoadAPIKeyCredentials(t *testing.T) {
+	credentials, err := LoadAPIKeyCredentials(strings.NewReader("credentials:\n  - key: example-key\n    attributes:\n      tenant_id: client-a\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(credentials) != 1 || credentials[0].Key != "example-key" || credentials[0].Attributes["tenant_id"] != "client-a" {
+		t.Fatalf("credentials = %#v", credentials)
+	}
+	credentials, err = LoadAPIKeyCredentials(strings.NewReader("credentials: []\n"))
+	if err != nil || len(credentials) != 0 {
+		t.Fatalf("empty credentials = %#v, error = %v", credentials, err)
+	}
+	for _, test := range []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{name: "missing list", yaml: "{}\n", want: "must set credentials"},
+		{name: "unknown field", yaml: "credentials:\n  - key: example-key\n    extra: value\n", want: "field extra not found"},
+		{name: "multiple documents", yaml: "credentials: []\n---\ncredentials: []\n", want: "exactly one YAML document"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := LoadAPIKeyCredentials(strings.NewReader(test.yaml)); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("LoadAPIKeyCredentials error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
@@ -122,6 +160,7 @@ func TestAPIKeySecretRejectsInvalidCredentials(t *testing.T) {
 		{name: "duplicate key", namespace: "gateway-test", auth: c.Authenticators[1], credentials: []APIKeyCredential{{Key: "same"}, {Key: "same"}}, want: "credentials[1].key"},
 		{name: "undeclared attribute", namespace: "gateway-test", auth: c.Authenticators[1], credentials: []APIKeyCredential{{Key: "key", Attributes: map[string]string{"unknown": "value"}}}, want: "credentials[0].attributes"},
 		{name: "unsafe attribute", namespace: "gateway-test", auth: c.Authenticators[1], credentials: []APIKeyCredential{{Key: "key", Attributes: map[string]string{"tenant_id": "bad\r\nvalue"}}}, want: "credentials[0].attributes.tenant_id"},
+		{name: "reserved separator", namespace: "gateway-test", auth: c.Authenticators[1], credentials: []APIKeyCredential{{Key: "key", Attributes: map[string]string{"tenant_id": "client;other"}}}, want: "credentials[0].attributes.tenant_id"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -171,6 +210,48 @@ authenticators:
 `
 	if _, err := Load(strings.NewReader(unknownField)); err == nil || !strings.Contains(err.Error(), "field credentials not found") {
 		t.Fatalf("inline credentials were accepted: %v", err)
+	}
+}
+
+func TestFileBasedAPIKeyDoesNotNeedKubernetesSecret(t *testing.T) {
+	input := `version: 1
+authenticators:
+  - name: local-key
+    api_key: {}
+apis:
+  - name: ingest
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [POST]
+        path:
+          exact: /ingest
+servers:
+  - hostname: key.gateway.test
+    authentication:
+      any_of: [local-key]
+    apis: [ingest]
+`
+	c, err := Load(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Kubernetes != nil || c.Authenticators[0].APIKey == nil || c.Authenticators[0].APIKey.Secret != "" {
+		t.Fatalf("file-based API-key config = %#v", c.Authenticators[0])
+	}
+	if _, err := Generate(c); err != nil {
+		t.Fatalf("generate Envoy files: %v", err)
+	}
+	file, err := GenerateAPIKeyECDS(c.Authenticators[0], []APIKeyCredential{{Key: "example-key"}})
+	if err != nil {
+		t.Fatalf("generate API-key ECDS file: %v", err)
+	}
+	if credentials := decodeAPIKeySecret(t, file).Credentials; len(credentials) != 1 || credentials[0].Client != apiKeyClientNoAttributes {
+		t.Fatalf("API-key client without attributes = %#v", credentials)
+	}
+	if _, err := APIKeySecret("gateway-test", c.Authenticators[0], nil); err == nil || !strings.Contains(err.Error(), "authenticator.api_key.secret") {
+		t.Fatalf("Secret without a configured name: %v", err)
 	}
 }
 

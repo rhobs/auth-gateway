@@ -308,7 +308,8 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 		}
 		if usesKey {
 			filters = append(filters, apiKeyFilter())
-			metadata, err := apiKeyMetadataFilter()
+			authenticator, _ := c.apiKeyAuthenticator()
+			metadata, err := apiKeyMetadataFilter(authenticator)
 			if err != nil {
 				return nil, fmt.Errorf("encode API-key metadata filter: %w", err)
 			}
@@ -581,7 +582,7 @@ func apiPermission(api string) *rbac.Permission {
 func grantPrincipal(c Config, grant AuthorizationGrant) *rbac.Principal {
 	authenticator := findAuthenticator(c, grant.Authenticator)
 	if authenticator.APIKey != nil {
-		return keyGrantPrincipal(grant)
+		return keyGrantPrincipal(authenticator, grant)
 	}
 	conditions := make([]*rbac.Principal, 0, len(grant.Attributes))
 	for _, attribute := range slices.Sorted(maps.Keys(grant.Attributes)) {

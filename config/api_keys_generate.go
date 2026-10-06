@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"path"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -123,22 +124,68 @@ func apiKeySkipMatcher(c Config, server Server) (*xdsmatcher.Matcher, error) {
 	return &xdsmatcher.Matcher{MatcherType: &xdsmatcher.Matcher_MatcherList_{MatcherList: &xdsmatcher.Matcher_MatcherList{Matchers: fields}}}, nil
 }
 
-func apiKeyMetadataFilter() (*hcm.HttpFilter, error) {
-	config, err := packEnvoy(&headertometadata.Config{RequestRules: []*headertometadata.Config_Rule{{
-		Header: apiKeyClientHeader, Remove: true,
+func apiKeyMetadataFilter(authenticator Authenticator) (*hcm.HttpFilter, error) {
+	attributeNames := slices.Clone(authenticator.APIKey.Attributes)
+	slices.Sort(attributeNames)
+	rules := []*headertometadata.Config_Rule{{
+		Header: apiKeyClientHeader, Remove: len(attributeNames) == 0,
 		OnHeaderPresent: &headertometadata.Config_KeyValuePair{
 			MetadataNamespace: apiKeyMetadataNamespace, Key: apiKeyMetadataKey,
-			Type: headertometadata.Config_PROTOBUF_VALUE, Encode: headertometadata.Config_BASE64,
 		},
-	}}})
+	}}
+	for index, attribute := range attributeNames {
+		rules = append(rules, &headertometadata.Config_Rule{
+			Header: apiKeyClientHeader, Remove: index == len(attributeNames)-1,
+			OnHeaderPresent: &headertometadata.Config_KeyValuePair{
+				MetadataNamespace: apiKeyMetadataNamespace,
+				Key:               apiKeyAttributeMetadataKey(attribute),
+				RegexValueRewrite: &matcher.RegexMatchAndSubstitute{
+					Pattern:      apiKeyRegexMatcher(apiKeyClientPattern(authenticator.APIKey.Attributes, attribute)),
+					Substitution: `\1`,
+				},
+			},
+		})
+	}
+	config, err := packEnvoy(&headertometadata.Config{RequestRules: rules})
 	if err != nil {
 		return nil, err
 	}
 	return &hcm.HttpFilter{Name: headerToMetadataFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: config}}, nil
 }
 
-func apiKeyNamePrincipal(name string) *rbac.Principal {
-	return apiKeyMetadataPrincipal([]string{apiKeyMetadataKey, apiKeyAuthenticatorKey}, &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: name}}}})
+func apiKeyClientPattern(attributes []string, capturedAttribute string) string {
+	attributeNames := slices.Clone(attributes)
+	slices.Sort(attributeNames)
+	if len(attributeNames) == 0 {
+		return "^" + regexp.QuoteMeta(apiKeyClientNoAttributes) + "$"
+	}
+	var pattern strings.Builder
+	pattern.WriteByte('^')
+	for index, attribute := range attributeNames {
+		if index > 0 {
+			pattern.WriteByte(';')
+		}
+		pattern.WriteString(regexp.QuoteMeta(attribute))
+		pattern.WriteByte('=')
+		if attribute == capturedAttribute {
+			pattern.WriteString("([^;]*)")
+		} else {
+			pattern.WriteString("[^;]*")
+		}
+	}
+	pattern.WriteByte('$')
+	return pattern.String()
+}
+
+func apiKeyRegexMatcher(pattern string) *matcher.RegexMatcher {
+	return &matcher.RegexMatcher{
+		EngineType: &matcher.RegexMatcher_GoogleRe2{GoogleRe2: &matcher.RegexMatcher_GoogleRE2{}}, //nolint:staticcheck // The pinned Envoy API exposes this RE2 field.
+		Regex:      pattern,
+	}
+}
+
+func apiKeyIdentityPrincipal(authenticator Authenticator) *rbac.Principal {
+	return apiKeyMetadataPrincipal([]string{apiKeyMetadataKey}, &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_SafeRegex{SafeRegex: apiKeyRegexMatcher(apiKeyClientPattern(authenticator.APIKey.Attributes, ""))}}}})
 }
 
 func apiKeyMetadataPrincipal(keys []string, value *matcher.ValueMatcher) *rbac.Principal {
@@ -177,14 +224,14 @@ func andPrincipals(values ...*rbac.Principal) *rbac.Principal {
 }
 
 func serverAuthenticationRBACRules(c Config, server Server) *rbac.RBAC {
-	keyName := ""
+	var keyAuthenticator Authenticator
 	for _, name := range selectedAuthenticatorNames(server) {
-		if findAuthenticator(c, name).APIKey != nil {
-			keyName = name
+		if selected := findAuthenticator(c, name); selected.APIKey != nil {
+			keyAuthenticator = selected
 			break
 		}
 	}
-	principal := apiKeyNamePrincipal(keyName)
+	principal := apiKeyIdentityPrincipal(keyAuthenticator)
 	policy := &rbac.Policy{Permissions: []*rbac.Permission{{Rule: &rbac.Permission_Any{Any: true}}}}
 	if mixedAnyOf(c, server) {
 		alternatives := []*rbac.Principal{principal}
@@ -202,7 +249,6 @@ func serverAuthenticationRBACRules(c Config, server Server) *rbac.RBAC {
 				break
 			}
 		}
-		keyAuthenticator := findAuthenticator(c, keyName)
 		principals := []*rbac.Principal{principal}
 		builder := &celExpressionBuilder{}
 		var equality []*expr.Expr
@@ -214,10 +260,10 @@ func serverAuthenticationRBACRules(c Config, server Server) *rbac.RBAC {
 			valueMatcher := nonemptyScalarValueMatcher()
 			principals = append(principals,
 				jwtClaimPrincipal(append([]string{jwtAuthenticator.Name}, jwtAttribute.ClaimPath...), valueMatcher),
-				apiKeyMetadataPrincipal([]string{apiKeyMetadataKey, apiKeyAttributesKey, attribute}, valueMatcher))
+				apiKeyMetadataPrincipal([]string{apiKeyAttributeMetadataKey(attribute)}, valueMatcher))
 			equality = append(equality, builder.call("_==_",
 				builder.metadataValue(jwtAuthnFilterName, append([]string{jwtAuthenticator.Name}, jwtAttribute.ClaimPath...)),
-				builder.metadataValue(apiKeyMetadataNamespace, []string{apiKeyMetadataKey, apiKeyAttributesKey, attribute})))
+				builder.metadataValue(apiKeyMetadataNamespace, []string{apiKeyAttributeMetadataKey(attribute)})))
 		}
 		principal = andPrincipals(principals...)
 		if len(equality) > 0 {
@@ -239,8 +285,8 @@ func nonemptyScalarValueMatcher() *matcher.ValueMatcher {
 	}}}}}
 }
 
-func keyGrantPrincipal(grant AuthorizationGrant) *rbac.Principal {
-	conditions := []*rbac.Principal{apiKeyNamePrincipal(grant.Authenticator)}
+func keyGrantPrincipal(authenticator Authenticator, grant AuthorizationGrant) *rbac.Principal {
+	conditions := []*rbac.Principal{apiKeyIdentityPrincipal(authenticator)}
 	for _, attribute := range slices.Sorted(maps.Keys(grant.Attributes)) {
 		allowed := grant.Attributes[attribute]
 		values := make([]*matcher.ValueMatcher, 0, len(allowed))
@@ -251,7 +297,7 @@ func keyGrantPrincipal(grant AuthorizationGrant) *rbac.Principal {
 		if len(values) > 1 {
 			valueMatcher = &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_OrMatch{OrMatch: &matcher.OrMatcher{ValueMatchers: values}}}
 		}
-		conditions = append(conditions, apiKeyMetadataPrincipal([]string{apiKeyMetadataKey, apiKeyAttributesKey, attribute}, valueMatcher))
+		conditions = append(conditions, apiKeyMetadataPrincipal([]string{apiKeyAttributeMetadataKey(attribute)}, valueMatcher))
 	}
 	return andPrincipals(conditions...)
 }
@@ -277,14 +323,10 @@ func serverAttributeInitializationConfig(c Config, server Server) *setfilterstat
 }
 
 func apiKeyAttributeExpression(attribute string) string {
-	current := `metadata.filter_metadata["` + apiKeyMetadataNamespace + `"]`
-	checks := []string{`"` + apiKeyMetadataNamespace + `" in metadata.filter_metadata`}
-	for _, key := range []string{apiKeyMetadataKey, apiKeyAttributesKey, attribute} {
-		literal := celStringLiteral(key)
-		checks = append(checks, literal+" in "+current)
-		current += "[" + literal + "]"
-	}
-	return "((" + strings.Join(checks, celAndSeparator) + ") && type(" + current + ") == string && " + current + " != \"\") ? " + current + " : \"\""
+	namespace := `metadata.filter_metadata["` + apiKeyMetadataNamespace + `"]`
+	key := celStringLiteral(apiKeyAttributeMetadataKey(attribute))
+	current := namespace + "[" + key + "]"
+	return "((\"" + apiKeyMetadataNamespace + "\" in metadata.filter_metadata" + celAndSeparator + key + " in " + namespace + ") && type(" + current + ") == string && " + current + " != \"\") ? " + current + " : \"\""
 }
 
 func credentialCleanupConfig(c Config) *headermutation.HeaderMutation {

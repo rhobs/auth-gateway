@@ -613,7 +613,7 @@ func (c Config) validateAuthentication(apis map[string]API) error {
 			if apiKeyCount > 1 {
 				return fmt.Errorf("%s.api_key: only one API-key authenticator is supported", name)
 			}
-			if err := validateAPIKeyAuthenticator(name+".api_key", *authenticator.APIKey); err != nil {
+			if err := validateAPIKeyAuthenticator(name+".api_key", *authenticator.APIKey, c.Kubernetes != nil); err != nil {
 				return err
 			}
 			apiKeyHeader = authenticator.APIKey.Header

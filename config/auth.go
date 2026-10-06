@@ -42,9 +42,9 @@ type JWTAttribute struct {
 	ClaimPath []string `yaml:"claim_path"`
 }
 
-// APIKeyAuthenticator reads keys from one Kubernetes Secret and declares their attributes.
+// APIKeyAuthenticator reads keys from an ECDS file and declares their attributes.
 type APIKeyAuthenticator struct {
-	Secret     string   `yaml:"secret"`
+	Secret     string   `yaml:"secret,omitempty"`
 	Header     string   `yaml:"header,omitempty"`
 	Attributes []string `yaml:"attributes,omitempty"`
 }
@@ -162,8 +162,8 @@ func validatePermissiveJWTIssuerBindings(servers []Server, authenticators map[st
 	return validateUniqueIssuerBindings(fmt.Sprintf("servers[%d].authentication.any_of", mixedServer), selected, authenticators)
 }
 
-func validateAPIKeyAuthenticator(name string, apiKey APIKeyAuthenticator) error {
-	if len(validation.IsDNS1123Subdomain(apiKey.Secret)) != 0 {
+func validateAPIKeyAuthenticator(name string, apiKey APIKeyAuthenticator, requireSecret bool) error {
+	if (requireSecret || apiKey.Secret != "") && len(validation.IsDNS1123Subdomain(apiKey.Secret)) != 0 {
 		return fmt.Errorf("%s.secret must be a Kubernetes Secret name", name)
 	}
 	if !validHeaderFieldName(apiKey.Header) || strings.Contains(apiKey.Header, "_") || forbiddenIdentityHeader(strings.ToLower(apiKey.Header)) {
