@@ -94,7 +94,10 @@ Choose request processing per route:
 
 The gateway replaces caller-supplied values for managed headers and removes bearer tokens and API keys before forwarding. A missing claim does not invalidate an otherwise valid token. A missing attribute needed for authorization denies the request. A missing or unsafe attribute required by a route header returns `403` before the request reaches the backend.
 
-See [config.auth.example.yaml](config.auth.example.yaml) for JWT-only, key-only, and mixed servers, and [docs/envoy.md](docs/envoy.md) for the native Envoy filter behavior.
+See the [auth method guides](docs/auth/README.md) for JWT and API-key
+setup, [config.auth.example.yaml](config.auth.example.yaml) for complete
+examples, and [docs/envoy.md](docs/envoy.md) for the native Envoy filter
+behavior.
 
 ## Timeouts and capacity
 
