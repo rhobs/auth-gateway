@@ -10,10 +10,6 @@ ENVOY_PORT ?= 8080
 OAUTH_HOST_PORT ?= 8443
 PROMETHEUS_HOST_PORT ?= 9090
 
-CA_CONFIGMAP := playground-oauth-ca
-CA_KEY := ca.crt
-CA_MOUNT_ID := $(shell printf '%s\0%s' '$(CA_CONFIGMAP)' '$(CA_KEY)' | shasum -a 256 | cut -c1-32)
-
 export ENVOY_IMAGE MOCK_OAUTH2_IMAGE PROMETHEUS_IMAGE HOST_PORT ENVOY_PORT OAUTH_HOST_PORT PROMETHEUS_HOST_PORT
 
 help:
@@ -28,15 +24,8 @@ help:
 
 generate:
 	@set -eu; \
-	  command -v yq >/dev/null || { printf '%s\n' 'yq v4 is required to extract generated resources' >&2; exit 1; }; \
-	  if [ ! -f credentials.yaml ]; then \
-	    cp credentials.example.yaml credentials.yaml; \
-	  elif yq -e '((.credentials | length) == 1) and (.credentials[0].key == "playground-demo-key") and (.credentials[0].attributes.user_id == "playground-user") and ((.credentials[0].attributes | keys | length) == 1) and ((.credentials[0] | keys | length) == 2) and ((keys | length) == 1)' credentials.yaml >/dev/null 2>&1; then \
-	    cp credentials.example.yaml credentials.yaml; \
-	  fi; \
-	  chmod 600 credentials.yaml; \
 	  umask 077; \
-	  mkdir -p generated/api-keys "generated/ca/$(CA_MOUNT_ID)"; \
+	  mkdir -p generated; \
 	  if [ ! -s generated/mock-oauth2.crt ] || [ ! -s generated/mock-oauth2.p12 ] || \
 	    ! openssl x509 -in generated/mock-oauth2.crt -noout -ext subjectAltName 2>/dev/null | grep -q 'DNS:mock-oauth2-server'; then \
 	    openssl req -x509 -newkey rsa:2048 -nodes \
@@ -56,24 +45,14 @@ generate:
 	      -passout pass:playground; \
 	    rm generated/mock-oauth2.key; \
 	  fi; \
-	  cp generated/mock-oauth2.crt "generated/ca/$(CA_MOUNT_ID)/ca.crt"; \
-	  chmod 644 generated/mock-oauth2.crt "generated/ca/$(CA_MOUNT_ID)/ca.crt"; \
-	  chmod 755 generated generated/ca "generated/ca/$(CA_MOUNT_ID)"; \
-	  rm -f generated/envoy.yaml generated/processing.yaml generated/demo.jwt generated/metrics.jwt generated/logs.jwt generated/kubernetes.yaml generated/api-key-secret.yaml generated/api-keys.b64 generated/token-response.json generated/metrics-token-response.json generated/logs-token-response.json generated/api-keys/api-keys.yaml generated/jwks-server.key generated/jwks.json generated/jwt-signing-key.pem generated/jwks-ca.crt; \
-	  go run ../examples/generate-kubernetes config.yaml generated/kubernetes.yaml; \
-	  files=$$(yq -r 'select(.kind == "ConfigMap" and .data."envoy.yaml" != null) | .data | keys | .[]' generated/kubernetes.yaml); \
-	  if [ -z "$$files" ]; then printf '%s\n' 'the generated gateway ConfigMap has no files' >&2; exit 1; fi; \
-	  printf '%s\n' "$$files" | while IFS= read -r file; do \
-	    CONFIG_FILENAME="$$file" yq -r 'select(.kind == "ConfigMap" and .data."envoy.yaml" != null) | .data[strenv(CONFIG_FILENAME)]' generated/kubernetes.yaml > "generated/$$file"; \
-	  done; \
-	  go run ../examples/generate-api-key-secret config.yaml credentials.yaml generated/api-key-secret.yaml; \
-	  yq -er '.data."api-keys.yaml"' generated/api-key-secret.yaml > generated/api-keys.b64; \
-	  openssl base64 -d -A -in generated/api-keys.b64 -out generated/api-keys/api-keys.yaml; \
-	  chmod 755 generated/api-keys; \
+	  chmod 644 generated/mock-oauth2.crt; \
+	  chmod 755 generated; \
+	  umask 022; \
+	  go test ../config -run '^TestPlaygroundBootstrap$$' -count=1 -update; \
+	  rm -f generated/envoy.yaml generated/processing/processing.yaml generated/api-keys/api-keys.yaml generated/metrics.jwt generated/logs.jwt generated/metrics-token-response.json generated/logs-token-response.json; \
+	  cp envoy.yaml.golden generated/envoy.yaml; \
 	  chmod 644 generated/envoy.yaml; \
-	  chmod 644 generated/api-keys/api-keys.yaml; \
-	  rm -f generated/kubernetes.yaml generated/api-key-secret.yaml generated/api-keys.b64; \
-	  printf '%s\n' 'Generated Envoy files and generated/api-keys/api-keys.yaml'
+	  printf '%s\n' 'Generated Envoy bootstrap and local OAuth certificate'
 
 start: generate
 	$(COMPOSE) up -d --force-recreate --remove-orphans

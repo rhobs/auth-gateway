@@ -2,15 +2,18 @@
 
 This playground runs Envoy, [navikt/mock-oauth2-server](https://github.com/navikt/mock-oauth2-server), and Prometheus in Docker Compose. It routes the `metrics-write` and `logs` APIs from [config.example.yaml](../config.example.yaml) to `https://httpbin.org/anything`; the query API is omitted. The two JWT issuers use [Mock OAuth JSON token callbacks](https://github.com/navikt/mock-oauth2-server#token-customization-via-json_config).
 
-Requirements: Docker Compose v2, Go, OpenSSL, `yq` v4, `jq`, and `curl`. Go is used only by `make generate` to call the repository's resource generators. No local Go server is kept running.
+Requirements: Docker Compose v2, Go, OpenSSL, `jq`, and `curl`. Go is used by `make generate` to refresh the Envoy bootstrap from the library. No local Go server is kept running.
 
-Start the stack. This generates Envoy resources and both demo JWTs:
+From the repository root, enter `playground` and start the stack. Run the remaining commands from that directory. Startup generates Envoy resources and both demo JWTs:
 
 ```sh
+cd playground
 make start
 ```
 
-The Envoy configuration is generated from [config.yaml](config.yaml). After editing it, run `make generate` and restart Envoy with `make start`. The generated bootstrap is [generated/envoy.yaml](generated/envoy.yaml); API-key ECDS data is [generated/api-keys/api-keys.yaml](generated/api-keys/api-keys.yaml). API-key values are in the ignored `credentials.yaml`, copied from [credentials.example.yaml](credentials.example.yaml) on first generation. Generation also upgrades the original one-key demo credentials to the current examples. Any other existing `credentials.yaml` is preserved, so if you customized it, add the `metrics-demo-key` and `logs-demo-key` entries from `credentials.example.yaml` to use the sample API-key commands below.
+The Envoy bootstrap comes from [config.yaml](config.yaml), without Kubernetes resources. After editing it, run `make generate` and restart Envoy with `make start`. Generation refreshes the checked-in [envoy.yaml.golden](envoy.yaml.golden) through the library's reference test, then copies it to [generated/envoy.yaml](generated/envoy.yaml).
+
+[credentials.yaml](credentials.yaml) is a complete Envoy API-key ECDS resource with demo keys. Compose mounts this file directly where Envoy reads its API keys. Edit it to test different local demo keys and attribute values, then run `make start` to restart Envoy.
 
 The four local servers share port 8080. `unprotected.localhost` exposes the browser-friendly public route. The `api-key.localhost`, `jwt.localhost`, and `mixed.localhost` servers expose the protected write routes:
 
@@ -70,4 +73,4 @@ Prometheus is available at `http://127.0.0.1:9090`. It scrapes Envoy's built-in 
 
 The token issuer URLs use `auth.localhost` because that is the host used when requesting tokens. Envoy fetches the separate JWKS documents from `mock-oauth2-server` over the Compose network. The generated certificate covers both hostnames and is trusted by Envoy. `make generate` replaces an older certificate that lacks the service-name SAN. Set `HOST_PORT` to change the local Envoy port; if you change `listener.port` in the config, set `ENVOY_PORT` to the same value. `OAUTH_HOST_PORT` changes the OAuth port on your host. Tokens include that port in `iss`, so update both JWT `issuer` values in `config.yaml` if you change it. JWKS requests use the OAuth container's internal port 8443 and Compose service name. If you change the internal port, update `SERVER_PORT`, the Compose port mapping, and both JWKS URLs as well.
 
-`make run` starts the stack and follows its logs. Press Ctrl-C to stop following logs, then run `make stop` to stop the containers. `make clean` stops the stack and removes generated files; it keeps `credentials.yaml`. On the next `make start`, generation upgrades the original one-key demo credentials or uses your existing customized credentials as-is.
+`make run` starts the stack and follows its logs. Press Ctrl-C to stop following logs, then run `make stop` to stop the containers. `make clean` stops the stack and removes generated files; it keeps `credentials.yaml` and `envoy.yaml.golden`.

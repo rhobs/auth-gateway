@@ -1,18 +1,12 @@
 # RHOBS Auth Gateway
 
-RHOBS Auth Gateway is a Go configuration library. It loads one YAML document and generates Envoy configuration files or Kubernetes resources. It does not run a controller or provide a command-line gateway.
+RHOBS Auth Gateway is a Go configuration library. It loads one YAML document and generates Envoy configuration files or Kubernetes resources. It does not run a controller or gateway process.
 
 The current implementation supports exact-host routing, HTTP and HTTPS listeners, upstream HTTP/1 and HTTP/2, optional JSON Web Token (JWT) and API-key authentication and authorization, route-selected request headers, ordered attribute mappings, per-API request counters, Kubernetes packaging, error access logs, and Prometheus metrics. Mutual TLS (mTLS) client-certificate authentication is future work. [config.mtls.example.yaml](config.mtls.example.yaml) is an unsupported design sketch and is rejected by the loader.
 
 ## Generate and deploy
 
-The [runnable Go example](examples/generate-kubernetes/main.go) reads a configuration, calls `config.Load`, generates Kubernetes resources with `config.GenerateKubernetes`, serializes them with `YAML`, and writes the manifest:
-
-```sh
-go run ./examples/generate-kubernetes config.example.yaml auth-gateway.yaml
-```
-
-The generator does not connect to Kubernetes or create referenced credentials. Create the target namespace and any referenced Transport Layer Security (TLS) Secrets, API-key Secret, and certificate authority (CA) ConfigMaps first. TLS Secrets must contain `tls.crt` and `tls.key`; CA ConfigMaps must contain the configured key. Then apply the generated manifest:
+To deploy on Kubernetes, load a gateway YAML document with `config.Load`, call `config.GenerateKubernetes`, then write `resources.YAML()` to a manifest file. These library calls do not connect to Kubernetes or create referenced credentials. Create the target namespace and any referenced Transport Layer Security (TLS) Secrets, API-key Secret, and certificate authority (CA) ConfigMaps first. TLS Secrets must contain `tls.crt` and `tls.key`; CA ConfigMaps must contain the configured key. Then apply the manifest:
 
 ```sh
 kubectl apply -f auth-gateway.yaml
@@ -22,7 +16,7 @@ The examples use Envoy `v1.39.1`. Use an Envoy image compatible with the generat
 
 The library also exposes two output paths:
 
-- `config.Generate(cfg)` returns a map of Envoy filenames to file contents. Use it for file-based Envoy deployments. It does not require Kubernetes settings.
+- `config.Generate(cfg)` returns a map of Envoy filenames to file contents. Use it for file-based Envoy deployments. It does not require Kubernetes settings. For API keys, `config.GenerateAPIKeyECDS` returns the separate `api-keys.yaml` file.
 - `config.GenerateKubernetes(cfg)` requires the `kubernetes` section and returns typed resources. Call `resources.YAML()` for a multi-document manifest, or `resources.Objects()` when a Kubernetes client needs typed objects.
 
 For a local Envoy demo with unprotected, API-key, JWT, and mixed servers, see [playground/README.md](playground/README.md).
@@ -65,24 +59,12 @@ Upstreams use HTTP/1 by default. Set `upstream.http_protocol: http2` only when t
 
 JWT authentication is optional. Configure named JWT authenticators, bind them to a server, and define authorization policies that grant access to named APIs using claims from a specific authenticator. Authorization reads the original verified claims, so attribute mappings cannot change a grant. Each issuer stays isolated from the others.
 
-API keys use one named `api_key` authenticator per gateway configuration. It names a Kubernetes Secret, an optional request header (default `X-API-Key`), and the attribute names that credentials may provide. All servers selecting that authenticator share one Secret. The Secret must be in the gateway Deployment's namespace; separate namespace deployments can use the same Secret name with independent contents. Authorization grants match the key's original attribute values, using the same policy layout as JWT grants.
+API keys use one named `api_key` authenticator per gateway configuration. It declares an optional request header (default `X-API-Key`) and the attribute names that credentials may provide. For Kubernetes, `api_key.secret` names the external Secret and is required; the Secret must be in the gateway Deployment's namespace. File-based Envoy deployments can omit `api_key.secret` and write the output of `config.GenerateAPIKeyECDS` to `/etc/auth-gateway/api-keys/api-keys.yaml`. Authorization grants match the key's original attribute values, using the same policy layout as JWT grants.
 
-Keep key values and their attributes in a local credentials file and generate the Secret separately. For example:
-
-```yaml
-credentials:
-  - key: "<random-opaque-key>"
-    attributes:
-      tenant_id: client-123
-      writer_id: writer-17
-```
-
-```sh
-go run ./examples/generate-api-key-secret config.auth.example.yaml credentials.yaml api-key-secret.yaml
-kubectl apply -f api-key-secret.yaml
-```
-
-The [Secret generator](examples/generate-api-key-secret/main.go) writes the manifest with mode `0600`. Keep both local files private and out of version control. `config.APIKeySecret` provides the same generation path for Go callers. The Secret has one `api-keys.yaml` ECDS resource; `credentials: []` explicitly revokes every key.
+The [API-key guide](docs/auth/api-key.md) shows the Secret format, client
+request, and how attributes affect grants and upstream headers. Keep real keys
+and deployed Secret manifests private. Replace the Secret's
+`ApiKeyAuth.credentials` list with `[]` to revoke all keys.
 
 On `authentication.any_of` with JWT and API key, a valid JWT wins when both credentials are present. If JWT verification fails or the bearer token is absent, a valid key can authenticate. On mixed `all_of`, both credentials are required. Every attribute declared by both authenticators must be a nonempty scalar string with exactly the same raw value. At most one JWT authenticator and one API-key authenticator may be selected by `all_of`.
 
@@ -114,7 +96,7 @@ Kubernetes metrics scrape Envoy every `30s` by default with a `10s` timeout. Set
 | Change | Required action and effect |
 | --- | --- |
 | Values in existing attribute mapping tables | Regenerate and apply the processing ConfigMap. Envoy's Extension Config Discovery Service (ECDS) reloads the mappings and request metric label values without a Pod restart. |
-| API-key values or their attribute values | Regenerate and apply the same namespace Secret. ECDS reloads the complete key set without a Pod restart. An invalid update leaves the last accepted set active; use `credentials: []` for revocation. |
+| API-key values or their attribute values | Regenerate and apply the same namespace Secret. ECDS reloads the complete key set without a Pod restart. An invalid update leaves the last accepted set active; set `credentials: []` in the Secret's `ApiKeyAuth` resource for revocation. |
 | Downstream certificate or key in a mounted TLS Secret | Update the Secret. Envoy's Secret Discovery Service (SDS) reloads it for new TLS connections. |
 | Routes, providers, the request metric name or label bindings, other static configuration, or deployment settings | Regenerate and apply the resources. Roll out the gateway when the static Envoy configuration changes. |
 | Upstream or JWKS CA bundle | Update the referenced bundle and explicitly roll out the gateway. |

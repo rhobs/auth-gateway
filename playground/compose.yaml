@@ -20,8 +20,9 @@ services:
       - "127.0.0.1:${HOST_PORT:-8080}:${ENVOY_PORT:-8080}"
       - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
     volumes:
-      - ./generated:/etc/auth-gateway:ro
-      - ./generated/ca:/etc/auth-gateway-ca:ro
+      - ./generated/envoy.yaml:/etc/auth-gateway/envoy.yaml:ro
+      - ./generated/mock-oauth2.crt:/etc/auth-gateway/mock-oauth2.crt:ro
+      - ./credentials.yaml:/etc/auth-gateway/api-keys/api-keys.yaml:ro
     command: ["-c", "/etc/auth-gateway/envoy.yaml", "--log-level", "info"]
 
   prometheus:

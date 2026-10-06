@@ -74,6 +74,23 @@ func TestGeneratedReferenceFiles(t *testing.T) {
 	}
 }
 
+func TestPlaygroundBootstrap(t *testing.T) {
+	inputPath := filepath.Join("..", "playground", "config.yaml")
+	c := loadTestConfig(t, readTestFile(t, inputPath), inputPath)
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap, exists := files[envoyConfigFilename]
+	if !exists {
+		t.Fatal("playground bootstrap is missing")
+	}
+	if len(files) != 1 {
+		t.Fatalf("playground needs a file layout for %d generated files", len(files))
+	}
+	checkReference(t, filepath.Join("..", "playground", "envoy.yaml.golden"), bootstrap)
+}
+
 func checkReference(t *testing.T, path string, want []byte) {
 	t.Helper()
 	if *updateGoldens {

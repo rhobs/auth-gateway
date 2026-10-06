@@ -5,7 +5,6 @@ listener:
 authenticators:
   - name: playground-key
     api_key:
-      secret: playground-api-keys
       header: X-API-Key
       attributes: [user_id]
   - name: playground-metrics-jwt
@@ -15,9 +14,7 @@ authenticators:
       jwks:
         uri: https://mock-oauth2-server:8443/metrics/jwks
         trusted_ca:
-          config_map:
-            name: playground-oauth-ca
-            key: ca.crt
+          filename: /etc/auth-gateway/mock-oauth2.crt
       attributes:
         user_id:
           claim_path: [sub]
@@ -28,9 +25,7 @@ authenticators:
       jwks:
         uri: https://mock-oauth2-server:8443/logs/jwks
         trusted_ca:
-          config_map:
-            name: playground-oauth-ca
-            key: ca.crt
+          filename: /etc/auth-gateway/mock-oauth2.crt
       attributes:
         user_id:
           claim_path: [sub]
@@ -133,10 +128,3 @@ servers:
     authorization:
       any_of: [playground-metrics-write-access, playground-logs-access]
     apis: [metrics-write, logs]
-
-# These settings let the existing Kubernetes generator produce the same Envoy
-# files that the local Compose stack mounts.
-kubernetes:
-  name: auth-gateway-playground
-  namespace: playground
-  image: envoyproxy/envoy:v1.39.1
