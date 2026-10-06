@@ -16,6 +16,12 @@ authenticators:
       attributes: [tenant_id, writer_id]
 ```
 
+`api_key.attributes` declares the names a key may provide. In this example,
+each key can carry `tenant_id` and `writer_id`; their string values are set
+per key in the credentials file below. Grants, route headers, and metric
+labels can use these names. The Secret generator rejects undeclared names,
+and a missing value cannot satisfy a grant that requires it.
+
 The `header` field is optional. For Kubernetes deployments, the Secret
 must be in the gateway Deployment's `kubernetes.namespace`. Put credentials
 in a private file, for example:
