@@ -30,4 +30,10 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for local checks, code layout, and gol
 - Work on a feature branch and never push directly to `main`.
 - Keep work local for now. Do not push branches or open PRs/MRs until asked.
 - Keep documentation brief and use simple technical English.
+- Keep user-facing doc guides focused on gateway configuration, client
+  requests, observable behavior, and resources users must provide, such as the
+  API-key Secret. Put intermediate credential-file formats, Go library calls,
+  and generator internals in deployment or developer docs. Show API-key
+  attribute bindings in readable form and explain how they affect authorization
+  and forwarding.
 - Use concise, natural-language commit messages without emojis.

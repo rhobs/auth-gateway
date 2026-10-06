@@ -51,10 +51,8 @@ servers:
     apis: [metrics-write]
 ```
 
-Define `metrics-write` under `apis` as in the
-[full example](../../config.auth.example.yaml). Every attribute listed in a
-grant must match; a missing or unlisted value is denied. Authorization
-uses the original verified claims, even when `processing` later maps them
+Define `metrics-write` under `apis` as in the [full example](../../config.auth.example.yaml).
+Every attribute listed in a grant must match; a missing or unlisted value is denied.
+Authorization uses the original verified claims, even when `processing` later maps them
 to values sent upstream. Changing the issuer, JWKS settings, claim paths,
-or grants requires regenerating the configuration and rolling out the
-Deployment.
+or grants requires regenerating the configuration and rolling out the Deployment.
