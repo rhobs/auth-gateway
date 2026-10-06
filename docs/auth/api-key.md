@@ -3,10 +3,9 @@
 ## Authentication
 
 Envoy reads a key from the configured request header (default `X-API-Key`)
-and checks it against a Kubernetes Secret. Keep key values and their
-attributes in that Secret, outside the gateway configuration. Define one
-named API-key authenticator per gateway configuration; all servers selecting
-it share the same Secret:
+and checks it against a mounted file, typically supplied by a Kubernetes
+Secret. Define one named API-key authenticator per gateway configuration;
+all servers selecting it share the same credential set:
 
 ```yaml
 authenticators:
@@ -17,9 +16,9 @@ authenticators:
       attributes: [tenant_id, writer_id]
 ```
 
-The `header` field is optional. The Secret must be in the gateway
-Deployment's `kubernetes.namespace`. Put credentials in a private file,
-for example:
+The `header` field is optional. For Kubernetes deployments, the Secret
+must be in the gateway Deployment's `kubernetes.namespace`. Put credentials
+in a private file, for example:
 
 ```yaml
 credentials:

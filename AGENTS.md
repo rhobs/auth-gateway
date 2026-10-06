@@ -28,5 +28,6 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for local checks, code layout, and gol
 ## Workflow
 
 - Work on a feature branch and never push directly to `main`.
+- Keep work local for now. Do not push branches or open PRs/MRs until asked.
 - Keep documentation brief and use simple technical English.
 - Use concise, natural-language commit messages without emojis.
