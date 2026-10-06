@@ -3,9 +3,10 @@
 ## Authentication
 
 Envoy reads a key from the configured request header (default `X-API-Key`)
-and checks it against a mounted file, typically supplied by a Kubernetes
-Secret. Define one named API-key authenticator per gateway configuration;
-all servers selecting it share the same credential set:
+and checks it against an Extension Config Discovery Service (ECDS) resource
+in a mounted file. In Kubernetes, that file comes from a Secret. Define one
+named API-key authenticator per gateway configuration; all servers selecting
+it share the same credential set:
 
 ```yaml
 authenticators:
@@ -34,17 +35,29 @@ credentials:
       writer_id: writer-17
 ```
 
-From the repository root, generate and apply the Secret before deploying
-the gateway. The [full example](../../config.auth.example.yaml) uses the
-same authenticator name, header, and Secret:
+Both generators read the complete gateway YAML. The Secret generator uses
+its API-key authenticator and `kubernetes.namespace` to write a Secret
+containing `api-keys.yaml`. The Kubernetes generator writes the Envoy
+bootstrap ConfigMap and Deployment. The Deployment mounts the Secret at
+`/etc/auth-gateway/api-keys/api-keys.yaml`, where Envoy watches it through
+ECDS. The source gateway YAML is not mounted into the Pod. Secret Discovery
+Service (SDS) is used for downstream TLS certificates.
+
+Create the configured namespace and any referenced TLS Secrets or CA
+ConfigMaps first. From the repository root, generate and apply the API-key
+Secret before the gateway manifest. The
+[full example](../../config.auth.example.yaml) uses the names shown above:
 
 ```sh
 go run ./examples/generate-api-key-secret \
   config.auth.example.yaml credentials.yaml api-key-secret.yaml
 kubectl apply -f api-key-secret.yaml
+go run ./examples/generate-kubernetes \
+  config.auth.example.yaml auth-gateway.yaml
+kubectl apply -f auth-gateway.yaml
 ```
 
-Updating the Secret replaces the complete key set without restarting
+Updating the Secret replaces the complete ECDS key set without restarting
 the gateway. Use `credentials: []` to revoke every key. Keep the credentials
 file and generated Secret manifest out of version control.
 
