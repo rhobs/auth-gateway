@@ -6,23 +6,26 @@ ENVOY_IMAGE ?= envoyproxy/envoy:v1.39.1
 MOCK_OAUTH2_IMAGE ?= ghcr.io/navikt/mock-oauth2-server:6.0.4
 PROMETHEUS_IMAGE ?= prom/prometheus:v3.5.0
 OTEL_COLLECTOR_IMAGE ?= otel/opentelemetry-collector-contrib:0.135.0
+JAEGER_IMAGE ?= jaegertracing/all-in-one:1.73.0
 HOST_PORT ?= 8080
 ENVOY_PORT ?= 8080
 OAUTH_HOST_PORT ?= 8443
 PROMETHEUS_HOST_PORT ?= 9090
 OTEL_METRICS_HOST_PORT ?= 8889
+JAEGER_HOST_PORT ?= 16686
 
-export ENVOY_IMAGE MOCK_OAUTH2_IMAGE PROMETHEUS_IMAGE OTEL_COLLECTOR_IMAGE HOST_PORT ENVOY_PORT OAUTH_HOST_PORT PROMETHEUS_HOST_PORT OTEL_METRICS_HOST_PORT
+export ENVOY_IMAGE MOCK_OAUTH2_IMAGE PROMETHEUS_IMAGE OTEL_COLLECTOR_IMAGE JAEGER_IMAGE HOST_PORT ENVOY_PORT OAUTH_HOST_PORT PROMETHEUS_HOST_PORT OTEL_METRICS_HOST_PORT JAEGER_HOST_PORT
 
 help:
 	@printf '%s\n' \
 	  'generate  Generate Envoy, collector, and local authentication files' \
-	  'start     Start Envoy, Mock OAuth, the collector, and Prometheus in Docker Compose' \
+	  'start     Start Envoy, Mock OAuth, the collector, Prometheus, and Jaeger in Docker Compose' \
 	  'run       Start the stack and follow its logs' \
 	  'token     Request fresh JWTs from both mock OAuth issuers' \
 	  'stop      Stop and remove the playground containers' \
 	  'clean     Stop the stack and remove generated files' \
 	  'Prometheus UI: http://127.0.0.1:$(PROMETHEUS_HOST_PORT)' \
+	  'Jaeger UI:     http://127.0.0.1:$(JAEGER_HOST_PORT)' \
 	  'Metrics:      http://127.0.0.1:$(OTEL_METRICS_HOST_PORT)/metrics'
 
 generate:
@@ -64,6 +67,7 @@ start: generate
 	@printf '%s\n' \
 	  'Envoy: http://unprotected.localhost:$(HOST_PORT)/anything' \
 	  'Prometheus: http://127.0.0.1:$(PROMETHEUS_HOST_PORT)' \
+	  'Jaeger:     http://127.0.0.1:$(JAEGER_HOST_PORT)' \
 	  'Metrics: http://127.0.0.1:$(OTEL_METRICS_HOST_PORT)/metrics' \
 	  'Metrics JWT: cat generated/metrics.jwt' \
 	  'Logs JWT:    cat generated/logs.jwt'

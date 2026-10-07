@@ -61,6 +61,12 @@ observability:
     enabled: true
     scrape_interval: 5s
     scrape_timeout: 2s
+  tracing:
+    enabled: true
+    endpoint: jaeger:4317
+    service_name: auth-gateway-playground
+    sampling_percentage: 100
+    insecure: true
 
 apis:
   - name: playground-public

@@ -30,10 +30,16 @@ services:
     image: ${OTEL_COLLECTOR_IMAGE:-otel/opentelemetry-collector-contrib:0.135.0}
     depends_on:
       - envoy
+      - jaeger
     network_mode: service:envoy
     command: ["--config=/etc/collector/config.yaml"]
     volumes:
       - ./generated/otel-collector.yaml:/etc/collector/config.yaml:ro
+
+  jaeger:
+    image: ${JAEGER_IMAGE:-jaegertracing/all-in-one:1.73.0}
+    ports:
+      - "127.0.0.1:${JAEGER_HOST_PORT:-16686}:16686"
 
   prometheus:
     image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.5.0}

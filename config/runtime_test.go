@@ -20,9 +20,22 @@ import (
 
 func TestPinnedImagesValidateGeneratedFiles(t *testing.T) {
 	certificate, key := runtimeCertificate(t)
-	for _, name := range []string{"public-routing", "route-lists", "server-tls", "jwt-auth", "jwt-auth-with-headers", "jwt-auth-with-mappings", "jwt-auth-multiple-issuers", "api-key-auth", "header-attributes", "production-tuning"} {
+	for _, name := range []string{"public-routing", "route-lists", "server-tls", "jwt-auth", "jwt-auth-with-headers", "jwt-auth-with-mappings", "jwt-auth-multiple-issuers", "api-key-auth", "header-attributes", "production-tuning", "tracing"} {
 		t.Run(name, func(t *testing.T) {
-			c := loadConfigCase(t, name)
+			baseline := name
+			if name == "tracing" {
+				baseline = "public-routing"
+			}
+			c := loadConfigCase(t, baseline)
+			if name == "tracing" {
+				c.Observability.Tracing = ObservabilityTracing{
+					Enabled:            new(true),
+					Endpoint:           "jaeger:4317",
+					ServiceName:        "auth-gateway-runtime",
+					SamplingPercentage: new(100.0),
+					Insecure:           new(true),
+				}
+			}
 			files, err := Generate(c)
 			if err != nil {
 				t.Fatal(err)
@@ -69,7 +82,7 @@ func TestPinnedImagesValidateGeneratedFiles(t *testing.T) {
 				image = "envoyproxy/envoy:v1.39.1"
 			}
 			runtimeDocker(t, append(args, image, "--mode", "validate", "-c", configDirectory+"/envoy.yaml", "--log-level", "error")...)
-			if name == "production-tuning" {
+			if name == "production-tuning" || name == "tracing" {
 				r, err := GenerateKubernetes(c)
 				if err != nil {
 					t.Fatal(err)

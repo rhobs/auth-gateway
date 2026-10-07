@@ -252,13 +252,17 @@ func (c Config) validate() error {
 		return fmt.Errorf("node.cluster must not be empty")
 	}
 	metricsEnabled := c.Kubernetes != nil && c.Observability.Metrics.Enabled != nil && *c.Observability.Metrics.Enabled
-	if err := c.Listener.validate(metricsEnabled); err != nil {
+	tracingEnabled := c.Observability.Tracing.enabled()
+	if err := c.Listener.validate(metricsEnabled, tracingEnabled); err != nil {
 		return err
 	}
 	if err := validateRequestMetricsConfig(c.RequestMetrics); err != nil {
 		return err
 	}
 	if err := c.Observability.Metrics.validate(); err != nil {
+		return err
+	}
+	if err := c.Observability.Tracing.validate(); err != nil {
 		return err
 	}
 	if len(c.APIs) == 0 {
@@ -344,7 +348,7 @@ func (c Config) validate() error {
 		if strings.TrimSpace(c.Kubernetes.Image) == "" || strings.ContainsAny(c.Kubernetes.Image, imageWhitespaceCharacters) {
 			return fmt.Errorf("kubernetes.image must be an image reference")
 		}
-		if metricsEnabled && (strings.TrimSpace(c.Kubernetes.OTelCollectorImage) == "" || strings.ContainsAny(c.Kubernetes.OTelCollectorImage, imageWhitespaceCharacters)) {
+		if (metricsEnabled || tracingEnabled) && (strings.TrimSpace(c.Kubernetes.OTelCollectorImage) == "" || strings.ContainsAny(c.Kubernetes.OTelCollectorImage, imageWhitespaceCharacters)) {
 			return fmt.Errorf("kubernetes.otel_collector_image must be an image reference")
 		}
 		if c.Kubernetes.Replicas != nil && *c.Kubernetes.Replicas < 0 {
@@ -404,7 +408,7 @@ func (c Config) withDefaults() Config {
 	}
 	c.Listener = c.Listener.withDefaults()
 	c.Overload = c.Overload.withDefaults()
-	c.Observability = c.Observability.withDefaults()
+	c.Observability = c.Observability.withDefaults(c.Node.Cluster)
 	if c.Servers != nil {
 		servers := make([]Server, len(c.Servers))
 		for i, server := range c.Servers {
@@ -1083,12 +1087,18 @@ func (l Listener) withDefaults() Listener {
 	return l
 }
 
-func (l Listener) validate(metricsEnabled bool) error {
+func (l Listener) validate(metricsEnabled, tracingEnabled bool) error {
 	if *l.Port == 0 || *l.Port > 65535 {
 		return fmt.Errorf("listener.port must be between 1 and 65535")
 	}
-	if *l.Port == envoyAdminPort || (metricsEnabled && *l.Port == defaultOTelMetricsPort) {
+	if *l.Port == envoyAdminPort {
 		return fmt.Errorf("listener.port must not conflict with admin port %d or the metrics collector port %d", envoyAdminPort, defaultOTelMetricsPort)
+	}
+	if metricsEnabled && *l.Port == defaultOTelMetricsPort {
+		return fmt.Errorf("listener.port must not conflict with admin port %d or the metrics collector port %d", envoyAdminPort, defaultOTelMetricsPort)
+	}
+	if tracingEnabled && *l.Port == defaultOTelTracePort {
+		return fmt.Errorf("listener.port must not conflict with the OTLP trace collector port %d", defaultOTelTracePort)
 	}
 	for _, value := range []struct {
 		name  string

@@ -24,6 +24,7 @@ const (
 	httpPortName               = "http"
 	httpsPortName              = "https"
 	metricsPortName            = "metrics"
+	tracesPortName             = "traces"
 	gatewayConfigVolumeName    = "config"
 	metricsConfigVolumeName    = "metrics-config"
 	processingConfigVolumeName = "processing-config"
@@ -74,7 +75,7 @@ func (r *KubernetesResources) YAML() ([]byte, error) {
 	return output.Bytes(), nil
 }
 
-// GenerateKubernetes builds Kubernetes resources for Envoy and optional observability metrics.
+// GenerateKubernetes builds Kubernetes resources for Envoy and optional observability collection.
 // It does not contact a cluster, read credentials, or write files.
 func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	effective, err := resolveConfig(c)
@@ -108,6 +109,8 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 		}
 	}
 	metricsEnabled := c.Observability.Metrics.Enabled != nil && *c.Observability.Metrics.Enabled
+	tracingEnabled := c.Observability.Tracing.enabled()
+	collectorEnabled := metricsEnabled || tracingEnabled
 
 	k := c.Kubernetes
 	envoyArgs := []string{"-c", path.Join(configDirectory, "envoy.yaml"), "--log-level", "info"}
@@ -128,8 +131,8 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 		Data:       stringFiles(configFiles),
 	}
 	var otelConfigMap *corev1.ConfigMap
-	if metricsEnabled {
-		otelConfig := generateOTelCollectorConfig(c.Observability.Metrics)
+	if collectorEnabled {
+		otelConfig := generateOTelCollectorConfig(c.Observability.Metrics, c.Observability.Tracing)
 		otelConfigMap = &corev1.ConfigMap{
 			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: kubernetesConfigMapKind},
 			ObjectMeta: metav1.ObjectMeta{Name: metricsName, Namespace: k.Namespace},
@@ -207,15 +210,24 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 			},
 		},
 	}
-	if metricsEnabled {
+	if collectorEnabled {
+		collectorPorts := make([]corev1.ContainerPort, 0, 2)
+		if metricsEnabled {
+			collectorPorts = append(collectorPorts, corev1.ContainerPort{
+				Name: metricsPortName, ContainerPort: defaultOTelMetricsPort, Protocol: corev1.ProtocolTCP,
+			})
+		}
+		if tracingEnabled {
+			collectorPorts = append(collectorPorts, corev1.ContainerPort{
+				Name: tracesPortName, ContainerPort: defaultOTelTracePort, Protocol: corev1.ProtocolTCP,
+			})
+		}
 		deployment.Spec.Template.Spec.Containers = append(deployment.Spec.Template.Spec.Containers, corev1.Container{
 			Name:            metricsPortName,
 			Image:           k.OTelCollectorImage,
 			ImagePullPolicy: corev1.PullIfNotPresent,
 			Args:            []string{"--config=" + path.Join(collectorConfigDirectory, collectorConfigFilename)},
-			Ports: []corev1.ContainerPort{{
-				Name: metricsPortName, ContainerPort: defaultOTelMetricsPort, Protocol: corev1.ProtocolTCP,
-			}},
+			Ports:           collectorPorts,
 			Resources: corev1.ResourceRequirements{
 				Requests: kubernetesResourceList(k.Metrics.Resources.Requests),
 				Limits:   kubernetesResourceList(k.Metrics.Resources.Limits),

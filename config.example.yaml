@@ -24,6 +24,15 @@ observability:
     enabled: true
     scrape_interval: 30s
     scrape_timeout: 10s
+  # Optional. Envoy sends spans to the local collector, which exports them to
+  # this OTLP/gRPC endpoint. Omit this section to leave tracing disabled.
+  # tracing:
+  #   enabled: true
+  #   endpoint: otel-collector.observability.svc:4317
+  #   service_name: auth-gateway
+  #   sampling_percentage: 10
+  #   # TLS is enabled by default. Set true for a trusted plaintext endpoint.
+  #   # insecure: true
 
 # Each API defines one upstream and one or more routes to it.
 apis:

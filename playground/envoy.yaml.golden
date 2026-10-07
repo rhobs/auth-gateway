@@ -203,6 +203,23 @@ static_resources:
                             filename: /etc/auth-gateway/mock-oauth2.crt
                 sni: mock-oauth2-server
           type: STRICT_DNS
+        - connect_timeout: 5s
+          load_assignment:
+            cluster_name: otel-traces
+            endpoints:
+                - lb_endpoints:
+                    - endpoint:
+                        address:
+                            socket_address:
+                                address: 127.0.0.1
+                                port_value: 4317
+          name: otel-traces
+          type: STATIC
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+                '@type': type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+                explicit_http_config:
+                    http2_protocol_options: {}
     listeners:
         - address:
             socket_address:
@@ -1337,6 +1354,22 @@ static_resources:
                     stat_prefix: ingress
                     stream_flush_timeout: 5s
                     stream_idle_timeout: 60s
+                    tracing:
+                        client_sampling:
+                            value: 100
+                        overall_sampling:
+                            value: 100
+                        provider:
+                            name: envoy.tracers.opentelemetry
+                            typed_config:
+                                '@type': type.googleapis.com/envoy.config.trace.v3.OpenTelemetryConfig
+                                grpc_service:
+                                    envoy_grpc:
+                                        cluster_name: otel-traces
+                                service_name: auth-gateway-playground
+                        random_sampling:
+                            value: 100
+                        spawn_upstream_span: true
           name: ingestion
           per_connection_buffer_limit_bytes: 1048576
 stats_config:

@@ -90,7 +90,7 @@ func TestPlaygroundBootstrap(t *testing.T) {
 	}
 	checkReference(t, filepath.Join("..", "playground", "envoy.yaml.golden"), bootstrap)
 
-	collectorConfig := generateOTelCollectorConfig(c.Observability.Metrics)
+	collectorConfig := generateOTelCollectorConfig(c.Observability.Metrics, c.Observability.Tracing)
 	checkReference(t, filepath.Join("..", "playground", "otel-collector.yaml.golden"), collectorConfig)
 }
 

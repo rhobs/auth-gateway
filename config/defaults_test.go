@@ -58,6 +58,8 @@ func TestAuthExampleAppliesAllDefaults(t *testing.T) {
 	}
 	wantObservability := ObservabilityConfig{Metrics: ObservabilityMetrics{
 		Enabled: new(true), ScrapeInterval: duration(30 * time.Second), ScrapeTimeout: duration(10 * time.Second),
+	}, Tracing: ObservabilityTracing{
+		Enabled: new(false), ServiceName: "auth-gateway", SamplingPercentage: new(100.0), Insecure: new(false),
 	}}
 	if !reflect.DeepEqual(c.Observability, wantObservability) {
 		t.Fatalf("observability defaults = %#v, want %#v", c.Observability, wantObservability)

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	bootstrap "github.com/envoyproxy/go-control-plane/envoy/config/bootstrap/v3"
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
@@ -18,6 +19,7 @@ import (
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	rbac "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	traceconfig "github.com/envoyproxy/go-control-plane/envoy/config/trace/v3"
 	setfilterstatecommon "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
 	headermutation "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
 	jwt "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/jwt_authn/v3"
@@ -30,10 +32,12 @@ import (
 	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	upstreamhttp "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 	matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
+	envoytype "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	"go.yaml.in/yaml/v3"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -91,6 +95,13 @@ func generate(effective effectiveConfig) (map[string][]byte, error) {
 		return nil, err
 	}
 	clusters = append(clusters, jwks...)
+	if c.Observability.Tracing.enabled() {
+		tracingCluster, err := otelTraceCluster()
+		if err != nil {
+			return nil, fmt.Errorf("OpenTelemetry trace cluster: %w", err)
+		}
+		clusters = append(clusters, tracingCluster)
+	}
 	apis := c.apisByName()
 	var filterChains []*listener.FilterChain
 	var httpHosts []*route.VirtualHost
@@ -405,6 +416,10 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 		filters = append(filters, cleanup)
 	}
 	filters = append(filters, &hcm.HttpFilter{Name: routerFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: routerConfig}})
+	tracing, err := envoyTracingConfig(c.Observability.Tracing)
+	if err != nil {
+		return nil, err
+	}
 	return &hcm.HttpConnectionManager{
 		StatPrefix:            httpManagerStatPrefix,
 		CodecType:             hcm.HttpConnectionManager_AUTO,
@@ -422,6 +437,7 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 		RequestTimeout:               c.Listener.RequestTimeout.protobuf(),
 		NormalizePath:                wrapperspb.Bool(false),
 		PathWithEscapedSlashesAction: hcm.HttpConnectionManager_KEEP_UNCHANGED,
+		Tracing:                      tracing,
 		RouteSpecifier: &hcm.HttpConnectionManager_RouteConfig{RouteConfig: &route.RouteConfiguration{
 			Name:                     ingestionListenerName,
 			IgnorePortInHostMatching: true,
@@ -429,6 +445,32 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 		}},
 		AccessLog:   accessLogs,
 		HttpFilters: filters,
+	}, nil
+}
+
+func envoyTracingConfig(config ObservabilityTracing) (*hcm.HttpConnectionManager_Tracing, error) {
+	if !config.enabled() {
+		return nil, nil
+	}
+	providerConfig, err := packEnvoy(&traceconfig.OpenTelemetryConfig{
+		GrpcService: &core.GrpcService{TargetSpecifier: &core.GrpcService_EnvoyGrpc_{EnvoyGrpc: &core.GrpcService_EnvoyGrpc{
+			ClusterName: envoyTraceClusterName,
+		}}},
+		ServiceName: config.ServiceName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode OpenTelemetry tracing provider: %w", err)
+	}
+	percentage := *config.SamplingPercentage
+	return &hcm.HttpConnectionManager_Tracing{
+		ClientSampling:    &envoytype.Percent{Value: percentage},
+		RandomSampling:    &envoytype.Percent{Value: percentage},
+		OverallSampling:   &envoytype.Percent{Value: percentage},
+		SpawnUpstreamSpan: wrapperspb.Bool(true),
+		Provider: &traceconfig.Tracing_Http{
+			Name:       envoyOTelTracerName,
+			ConfigType: &traceconfig.Tracing_Http_TypedConfig{TypedConfig: providerConfig},
+		},
 	}, nil
 }
 
@@ -1275,6 +1317,31 @@ func apiClusters(apis []API) ([]*cluster.Cluster, error) {
 		clusters = append(clusters, upstream)
 	}
 	return clusters, nil
+}
+
+func otelTraceCluster() (*cluster.Cluster, error) {
+	protocolOptions, err := packEnvoy(&upstreamhttp.HttpProtocolOptions{UpstreamProtocolOptions: &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig_{ExplicitHttpConfig: &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig{
+		ProtocolConfig: &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{Http2ProtocolOptions: &core.Http2ProtocolOptions{}},
+	}}})
+	if err != nil {
+		return nil, fmt.Errorf("encode OTLP upstream HTTP/2 options: %w", err)
+	}
+	return &cluster.Cluster{
+		Name:                          envoyTraceClusterName,
+		ConnectTimeout:                durationpb.New(5 * time.Second),
+		ClusterDiscoveryType:          &cluster.Cluster_Type{Type: cluster.Cluster_STATIC},
+		TypedExtensionProtocolOptions: map[string]*anypb.Any{"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": protocolOptions},
+		LoadAssignment: &endpoint.ClusterLoadAssignment{
+			ClusterName: envoyTraceClusterName,
+			Endpoints: []*endpoint.LocalityLbEndpoints{{
+				LbEndpoints: []*endpoint.LbEndpoint{{
+					HostIdentifier: &endpoint.LbEndpoint_Endpoint{Endpoint: &endpoint.Endpoint{
+						Address: socket(defaultOTelTraceReceiverAddress, defaultOTelTracePort),
+					}},
+				}},
+			}},
+		},
+	}, nil
 }
 
 func socket(address string, port uint32) *core.Address {
