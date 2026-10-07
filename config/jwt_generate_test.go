@@ -146,7 +146,7 @@ func TestJWTAuthorizationReadsOriginalClaimsFromNamedProvider(t *testing.T) {
 
 func TestJWTAuthorizationMatchesAnyAllowedListClaimValue(t *testing.T) {
 	c := loadConfigCase(t, "jwt-auth")
-	c.Authenticators[0].JWT.Attributes["my_list"] = JWTAttribute{ClaimPath: []string{"x", "my_list"}}
+	c.Authenticators[0].Attributes["my_list"] = AttributeSource{ClaimPath: []string{"x", "my_list"}}
 	grant := c.AuthorizationPolicies[0].Grants[0]
 	grant.Attributes = map[string][]string{"my_list": {"y", "z"}}
 

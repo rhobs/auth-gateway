@@ -50,11 +50,12 @@ authenticators:
         # trusted_ca: {config_map: {name: internal-issuer-ca, key: ca.crt}}
       # Optional. Omit to skip JWT audience validation.
       audiences: [observability-ingestion]
-      attributes:
-        tenant_id:
-          claim_path: [x, y, z, claim]
-        writer_id:
-          claim_path: [sub]
+    attributes:
+      tenant_id:
+        claim_path: [x, y, z, claim]
+      writer_id:
+        claim_path: [sub]
+      requested_tenant: {header: X-Tenant}
 
   - name: external-jwt
     jwt:
@@ -66,18 +67,21 @@ authenticators:
         # connect_timeout: 5s # Optional, default shown.
       # Optional. Omit to skip JWT audience validation.
       audiences: [observability-ingestion]
-      attributes:
-        tenant_id:
-          claim_path: [organization, id]
-        writer_id:
-          claim_path: [sub]
+    attributes:
+      tenant_id:
+        claim_path: [organization, id]
+      writer_id:
+        claim_path: [sub]
 
   - name: partner-key
     api_key:
       # One Secret holds every key used by this gateway's servers.
       secret: auth-gateway-api-keys
       header: X-Partner-Key # Optional. Defaults to X-API-Key.
-      attributes: [tenant_id, writer_id]
+    attributes:
+      tenant_id: {credential: true}
+      writer_id: {credential: true}
+      requested_tenant: {header: X-Tenant}
 
 authorization_policies:
   - name: metrics-writers
@@ -109,6 +113,7 @@ authorization_policies:
         attributes:
           tenant_id: [client-123]
           writer_id: [writer-17]
+          requested_tenant: [client-123]
 
 # Optional. All metered APIs share this counter name. Envoy adds envoy_http_lua_.
 request_metrics:
@@ -226,7 +231,7 @@ servers:
 
   - hostname: both.auth.example.com
     authentication:
-      # Both credentials are required. Shared raw attributes must match.
+      # Both credentials and X-Tenant are required. Shared raw attributes must match.
       all_of: [internal-jwt, partner-key]
     authorization:
       all_of: [metrics-writers, partner-metrics-writers]

@@ -7,11 +7,11 @@ authenticators:
       jwks:
         uri: https://issuer-one.jwt.test/jwks
       audiences: [gateway-test]
-      attributes:
-        tenant_id:
-          claim_path: [organization, id]
-        writer_id:
-          claim_path: [sub]
+    attributes:
+      tenant_id:
+        claim_path: [organization, id]
+      writer_id:
+        claim_path: [sub]
 
 authorization_policies:
   - name: metrics-writers

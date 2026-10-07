@@ -56,14 +56,8 @@ func validateAPIMetrics(name string, value *APIMetrics) error {
 func validateMetricAttributeReferences(apis []API, authenticators map[string]Authenticator) error {
 	known := make(map[string]struct{})
 	for _, authenticator := range authenticators {
-		if authenticator.JWT != nil {
-			for attribute := range authenticator.JWT.Attributes {
-				known[attribute] = struct{}{}
-			}
-		} else {
-			for _, attribute := range authenticator.APIKey.Attributes {
-				known[attribute] = struct{}{}
-			}
+		for attribute := range authenticator.Attributes {
+			known[attribute] = struct{}{}
 		}
 	}
 	for i, api := range apis {

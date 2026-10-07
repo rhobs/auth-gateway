@@ -14,11 +14,11 @@ authenticators:
       jwks:
         uri: https://sso.internal.example.com/realms/observability/protocol/openid-connect/certs
       audiences: [observability-ingestion]
-      attributes:
-        tenant_id:
-          claim_path: [x, y, z, claim]
-        writer_id:
-          claim_path: [sub]
+    attributes:
+      tenant_id:
+        claim_path: [x, y, z, claim]
+      writer_id:
+        claim_path: [sub]
 
   - name: external-jwt
     jwt:
@@ -26,11 +26,11 @@ authenticators:
       jwks:
         uri: https://sso.external.example.com/realms/observability/protocol/openid-connect/certs
       audiences: [observability-ingestion]
-      attributes:
-        tenant_id:
-          claim_path: [organization, id]
-        writer_id:
-          claim_path: [sub]
+    attributes:
+      tenant_id:
+        claim_path: [organization, id]
+      writer_id:
+        claim_path: [sub]
 
 authorization_policies:
   - name: metrics-writers

@@ -11,11 +11,13 @@ authenticators:
       jwks:
         uri: https://jwks.jwt.test/issuer-one
       audiences: [gateway-test]
-      attributes:
-        tenant_id:
-          claim_path: [organization, id]
-        writer_id:
-          claim_path: [sub]
+    attributes:
+      tenant_id:
+        claim_path: [organization, id]
+      writer_id:
+        claim_path: [sub]
+      requested_tenant:
+        header: X-Scope-OrgID
 authorization_policies:
   - name: metrics-writers
     grants:
@@ -23,6 +25,12 @@ authorization_policies:
         apis: [metrics]
         attributes:
           tenant_id: [customer-a]
+  - name: managed-header-writers
+    grants:
+      - authenticator: issuer-one
+        apis: [metrics]
+        attributes:
+          requested_tenant: [requested-a]
 apis:
   - name: metrics
     upstream:
@@ -40,12 +48,23 @@ apis:
               from_attribute: tenant_id
             - name: X-Writer-ID
               from_attribute: writer_id
+      - methods: [GET]
+        path:
+          exact: /headerless
+        rewrite:
+          path: /anything
 servers:
   - hostname: headers.jwt.auth-gateway.test
     authentication:
       any_of: [issuer-one]
     authorization:
       any_of: [metrics-writers]
+    apis: [metrics]
+  - hostname: managed.jwt.auth-gateway.test
+    authentication:
+      any_of: [issuer-one]
+    authorization:
+      any_of: [managed-header-writers]
     apis: [metrics]
 kubernetes:
   name: auth-gateway

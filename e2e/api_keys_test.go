@@ -305,6 +305,10 @@ var _ = Describe("API-key namespace isolation", Label("gateway", "api-key", "aut
 })
 
 func setupAPIKeyGateway(ctx SpecContext, namespace string, keyOnly bool, credentials []config.APIKeyCredential, warmupKey string) (*apiKeyE2E, error) {
+	return setupAPIKeyGatewayWithShape(ctx, namespace, keyOnly, credentials, warmupKey, nil)
+}
+
+func setupAPIKeyGatewayWithShape(ctx SpecContext, namespace string, keyOnly bool, credentials []config.APIKeyCredential, warmupKey string, shape func(*config.Config)) (*apiKeyE2E, error) {
 	activeNamespace = namespace
 	if err := env.DeleteNamespace(ctx, namespace); err != nil {
 		return nil, err
@@ -315,6 +319,9 @@ func setupAPIKeyGateway(ctx SpecContext, namespace string, keyOnly bool, credent
 	c, err := apiKeyConfig(namespace, keyOnly)
 	if err != nil {
 		return nil, err
+	}
+	if shape != nil {
+		shape(&c)
 	}
 	gateway := &apiKeyE2E{config: c}
 	if !keyOnly {

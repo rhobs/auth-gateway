@@ -11,9 +11,9 @@ authenticators:
       jwks:
         uri: https://jwks.jwt.test/issuer-one
       # Deliberately omitted to exercise tokens without an aud claim.
-      attributes:
-        my_list:
-          claim_path: [x, my_list]
+    attributes:
+      my_list:
+        claim_path: [x, my_list]
 authorization_policies:
   - name: metrics-writers
     grants:

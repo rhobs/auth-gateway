@@ -18,9 +18,9 @@ authenticators:
         # cache_duration: 5m # Optional, default shown.
         # fetch_timeout: 5s # Optional, default shown.
         # connect_timeout: 5s # Optional, default shown.
-      attributes:
-        tenant_id:
-          claim_path: [organization, id]
+    attributes:
+      tenant_id:
+        claim_path: [organization, id]
 
 authorization_policies:
   - name: customer-access

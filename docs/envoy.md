@@ -33,7 +33,7 @@ auth_gateway.request_controls
   -> [envoy.filters.http.lua]                  (response counter)
   -> [envoy.filters.http.jwt_authn]
   -> [envoy.filters.http.api_key_auth]         (Secret-backed ECDS)
-  -> [envoy.filters.http.header_to_metadata]  (verified key identity)
+  -> [envoy.filters.http.header_to_metadata]  (key identity and source headers)
   -> [auth_gateway.authentication]             (mixed credential RBAC)
   -> [auth_gateway.attributes.server-N]        (working attributes)
   -> [envoy.filters.http.set_filter_state]     (mapping ECDS)
@@ -46,23 +46,23 @@ auth_gateway.request_controls
 
 The request-control filter removes fixed Envoy retry, timeout, and alternate-stat headers on both public and protected chains. These controls cannot be passed through as identity headers.
 
-The JWT filter validates signature, issuer, expiration, and not-before values. If an authenticator sets `audiences`, the filter also requires the token's `aud` claim to match one of them. It reads the bearer token from `Authorization` and stores each provider's verified claims in separate Envoy dynamic metadata. The API-key filter reads the configured header, validates it against one ECDS credential set, and forwards a verified identity through an internal header. The identity has alphabetically ordered `attribute=value` fields. Generated `header_to_metadata` rules copy the full value and extract each attribute with a regex, then remove the internal header. Request controls remove caller-supplied identity markers before either filter runs. No new Lua handles authentication or attributes.
+The JWT filter validates signature, issuer, expiration, and not-before values. If an authenticator sets `audiences`, the filter also requires the token's `aud` claim to match one of them. It reads the bearer token from `Authorization` and stores each provider's verified claims in separate Envoy dynamic metadata. The API-key filter reads the configured header, validates it against one ECDS credential set, and forwards a verified identity through an internal header. The identity has alphabetically ordered credential `attribute=value` fields. Generated `header_to_metadata` rules copy the identity, extract each credential attribute with a regex, then remove the internal header. The same filter captures each distinct declared source header once in separate dynamic metadata without removing it. Request controls remove caller-supplied identity markers before either credential filter runs. No new Lua handles authentication or attributes.
 
-On mixed `authentication.any_of`, the JWT filter permits a missing or failed token so a key can be tried. A verified JWT writes a marker that makes the API-key matcher skip key validation, including when a key is also present. Authorization then uses the JWT's named metadata. A valid but unprivileged JWT does not fall back to a key. On mixed `all_of`, JWT verification is strict and the key filter also runs. The authentication RBAC rule requires both credentials. For every attribute declared by both authenticators, it also requires nonempty scalar strings with exact equality in the original JWT claim and Secret identity. Missing or invalid credentials return `401`; a valid identity without a matching grant, or with unequal shared attributes, returns `403`.
+On mixed `authentication.any_of`, the JWT filter permits a missing or failed token so a key can be tried. A verified JWT writes a marker that makes the API-key matcher skip key validation, including when a key is also present. Authorization then uses the JWT's named metadata. A valid but unprivileged JWT does not fall back to a key. On mixed `all_of`, JWT verification is strict and the key filter also runs. The authentication RBAC rule requires both credentials. For every attribute declared by both authenticators, it also requires nonempty scalar strings with exact equality in their original claim, credential, or header sources. Missing or invalid credentials return `401`; a valid identity without a matching grant, or with unequal shared attributes, returns `403`.
 
-Attribute initialization runs when request headers or metric labels need verified attributes. With API keys, host-scoped inline `set_filter_state` filters initialize working attributes from the selected JWT or key. The separate ECDS `set_filter_state` filter then applies mappings. JWT-only configurations retain the existing combined initialization and mapping stage. Authorization RBAC reads only original verified metadata. Required-header checks run after authorization and before header mutation. The credential cleanup filter removes `Authorization`, the configured key header, and internal markers, including on public chains in a gateway that uses keys. Header mutation replaces caller values for managed names and sets the selected route's outputs. The router forwards only after these filters allow the request.
+Attribute initialization runs when request headers or metric labels need working attributes. With API keys, host-scoped inline `set_filter_state` filters initialize them from the selected JWT or key, including its declared source headers. The separate ECDS `set_filter_state` filter then applies mappings. JWT-only configurations initialize attributes in the same stage as their mappings, either inline or through ECDS. Header initialization checks the named authenticator's verified identity before copying a value, so an unselected header source cannot replace the selected value on mixed `any_of`. Authorization RBAC reads original claim, credential, or source-header metadata. Required-header checks run after authorization and before header mutation. The credential cleanup filter removes `Authorization`, the configured key header, and internal markers, including on public chains in a gateway that uses keys. Header mutation removes caller values for every managed output name and sets the selected route's outputs. The router forwards only after these filters allow the request.
 
-## Original claims and working attributes
+## Attribute sources and working values
 
 A JWT attribute's `claim_path` is a list of literal object keys. For example, `[organization, id]` reads two nested keys, while `[customer.id]` reads one top-level key containing a dot. To authorize `{"x":{"my_list":["y","z"]}}`, set `claim_path: [x, my_list]` and allow values with `attributes.my_list: [y, z]`. Any string member that matches an allowed value is sufficient; scalar claims still use exact matching. The path may end at a list-valued claim, but it cannot traverse into a list. Different attributes in one grant must all match.
 
-Working attributes used for processing require a scalar string. Missing, null, empty, non-string, or list-valued claims leave the corresponding working attribute unset; they do not invalidate an otherwise valid JWT. Each API-key credential stores a map of declared string attributes in the Secret. Key grants match exact original values, and missing key attributes deny any grant that requires them.
+Declare attributes beside `jwt` or `api_key`. JWT attributes use `claim_path` or `header`; API-key attributes use `credential: true` or `header`. Working attributes used for processing require a nonempty scalar string. Missing, null, empty, non-string, or list-valued claims leave the corresponding working attribute unset; they do not invalidate an otherwise valid JWT. A missing or empty source header also leaves its attribute unset. Each API-key credential stores only its declared credential-backed string attributes in the Secret. Key grants match exact original values, and missing attributes deny any grant that requires them.
 
-Authorization grants are tied to a named authenticator and use its original JWT claims or API-key attributes. The optional top-level `processing` list changes working attributes after verification and before RBAC. Each processor performs one exact lookup per configured attribute. Entries in one table do not chain. Later processors see earlier results and may replace them. Unmatched values pass through. Neither a mapping nor a caller-supplied header can change a raw authorization decision.
+Authorization grants are tied to a named authenticator and use its original claim, credential, or source-header values. A header-only JWT grant also checks the verified issuer; a header-only key grant also checks the verified key identity. A caller can choose a source-header value, but cannot use it to bypass authentication. The optional top-level `processing` list changes working attributes after authentication and before RBAC. Each processor performs one exact lookup per configured attribute. Entries in one table do not chain. Later processors see earlier results and may replace them. Unmatched values pass through. Mappings do not change raw authorization decisions. Header-backed grants do depend on the original caller-supplied header.
 
 Envoy `v1.39.1` exposes `envoy.string` filter-state values as bytes in Common Expression Language (CEL). The generator compares mapping inputs with byte literals and uses `skip_if_empty` so unmatched values pass through and missing values do not become placeholder strings. It emits one update per attribute per processor to preserve processor order.
 
-A route that selects request headers also selects required working attributes. If an attribute is missing or unsuitable for an HTTP header after processing, the required-header RBAC filter returns `403` before upstream delivery. A caller-supplied header cannot fill the missing value.
+A route that selects output headers also selects required working attributes. If an attribute is missing or unsuitable for an HTTP header after processing, the required-header RBAC filter returns `403` before upstream delivery. A caller-supplied output header cannot fill the missing value. If a source header has a managed output name, the source is captured before mutation; that name is replaced on routes with an output and removed on other routes. Other source headers pass through.
 
 ## JWT and upstream trust
 
@@ -76,13 +76,72 @@ Upstreams use HTTP/1 unless `http_protocol: http2` is set. HTTP/2 connection opt
 
 The Envoy bootstrap and SDS resource files are projected from the main ConfigMap. TLS Secrets are mounted as read-only directories without `subPath`, so Kubernetes can refresh their projected files. Identical Secret and path bindings share a volume mount; different server chains keep separate SDS resources. File-only generation returns those SDS files but does not create or mount the certificate material.
 
-When mappings exist, the generator puts `processing.yaml` in the separate processing ConfigMap and mounts it at `/etc/auth-gateway/processing`. This file is an ECDS resource for `envoy.filters.http.set_filter_state`. With keys, it contains only mapping updates; host-scoped initializers in the bootstrap extract JWT claims or key attributes first. JWT-only configurations keep claim extraction in the ECDS resource. Envoy watches the mounted directory. Updating mapping values changes only that ConfigMap. The bootstrap, Deployment template, and Pod identity remain unchanged.
+When mappings exist, the generator puts `processing.yaml` in the separate processing ConfigMap and mounts it at `/etc/auth-gateway/processing`. This file is an ECDS resource for `envoy.filters.http.set_filter_state`. With keys, it contains only mapping updates; host-scoped initializers in the bootstrap extract claims, credential attributes, or source headers first. JWT-only configurations keep attribute extraction in the ECDS resource. Envoy watches the mounted directory. Updating mapping values changes only that ConfigMap. The bootstrap, Deployment template, and Pod identity remain unchanged.
 
 All keys used by this gateway's servers live in one same-namespace Secret with an `api-keys.yaml` entry. The Deployment mounts that Secret as a read-only directory at `/etc/auth-gateway/api-keys`, without `subPath`, and Envoy watches it through ECDS. Each credential binds an opaque key to the named authenticator and its original attributes. Replacing the Secret entry replaces the complete accepted key set across HTTP and HTTPS chains without changing the Pod. Envoy keeps its last accepted set if a projected update is invalid. Apply a valid resource with `credentials: []` to revoke every key; deleting or corrupting the Secret is not a revocation method. Kubernetes volumes cannot read Secrets across namespaces, so each gateway Deployment uses a Secret in its own namespace. The same Secret name may have independent contents in another namespace.
 
-The static bootstrap embeds the shared request metric name, Lua's label names, and each API's label-to-attribute bindings in route metadata. Attribute mapping tables stay in the ECDS-loaded `set_filter_state` filter. Lua reads its processed values. For example, `tenant: tenant_id` with a `client-123: team-a` mapping emits `tenant="team-a"`, while RBAC checks the original `client-123`. Changing the metric name or a binding requires a rollout; changing a mapping value updates only the processing ConfigMap and changes subsequent metric labels without a Pod restart.
+### API-key Secret format
 
-SDS reloads updated downstream certificates and keys for new TLS connections. ECDS reloads mapping tables and the API-key credential set. Routes, authenticator definitions (including the key header and declared attribute names), authorization policies, other bootstrap data, deployment settings, and upstream/JWKS CA bundles require the documented regeneration and rollout steps. The generator does not add a checksum annotation.
+The application that provisions keys can load a small credential document with
+`config.LoadAPIKeyCredentials`, then use `config.APIKeySecret` to produce the
+Kubernetes Secret. For a key authenticator declaring `tenant_id` and
+`writer_id` with `credential: true`, the input is:
+
+```yaml
+credentials:
+  - key: example-partner-key
+    attributes:
+      tenant_id: client-123
+      writer_id: writer-17
+```
+
+Only credential-backed attributes belong in this document. Header-backed
+attributes come from each request. `config.APIKeySecret` writes the generated
+ECDS resource into `Secret.data["api-keys.yaml"]`. The equivalent manually
+written Secret below uses `stringData` for readability. The `client` field
+lists credential attributes alphabetically, with empty values for missing
+bindings:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: auth-gateway-api-keys
+  namespace: observability
+type: Opaque
+stringData:
+  api-keys.yaml: |
+    resources:
+      - '@type': type.googleapis.com/envoy.config.core.v3.TypedExtensionConfig
+        name: envoy.filters.http.api_key_auth
+        typed_config:
+          '@type': type.googleapis.com/envoy.extensions.common.matching.v3.ExtensionWithMatcher
+          extension_config:
+            name: envoy.filters.http.api_key_auth
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.filters.http.api_key_auth.v3.ApiKeyAuth
+              credentials:
+                - client: tenant_id=client-123;writer_id=writer-17
+                  key: example-partner-key
+              forwarding:
+                header: x-auth-gateway-api-key-client
+                hide_credentials: true
+              key_sources:
+                - cookie: ""
+                  header: x-partner-key
+                  query: ""
+```
+
+The example `key_sources.header` matches `api_key.header: X-Partner-Key`.
+Credential values cannot contain semicolons. Use a different key for real
+clients. An input document with `credentials: []`, or an Envoy Secret
+resource with `ApiKeyAuth.credentials: []`, revokes all keys.
+
+### Mapping and rollout behavior
+
+The static bootstrap embeds the shared request metric name, Lua's label names, and each API's label-to-attribute bindings in route metadata. Attribute mapping tables stay in the ECDS-loaded `set_filter_state` filter. Lua reads its processed values. For example, `tenant: requested_tenant` with a `client-123: team-a` mapping emits `tenant="team-a"` for `X-Tenant: client-123`, while RBAC checks the original `client-123`. Changing the metric name or a binding requires a rollout; changing a mapping value updates only the processing ConfigMap and changes subsequent metric labels without a Pod restart.
+
+SDS reloads updated downstream certificates and keys for new TLS connections. ECDS reloads mapping tables and the API-key credential set. Routes, authenticator definitions (including attribute sources and credential headers), authorization policies, other bootstrap data, deployment settings, and upstream/JWKS CA bundles require the documented regeneration and rollout steps. The generator does not add a checksum annotation.
 
 ## Timeouts, overload, logs, and metrics
 

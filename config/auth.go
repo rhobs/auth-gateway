@@ -24,29 +24,30 @@ var attributeNamePattern = regexp.MustCompile("^[a-z][a-z0-9_-]{0,63}$")
 
 // Authenticator defines one named credential validator.
 type Authenticator struct {
-	Name   string               `yaml:"name"`
-	JWT    *JWTAuthenticator    `yaml:"jwt,omitempty"`
-	APIKey *APIKeyAuthenticator `yaml:"api_key,omitempty"`
+	Name       string                     `yaml:"name"`
+	JWT        *JWTAuthenticator          `yaml:"jwt,omitempty"`
+	APIKey     *APIKeyAuthenticator       `yaml:"api_key,omitempty"`
+	Attributes map[string]AttributeSource `yaml:"attributes,omitempty"`
 }
 
-// JWTAuthenticator validates one issuer, optionally restricts audiences, and declares attributes from verified claims.
+// JWTAuthenticator validates one issuer and optionally restricts audiences.
 type JWTAuthenticator struct {
-	Issuer     string                  `yaml:"issuer"`
-	JWKS       JWKSConfig              `yaml:"jwks"`
-	Audiences  []string                `yaml:"audiences,omitempty"`
-	Attributes map[string]JWTAttribute `yaml:"attributes,omitempty"`
+	Issuer    string     `yaml:"issuer"`
+	JWKS      JWKSConfig `yaml:"jwks"`
+	Audiences []string   `yaml:"audiences,omitempty"`
 }
 
-// JWTAttribute selects a literal object path in the verified JWT payload.
-type JWTAttribute struct {
-	ClaimPath []string `yaml:"claim_path"`
+// AttributeSource selects one original value from a verified claim, key credential, or request header.
+type AttributeSource struct {
+	ClaimPath  []string `yaml:"claim_path,omitempty"`
+	Header     *string  `yaml:"header,omitempty"`
+	Credential *bool    `yaml:"credential,omitempty"`
 }
 
-// APIKeyAuthenticator reads keys from an ECDS file and declares their attributes.
+// APIKeyAuthenticator reads keys from an ECDS file.
 type APIKeyAuthenticator struct {
-	Secret     string   `yaml:"secret,omitempty"`
-	Header     string   `yaml:"header,omitempty"`
-	Attributes []string `yaml:"attributes,omitempty"`
+	Secret string `yaml:"secret,omitempty"`
+	Header string `yaml:"header,omitempty"`
 }
 
 func (a APIKeyAuthenticator) withDefaults() APIKeyAuthenticator {
@@ -57,11 +58,19 @@ func (a APIKeyAuthenticator) withDefaults() APIKeyAuthenticator {
 }
 
 func (a Authenticator) providesAttribute(name string) bool {
-	if a.JWT != nil {
-		_, exists := a.JWT.Attributes[name]
-		return exists
+	_, exists := a.Attributes[name]
+	return exists
+}
+
+func (a Authenticator) credentialAttributeNames() []string {
+	var names []string
+	for name, source := range a.Attributes {
+		if source.Credential != nil && *source.Credential {
+			names = append(names, name)
+		}
 	}
-	return a.APIKey != nil && slices.Contains(a.APIKey.Attributes, name)
+	slices.Sort(names)
+	return names
 }
 
 // Processor transforms working attributes after JWT verification.
@@ -169,16 +178,6 @@ func validateAPIKeyAuthenticator(name string, apiKey APIKeyAuthenticator, requir
 	if !validHeaderFieldName(apiKey.Header) || strings.Contains(apiKey.Header, "_") || forbiddenIdentityHeader(strings.ToLower(apiKey.Header)) {
 		return fmt.Errorf("%s.header must be a safe HTTP credential header name", name)
 	}
-	seen := make(map[string]struct{}, len(apiKey.Attributes))
-	for _, attribute := range apiKey.Attributes {
-		if !attributeNamePattern.MatchString(attribute) {
-			return fmt.Errorf(attributeNameValidationErrorFormat, name, attribute)
-		}
-		if _, exists := seen[attribute]; exists {
-			return fmt.Errorf("%s.attributes contains duplicate attribute %q", name, attribute)
-		}
-		seen[attribute] = struct{}{}
-	}
 	return nil
 }
 
@@ -209,16 +208,43 @@ func validateJWTAuthenticator(name string, jwt JWTAuthenticator) error {
 		}
 		seenAudiences[audience] = struct{}{}
 	}
-	for _, attribute := range slices.Sorted(maps.Keys(jwt.Attributes)) {
+	return nil
+}
+
+func validateAuthenticatorAttributes(name string, authenticator Authenticator, apiKeyHeader string) error {
+	for _, attribute := range slices.Sorted(maps.Keys(authenticator.Attributes)) {
 		if !attributeNamePattern.MatchString(attribute) {
 			return fmt.Errorf(attributeNameValidationErrorFormat, name, attribute)
 		}
-		mapping := jwt.Attributes[attribute]
-		if len(mapping.ClaimPath) == 0 {
-			return fmt.Errorf("%s.attributes.%s.claim_path must contain at least one literal object key", name, attribute)
+		source := authenticator.Attributes[attribute]
+		field := name + ".attributes." + attribute
+		if authenticator.JWT != nil {
+			if source.Credential != nil || (source.ClaimPath == nil) == (source.Header == nil) {
+				return fmt.Errorf("%s must set exactly one of claim_path or header", field)
+			}
+		} else if source.ClaimPath != nil || (source.Credential == nil) == (source.Header == nil) {
+			return fmt.Errorf("%s must set exactly one of credential: true or header", field)
 		}
-		if slices.Contains(mapping.ClaimPath, "") {
-			return fmt.Errorf("%s.attributes.%s.claim_path keys must not be empty", name, attribute)
+		if source.ClaimPath != nil {
+			if len(source.ClaimPath) == 0 {
+				return fmt.Errorf("%s.claim_path must contain at least one literal object key", field)
+			}
+			if slices.Contains(source.ClaimPath, "") {
+				return fmt.Errorf("%s.claim_path keys must not be empty", field)
+			}
+		}
+		if source.Credential != nil && !*source.Credential {
+			return fmt.Errorf("%s.credential must be true", field)
+		}
+		if source.Header != nil {
+			header := *source.Header
+			lower := strings.ToLower(header)
+			if !validHeaderFieldName(header) || strings.Contains(header, "_") || forbiddenIdentityHeader(lower) {
+				return fmt.Errorf("%s.header must be a safe HTTP request header name", field)
+			}
+			if strings.EqualFold(header, apiKeyHeader) {
+				return fmt.Errorf("%s.header is reserved for API-key credentials", field)
+			}
 		}
 	}
 	return nil
@@ -379,22 +405,29 @@ func cloneAuthenticators(values []Authenticator) []Authenticator {
 	out := make([]Authenticator, len(values))
 	for i, value := range values {
 		out[i] = value
+		if value.Attributes != nil {
+			out[i].Attributes = make(map[string]AttributeSource, len(value.Attributes))
+			for name, source := range value.Attributes {
+				source.ClaimPath = slices.Clone(source.ClaimPath)
+				if source.Header != nil {
+					header := *source.Header
+					source.Header = &header
+				}
+				if source.Credential != nil {
+					credential := *source.Credential
+					source.Credential = &credential
+				}
+				out[i].Attributes[name] = source
+			}
+		}
 		if value.JWT != nil {
 			jwt := *value.JWT
 			jwt.JWKS = jwt.JWKS.withDefaults()
 			jwt.Audiences = slices.Clone(value.JWT.Audiences)
-			if value.JWT.Attributes != nil {
-				jwt.Attributes = make(map[string]JWTAttribute, len(value.JWT.Attributes))
-				for name, attribute := range value.JWT.Attributes {
-					attribute.ClaimPath = slices.Clone(attribute.ClaimPath)
-					jwt.Attributes[name] = attribute
-				}
-			}
 			out[i].JWT = &jwt
 		}
 		if value.APIKey != nil {
 			apiKey := value.APIKey.withDefaults()
-			apiKey.Attributes = slices.Clone(value.APIKey.Attributes)
 			out[i].APIKey = &apiKey
 		}
 	}

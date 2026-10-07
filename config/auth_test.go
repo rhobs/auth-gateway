@@ -14,15 +14,24 @@ func TestAuthExampleContainsExpectedAuthenticationConfiguration(t *testing.T) {
 	if c.Processing[0].Type != "attribute-mapper" {
 		t.Fatalf("processing type = %q", c.Processing[0].Type)
 	}
-	if got, want := c.Authenticators[0].JWT.Attributes["tenant_id"].ClaimPath, []string{"x", "y", "z", "claim"}; !slices.Equal(got, want) {
+	if got, want := c.Authenticators[0].Attributes["tenant_id"].ClaimPath, []string{"x", "y", "z", "claim"}; !slices.Equal(got, want) {
 		t.Fatalf("tenant claim path = %v, want %v", got, want)
+	}
+	if source := c.Authenticators[0].Attributes["requested_tenant"]; source.Header == nil || *source.Header != "X-Tenant" {
+		t.Fatalf("JWT header attribute = %#v", source)
 	}
 	if got, want := c.AuthorizationPolicies[0].Grants[0].Attributes["tenant_id"], []string{"client-123", "client-456"}; !slices.Equal(got, want) {
 		t.Fatalf("authorization values = %v, want original claim values %v", got, want)
 	}
+	if got, want := c.AuthorizationPolicies[2].Grants[0].Attributes["requested_tenant"], []string{"client-123"}; !slices.Equal(got, want) {
+		t.Fatalf("header grant values = %v, want %v", got, want)
+	}
 	if key := c.Authenticators[2].APIKey; key == nil || key.Secret != "auth-gateway-api-keys" || key.Header != "X-Partner-Key" ||
-		!slices.Equal(key.Attributes, []string{"tenant_id", "writer_id"}) {
+		!slices.Equal(c.Authenticators[2].credentialAttributeNames(), []string{"tenant_id", "writer_id"}) {
 		t.Fatalf("example API-key authenticator = %#v", key)
+	}
+	if source := c.Authenticators[2].Attributes["requested_tenant"]; source.Header == nil || *source.Header != "X-Tenant" {
+		t.Fatalf("API-key header attribute = %#v", source)
 	}
 	headers := c.APIs[0].Routes[0].Processing.RequestHeaders
 	if len(headers) != 2 || headers[0].Name != "X-Scope-OrgID" || headers[1].Name != "X-Writer-ID" {
@@ -32,7 +41,7 @@ func TestAuthExampleContainsExpectedAuthenticationConfiguration(t *testing.T) {
 
 func TestValidateAcceptsLiteralClaimKeysAndSingleJWTAllOf(t *testing.T) {
 	config := loadAuthExample(t)
-	config.Authenticators[0].JWT.Attributes["tenant_id"] = JWTAttribute{
+	config.Authenticators[0].Attributes["tenant_id"] = AttributeSource{
 		ClaimPath: []string{"organization", "customer.id"},
 	}
 	config.Servers[0].Authentication = &Authentication{AllOf: []string{"internal-jwt"}}
@@ -65,6 +74,76 @@ apis:
 	}
 }
 
+func TestValidateAuthenticatorAttributeSources(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+		edit func(*Config)
+	}{
+		{name: "JWT missing source", want: "authenticators[0].attributes.tenant_id", edit: func(c *Config) {
+			c.Authenticators[0].Attributes["tenant_id"] = AttributeSource{}
+		}},
+		{name: "JWT multiple sources", want: "authenticators[0].attributes.tenant_id", edit: func(c *Config) {
+			c.Authenticators[0].Attributes["tenant_id"] = AttributeSource{ClaimPath: []string{"sub"}, Header: testStringPointer("X-Tenant")}
+		}},
+		{name: "JWT credential source", want: "authenticators[0].attributes.tenant_id", edit: func(c *Config) {
+			c.Authenticators[0].Attributes["tenant_id"] = AttributeSource{Credential: testBoolPointer(true)}
+		}},
+		{name: "empty header", want: "authenticators[0].attributes.requested_tenant.header", edit: func(c *Config) {
+			c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: testStringPointer("")}
+		}},
+		{name: "invalid header", want: "authenticators[0].attributes.requested_tenant.header", edit: func(c *Config) {
+			c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: testStringPointer("Bad Header")}
+		}},
+		{name: "reserved header", want: "authenticators[0].attributes.requested_tenant.header", edit: func(c *Config) {
+			c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: testStringPointer("Authorization")}
+		}},
+		{name: "internal header", want: "authenticators[0].attributes.requested_tenant.header", edit: func(c *Config) {
+			c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: testStringPointer("X-Auth-Gateway-Identity")}
+		}},
+		{name: "underscore header", want: "authenticators[0].attributes.requested_tenant.header", edit: func(c *Config) {
+			c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: testStringPointer("X_Tenant")}
+		}},
+		{name: "key credential header", want: "authenticators[0].attributes.requested_tenant.header is reserved", edit: func(c *Config) {
+			c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: testStringPointer("x-partner-key")}
+		}},
+		{name: "key missing source", want: "authenticators[2].attributes.tenant_id", edit: func(c *Config) {
+			c.Authenticators[2].Attributes["tenant_id"] = AttributeSource{}
+		}},
+		{name: "key false credential", want: "authenticators[2].attributes.tenant_id.credential", edit: func(c *Config) {
+			c.Authenticators[2].Attributes["tenant_id"] = AttributeSource{Credential: testBoolPointer(false)}
+		}},
+		{name: "key claim source", want: "authenticators[2].attributes.tenant_id", edit: func(c *Config) {
+			c.Authenticators[2].Attributes["tenant_id"] = AttributeSource{ClaimPath: []string{"sub"}}
+		}},
+		{name: "key multiple sources", want: "authenticators[2].attributes.tenant_id", edit: func(c *Config) {
+			c.Authenticators[2].Attributes["tenant_id"] = AttributeSource{Credential: testBoolPointer(true), Header: testStringPointer("X-Tenant")}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c := loadAuthExample(t)
+			test.edit(&c)
+			if err := c.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validation error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestValidateAcceptsHeaderOnlyGrant(t *testing.T) {
+	c := loadAuthExample(t)
+	c.AuthorizationPolicies[0].Grants[0].Attributes = map[string][]string{"requested_tenant": {"client-123"}}
+	c.AuthorizationPolicies[2].Grants[0].Attributes = map[string][]string{"requested_tenant": {"client-123"}}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("header-only grants were rejected: %v", err)
+	}
+}
+
+func testStringPointer(value string) *string { return &value }
+
+func testBoolPointer(value bool) *bool { return &value }
+
 func TestValidateRejectsInvalidAuthenticationAndAuthorization(t *testing.T) {
 	tests := []struct {
 		name string
@@ -77,8 +156,8 @@ func TestValidateRejectsInvalidAuthenticationAndAuthorization(t *testing.T) {
 		{name: "non-HTTPS JWKS", want: "authenticators[0].jwt.jwks.uri", edit: func(c *Config) { c.Authenticators[0].JWT.JWKS.URI = "http://sso.example.com/jwks" }},
 		{name: "JWKS user information", want: "authenticators[0].jwt.jwks.uri", edit: func(c *Config) { c.Authenticators[0].JWT.JWKS.URI = "https://user@sso.example.com/jwks" }},
 		{name: "duplicate audience", want: "authenticators[0].jwt.audiences", edit: func(c *Config) { c.Authenticators[0].JWT.Audiences = []string{"same", "same"} }},
-		{name: "empty claim path", want: "authenticators[0].jwt.attributes.tenant_id.claim_path", edit: func(c *Config) {
-			c.Authenticators[0].JWT.Attributes["tenant_id"] = JWTAttribute{ClaimPath: []string{""}}
+		{name: "empty claim path", want: "authenticators[0].attributes.tenant_id.claim_path", edit: func(c *Config) {
+			c.Authenticators[0].Attributes["tenant_id"] = AttributeSource{ClaimPath: []string{""}}
 		}},
 		{name: "empty mapping output", want: "processing[0].attributes.tenant_id.mappings", edit: func(c *Config) { c.Processing[0].Attributes["tenant_id"].Mappings["client-123"] = "" }},
 		{name: "unsafe mapping output", want: "processing[0].attributes.tenant_id.mappings", edit: func(c *Config) {
@@ -125,12 +204,12 @@ func TestValidateRejectsInvalidAuthenticationAndAuthorization(t *testing.T) {
 
 func TestAnyOfMayOmitUnusedHeaderAttributes(t *testing.T) {
 	config := loadAuthExample(t)
-	delete(config.Authenticators[1].JWT.Attributes, "writer_id")
+	delete(config.Authenticators[1].Attributes, "writer_id")
 	if err := config.Validate(); err != nil {
 		t.Fatalf("Validate rejected an any_of authenticator that omits a route attribute: %v", err)
 	}
 
-	delete(config.Authenticators[0].JWT.Attributes, "writer_id")
+	delete(config.Authenticators[0].Attributes, "writer_id")
 	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "does not provide processing attribute") {
 		t.Fatalf("Validate error = %v, want missing bound attribute error", err)
 	}

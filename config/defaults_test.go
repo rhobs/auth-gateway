@@ -144,8 +144,11 @@ func TestDefaultsCloneInputs(t *testing.T) {
 		c := loadAuthExample(t)
 		defaulted := c.withDefaults()
 		defaulted.Authenticators[0].JWT.Audiences[0] = "changed"
-		defaulted.Authenticators[0].JWT.Attributes["tenant_id"].ClaimPath[0] = "changed"
-		defaulted.Authenticators[2].APIKey.Attributes[0] = "changed"
+		defaulted.Authenticators[0].Attributes["tenant_id"].ClaimPath[0] = "changed"
+		keySource := defaulted.Authenticators[2].Attributes["tenant_id"]
+		*keySource.Credential = false
+		headerSource := defaulted.Authenticators[2].Attributes["requested_tenant"]
+		*headerSource.Header = "changed"
 		defaulted.Processing[0].Attributes["tenant_id"].Mappings["client-123"] = "changed"
 		defaulted.AuthorizationPolicies[0].Grants[0].APIs[0] = "changed"
 		defaulted.AuthorizationPolicies[0].Grants[0].Attributes["tenant_id"][0] = "changed"
@@ -156,8 +159,9 @@ func TestDefaultsCloneInputs(t *testing.T) {
 		defaulted.RequestMetrics.Name = "changed_requests_total"
 
 		if c.Authenticators[0].JWT.Audiences[0] == "changed" ||
-			c.Authenticators[0].JWT.Attributes["tenant_id"].ClaimPath[0] == "changed" ||
-			c.Authenticators[2].APIKey.Attributes[0] == "changed" ||
+			c.Authenticators[0].Attributes["tenant_id"].ClaimPath[0] == "changed" ||
+			!*c.Authenticators[2].Attributes["tenant_id"].Credential ||
+			*c.Authenticators[2].Attributes["requested_tenant"].Header == "changed" ||
 			c.Processing[0].Attributes["tenant_id"].Mappings["client-123"] == "changed" ||
 			c.AuthorizationPolicies[0].Grants[0].APIs[0] == "changed" ||
 			c.AuthorizationPolicies[0].Grants[0].Attributes["tenant_id"][0] == "changed" ||

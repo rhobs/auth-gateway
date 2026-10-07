@@ -59,6 +59,7 @@ const (
 	apiNameValidationErrorFormat            = "%s.name must start with a lowercase letter and contain only lowercase letters, numbers, or hyphens"
 	imageWhitespaceCharacters               = " \t\r\n"
 	invalidControlCharacters                = "\r\n\x00"
+	authenticatorFieldPathFormat            = "authenticators[%d]"
 	serverFieldPathFormat                   = "servers[%d]"
 	maxStreamDurationFieldName              = "max_stream_duration"
 	http1Protocol                           = "http1"
@@ -591,7 +592,7 @@ func (c Config) validateAuthentication(apis map[string]API) error {
 	apiKeyCount := 0
 	apiKeyHeader := ""
 	for i, authenticator := range c.Authenticators {
-		name := fmt.Sprintf("authenticators[%d]", i)
+		name := fmt.Sprintf(authenticatorFieldPathFormat, i)
 		if !apiNamePattern.MatchString(authenticator.Name) {
 			return fmt.Errorf(apiNameValidationErrorFormat, name)
 		}
@@ -619,6 +620,11 @@ func (c Config) validateAuthentication(apis map[string]API) error {
 			apiKeyHeader = authenticator.APIKey.Header
 		}
 		authenticators[authenticator.Name] = authenticator
+	}
+	for i, authenticator := range c.Authenticators {
+		if err := validateAuthenticatorAttributes(fmt.Sprintf(authenticatorFieldPathFormat, i), authenticator, apiKeyHeader); err != nil {
+			return err
+		}
 	}
 	if apiKeyHeader != "" {
 		for i, api := range c.APIs {

@@ -73,7 +73,6 @@ func TestAPIKeySecretContainsOneReloadableResource(t *testing.T) {
 func TestAPIKeyClientIncludesMissingAttributesInNameOrder(t *testing.T) {
 	c := loadConfigCase(t, "api-key-auth")
 	authenticator := c.Authenticators[1]
-	authenticator.APIKey.Attributes = []string{"writer_id", "tenant_id"}
 	file, err := GenerateAPIKeyECDS(authenticator, []APIKeyCredential{{
 		Key: "key-a", Attributes: map[string]string{"writer_id": "writer-a"},
 	}})
@@ -83,6 +82,33 @@ func TestAPIKeyClientIncludesMissingAttributesInNameOrder(t *testing.T) {
 	credentials := decodeAPIKeySecret(t, file).Credentials
 	if len(credentials) != 1 || credentials[0].Client != "tenant_id=;writer_id=writer-a" {
 		t.Fatalf("client with a missing attribute = %#v", credentials)
+	}
+}
+
+func TestAPIKeyHeaderAttributesStayOutOfCredentialIdentity(t *testing.T) {
+	c := loadConfigCase(t, "api-key-auth")
+	authenticator := c.Authenticators[1]
+	authenticator.Attributes["requested_tenant"] = AttributeSource{Header: testStringPointer("X-Tenant")}
+	credential := []APIKeyCredential{{Key: "key-a", Attributes: map[string]string{"tenant_id": "client-a"}}}
+	file, err := GenerateAPIKeyECDS(authenticator, credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := decodeAPIKeySecret(t, file).Credentials[0].Client, "tenant_id=client-a;writer_id="; got != want {
+		t.Fatalf("credential identity = %q, want %q", got, want)
+	}
+	credential[0].Attributes["requested_tenant"] = "client-a"
+	if _, err := GenerateAPIKeyECDS(authenticator, credential); err == nil || !strings.Contains(err.Error(), "undeclared attribute") {
+		t.Fatalf("header attribute in credentials was accepted: %v", err)
+	}
+
+	authenticator.Attributes = map[string]AttributeSource{"requested_tenant": {Header: testStringPointer("X-Tenant")}}
+	file, err = GenerateAPIKeyECDS(authenticator, []APIKeyCredential{{Key: "key-a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decodeAPIKeySecret(t, file).Credentials[0].Client; got != apiKeyClientNoAttributes {
+		t.Fatalf("header-only credential identity = %q", got)
 	}
 }
 
@@ -185,7 +211,8 @@ authenticators:
   - name: partner-key
     api_key:
       secret: shared-keys
-      attributes: [tenant_id]
+    attributes:
+      tenant_id: {credential: true}
 apis:
   - name: ingest
     upstream:
@@ -206,7 +233,7 @@ servers:
 		t.Fatal(err)
 	}
 	if key := c.Authenticators[0].APIKey; key == nil || key.Secret != "shared-keys" || key.Header != "X-API-Key" ||
-		len(key.Attributes) != 1 || key.Attributes[0] != "tenant_id" {
+		!slices.Equal(c.Authenticators[0].credentialAttributeNames(), []string{"tenant_id"}) {
 		t.Fatalf("loaded API-key authenticator = %#v", key)
 	}
 	unknownField := `version: 1
@@ -274,11 +301,10 @@ func TestValidateAPIKeyConfiguration(t *testing.T) {
 		{name: "reserved header", want: "authenticators[1].api_key.header", edit: func(c *Config) { c.Authenticators[1].APIKey.Header = "Authorization" }},
 		{name: "internal header", want: "authenticators[1].api_key.header", edit: func(c *Config) { c.Authenticators[1].APIKey.Header = "X-Auth-Gateway-Identity" }},
 		{name: "underscore header", want: "authenticators[1].api_key.header", edit: func(c *Config) { c.Authenticators[1].APIKey.Header = "X_Partner_Key" }},
-		{name: "duplicate attribute", want: "authenticators[1].api_key.attributes contains duplicate", edit: func(c *Config) {
-			c.Authenticators[1].APIKey.Attributes = []string{"tenant_id", "tenant_id"}
-		}},
-		{name: "invalid attribute", want: "authenticators[1].api_key.attributes", edit: func(c *Config) {
-			c.Authenticators[1].APIKey.Attributes[0] = "Tenant.ID"
+		{name: "invalid attribute", want: "authenticators[1].attributes", edit: func(c *Config) {
+			source := c.Authenticators[1].Attributes["tenant_id"]
+			delete(c.Authenticators[1].Attributes, "tenant_id")
+			c.Authenticators[1].Attributes["Tenant.ID"] = source
 		}},
 		{name: "undeclared grant attribute", want: "authorization_policies[1].grants[0].attributes references", edit: func(c *Config) {
 			c.AuthorizationPolicies[1].Grants[0].Attributes["undeclared"] = []string{"value"}
@@ -318,11 +344,11 @@ func TestValidateAPIKeyConfiguration(t *testing.T) {
 func TestAPIKeyDefaultsDoNotMutateInput(t *testing.T) {
 	c := loadConfigCase(t, "api-key-auth")
 	c.Authenticators[1].APIKey.Header = ""
-	attributes := slices.Clone(c.Authenticators[1].APIKey.Attributes)
+	attributes := c.Authenticators[1].credentialAttributeNames()
 	if _, err := GenerateKubernetes(c); err != nil {
 		t.Fatal(err)
 	}
-	if c.Authenticators[1].APIKey.Header != "" || !slices.Equal(c.Authenticators[1].APIKey.Attributes, attributes) {
+	if c.Authenticators[1].APIKey.Header != "" || !slices.Equal(c.Authenticators[1].credentialAttributeNames(), attributes) {
 		t.Fatalf("generation mutated the API-key authenticator: %#v", c.Authenticators[1].APIKey)
 	}
 }
@@ -371,7 +397,7 @@ func TestAPIKeyPipelineUsesFileECDSAndHostScopedFilters(t *testing.T) {
 		if rule.Header != apiKeyClientHeader || rule.Remove != (index == 1) ||
 			value.GetMetadataNamespace() != apiKeyMetadataNamespace ||
 			value.GetKey() != apiKeyAttributeMetadataKey(attribute) ||
-			value.GetRegexValueRewrite().GetPattern().GetRegex() != apiKeyClientPattern(c.Authenticators[1].APIKey.Attributes, attribute) ||
+			value.GetRegexValueRewrite().GetPattern().GetRegex() != apiKeyClientPattern(c.Authenticators[1].credentialAttributeNames(), attribute) ||
 			value.GetRegexValueRewrite().GetSubstitution() != `\1` {
 			t.Fatalf("API-key attribute %q extraction = %#v", attribute, rule)
 		}
@@ -434,7 +460,7 @@ func TestAPIKeyRawAuthorizationAndSharedAttributeEquality(t *testing.T) {
 	keyOnly := serverAuthenticationRBACRules(c, c.Servers[1]).Policies["authenticated"].Principals[0]
 	if matcher := keyOnly.GetSourcedMetadata().GetMetadataMatcher(); matcher == nil || matcher.Filter != apiKeyMetadataNamespace ||
 		!slices.Equal(metadataMatcherPath(matcher.GetPath()), []string{"identity"}) ||
-		matcher.GetValue().GetStringMatch().GetSafeRegex().GetRegex() != apiKeyClientPattern(c.Authenticators[1].APIKey.Attributes, "") {
+		matcher.GetValue().GetStringMatch().GetSafeRegex().GetRegex() != apiKeyClientPattern(c.Authenticators[1].credentialAttributeNames(), "") {
 		t.Fatalf("key-only authentication principal = %#v", keyOnly)
 	}
 	mixed := serverAuthenticationRBACRules(c, c.Servers[2]).Policies["authenticated"].Principals[0].GetOrIds().GetIds()

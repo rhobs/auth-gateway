@@ -6,16 +6,18 @@ authenticators:
       jwks:
         uri: https://jwks.jwt.test/issuer-one
       audiences: [gateway-test]
-      attributes:
-        tenant_id:
-          claim_path: [organization, id]
-        writer_id:
-          claim_path: [sub]
+    attributes:
+      tenant_id:
+        claim_path: [organization, id]
+      writer_id:
+        claim_path: [sub]
   - name: partner-key
     api_key:
       secret: gateway-api-keys
       header: X-Partner-Key
-      attributes: [tenant_id, writer_id]
+    attributes:
+      tenant_id: {credential: true}
+      writer_id: {credential: true}
 authorization_policies:
   - name: jwt-writers
     grants:

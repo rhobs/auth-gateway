@@ -103,12 +103,15 @@ func generateAPIKeyECDS(authenticator Authenticator, credentials []APIKeyCredent
 	if err := validateAPIKeyAuthenticator("authenticator.api_key", apiKey, requireSecret); err != nil {
 		return nil, err
 	}
-	allowedAttributes := make(map[string]struct{}, len(apiKey.Attributes))
-	for _, attribute := range apiKey.Attributes {
+	authenticator.APIKey = &apiKey
+	if err := validateAuthenticatorAttributes("authenticator", authenticator, apiKey.Header); err != nil {
+		return nil, err
+	}
+	attributeNames := authenticator.credentialAttributeNames()
+	allowedAttributes := make(map[string]struct{}, len(attributeNames))
+	for _, attribute := range attributeNames {
 		allowedAttributes[attribute] = struct{}{}
 	}
-	attributeNames := slices.Clone(apiKey.Attributes)
-	slices.Sort(attributeNames)
 	seenKeys := make(map[string]struct{}, len(credentials))
 	entries := make([]*apikey.Credential, 0, len(credentials))
 	for index, credential := range credentials {
@@ -194,10 +197,11 @@ func validCredentialText(value string) bool {
 }
 
 const (
-	headerToMetadataFilterName  = "envoy.filters.http.header_to_metadata"
-	authenticationFilterName    = "auth_gateway.authentication"
-	credentialCleanupFilterName = "auth_gateway.credentials"
-	jwtVerifiedHeaderPrefix     = "x-auth-gateway-jwt-verified-"
+	headerToMetadataFilterName     = "envoy.filters.http.header_to_metadata"
+	requestHeaderMetadataNamespace = "auth_gateway.request_headers"
+	authenticationFilterName       = "auth_gateway.authentication"
+	credentialCleanupFilterName    = "auth_gateway.credentials"
+	jwtVerifiedHeaderPrefix        = "x-auth-gateway-jwt-verified-"
 )
 
 func selectedAuthenticatorNames(server Server) []string {
@@ -291,25 +295,50 @@ func apiKeySkipMatcher(c Config, server Server) (*xdsmatcher.Matcher, error) {
 	return &xdsmatcher.Matcher{MatcherType: &xdsmatcher.Matcher_MatcherList_{MatcherList: &xdsmatcher.Matcher_MatcherList{Matchers: fields}}}, nil
 }
 
-func apiKeyMetadataFilter(authenticator Authenticator) (*hcm.HttpFilter, error) {
-	attributeNames := slices.Clone(authenticator.APIKey.Attributes)
-	slices.Sort(attributeNames)
-	rules := []*headertometadata.Config_Rule{{
-		Header: apiKeyClientHeader, Remove: len(attributeNames) == 0,
-		OnHeaderPresent: &headertometadata.Config_KeyValuePair{
-			MetadataNamespace: apiKeyMetadataNamespace, Key: apiKeyMetadataKey,
-		},
-	}}
-	for index, attribute := range attributeNames {
+func requestHeaderSources(c Config, serverIndexes []int) []string {
+	headers := make(map[string]struct{})
+	for _, index := range serverIndexes {
+		for _, name := range selectedAuthenticatorNames(c.Servers[index]) {
+			for _, source := range findAuthenticator(c, name).Attributes {
+				if source.Header != nil {
+					headers[strings.ToLower(*source.Header)] = struct{}{}
+				}
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(headers))
+}
+
+func requestMetadataFilter(keyAuthenticator Authenticator, headers []string) (*hcm.HttpFilter, error) {
+	var rules []*headertometadata.Config_Rule
+	if keyAuthenticator.APIKey != nil {
+		attributeNames := keyAuthenticator.credentialAttributeNames()
 		rules = append(rules, &headertometadata.Config_Rule{
-			Header: apiKeyClientHeader, Remove: index == len(attributeNames)-1,
+			Header: apiKeyClientHeader, Remove: len(attributeNames) == 0,
 			OnHeaderPresent: &headertometadata.Config_KeyValuePair{
-				MetadataNamespace: apiKeyMetadataNamespace,
-				Key:               apiKeyAttributeMetadataKey(attribute),
-				RegexValueRewrite: &matcher.RegexMatchAndSubstitute{
-					Pattern:      apiKeyRegexMatcher(apiKeyClientPattern(authenticator.APIKey.Attributes, attribute)),
-					Substitution: `\1`,
+				MetadataNamespace: apiKeyMetadataNamespace, Key: apiKeyMetadataKey,
+			},
+		})
+		for index, attribute := range attributeNames {
+			rules = append(rules, &headertometadata.Config_Rule{
+				Header: apiKeyClientHeader, Remove: index == len(attributeNames)-1,
+				OnHeaderPresent: &headertometadata.Config_KeyValuePair{
+					MetadataNamespace: apiKeyMetadataNamespace,
+					Key:               apiKeyAttributeMetadataKey(attribute),
+					RegexValueRewrite: &matcher.RegexMatchAndSubstitute{
+						Pattern:      apiKeyRegexMatcher(apiKeyClientPattern(attributeNames, attribute)),
+						Substitution: `\1`,
+					},
 				},
+			})
+		}
+	}
+	for _, header := range headers {
+		rules = append(rules, &headertometadata.Config_Rule{
+			Header: header,
+			OnHeaderPresent: &headertometadata.Config_KeyValuePair{
+				MetadataNamespace: requestHeaderMetadataNamespace,
+				Key:               header,
 			},
 		})
 	}
@@ -352,18 +381,11 @@ func apiKeyRegexMatcher(pattern string) *matcher.RegexMatcher {
 }
 
 func apiKeyIdentityPrincipal(authenticator Authenticator) *rbac.Principal {
-	return apiKeyMetadataPrincipal([]string{apiKeyMetadataKey}, &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_SafeRegex{SafeRegex: apiKeyRegexMatcher(apiKeyClientPattern(authenticator.APIKey.Attributes, ""))}}}})
+	return apiKeyMetadataPrincipal([]string{apiKeyMetadataKey}, &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_SafeRegex{SafeRegex: apiKeyRegexMatcher(apiKeyClientPattern(authenticator.credentialAttributeNames(), ""))}}}})
 }
 
 func apiKeyMetadataPrincipal(keys []string, value *matcher.ValueMatcher) *rbac.Principal {
-	segments := make([]*matcher.MetadataMatcher_PathSegment, 0, len(keys))
-	for _, key := range keys {
-		segments = append(segments, metadataPathSegment(key))
-	}
-	return &rbac.Principal{Identifier: &rbac.Principal_SourcedMetadata{SourcedMetadata: &rbac.SourcedMetadata{
-		MetadataSource:  rbac.MetadataSource_DYNAMIC,
-		MetadataMatcher: &matcher.MetadataMatcher{Filter: apiKeyMetadataNamespace, Path: segments, Value: value},
-	}}}
+	return dynamicMetadataPrincipal(apiKeyMetadataNamespace, keys, value)
 }
 
 func jwtMarkerPrincipal(authenticator Authenticator) *rbac.Principal {
@@ -419,18 +441,20 @@ func serverAuthenticationRBACRules(c Config, server Server) *rbac.RBAC {
 		principals := []*rbac.Principal{principal}
 		builder := &celExpressionBuilder{}
 		var equality []*expr.Expr
-		for _, attribute := range keyAuthenticator.APIKey.Attributes {
-			jwtAttribute, shared := jwtAuthenticator.JWT.Attributes[attribute]
+		for _, attribute := range slices.Sorted(maps.Keys(keyAuthenticator.Attributes)) {
+			_, shared := jwtAuthenticator.Attributes[attribute]
 			if !shared {
 				continue
 			}
+			jwtNamespace, jwtPath := attributeMetadataPath(jwtAuthenticator, attribute)
+			keyNamespace, keyPath := attributeMetadataPath(keyAuthenticator, attribute)
 			valueMatcher := nonemptyScalarValueMatcher()
 			principals = append(principals,
-				jwtClaimPrincipal(append([]string{jwtAuthenticator.Name}, jwtAttribute.ClaimPath...), valueMatcher),
-				apiKeyMetadataPrincipal([]string{apiKeyAttributeMetadataKey(attribute)}, valueMatcher))
+				dynamicMetadataPrincipal(jwtNamespace, jwtPath, valueMatcher),
+				dynamicMetadataPrincipal(keyNamespace, keyPath, valueMatcher))
 			equality = append(equality, builder.call("_==_",
-				builder.metadataValue(jwtAuthnFilterName, append([]string{jwtAuthenticator.Name}, jwtAttribute.ClaimPath...)),
-				builder.metadataValue(apiKeyMetadataNamespace, []string{apiKeyAttributeMetadataKey(attribute)})))
+				builder.metadataValue(jwtNamespace, jwtPath),
+				builder.metadataValue(keyNamespace, keyPath)))
 		}
 		principal = andPrincipals(principals...)
 		if len(equality) > 0 {
@@ -455,16 +479,8 @@ func nonemptyScalarValueMatcher() *matcher.ValueMatcher {
 func keyGrantPrincipal(authenticator Authenticator, grant AuthorizationGrant) *rbac.Principal {
 	conditions := []*rbac.Principal{apiKeyIdentityPrincipal(authenticator)}
 	for _, attribute := range slices.Sorted(maps.Keys(grant.Attributes)) {
-		allowed := grant.Attributes[attribute]
-		values := make([]*matcher.ValueMatcher, 0, len(allowed))
-		for _, value := range allowed {
-			values = append(values, &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: value}}}})
-		}
-		valueMatcher := values[0]
-		if len(values) > 1 {
-			valueMatcher = &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_OrMatch{OrMatch: &matcher.OrMatcher{ValueMatchers: values}}}
-		}
-		conditions = append(conditions, apiKeyMetadataPrincipal([]string{apiKeyAttributeMetadataKey(attribute)}, valueMatcher))
+		namespace, path := attributeMetadataPath(authenticator, attribute)
+		conditions = append(conditions, dynamicMetadataPrincipal(namespace, path, allowedStringValueMatcher(grant.Attributes[attribute])))
 	}
 	return andPrincipals(conditions...)
 }
@@ -473,17 +489,18 @@ func serverAttributeInitializationConfig(c Config, server Server) *setfilterstat
 	config := &setfilterstate.Config{}
 	for _, name := range selectedAuthenticatorNames(server) {
 		authenticator := findAuthenticator(c, name)
-		if authenticator.JWT != nil {
-			for _, attribute := range slices.Sorted(maps.Keys(authenticator.JWT.Attributes)) {
-				claimPath := append([]string{name}, authenticator.JWT.Attributes[attribute].ClaimPath...)
-				config.OnRequestHeaders = append(config.OnRequestHeaders, filterStateValue(filterStateKey(attribute), jwtClaimExpression(claimPath)))
+		for _, attribute := range slices.Sorted(maps.Keys(authenticator.Attributes)) {
+			source := authenticator.Attributes[attribute]
+			var expression string
+			switch {
+			case source.Header != nil:
+				expression = headerAttributeExpression(authenticator, *source.Header)
+			case authenticator.JWT != nil:
+				expression = jwtClaimExpression(append([]string{name}, source.ClaimPath...))
+			default:
+				expression = apiKeyAttributeExpression(attribute)
 			}
-		} else {
-			attributes := slices.Clone(authenticator.APIKey.Attributes)
-			slices.Sort(attributes)
-			for _, attribute := range attributes {
-				config.OnRequestHeaders = append(config.OnRequestHeaders, filterStateValue(filterStateKey(attribute), apiKeyAttributeExpression(attribute)))
-			}
+			config.OnRequestHeaders = append(config.OnRequestHeaders, filterStateValue(filterStateKey(attribute), expression))
 		}
 	}
 	return config

@@ -30,7 +30,14 @@ attributes in a grant must match; one allowed value is enough for each
 attribute. A protected server needs a matching authorization grant to
 forward an API request.
 
-Authorization checks original verified JWT claims or API-key attributes.
-Attribute mappings and caller-supplied headers cannot change a grant.
-Changes to authenticators or policies require regenerating the static
-configuration and explicitly rolling out the gateway Deployment.
+Declare attributes beside `jwt` or `api_key`. JWT attributes can read a
+verified claim or an incoming header. API-key attributes can read a value
+bound to the key in the Secret or an incoming header. A grant checks the
+original value from the declared source. A header value comes from the caller,
+but the named JWT or API key must still authenticate before its grant applies.
+Missing or empty headers leave the attribute unset. Mappings affect forwarding
+and metric labels, not grants. A source header normally reaches the backend;
+if it is also a managed output header, the gateway replaces or removes it.
+
+Changes to attribute sources, authenticators, or policies require regenerating
+the static configuration and explicitly rolling out the gateway Deployment.

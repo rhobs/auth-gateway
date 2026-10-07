@@ -1,0 +1,77 @@
+version: 1
+
+authenticators:
+  - name: issuer-one
+    jwt:
+      issuer: https://issuer-one.jwt.test
+      jwks:
+        uri: https://issuer-one.jwt.test/jwks
+      audiences: [gateway-test]
+    attributes:
+      tenant_id: {claim_path: [organization, id]}
+      requested_tenant: {header: X-Tenant}
+  - name: partner-key
+    api_key:
+      secret: gateway-api-keys
+      header: X-Partner-Key
+    attributes:
+      tenant_id: {credential: true}
+      requested_tenant: {header: X-Tenant}
+
+authorization_policies:
+  - name: writers
+    grants:
+      - authenticator: issuer-one
+        apis: [ingest]
+        attributes:
+          requested_tenant: [client-a]
+      - authenticator: partner-key
+        apis: [ingest]
+        attributes:
+          requested_tenant: [client-a]
+
+apis:
+  - name: ingest
+    metrics:
+      labels:
+        tenant: requested_tenant
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [POST]
+        path:
+          exact: /ingest
+        rewrite:
+          path: /anything
+        processing:
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: requested_tenant
+
+processing:
+  - name: tenants
+    type: attribute-mapper
+    attributes:
+      requested_tenant:
+        mappings:
+          client-a: team-a
+
+servers:
+  - hostname: either.header.gateway.test
+    authentication:
+      any_of: [issuer-one, partner-key]
+    authorization:
+      any_of: [writers]
+    apis: [ingest]
+  - hostname: both.header.gateway.test
+    authentication:
+      all_of: [issuer-one, partner-key]
+    authorization:
+      all_of: [writers]
+    apis: [ingest]
+
+kubernetes:
+  name: auth-gateway
+  namespace: gateway-test
+  image: envoyproxy/envoy:v1.39.1

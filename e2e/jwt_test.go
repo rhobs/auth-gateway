@@ -44,6 +44,7 @@ const (
 	jwtLifecycleNamespace = "auth-gateway-jwt-lifecycle-e2e"
 	jwtPlainHost          = "plain.jwt.auth-gateway.test"
 	jwtHeadersHost        = "headers.jwt.auth-gateway.test"
+	jwtManagedHeaderHost  = "managed.jwt.auth-gateway.test"
 	jwtHTTPHost           = "writer.jwt.auth-gateway.test"
 	jwtHTTPSHost          = "writer-tls.jwt.auth-gateway.test"
 	jwtIssuerOneHost      = "issuer-one-only.jwt.auth-gateway.test"
@@ -185,6 +186,57 @@ var _ = Describe("Direct JWT headers", Label("gateway", "jwt", "authentication",
 		Expect(headerValue(headers, "X-Writer-ID")).To(Equal("writer-17"))
 		Expect(headerValue(headers, "Authorization")).To(BeEmpty())
 	}, SpecTimeout(12*time.Minute))
+
+	It("authorizes with the original managed header before replacing it", func(ctx SpecContext) {
+		token := jwtHeadersGateway.token("issuer-one", jwtTestClaims("customer-a"), nil)
+		status, body, err := jwtHeadersGateway.requestMethodPathHeaders(ctx, jwtHeadersGateway.httpAddr, jwtManagedHeaderHost,
+			false, http.MethodGet, "/protected", token, http.Header{"X-Scope-OrgID": []string{"requested-a"}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(http.StatusOK), string(body))
+		var echo struct {
+			Method  string              `json:"method"`
+			URL     string              `json:"url"`
+			Headers map[string][]string `json:"headers"`
+		}
+		Expect(json.Unmarshal(body, &echo)).To(Succeed())
+		Expect(echo.Method).To(Equal(http.MethodGet))
+		Expect(echo.URL).To(HaveSuffix("/anything"))
+		Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(Equal("customer-a"))
+		Expect(headerValue(echo.Headers, "X-Writer-ID")).To(Equal("writer-17"))
+		Expect(headerValue(echo.Headers, "Authorization")).To(BeEmpty())
+
+		adminAddress, stop, err := env.Forward(ctx, jwtHeadersNamespace, "deployment/auth-gateway", 9901)
+		Expect(err).NotTo(HaveOccurred())
+		defer stop()
+		before, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
+		Expect(err).NotTo(HaveOccurred())
+		status, body, err = jwtHeadersGateway.requestMethodPathHeaders(ctx, jwtHeadersGateway.httpAddr, jwtManagedHeaderHost,
+			false, http.MethodGet, "/protected", token, http.Header{"X-Scope-OrgID": []string{"requested-b"}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(http.StatusForbidden), string(body))
+		after, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(after).To(Equal(before), "the denied managed header reached the upstream")
+	}, NodeTimeout(90*time.Second))
+
+	It("removes a managed input header on routes without that output", func(ctx SpecContext) {
+		token := jwtHeadersGateway.token("issuer-one", jwtTestClaims("customer-a"), nil)
+		status, body, err := jwtHeadersGateway.requestMethodPathHeaders(ctx, jwtHeadersGateway.httpAddr, jwtManagedHeaderHost,
+			false, http.MethodGet, "/headerless", token, http.Header{"X-Scope-OrgID": []string{"requested-a"}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(http.StatusOK), string(body))
+		var echo struct {
+			Method  string              `json:"method"`
+			URL     string              `json:"url"`
+			Headers map[string][]string `json:"headers"`
+		}
+		Expect(json.Unmarshal(body, &echo)).To(Succeed())
+		Expect(echo.Method).To(Equal(http.MethodGet))
+		Expect(echo.URL).To(HaveSuffix("/anything"))
+		Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(BeEmpty())
+		Expect(headerValue(echo.Headers, "X-Writer-ID")).To(BeEmpty())
+		Expect(headerValue(echo.Headers, "Authorization")).To(BeEmpty())
+	}, NodeTimeout(60*time.Second))
 
 	It("rejects a missing required header attribute even when the caller supplies that header", func(ctx SpecContext) {
 		adminAddress, stop, err := env.Forward(ctx, jwtHeadersNamespace, "deployment/auth-gateway", 9901)
@@ -882,6 +934,16 @@ func (e *jwtE2E) requestPath(ctx context.Context, address, host string, useTLS b
 }
 
 func (e *jwtE2E) requestMethodPath(ctx context.Context, address, host string, useTLS bool, method, path, token string, spoof bool) (int, []byte, error) {
+	headers := make(http.Header)
+	if spoof {
+		headers.Add("X-Scope-OrgID", "spoofed")
+		headers.Add("X-Scope-OrgID", "duplicate")
+		headers.Set("X-Writer-ID", "spoofed")
+	}
+	return e.requestMethodPathHeaders(ctx, address, host, useTLS, method, path, token, headers)
+}
+
+func (e *jwtE2E) requestMethodPathHeaders(ctx context.Context, address, host string, useTLS bool, method, path, token string, headers http.Header) (int, []byte, error) {
 	scheme, client := "http", testClient
 	if useTLS {
 		scheme = "https"
@@ -894,13 +956,12 @@ func (e *jwtE2E) requestMethodPath(ctx context.Context, address, host string, us
 		return 0, nil, err
 	}
 	request.Host = host
+	request.Header = headers.Clone()
+	if request.Header == nil {
+		request.Header = make(http.Header)
+	}
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
-	}
-	if spoof {
-		request.Header.Add("X-Scope-OrgID", "spoofed")
-		request.Header.Add("X-Scope-OrgID", "duplicate")
-		request.Header.Set("X-Writer-ID", "spoofed")
 	}
 	response, err := client.Do(request)
 	if err != nil {

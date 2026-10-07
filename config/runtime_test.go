@@ -20,7 +20,7 @@ import (
 
 func TestPinnedImagesValidateGeneratedFiles(t *testing.T) {
 	certificate, key := runtimeCertificate(t)
-	for _, name := range []string{"public-routing", "route-lists", "server-tls", "jwt-auth", "jwt-auth-with-headers", "jwt-auth-with-mappings", "jwt-auth-multiple-issuers", "api-key-auth", "production-tuning"} {
+	for _, name := range []string{"public-routing", "route-lists", "server-tls", "jwt-auth", "jwt-auth-with-headers", "jwt-auth-with-mappings", "jwt-auth-multiple-issuers", "api-key-auth", "header-attributes", "production-tuning"} {
 		t.Run(name, func(t *testing.T) {
 			c := loadConfigCase(t, name)
 			files, err := Generate(c)

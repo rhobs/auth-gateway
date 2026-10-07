@@ -11,34 +11,34 @@ authenticators:
       jwks:
         uri: https://jwks.jwt.test/issuer-one
       audiences: [gateway-test]
-      attributes:
-        tenant_id:
-          claim_path: [organization, id]
-        writer_id:
-          claim_path: [sub]
-        chain_id:
-          claim_path: [chain]
-        order_id:
-          claim_path: [order]
-        escaped_id:
-          claim_path: [literal.claim]
+    attributes:
+      tenant_id:
+        claim_path: [organization, id]
+      writer_id:
+        claim_path: [sub]
+      chain_id:
+        claim_path: [chain]
+      order_id:
+        claim_path: [order]
+      escaped_id:
+        claim_path: [literal.claim]
   - name: issuer-two
     jwt:
       issuer: https://issuer-two.jwt.test
       jwks:
         uri: https://jwks.jwt.test/issuer-two
       audiences: [gateway-test]
-      attributes:
-        tenant_id:
-          claim_path: [organization, id]
-        writer_id:
-          claim_path: [sub]
-        chain_id:
-          claim_path: [chain]
-        order_id:
-          claim_path: [order]
-        escaped_id:
-          claim_path: [literal.claim]
+    attributes:
+      tenant_id:
+        claim_path: [organization, id]
+      writer_id:
+        claim_path: [sub]
+      chain_id:
+        claim_path: [chain]
+      order_id:
+        claim_path: [order]
+      escaped_id:
+        claim_path: [literal.claim]
 authorization_policies:
   - name: metrics-writers
     grants:

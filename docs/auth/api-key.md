@@ -2,10 +2,9 @@
 
 ## Authentication
 
-Clients send a key in the configured request header (default `X-API-Key`).
-In Kubernetes, the gateway reads keys from a Secret. Define one named API-key
-authenticator per gateway configuration; all servers selecting it share the
-same credential set:
+Clients send a key in the configured credential header (default `X-API-Key`).
+Define one named API-key authenticator per gateway configuration. All servers
+selecting it share the same credential set:
 
 ```yaml
 authenticators:
@@ -13,74 +12,46 @@ authenticators:
     api_key:
       secret: auth-gateway-api-keys
       header: X-Partner-Key
-      attributes: [tenant_id, writer_id]
+    attributes:
+      tenant_id: {credential: true}
+      writer_id: {credential: true}
+      requested_tenant: {header: X-Tenant}
 ```
 
-`api_key.attributes` declares the names a key may provide. The Secret below
-binds `tenant_id` and `writer_id` values to one key. Grants check the original
-values; route headers and metric labels can use processed values. A missing
-value cannot satisfy a grant that requires it.
+`credential: true` reads a value bound to the issued key in the Secret.
+`header: X-Tenant` reads the original request header; it is separate from
+the `X-Partner-Key` credential header. For example, one Secret binding could
+contain these values:
 
-The `header` field is optional. The `secret` field is required for Kubernetes
-deployments and can be omitted for file-based Envoy. Create the Secret in the
-configured `kubernetes.namespace` before deploying the gateway. The
-[full example](../../config.auth.example.yaml) uses `observability`:
+| Issued key | `tenant_id` | `writer_id` |
+| --- | --- | --- |
+| `example-partner-key` | `client-123` | `writer-17` |
 
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: auth-gateway-api-keys
-  namespace: observability
-type: Opaque
-stringData:
-  api-keys.yaml: |
-    resources:
-        - '@type': type.googleapis.com/envoy.config.core.v3.TypedExtensionConfig
-          name: envoy.filters.http.api_key_auth
-          typed_config:
-            '@type': type.googleapis.com/envoy.extensions.common.matching.v3.ExtensionWithMatcher
-            extension_config:
-                name: envoy.filters.http.api_key_auth
-                typed_config:
-                    '@type': type.googleapis.com/envoy.extensions.filters.http.api_key_auth.v3.ApiKeyAuth
-                    credentials:
-                        - client: tenant_id=client-123;writer_id=writer-17
-                          key: example-partner-key
-                    forwarding:
-                        header: x-auth-gateway-api-key-client
-                        hide_credentials: true
-                    key_sources:
-                        - cookie: ""
-                          header: x-partner-key
-                          query: ""
-```
+Create the `auth-gateway-api-keys` Secret in the gateway Deployment's
+`kubernetes.namespace` before deploying. The [Secret file format](../envoy.md#api-key-secret-format)
+is documented with the deployment details. The `secret` field can be omitted
+for file-based Envoy deployments. Keep issued keys and Secret manifests out
+of version control.
 
-The `key` is what clients send. The plain-text `client` value gives that key
-its original attribute values. The gateway already knows the authenticator
-from its configuration. List every declared attribute in alphabetical order;
-use an empty value when an attribute is absent. Attribute values cannot
-contain semicolons. Use a different key value for real clients.
-
-A client sends its issued key in the configured header:
+A client sends both the key and the tenant it requests:
 
 ```http
 POST /metrics/api/v1/receive HTTP/1.1
 Host: partner.auth.example.com
 X-Partner-Key: example-partner-key
+X-Tenant: client-123
 Content-Length: 0
 ```
 
-Updating the Secret replaces the accepted key set without restarting the
-gateway. Set `credentials: []` under `ApiKeyAuth` in the Secret to revoke every
-key. Keep real key values and deployed Secret manifests private and out of
-version control.
+The key must be valid even when a grant checks only a header-backed attribute.
+A missing or empty `X-Tenant` leaves `requested_tenant` unset. Updating the
+Secret replaces the accepted key set without restarting the gateway. Use an
+explicit empty credential set in the Secret to revoke every key.
 
-## Authorization
+## Authorization and forwarding
 
-A grant checks the original attributes stored with a verified key. This
-policy allows `metrics-write` only when both listed attributes match.
-Select the authenticator and policy on the same server:
+This grant requires the original values bound to the key and the original
+`X-Tenant` value. Select the authenticator and policy on the same server:
 
 ```yaml
 authorization_policies:
@@ -91,6 +62,7 @@ authorization_policies:
         attributes:
           tenant_id: [client-123]
           writer_id: [writer-17]
+          requested_tenant: [client-123]
 
 servers:
   - hostname: partner.auth.example.com
@@ -101,37 +73,45 @@ servers:
     apis: [metrics-write]
 ```
 
-Define `metrics-write` under `apis` as in the full example. The grant checks
-the raw `client-123` and `writer-17` values in `client`; missing or unlisted
-values are denied. The full example then maps `tenant_id` for upstream
-requests:
+All listed attributes must match. The header is caller-supplied, so include
+a credential-bound condition when access must also be tied to the issued
+key. A missing or unlisted value is denied before the backend receives the
+request.
+
+The full [gateway example](../../config.auth.example.yaml) maps
+`tenant_id: client-123` to `team-a` for upstream use. A route can also map
+`requested_tenant` to an output header, and `metrics.labels` can use its
+processed value:
 
 ```yaml
 processing:
   - name: upstream-tenants
     type: attribute-mapper
     attributes:
-      tenant_id:
+      requested_tenant:
         mappings:
           client-123: team-a
+
+apis:
+  - name: metrics-write
+    metrics:
+      labels:
+        requested_tenant: requested_tenant
+    upstream:
+      address: thanos-receive
+      port: 19291
+    routes:
+      - methods: [POST]
+        path: {exact: /metrics/api/v1/receive}
+        processing:
+          request_headers:
+            - name: X-Requested-Tenant
+              from_attribute: requested_tenant
 ```
 
-The `metrics-write` route binds those attributes to upstream headers:
-
-```yaml
-processing:
-  request_headers:
-    - name: X-Scope-OrgID
-      from_attribute: tenant_id
-    - name: X-Writer-ID
-      from_attribute: writer_id
-```
-
-The key's `tenant_id=client-123` becomes `X-Scope-OrgID: team-a`;
-`writer_id=writer-17` becomes `X-Writer-ID: writer-17`. Authorization still
-checks the raw values.
-
-Changing this mapping updates only the processing ConfigMap. Changing the key
-header, declared attributes, or grants requires regenerating the configuration
-and rolling out the Deployment. Changing only credential values requires a
-Secret update.
+For the request above, the grant checks `client-123`, while the route sends
+`X-Requested-Tenant: team-a` and the metric label uses `team-a`. The original
+`X-Tenant: client-123` also reaches the backend unless it is configured as a
+managed output header. Changing a mapping updates only the processing
+ConfigMap. Changing the credential header, attribute sources, or grants
+requires regenerating the static configuration and rolling out the Deployment.
