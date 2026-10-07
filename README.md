@@ -2,7 +2,7 @@
 
 RHOBS Auth Gateway is a Go configuration library. It loads one YAML document and generates Envoy configuration files or Kubernetes resources. It does not run a controller or gateway process.
 
-The current implementation supports exact-host routing, HTTP and HTTPS listeners, upstream HTTP/1 and HTTP/2, optional JSON Web Token (JWT) and API-key authentication and authorization, attributes from claims, key credentials, and request headers, route-selected request headers, ordered attribute mappings, per-API request counters, Kubernetes packaging, error access logs, and Prometheus metrics. Mutual TLS (mTLS) client-certificate authentication is future work. [config.mtls.example.yaml](config.mtls.example.yaml) is an unsupported design sketch and is rejected by the loader.
+The current implementation supports exact-host routing, HTTP and HTTPS listeners, upstream HTTP/1 and HTTP/2, optional JSON Web Token (JWT) and API-key authentication and authorization, attributes from claims, key credentials, and request headers, route-selected request headers, ordered attribute mappings, per-API request counters, Kubernetes packaging, error access logs, Prometheus metrics, and optional Envoy OpenTelemetry traces. Mutual TLS (mTLS) client-certificate authentication is future work. [config.mtls.example.yaml](config.mtls.example.yaml) is an unsupported design sketch and is rejected by the loader.
 
 ## Generate and deploy
 
@@ -91,7 +91,7 @@ An explicit zero is treated as a supplied value and is rejected where a positive
 
 Overload protection is disabled unless the top-level `overload` section is present. Set both `max_heap_bytes` and `max_downstream_connections`; the heap budget must be less than Envoy's memory limit. The default heap-shrink and request-reject thresholds are `0.90` and `0.95`.
 
-Kubernetes metrics collection is enabled by default. Set `observability.metrics` to change the scrape interval and timeout, or set `observability.metrics.enabled: false` to omit the collector sidecar and metrics Service port. That flag does not change which per-API counters Envoy generates. Collector resources remain under `kubernetes.metrics.resources`. The default collector image is `otel/opentelemetry-collector-contrib:0.135.0`. Omit `kubernetes.envoy_concurrency` to let Envoy choose its worker count; a CPU limit does not set it.
+Kubernetes metrics collection is enabled by default. Set `observability.metrics` to change the scrape interval and timeout, or set `observability.metrics.enabled: false` to omit metrics scraping and the metrics Service port. That flag does not change which per-API counters Envoy generates. Set `observability.tracing.enabled: true` to enable Envoy spans; the collector sidecar exports them to `observability.tracing.endpoint`. The collector remains when either metrics or tracing is enabled. Collector resources remain under `kubernetes.metrics.resources`. The default collector image is `otel/opentelemetry-collector-contrib:0.135.0`. Omit `kubernetes.envoy_concurrency` to let Envoy choose its worker count; a CPU limit does not set it.
 
 ## Applying updates
 
@@ -101,6 +101,8 @@ Kubernetes metrics collection is enabled by default. Set `observability.metrics`
 | API-key values or their attribute values | Regenerate and apply the same namespace Secret. ECDS reloads the complete key set without a Pod restart. An invalid update leaves the last accepted set active; set `credentials: []` in the Secret's `ApiKeyAuth` resource for revocation. |
 | Downstream certificate or key in a mounted TLS Secret | Update the Secret. Envoy's Secret Discovery Service (SDS) reloads it for new TLS connections. |
 | `observability.metrics.scrape_interval` or `observability.metrics.scrape_timeout` | Regenerate and apply resources, then restart the gateway so the collector loads its updated ConfigMap. |
+| `observability.tracing.endpoint` or `observability.tracing.insecure` | Regenerate and apply resources, then restart the gateway so the collector loads its updated ConfigMap. |
+| `observability.tracing.enabled`, `service_name`, or `sampling_percentage` | Regenerate and apply resources, then roll out the gateway to load the changed Envoy bootstrap. |
 | Routes, authenticator attribute sources, the request metric name or label bindings, other static configuration, or deployment settings | Regenerate and apply the resources. Roll out the gateway when the static Envoy configuration changes. |
 | Upstream or JWKS CA bundle | Update the referenced bundle and explicitly roll out the gateway. |
 
@@ -110,10 +112,12 @@ The Deployment has no generated checksum annotation. A changed ConfigMap alone d
 
 Envoy writes structured JSON access logs to stdout for responses with status `400` or higher. Entries include the route, method, status, duration, response details, and upstream information.
 
-Kubernetes output includes an OpenTelemetry Collector sidecar when `observability.metrics.enabled` is true. It scrapes Envoy's admin endpoint at `127.0.0.1:9901/stats/prometheus` and serves Prometheus metrics at `/metrics` on port `8889` of the gateway Service. The admin endpoint remains bound to loopback and is not exposed through the Service.
+Kubernetes output includes an OpenTelemetry Collector sidecar when either `observability.metrics.enabled` or `observability.tracing.enabled` is true. When metrics are enabled, it scrapes Envoy's admin endpoint at `127.0.0.1:9901/stats/prometheus` and serves Prometheus metrics at `/metrics` on port `8889` of the gateway Service. When tracing is enabled, its OTLP/gRPC receiver listens on `127.0.0.1:4317` and is not exposed through the Service. The Envoy admin endpoint remains bound to loopback and is not exposed through the Service.
 
 Set `apis[].metrics` to count responses for an API. `metrics: {}` records `api` and the exact downstream `http_status_code`. Use `metrics.labels` to bind more Prometheus labels to processed attributes, including header-backed attributes, for example `tenant: requested_tenant`. Enabled APIs share the union of configured label names; missing, unavailable, or unsafe values use `__unattributed__`. Envoy adds the `envoy_http_lua_` prefix to these counters, and the collector removes it before exposing the series. The default exported metric is `auth_gateway_http_requests_total`; set top-level `request_metrics.name` to change it. The counter includes responses handled by the existing stats-only Lua filter, such as authentication and RBAC denials and upstream responses. Gateway 404 and 405 fallback routes have no custom counter.
 
 Label values must be 1 to 128 printable ASCII bytes and cannot contain `|`. Label names use Prometheus ASCII syntax and cannot be `api`, `http_status_code`, `envoy_http_conn_manager_prefix`, or start with `__`. Each distinct label combination stays in Envoy memory until the process restarts, so choose labels with bounded values.
+
+Set `observability.tracing.enabled: true` to enable Envoy's native OpenTelemetry HTTP tracer. Envoy sends sampled OTLP/gRPC spans to the local collector at `127.0.0.1:4317`, and the collector exports them to the required `observability.tracing.endpoint` (`host:port`). TLS is enabled by default; set `insecure: true` only for a trusted plaintext endpoint. The service name defaults to `node.cluster`, and `sampling_percentage` defaults to `100` and accepts values from `0` to `100`. Tracing starts the collector even when metrics are disabled; the OTLP receiver remains local to the Pod and is not exposed by the Service. For file-based Envoy output, configure a collector yourself to receive on the local OTLP port and export to the same endpoint.
 
 For generator details, filter order, trust, and reload mechanics, see [docs/envoy.md](docs/envoy.md). For local checks, test ownership, and golden updates, see [CONTRIBUTING.md](CONTRIBUTING.md).
