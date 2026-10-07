@@ -11,12 +11,15 @@ apis:
       - methods: [POST]
         path:
           exact: /metrics/api/v1/receive
+observability:
+  metrics:
+    enabled: null
+    scrape_interval: null
+    scrape_timeout: null
 kubernetes:
   name: auth-gateway
   namespace: observability
   image: envoyproxy/envoy:v1.39.1
   metrics:
-    scrape_interval: null
-    scrape_timeout: null
     resources: {requests: null, limits: null}
 overload: null

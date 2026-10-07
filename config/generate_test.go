@@ -89,6 +89,9 @@ func TestPlaygroundBootstrap(t *testing.T) {
 		t.Fatalf("playground needs a file layout for %d generated files", len(files))
 	}
 	checkReference(t, filepath.Join("..", "playground", "envoy.yaml.golden"), bootstrap)
+
+	collectorConfig := generateOTelCollectorConfig(c.Observability.Metrics)
+	checkReference(t, filepath.Join("..", "playground", "otel-collector.yaml.golden"), collectorConfig)
 }
 
 func checkReference(t *testing.T, path string, want []byte) {

@@ -9,7 +9,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// The auth example leaves default-valued settings commented out.
+// The auth example's default values match the loader defaults.
 func TestAuthExampleAppliesAllDefaults(t *testing.T) {
 	c := loadAuthExample(t)
 	if c.Node != (EnvoyNode{ID: "auth-gateway", Cluster: "auth-gateway"}) {
@@ -56,11 +56,17 @@ func TestAuthExampleAppliesAllDefaults(t *testing.T) {
 			}
 		}
 	}
+	wantObservability := ObservabilityConfig{Metrics: ObservabilityMetrics{
+		Enabled: new(true), ScrapeInterval: duration(30 * time.Second), ScrapeTimeout: duration(10 * time.Second),
+	}}
+	if !reflect.DeepEqual(c.Observability, wantObservability) {
+		t.Fatalf("observability defaults = %#v, want %#v", c.Observability, wantObservability)
+	}
 	wantKubernetes := &Kubernetes{
 		Name: "auth-gateway", Namespace: "observability", Image: c.Kubernetes.Image,
 		OTelCollectorImage: "otel/opentelemetry-collector-contrib:0.135.0", Replicas: new(int32(2)), ServicePort: new(int32(80)), HTTPSServicePort: new(int32(443)),
 		Resources: KubernetesResourceRequirements{Requests: map[string]string{"cpu": "50m", "memory": "64Mi"}, Limits: map[string]string{"cpu": "1", "memory": "256Mi"}},
-		Metrics:   KubernetesMetrics{ScrapeInterval: duration(30 * time.Second), ScrapeTimeout: duration(10 * time.Second), Resources: KubernetesResourceRequirements{Requests: map[string]string{"cpu": "20m", "memory": "64Mi"}, Limits: map[string]string{"memory": "256Mi"}}},
+		Metrics:   KubernetesMetrics{Resources: KubernetesResourceRequirements{Requests: map[string]string{"cpu": "20m", "memory": "64Mi"}, Limits: map[string]string{"memory": "256Mi"}}},
 	}
 	if !reflect.DeepEqual(c.Kubernetes, wantKubernetes) {
 		t.Fatalf("Kubernetes defaults = %#v, want %#v", c.Kubernetes, wantKubernetes)
@@ -218,10 +224,10 @@ func TestDefaultsCloneInputs(t *testing.T) {
 		}
 		*defaulted.Overload.HeapShrinkThreshold = 0.2
 		*defaulted.Kubernetes.EnvoyConcurrency = 3
-		*defaulted.Kubernetes.Metrics.ScrapeInterval = Duration(time.Second)
+		*defaulted.Observability.Metrics.ScrapeInterval = Duration(time.Second)
 		defaulted.Kubernetes.Metrics.Resources.Requests["cpu"] = "10m"
 		defaulted.Kubernetes.Resources.Limits["memory"] = "512Mi"
-		if *c.Overload.HeapShrinkThreshold != 0.7 || *c.Kubernetes.EnvoyConcurrency != 2 || *c.Kubernetes.Metrics.ScrapeInterval != Duration(30*time.Second) || c.Kubernetes.Metrics.Resources.Requests["cpu"] != "5m" || len(c.Kubernetes.Resources.Limits) != 0 {
+		if *c.Overload.HeapShrinkThreshold != 0.7 || *c.Kubernetes.EnvoyConcurrency != 2 || *c.Observability.Metrics.ScrapeInterval != Duration(30*time.Second) || c.Kubernetes.Metrics.Resources.Requests["cpu"] != "5m" || len(c.Kubernetes.Resources.Limits) != 0 {
 			t.Fatal("defaulting aliases resource maps or optional pointers")
 		}
 	})
@@ -268,8 +274,9 @@ func TestKubernetesYAMLOptions(t *testing.T) {
 	for _, test := range defaults {
 		t.Run(test.name, func(t *testing.T) {
 			c := loadTestConfig(t, readFixture(t, test.file), test.name)
-			metrics := c.Kubernetes.Metrics
-			if c.Overload != nil || c.Kubernetes.EnvoyConcurrency != nil || *metrics.ScrapeInterval != Duration(30*time.Second) || *metrics.ScrapeTimeout != Duration(10*time.Second) || !reflect.DeepEqual(metrics.Resources.Requests, map[string]string{"cpu": "20m", "memory": "64Mi"}) || !reflect.DeepEqual(metrics.Resources.Limits, map[string]string{"memory": "256Mi"}) {
+			metrics := c.Observability.Metrics
+			collectorResources := c.Kubernetes.Metrics.Resources
+			if c.Overload != nil || c.Kubernetes.EnvoyConcurrency != nil || metrics.Enabled == nil || !*metrics.Enabled || *metrics.ScrapeInterval != Duration(30*time.Second) || *metrics.ScrapeTimeout != Duration(10*time.Second) || !reflect.DeepEqual(collectorResources.Requests, map[string]string{"cpu": "20m", "memory": "64Mi"}) || !reflect.DeepEqual(collectorResources.Limits, map[string]string{"memory": "256Mi"}) {
 				t.Fatalf("defaulted Kubernetes settings = %#v", c.Kubernetes)
 			}
 		})

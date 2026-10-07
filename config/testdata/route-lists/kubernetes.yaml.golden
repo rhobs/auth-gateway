@@ -245,6 +245,12 @@ data:
               static_configs:
                 - targets:
                     - 127.0.0.1:9901
+    processors:
+      transform:
+        metric_statements:
+          - context: metric
+            statements:
+              - replace_pattern(name, "^envoy_http_lua_", "")
     exporters:
       prometheus:
         endpoint: 0.0.0.0:8889
@@ -253,6 +259,8 @@ data:
         metrics:
           receivers:
             - prometheus
+          processors:
+            - transform
           exporters:
             - prometheus
 kind: ConfigMap

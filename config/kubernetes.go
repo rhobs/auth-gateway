@@ -7,7 +7,6 @@ import (
 	"path"
 	"slices"
 	"strconv"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -42,7 +41,7 @@ const (
 type KubernetesResources struct {
 	ConfigMap              corev1.ConfigMap
 	ProcessingConfigMap    *corev1.ConfigMap
-	OTelCollectorConfigMap corev1.ConfigMap
+	OTelCollectorConfigMap *corev1.ConfigMap
 	ServiceAccount         corev1.ServiceAccount
 	Deployment             appsv1.Deployment
 	Service                corev1.Service
@@ -54,7 +53,10 @@ func (r *KubernetesResources) Objects() []runtime.Object {
 	if r.ProcessingConfigMap != nil {
 		objects = append(objects, r.ProcessingConfigMap)
 	}
-	return append(objects, &r.OTelCollectorConfigMap, &r.ServiceAccount, &r.Deployment, &r.Service)
+	if r.OTelCollectorConfigMap != nil {
+		objects = append(objects, r.OTelCollectorConfigMap)
+	}
+	return append(objects, &r.ServiceAccount, &r.Deployment, &r.Service)
 }
 
 // YAML serializes all resources as a Kubernetes manifest stream.
@@ -72,7 +74,7 @@ func (r *KubernetesResources) YAML() ([]byte, error) {
 	return output.Bytes(), nil
 }
 
-// GenerateKubernetes builds Kubernetes resources for Envoy and its metrics sidecar.
+// GenerateKubernetes builds Kubernetes resources for Envoy and optional observability metrics.
 // It does not contact a cluster, read credentials, or write files.
 func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	effective, err := resolveConfig(c)
@@ -105,7 +107,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 			Data: map[string]string{processingConfigFilename: string(processingData)},
 		}
 	}
-	otelConfig := generateOTelCollectorConfig(c.Kubernetes.Metrics)
+	metricsEnabled := c.Observability.Metrics.Enabled != nil && *c.Observability.Metrics.Enabled
 
 	k := c.Kubernetes
 	envoyArgs := []string{"-c", path.Join(configDirectory, "envoy.yaml"), "--log-level", "info"}
@@ -125,10 +127,14 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 		ObjectMeta: metav1.ObjectMeta{Name: configName, Namespace: k.Namespace},
 		Data:       stringFiles(configFiles),
 	}
-	otelConfigMap := corev1.ConfigMap{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: kubernetesConfigMapKind},
-		ObjectMeta: metav1.ObjectMeta{Name: metricsName, Namespace: k.Namespace},
-		Data:       map[string]string{collectorConfigFilename: string(otelConfig)},
+	var otelConfigMap *corev1.ConfigMap
+	if metricsEnabled {
+		otelConfig := generateOTelCollectorConfig(c.Observability.Metrics)
+		otelConfigMap = &corev1.ConfigMap{
+			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: kubernetesConfigMapKind},
+			ObjectMeta: metav1.ObjectMeta{Name: metricsName, Namespace: k.Namespace},
+			Data:       map[string]string{collectorConfigFilename: string(otelConfig)},
+		}
 	}
 	serviceAccount := corev1.ServiceAccount{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ServiceAccount"},
@@ -189,23 +195,6 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 							MountPath: configDirectory,
 							ReadOnly:  true,
 						}},
-					}, {
-						Name:            metricsPortName,
-						Image:           k.OTelCollectorImage,
-						ImagePullPolicy: corev1.PullIfNotPresent,
-						Args:            []string{"--config=" + path.Join(collectorConfigDirectory, collectorConfigFilename)},
-						Ports: []corev1.ContainerPort{{
-							Name: metricsPortName, ContainerPort: defaultOTelMetricsPort, Protocol: corev1.ProtocolTCP,
-						}},
-						Resources: corev1.ResourceRequirements{
-							Requests: kubernetesResourceList(k.Metrics.Resources.Requests),
-							Limits:   kubernetesResourceList(k.Metrics.Resources.Limits),
-						},
-						VolumeMounts: []corev1.VolumeMount{{
-							Name:      metricsConfigVolumeName,
-							MountPath: collectorConfigDirectory,
-							ReadOnly:  true,
-						}},
 					}},
 					Volumes: []corev1.Volume{{
 						Name: gatewayConfigVolumeName,
@@ -213,15 +202,36 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 							LocalObjectReference: corev1.LocalObjectReference{Name: configName},
 							Items:                configMapItems(configFiles),
 						}},
-					}, {
-						Name: metricsConfigVolumeName,
-						VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-							LocalObjectReference: corev1.LocalObjectReference{Name: metricsName},
-						}},
 					}},
 				},
 			},
 		},
+	}
+	if metricsEnabled {
+		deployment.Spec.Template.Spec.Containers = append(deployment.Spec.Template.Spec.Containers, corev1.Container{
+			Name:            metricsPortName,
+			Image:           k.OTelCollectorImage,
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			Args:            []string{"--config=" + path.Join(collectorConfigDirectory, collectorConfigFilename)},
+			Ports: []corev1.ContainerPort{{
+				Name: metricsPortName, ContainerPort: defaultOTelMetricsPort, Protocol: corev1.ProtocolTCP,
+			}},
+			Resources: corev1.ResourceRequirements{
+				Requests: kubernetesResourceList(k.Metrics.Resources.Requests),
+				Limits:   kubernetesResourceList(k.Metrics.Resources.Limits),
+			},
+			VolumeMounts: []corev1.VolumeMount{{
+				Name:      metricsConfigVolumeName,
+				MountPath: collectorConfigDirectory,
+				ReadOnly:  true,
+			}},
+		})
+		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
+			Name: metricsConfigVolumeName,
+			VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: metricsName},
+			}},
+		})
 	}
 	if processingConfigMap != nil {
 		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
@@ -307,12 +317,14 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 			Protocol:   corev1.ProtocolTCP,
 		})
 	}
-	servicePorts = append(servicePorts, corev1.ServicePort{
-		Name:       metricsPortName,
-		Port:       defaultOTelMetricsPort,
-		TargetPort: intstr.FromString(metricsPortName),
-		Protocol:   corev1.ProtocolTCP,
-	})
+	if metricsEnabled {
+		servicePorts = append(servicePorts, corev1.ServicePort{
+			Name:       metricsPortName,
+			Port:       defaultOTelMetricsPort,
+			TargetPort: intstr.FromString(metricsPortName),
+			Protocol:   corev1.ProtocolTCP,
+		})
+	}
 	service := corev1.Service{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
 		ObjectMeta: metav1.ObjectMeta{
@@ -364,36 +376,18 @@ func kubernetesResourceList(values map[string]string) corev1.ResourceList {
 	return resources
 }
 
-// KubernetesMetrics configures the collector's scrape timing and resources.
+// KubernetesMetrics configures resources for the collector container.
 type KubernetesMetrics struct {
-	ScrapeInterval *Duration                      `yaml:"scrape_interval,omitempty"`
-	ScrapeTimeout  *Duration                      `yaml:"scrape_timeout,omitempty"`
-	Resources      KubernetesResourceRequirements `yaml:"resources,omitempty"`
+	Resources KubernetesResourceRequirements `yaml:"resources,omitempty"`
 }
 
 func (m KubernetesMetrics) withDefaults() KubernetesMetrics {
-	m.ScrapeInterval = defaultDuration(m.ScrapeInterval, 30*time.Second)
-	m.ScrapeTimeout = defaultDuration(m.ScrapeTimeout, 10*time.Second)
 	m.Resources.Requests = copyResourcesOrDefault(m.Resources.Requests, map[string]string{kubernetesCPUResourceName: "20m", kubernetesMemoryResourceName: "64Mi"})
 	m.Resources.Limits = copyResourcesOrDefault(m.Resources.Limits, map[string]string{kubernetesMemoryResourceName: "256Mi"})
 	return m
 }
 
 func (m KubernetesMetrics) validate() error {
-	for _, field := range []struct {
-		name  string
-		value *Duration
-	}{{"scrape_interval", m.ScrapeInterval}, {"scrape_timeout", m.ScrapeTimeout}} {
-		if err := validateDuration("kubernetes.metrics."+field.name, field.value, false); err != nil {
-			return err
-		}
-		if time.Duration(*field.value)%time.Millisecond != 0 {
-			return fmt.Errorf("kubernetes.metrics.%s must be a whole number of milliseconds", field.name)
-		}
-	}
-	if *m.ScrapeTimeout > *m.ScrapeInterval {
-		return fmt.Errorf("kubernetes.metrics.scrape_timeout (%s) must not exceed kubernetes.metrics.scrape_interval (%s)", m.ScrapeTimeout, m.ScrapeInterval)
-	}
 	return validateKubernetesResourceRequirements("kubernetes.metrics.resources", m.Resources)
 }
 

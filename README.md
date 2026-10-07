@@ -91,7 +91,7 @@ An explicit zero is treated as a supplied value and is rejected where a positive
 
 Overload protection is disabled unless the top-level `overload` section is present. Set both `max_heap_bytes` and `max_downstream_connections`; the heap budget must be less than Envoy's memory limit. The default heap-shrink and request-reject thresholds are `0.90` and `0.95`.
 
-Kubernetes metrics scrape Envoy every `30s` by default with a `10s` timeout. Set `kubernetes.metrics` to change scrape timing and collector resources. The default collector image is `otel/opentelemetry-collector-contrib:0.135.0`. Omit `kubernetes.envoy_concurrency` to let Envoy choose its worker count; a CPU limit does not set it.
+Kubernetes metrics collection is enabled by default. Set `observability.metrics` to change the scrape interval and timeout, or set `observability.metrics.enabled: false` to omit the collector sidecar and metrics Service port. That flag does not change which per-API counters Envoy generates. Collector resources remain under `kubernetes.metrics.resources`. The default collector image is `otel/opentelemetry-collector-contrib:0.135.0`. Omit `kubernetes.envoy_concurrency` to let Envoy choose its worker count; a CPU limit does not set it.
 
 ## Applying updates
 
@@ -100,6 +100,7 @@ Kubernetes metrics scrape Envoy every `30s` by default with a `10s` timeout. Set
 | Values in existing attribute mapping tables | Regenerate and apply the processing ConfigMap. Envoy's Extension Config Discovery Service (ECDS) reloads the mappings and request metric label values without a Pod restart. |
 | API-key values or their attribute values | Regenerate and apply the same namespace Secret. ECDS reloads the complete key set without a Pod restart. An invalid update leaves the last accepted set active; set `credentials: []` in the Secret's `ApiKeyAuth` resource for revocation. |
 | Downstream certificate or key in a mounted TLS Secret | Update the Secret. Envoy's Secret Discovery Service (SDS) reloads it for new TLS connections. |
+| `observability.metrics.scrape_interval` or `observability.metrics.scrape_timeout` | Regenerate and apply resources, then restart the gateway so the collector loads its updated ConfigMap. |
 | Routes, authenticator attribute sources, the request metric name or label bindings, other static configuration, or deployment settings | Regenerate and apply the resources. Roll out the gateway when the static Envoy configuration changes. |
 | Upstream or JWKS CA bundle | Update the referenced bundle and explicitly roll out the gateway. |
 
@@ -109,9 +110,9 @@ The Deployment has no generated checksum annotation. A changed ConfigMap alone d
 
 Envoy writes structured JSON access logs to stdout for responses with status `400` or higher. Entries include the route, method, status, duration, response details, and upstream information.
 
-Kubernetes output includes an OpenTelemetry Collector sidecar. It scrapes Envoy's admin endpoint at `127.0.0.1:9901/stats/prometheus` and serves Prometheus metrics at `/metrics` on port `8889` of the gateway Service. The admin endpoint remains bound to loopback and is not exposed through the Service.
+Kubernetes output includes an OpenTelemetry Collector sidecar when `observability.metrics.enabled` is true. It scrapes Envoy's admin endpoint at `127.0.0.1:9901/stats/prometheus` and serves Prometheus metrics at `/metrics` on port `8889` of the gateway Service. The admin endpoint remains bound to loopback and is not exposed through the Service.
 
-Set `apis[].metrics` to count responses for an API. `metrics: {}` records `api` and the exact downstream `http_status_code`. Use `metrics.labels` to bind more Prometheus labels to processed attributes, including header-backed attributes, for example `tenant: requested_tenant`. Enabled APIs share the union of configured label names; missing, unavailable, or unsafe values use `__unattributed__`. The default metric is `envoy_http_lua_auth_gateway_http_requests_total`. Set top-level `request_metrics.name` to change the shared name after Envoy's `envoy_http_lua_` prefix. The counter includes responses handled by the existing stats-only Lua filter, such as authentication and RBAC denials and upstream responses. Gateway 404 and 405 fallback routes have no custom counter.
+Set `apis[].metrics` to count responses for an API. `metrics: {}` records `api` and the exact downstream `http_status_code`. Use `metrics.labels` to bind more Prometheus labels to processed attributes, including header-backed attributes, for example `tenant: requested_tenant`. Enabled APIs share the union of configured label names; missing, unavailable, or unsafe values use `__unattributed__`. Envoy adds the `envoy_http_lua_` prefix to these counters, and the collector removes it before exposing the series. The default exported metric is `auth_gateway_http_requests_total`; set top-level `request_metrics.name` to change it. The counter includes responses handled by the existing stats-only Lua filter, such as authentication and RBAC denials and upstream responses. Gateway 404 and 405 fallback routes have no custom counter.
 
 Label values must be 1 to 128 printable ASCII bytes and cannot contain `|`. Label names use Prometheus ASCII syntax and cannot be `api`, `http_status_code`, `envoy_http_conn_manager_prefix`, or start with `__`. Each distinct label combination stays in Envoy memory until the process restarts, so choose labels with bounded values.
 

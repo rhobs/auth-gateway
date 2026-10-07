@@ -77,7 +77,7 @@ const defaultKubernetesReplicas int32 = 2
 
 var apiNamePattern = regexp.MustCompile("^[a-z][a-z0-9-]{0,52}$")
 
-// Config describes Envoy metadata, authentication, authorization, API routes, upstreams, and optional Kubernetes output.
+// Config describes gateway behavior, observability, and optional Kubernetes output.
 type Config struct {
 	Version               int                   `yaml:"version"`
 	Node                  EnvoyNode             `yaml:"node,omitempty"`
@@ -89,6 +89,7 @@ type Config struct {
 	Servers               []Server              `yaml:"servers"`
 	APIs                  []API                 `yaml:"apis"`
 	RequestMetrics        *RequestMetricsConfig `yaml:"request_metrics,omitempty"`
+	Observability         ObservabilityConfig   `yaml:"observability,omitempty"`
 	Kubernetes            *Kubernetes           `yaml:"kubernetes,omitempty"`
 }
 
@@ -250,10 +251,14 @@ func (c Config) validate() error {
 	if strings.TrimSpace(c.Node.Cluster) == "" {
 		return fmt.Errorf("node.cluster must not be empty")
 	}
-	if err := c.Listener.validate(c.Kubernetes != nil); err != nil {
+	metricsEnabled := c.Kubernetes != nil && c.Observability.Metrics.Enabled != nil && *c.Observability.Metrics.Enabled
+	if err := c.Listener.validate(metricsEnabled); err != nil {
 		return err
 	}
 	if err := validateRequestMetricsConfig(c.RequestMetrics); err != nil {
+		return err
+	}
+	if err := c.Observability.Metrics.validate(); err != nil {
 		return err
 	}
 	if len(c.APIs) == 0 {
@@ -339,7 +344,7 @@ func (c Config) validate() error {
 		if strings.TrimSpace(c.Kubernetes.Image) == "" || strings.ContainsAny(c.Kubernetes.Image, imageWhitespaceCharacters) {
 			return fmt.Errorf("kubernetes.image must be an image reference")
 		}
-		if strings.TrimSpace(c.Kubernetes.OTelCollectorImage) == "" || strings.ContainsAny(c.Kubernetes.OTelCollectorImage, imageWhitespaceCharacters) {
+		if metricsEnabled && (strings.TrimSpace(c.Kubernetes.OTelCollectorImage) == "" || strings.ContainsAny(c.Kubernetes.OTelCollectorImage, imageWhitespaceCharacters)) {
 			return fmt.Errorf("kubernetes.otel_collector_image must be an image reference")
 		}
 		if c.Kubernetes.Replicas != nil && *c.Kubernetes.Replicas < 0 {
@@ -350,7 +355,7 @@ func (c Config) validate() error {
 				return fmt.Errorf("kubernetes.service_port must be between 1 and 65535")
 			}
 		}
-		if c.hasHTTP() && *c.Kubernetes.ServicePort == defaultOTelMetricsPort {
+		if metricsEnabled && c.hasHTTP() && *c.Kubernetes.ServicePort == defaultOTelMetricsPort {
 			return fmt.Errorf("kubernetes.service_port must not conflict with the metrics port")
 		}
 		if c.hasHTTPS() {
@@ -360,7 +365,7 @@ func (c Config) validate() error {
 			if *c.Kubernetes.HTTPSServicePort < 1 || *c.Kubernetes.HTTPSServicePort > 65535 {
 				return fmt.Errorf("kubernetes.https_service_port must be between 1 and 65535")
 			}
-			if *c.Kubernetes.HTTPSServicePort == defaultOTelMetricsPort {
+			if metricsEnabled && *c.Kubernetes.HTTPSServicePort == defaultOTelMetricsPort {
 				return fmt.Errorf("kubernetes.https_service_port must not conflict with the metrics port")
 			}
 			if c.hasHTTP() && *c.Kubernetes.HTTPSServicePort == *c.Kubernetes.ServicePort {
@@ -399,6 +404,7 @@ func (c Config) withDefaults() Config {
 	}
 	c.Listener = c.Listener.withDefaults()
 	c.Overload = c.Overload.withDefaults()
+	c.Observability = c.Observability.withDefaults()
 	if c.Servers != nil {
 		servers := make([]Server, len(c.Servers))
 		for i, server := range c.Servers {
@@ -1077,12 +1083,12 @@ func (l Listener) withDefaults() Listener {
 	return l
 }
 
-func (l Listener) validate(kubernetes bool) error {
+func (l Listener) validate(metricsEnabled bool) error {
 	if *l.Port == 0 || *l.Port > 65535 {
 		return fmt.Errorf("listener.port must be between 1 and 65535")
 	}
-	if *l.Port == envoyAdminPort || (kubernetes && *l.Port == defaultOTelMetricsPort) {
-		return fmt.Errorf("listener.port must not conflict with admin port %d or the Kubernetes metrics port %d", envoyAdminPort, defaultOTelMetricsPort)
+	if *l.Port == envoyAdminPort || (metricsEnabled && *l.Port == defaultOTelMetricsPort) {
+		return fmt.Errorf("listener.port must not conflict with admin port %d or the metrics collector port %d", envoyAdminPort, defaultOTelMetricsPort)
 	}
 	for _, value := range []struct {
 		name  string

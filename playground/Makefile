@@ -5,22 +5,25 @@ COMPOSE ?= docker compose
 ENVOY_IMAGE ?= envoyproxy/envoy:v1.39.1
 MOCK_OAUTH2_IMAGE ?= ghcr.io/navikt/mock-oauth2-server:6.0.4
 PROMETHEUS_IMAGE ?= prom/prometheus:v3.5.0
+OTEL_COLLECTOR_IMAGE ?= otel/opentelemetry-collector-contrib:0.135.0
 HOST_PORT ?= 8080
 ENVOY_PORT ?= 8080
 OAUTH_HOST_PORT ?= 8443
 PROMETHEUS_HOST_PORT ?= 9090
+OTEL_METRICS_HOST_PORT ?= 8889
 
-export ENVOY_IMAGE MOCK_OAUTH2_IMAGE PROMETHEUS_IMAGE HOST_PORT ENVOY_PORT OAUTH_HOST_PORT PROMETHEUS_HOST_PORT
+export ENVOY_IMAGE MOCK_OAUTH2_IMAGE PROMETHEUS_IMAGE OTEL_COLLECTOR_IMAGE HOST_PORT ENVOY_PORT OAUTH_HOST_PORT PROMETHEUS_HOST_PORT OTEL_METRICS_HOST_PORT
 
 help:
 	@printf '%s\n' \
-	  'generate  Generate Envoy files and local authentication resources' \
-	  'start     Start Envoy, Mock OAuth, and Prometheus in Docker Compose' \
+	  'generate  Generate Envoy, collector, and local authentication files' \
+	  'start     Start Envoy, Mock OAuth, the collector, and Prometheus in Docker Compose' \
 	  'run       Start the stack and follow its logs' \
 	  'token     Request fresh JWTs from both mock OAuth issuers' \
 	  'stop      Stop and remove the playground containers' \
 	  'clean     Stop the stack and remove generated files' \
-	  'Prometheus UI: http://127.0.0.1:$(PROMETHEUS_HOST_PORT)'
+	  'Prometheus UI: http://127.0.0.1:$(PROMETHEUS_HOST_PORT)' \
+	  'Metrics:      http://127.0.0.1:$(OTEL_METRICS_HOST_PORT)/metrics'
 
 generate:
 	@set -eu; \
@@ -49,10 +52,11 @@ generate:
 	  chmod 755 generated; \
 	  umask 022; \
 	  go test ../config -run '^TestPlaygroundBootstrap$$' -count=1 -update; \
-	  rm -f generated/envoy.yaml generated/processing/processing.yaml generated/api-keys/api-keys.yaml generated/metrics.jwt generated/logs.jwt generated/metrics-token-response.json generated/logs-token-response.json; \
+	  rm -f generated/envoy.yaml generated/otel-collector.yaml generated/processing/processing.yaml generated/api-keys/api-keys.yaml generated/metrics.jwt generated/logs.jwt generated/metrics-token-response.json generated/logs-token-response.json; \
 	  cp envoy.yaml.golden generated/envoy.yaml; \
-	  chmod 644 generated/envoy.yaml; \
-	  printf '%s\n' 'Generated Envoy bootstrap and local OAuth certificate'
+	  cp otel-collector.yaml.golden generated/otel-collector.yaml; \
+	  chmod 644 generated/envoy.yaml generated/otel-collector.yaml; \
+	  printf '%s\n' 'Generated Envoy and collector configs and local OAuth certificate'
 
 start: generate
 	$(COMPOSE) up -d --force-recreate --remove-orphans
@@ -60,6 +64,7 @@ start: generate
 	@printf '%s\n' \
 	  'Envoy: http://unprotected.localhost:$(HOST_PORT)/anything' \
 	  'Prometheus: http://127.0.0.1:$(PROMETHEUS_HOST_PORT)' \
+	  'Metrics: http://127.0.0.1:$(OTEL_METRICS_HOST_PORT)/metrics' \
 	  'Metrics JWT: cat generated/metrics.jwt' \
 	  'Logs JWT:    cat generated/logs.jwt'
 

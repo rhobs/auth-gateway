@@ -229,6 +229,45 @@ func TestGenerateKubernetesExposesMetricsWithoutAdminPort(t *testing.T) {
 	}
 }
 
+func TestGenerateKubernetesOmitsCollectorWhenMetricsAreDisabled(t *testing.T) {
+	c := loadConfigCase(t, "api-key-auth")
+	enabled, err := GenerateKubernetes(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Observability.Metrics.Enabled = new(false)
+	// With no collector port reserved, the HTTP Service can use 8889.
+	c.Kubernetes.ServicePort = new(int32(defaultOTelMetricsPort))
+	disabled, err := GenerateKubernetes(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enabled.OTelCollectorConfigMap == nil || disabled.OTelCollectorConfigMap != nil {
+		t.Fatalf("collector ConfigMaps when enabled/disabled = %v/%v", enabled.OTelCollectorConfigMap != nil, disabled.OTelCollectorConfigMap != nil)
+	}
+	if got := len(disabled.Deployment.Spec.Template.Spec.Containers); got != 1 {
+		t.Fatalf("disabled metrics deployment has %d containers, want only Envoy", got)
+	}
+	for _, volume := range disabled.Deployment.Spec.Template.Spec.Volumes {
+		if volume.Name == metricsConfigVolumeName {
+			t.Fatal("disabled metrics generated a collector config volume")
+		}
+	}
+	servicePorts := make(map[string]int32, len(disabled.Service.Spec.Ports))
+	for _, port := range disabled.Service.Spec.Ports {
+		servicePorts[port.Name] = port.Port
+	}
+	if servicePorts["http"] != defaultOTelMetricsPort {
+		t.Fatalf("disabled metrics HTTP Service port = %d, want %d", servicePorts["http"], defaultOTelMetricsPort)
+	}
+	if _, exists := servicePorts[metricsPortName]; exists {
+		t.Fatalf("disabled metrics Service still exposes the collector port: %#v", servicePorts)
+	}
+	if !reflect.DeepEqual(enabled.ConfigMap.Data, disabled.ConfigMap.Data) {
+		t.Fatal("disabling collector metrics changed the Envoy bootstrap")
+	}
+}
+
 func TestGenerateKubernetesMountsServerTLSSecretAndSharesListenerPort(t *testing.T) {
 	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
@@ -492,10 +531,10 @@ func TestKubernetesValidationAndOverloadBudgets(t *testing.T) {
 			c.Kubernetes.Resources.Limits = map[string]string{"memory": "0"}
 		}},
 		{"zero concurrency", "kubernetes.envoy_concurrency", func(c *Config) { c.Kubernetes.EnvoyConcurrency = new(uint32(0)) }},
-		{"zero interval", "kubernetes.metrics.scrape_interval", func(c *Config) { c.Kubernetes.Metrics.ScrapeInterval = duration(0) }},
-		{"zero timeout", "kubernetes.metrics.scrape_timeout", func(c *Config) { c.Kubernetes.Metrics.ScrapeTimeout = duration(0) }},
-		{"timeout exceeds interval", "kubernetes.metrics.scrape_timeout", func(c *Config) { c.Kubernetes.Metrics.ScrapeInterval = duration(time.Second) }},
-		{"fractional milliseconds", "kubernetes.metrics.scrape_timeout", func(c *Config) { c.Kubernetes.Metrics.ScrapeTimeout = duration(time.Millisecond + time.Microsecond) }},
+		{"zero interval", "observability.metrics.scrape_interval", func(c *Config) { c.Observability.Metrics.ScrapeInterval = duration(0) }},
+		{"zero timeout", "observability.metrics.scrape_timeout", func(c *Config) { c.Observability.Metrics.ScrapeTimeout = duration(0) }},
+		{"timeout exceeds interval", "observability.metrics.scrape_timeout", func(c *Config) { c.Observability.Metrics.ScrapeInterval = duration(time.Second) }},
+		{"fractional milliseconds", "observability.metrics.scrape_timeout", func(c *Config) { c.Observability.Metrics.ScrapeTimeout = duration(time.Millisecond + time.Microsecond) }},
 		{"envoy request exceeds limit", "kubernetes.resources.requests.cpu", func(c *Config) { c.Kubernetes.Resources.Requests["cpu"] = "1001m" }},
 		{"collector request exceeds limit", "kubernetes.metrics.resources.requests.memory", func(c *Config) { c.Kubernetes.Metrics.Resources.Requests["memory"] = "257Mi" }},
 		{"invalid collector quantity", "kubernetes.metrics.resources.limits.memory", func(c *Config) { c.Kubernetes.Metrics.Resources.Limits["memory"] = "invalid" }},
@@ -548,10 +587,9 @@ func TestHeapBudgetComparedExactly(t *testing.T) {
 func TestMetricsAndConcurrencyGeneration(t *testing.T) {
 	c := loadConfigCase(t, "public-routing")
 	c.Kubernetes.EnvoyConcurrency = new(uint32(3))
-	c.Kubernetes.Metrics = KubernetesMetrics{
-		ScrapeInterval: duration(1500 * time.Millisecond), ScrapeTimeout: duration(250 * time.Millisecond),
-		Resources: KubernetesResourceRequirements{Requests: map[string]string{"cpu": "30m"}, Limits: map[string]string{}},
-	}
+	c.Observability.Metrics.ScrapeInterval = duration(1500 * time.Millisecond)
+	c.Observability.Metrics.ScrapeTimeout = duration(250 * time.Millisecond)
+	c.Kubernetes.Metrics = KubernetesMetrics{Resources: KubernetesResourceRequirements{Requests: map[string]string{"cpu": "30m"}, Limits: map[string]string{}}}
 	r, err := GenerateKubernetes(c)
 	if err != nil {
 		t.Fatal(err)

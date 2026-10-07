@@ -1,17 +1,17 @@
 # Local playground
 
-This playground runs Envoy, [navikt/mock-oauth2-server](https://github.com/navikt/mock-oauth2-server), and Prometheus in Docker Compose. It routes the `metrics-write` and `logs` APIs from [config.example.yaml](../config.example.yaml) to `https://httpbin.org/anything`; the query API is omitted. The two JWT issuers use [Mock OAuth JSON token callbacks](https://github.com/navikt/mock-oauth2-server#token-customization-via-json_config).
+This playground runs Envoy, an OpenTelemetry Collector, [navikt/mock-oauth2-server](https://github.com/navikt/mock-oauth2-server), and Prometheus in Docker Compose. It routes the `metrics-write` and `logs` APIs from [config.example.yaml](../config.example.yaml) to `https://httpbin.org/anything`; the query API is omitted. The two JWT issuers use [Mock OAuth JSON token callbacks](https://github.com/navikt/mock-oauth2-server#token-customization-via-json_config).
 
 Requirements: Docker Compose v2, Go, OpenSSL, `jq`, and `curl`. Go is used by `make generate` to refresh the Envoy bootstrap from the library. No local Go server is kept running.
 
-From the repository root, enter `playground` and start the stack. Run the remaining commands from that directory. Startup generates Envoy resources and both demo JWTs:
+From the repository root, enter `playground` and start the stack. Run the remaining commands from that directory. Startup generates Envoy and collector configs plus both demo JWTs:
 
 ```sh
 cd playground
 make start
 ```
 
-The Envoy bootstrap comes from [config.yaml](config.yaml), without Kubernetes resources. After editing it, run `make generate` and restart Envoy with `make start`. Generation refreshes the checked-in [envoy.yaml.golden](envoy.yaml.golden) through the library's reference test, then copies it to [generated/envoy.yaml](generated/envoy.yaml).
+The Envoy bootstrap comes from [config.yaml](config.yaml), without Kubernetes resources. The collector config is generated from `observability.metrics` in the same file. After editing it, run `make generate` and restart the stack with `make start`. Generation refreshes the checked-in [envoy.yaml.golden](envoy.yaml.golden) and [otel-collector.yaml.golden](otel-collector.yaml.golden), then copies them to `generated/` for Compose.
 
 [credentials.yaml](credentials.yaml) is a complete Envoy API-key ECDS resource with demo keys. Compose mounts this file directly where Envoy reads its API keys. Edit it to test different local demo keys and attribute values, then run `make start` to restart Envoy.
 
@@ -69,8 +69,8 @@ curl --request POST \
 
 To see the different issuers and keys rejected by route authorization, use the metrics token or key on `/logs/otlp/v1/logs`, or the logs token or key on `/metrics/api/v1/receive`. Those requests should return 403.
 
-Prometheus is available at `http://127.0.0.1:9090`. It scrapes Envoy's built-in stats and the custom request counter every five seconds. This config sets `request_metrics.name` to `gateway_http_requests_total`, so the exported counter is `envoy_http_lua_gateway_http_requests_total` with `api`, `http_status_code`, and `user_id` labels. `envoy_http_lua_auth_gateway_http_requests_total` is the default counter name when `request_metrics.name` is omitted, so it has no series in this playground. Try `envoy_http_lua_gateway_http_requests_total{api="metrics-write"}` and `envoy_http_lua_gateway_http_requests_total{api="logs",user_id="logs-writer"}` in the Prometheus expression browser. Envoy's admin port remains loopback-only and is not published to the host. The metrics database is temporary and is removed when the stack is stopped. Set `PROMETHEUS_HOST_PORT` to change the local Prometheus port.
+Prometheus is available at `http://127.0.0.1:9090`; the collector endpoint is `http://127.0.0.1:8889/metrics`. The collector scrapes Envoy's built-in stats and custom request counter every five seconds, then removes Envoy's `envoy_http_lua_` prefix from Lua metric names. This config sets `request_metrics.name` to `gateway_http_requests_total`, so Prometheus sees `gateway_http_requests_total` with `api`, `http_status_code`, and `user_id` labels. `auth_gateway_http_requests_total` is the default counter name when `request_metrics.name` is omitted, so it has no series in this playground. Try `gateway_http_requests_total{api="metrics-write"}` and `gateway_http_requests_total{api="logs",user_id="logs-writer"}` in the Prometheus expression browser. Envoy's admin port remains loopback-only; the collector shares Envoy's network namespace to scrape it. The metrics database is temporary and is removed when the stack is stopped. Set `PROMETHEUS_HOST_PORT` to change the local Prometheus port and `OTEL_METRICS_HOST_PORT` to change the collector port.
 
 The token issuer URLs use `auth.localhost` because that is the host used when requesting tokens. Envoy fetches the separate JWKS documents from `mock-oauth2-server` over the Compose network. The generated certificate covers both hostnames and is trusted by Envoy. `make generate` replaces an older certificate that lacks the service-name SAN. Set `HOST_PORT` to change the local Envoy port; if you change `listener.port` in the config, set `ENVOY_PORT` to the same value. `OAUTH_HOST_PORT` changes the OAuth port on your host. Tokens include that port in `iss`, so update both JWT `issuer` values in `config.yaml` if you change it. JWKS requests use the OAuth container's internal port 8443 and Compose service name. If you change the internal port, update `SERVER_PORT`, the Compose port mapping, and both JWKS URLs as well.
 
-`make run` starts the stack and follows its logs. Press Ctrl-C to stop following logs, then run `make stop` to stop the containers. `make clean` stops the stack and removes generated files; it keeps `credentials.yaml` and `envoy.yaml.golden`.
+`make run` starts the stack and follows its logs. Press Ctrl-C to stop following logs, then run `make stop` to stop the containers. `make clean` stops the stack and removes generated files; it keeps `credentials.yaml` and both checked-in YAML goldens.

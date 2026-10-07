@@ -19,16 +19,26 @@ services:
     ports:
       - "127.0.0.1:${HOST_PORT:-8080}:${ENVOY_PORT:-8080}"
       - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
+      - "127.0.0.1:${OTEL_METRICS_HOST_PORT:-8889}:8889"
     volumes:
       - ./generated/envoy.yaml:/etc/auth-gateway/envoy.yaml:ro
       - ./generated/mock-oauth2.crt:/etc/auth-gateway/mock-oauth2.crt:ro
       - ./credentials.yaml:/etc/auth-gateway/api-keys/api-keys.yaml:ro
     command: ["-c", "/etc/auth-gateway/envoy.yaml", "--log-level", "info"]
 
+  otel-collector:
+    image: ${OTEL_COLLECTOR_IMAGE:-otel/opentelemetry-collector-contrib:0.135.0}
+    depends_on:
+      - envoy
+    network_mode: service:envoy
+    command: ["--config=/etc/collector/config.yaml"]
+    volumes:
+      - ./generated/otel-collector.yaml:/etc/collector/config.yaml:ro
+
   prometheus:
     image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.5.0}
     depends_on:
-      - envoy
+      - otel-collector
     network_mode: service:envoy
     command:
       - --config.file=/etc/prometheus/prometheus.yml

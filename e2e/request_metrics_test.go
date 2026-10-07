@@ -25,6 +25,7 @@ type requestMetricSample struct {
 var _ = Describe("Per-API request metrics", Label("gateway", "jwt", "metrics"), Ordered, func() {
 	var gateway *jwtE2E
 	var adminAddress string
+	var collectorAddress string
 
 	BeforeAll(func(ctx SpecContext) {
 		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, jwtMetricsNamespace)).To(Succeed()) }, NodeTimeout(3*time.Minute))
@@ -32,6 +33,7 @@ var _ = Describe("Per-API request metrics", Label("gateway", "jwt", "metrics"), 
 		gateway, err = setupJWTGateway(ctx, jwtMetricsNamespace, "jwt-gateway.yaml")
 		Expect(err).NotTo(HaveOccurred())
 		adminAddress = env.ForwardWithCleanup(ctx, jwtMetricsNamespace, "deployment/auth-gateway", 9901)
+		collectorAddress = env.ForwardWithCleanup(ctx, jwtMetricsNamespace, "service/auth-gateway", 8889)
 	}, NodeTimeout(12*time.Minute))
 
 	It("counts a successful request with mapped labels", func(ctx SpecContext) {
@@ -60,6 +62,9 @@ var _ = Describe("Per-API request metrics", Label("gateway", "jwt", "metrics"), 
 		after, err := requestMetricCount(ctx, adminAddress, labels)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(after).To(Equal(before + 1))
+		Eventually(func() error {
+			return checkExportedRequestMetric(ctx, collectorAddress, "gateway_http_requests_total", labels)
+		}).WithContext(ctx).WithTimeout(15 * time.Second).WithPolling(250 * time.Millisecond).Should(Succeed())
 	}, NodeTimeout(60*time.Second))
 
 	It("counts an RBAC denial with a mapped tenant and missing writer", func(ctx SpecContext) {
@@ -288,4 +293,47 @@ func envoyRequestMetricSamples(ctx context.Context, adminAddress string) ([]requ
 		samples = append(samples, requestMetricSample{labels: labels, count: count})
 	}
 	return samples, nil
+}
+
+func checkExportedRequestMetric(ctx context.Context, address, name string, labels map[string]string) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+"/metrics", nil)
+	if err != nil {
+		return err
+	}
+	response, err := testClient.Do(request)
+	if err != nil {
+		return err
+	}
+	body, err := readAndCloseResponseBody(response, 1<<20)
+	if err != nil {
+		return err
+	}
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("collector metrics returned HTTP %d: %s", response.StatusCode, body)
+	}
+	wantPrefix := name + "{"
+	oldPrefix := "envoy_http_lua_" + wantPrefix
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.HasPrefix(line, oldPrefix) {
+			return fmt.Errorf("exported request metric still has Envoy's Lua prefix: %q", line)
+		}
+		if !strings.HasPrefix(line, wantPrefix) {
+			continue
+		}
+		metricLabels, _, found := strings.Cut(strings.TrimPrefix(line, wantPrefix), "} ")
+		if !found {
+			return fmt.Errorf("malformed exported request metric sample: %q", line)
+		}
+		matched := true
+		for labelName, value := range labels {
+			if !strings.Contains(","+metricLabels+",", ","+labelName+"="+strconv.Quote(value)+",") {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return nil
+		}
+	}
+	return fmt.Errorf("exported request metric %q with labels %v was not found", name, labels)
 }

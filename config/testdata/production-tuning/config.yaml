@@ -68,14 +68,17 @@ servers:
     authentication: {any_of: [issuer]}
     authorization: {any_of: [observability]}
     apis: [metrics]
+observability:
+  metrics:
+    enabled: true
+    scrape_interval: 1500ms
+    scrape_timeout: 250ms
 kubernetes:
   name: auth-gateway
   namespace: observability
   image: envoyproxy/envoy:v1.39.1
   envoy_concurrency: 2
   metrics:
-    scrape_interval: 1500ms
-    scrape_timeout: 250ms
     resources:
       requests: {cpu: 30m, memory: 64Mi}
       limits: {memory: 128Mi}

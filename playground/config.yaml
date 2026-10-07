@@ -56,6 +56,12 @@ authorization_policies:
 request_metrics:
   name: gateway_http_requests_total
 
+observability:
+  metrics:
+    enabled: true
+    scrape_interval: 5s
+    scrape_timeout: 2s
+
 apis:
   - name: playground-public
     upstream:
