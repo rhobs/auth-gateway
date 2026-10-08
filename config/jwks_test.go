@@ -27,7 +27,6 @@ func TestJWKSTransportAndTrust(t *testing.T) {
 	j.CacheDuration = duration(15 * time.Second)
 	j.FetchTimeout = duration(2 * time.Second)
 	j.ConnectTimeout = duration(500 * time.Millisecond)
-	j.CircuitBreakers = &CircuitBreakerConfig{MaxConnections: new(uint32(3)), MaxRequests: new(uint32(0)), MaxRetries: new(uint32(7))}
 	r, err := GenerateKubernetes(c)
 	if err != nil {
 		t.Fatal(err)
@@ -63,9 +62,8 @@ func TestJWKSTransportAndTrust(t *testing.T) {
 			if transport.Sni != "" || san.SanType != tls.SubjectAltNameMatcher_IP_ADDRESS || san.Matcher.GetExact() != "192.0.2.1" {
 				t.Fatalf("IP identity = %v", &transport)
 			}
-			limits := cluster.CircuitBreakers.Thresholds[0]
-			if cluster.ConnectTimeout.AsDuration() != 500*time.Millisecond || limits.MaxConnections.Value != 3 || limits.MaxRequests.Value != 0 || limits.MaxRetries.Value != 7 {
-				t.Fatalf("JWKS limits = %v", cluster)
+			if cluster.ConnectTimeout.AsDuration() != 500*time.Millisecond {
+				t.Fatalf("JWKS cluster connection timeout = %v", cluster.ConnectTimeout)
 			}
 		} else if transport.Sni == "" || san.SanType != tls.SubjectAltNameMatcher_DNS || san.Matcher.GetExact() != transport.Sni {
 			t.Fatalf("DNS identity = %v", &transport)

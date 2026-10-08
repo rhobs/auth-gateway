@@ -64,14 +64,6 @@ type API struct {
 	Timeouts        *RouteTimeouts        `yaml:"timeouts,omitempty"`
 }
 
-// CircuitBreakerConfig describes Envoy circuit breaker thresholds for an API's upstream cluster.
-type CircuitBreakerConfig struct {
-	MaxConnections     *uint32 `yaml:"max_connections,omitempty"`
-	MaxPendingRequests *uint32 `yaml:"max_pending_requests,omitempty"`
-	MaxRequests        *uint32 `yaml:"max_requests,omitempty"`
-	MaxRetries         *uint32 `yaml:"max_retries,omitempty"`
-}
-
 // Route describes the required methods and path matcher, plus optional rewrite and processing.
 type Route struct {
 	Methods    []string         `yaml:"methods"`
@@ -367,15 +359,6 @@ func (a API) clone() API {
 	}
 	a.Timeouts = cloneConfigPointer(a.Timeouts)
 	return a
-}
-
-func (c *CircuitBreakerConfig) clone() CircuitBreakerConfig {
-	cloned := *c
-	cloned.MaxConnections = clonePointer(c.MaxConnections)
-	cloned.MaxPendingRequests = clonePointer(c.MaxPendingRequests)
-	cloned.MaxRequests = clonePointer(c.MaxRequests)
-	cloned.MaxRetries = clonePointer(c.MaxRetries)
-	return cloned
 }
 
 func (r Route) clone() Route {

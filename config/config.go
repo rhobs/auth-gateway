@@ -16,7 +16,9 @@ import (
 	"strings"
 	"time"
 
+	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	mutationrules "github.com/envoyproxy/go-control-plane/envoy/config/common/mutation_rules/v3"
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	overload "github.com/envoyproxy/go-control-plane/envoy/config/overload/v3"
 	headermutation "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
 	connections "github.com/envoyproxy/go-control-plane/envoy/extensions/resource_monitors/downstream_connections/v3"
@@ -330,6 +332,45 @@ func (j JWKSConfig) withDefaults() JWKSConfig {
 	j.TrustedCA = cloneConfigPointer(j.TrustedCA)
 	j.CircuitBreakers = j.CircuitBreakers.withDefaults()
 	return j
+}
+
+// CircuitBreakerConfig describes Envoy circuit breaker thresholds for an upstream cluster.
+type CircuitBreakerConfig struct {
+	MaxConnections     *uint32 `yaml:"max_connections,omitempty"`
+	MaxPendingRequests *uint32 `yaml:"max_pending_requests,omitempty"`
+	MaxRequests        *uint32 `yaml:"max_requests,omitempty"`
+	MaxRetries         *uint32 `yaml:"max_retries,omitempty"`
+}
+
+func (c *CircuitBreakerConfig) clone() CircuitBreakerConfig {
+	cloned := *c
+	cloned.MaxConnections = clonePointer(c.MaxConnections)
+	cloned.MaxPendingRequests = clonePointer(c.MaxPendingRequests)
+	cloned.MaxRequests = clonePointer(c.MaxRequests)
+	cloned.MaxRetries = clonePointer(c.MaxRetries)
+	return cloned
+}
+
+func (c *CircuitBreakerConfig) withDefaults() *CircuitBreakerConfig {
+	if c == nil {
+		c = &CircuitBreakerConfig{}
+	}
+	return &CircuitBreakerConfig{
+		MaxConnections:     defaultValue(c.MaxConnections, defaultCircuitBreakerMaxConnections),
+		MaxPendingRequests: defaultValue(c.MaxPendingRequests, defaultCircuitBreakerMaxPendingRequests),
+		MaxRequests:        defaultValue(c.MaxRequests, defaultCircuitBreakerMaxRequests),
+		MaxRetries:         defaultValue(c.MaxRetries, defaultCircuitBreakerMaxRetries),
+	}
+}
+
+func (c *CircuitBreakerConfig) toCircuitBreakers() *cluster.CircuitBreakers {
+	return &cluster.CircuitBreakers{Thresholds: []*cluster.CircuitBreakers_Thresholds{{
+		Priority:           core.RoutingPriority_DEFAULT,
+		MaxConnections:     wrapperspb.UInt32(*c.MaxConnections),
+		MaxPendingRequests: wrapperspb.UInt32(*c.MaxPendingRequests),
+		MaxRequests:        wrapperspb.UInt32(*c.MaxRequests),
+		MaxRetries:         wrapperspb.UInt32(*c.MaxRetries),
+	}}}
 }
 
 func (l Listener) withDefaults() Listener {

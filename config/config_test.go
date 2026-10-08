@@ -462,6 +462,34 @@ func TestAuthExampleAppliesAllDefaults(t *testing.T) {
 	}
 }
 
+func TestCircuitBreakerConfigAppliesToJWKSCluster(t *testing.T) {
+	c := loadConfigCase(t, "jwt-auth-multiple-issuers")
+	c.Authenticators[0].JWT.JWKS.CircuitBreakers = &CircuitBreakerConfig{
+		MaxConnections: new(uint32(3)), MaxRequests: new(uint32(0)), MaxRetries: new(uint32(7)),
+	}
+	resources, err := GenerateKubernetes(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap := decodeBootstrap(t, []byte(resources.ConfigMap.Data[envoyConfigFilename]))
+	name := jwksClusterName(c.Authenticators[0].Name)
+	for _, cluster := range bootstrap.StaticResources.Clusters {
+		if cluster.Name != name {
+			continue
+		}
+		if len(cluster.CircuitBreakers.Thresholds) != 1 {
+			t.Fatalf("JWKS circuit breaker thresholds = %v, want one threshold", cluster.CircuitBreakers.Thresholds)
+		}
+		limits := cluster.CircuitBreakers.Thresholds[0]
+		if limits.MaxConnections.Value != 3 || limits.MaxPendingRequests.Value != 1024 ||
+			limits.MaxRequests.Value != 0 || limits.MaxRetries.Value != 7 {
+			t.Fatalf("JWKS circuit breaker limits = %v", limits)
+		}
+		return
+	}
+	t.Fatalf("JWKS cluster %q not found", name)
+}
+
 func TestOptInOverloadDefaults(t *testing.T) {
 	c := loadAuthExample(t)
 	c.Overload = &OverloadConfig{MaxHeapBytes: 201326592, MaxDownstreamConnections: 2048}
