@@ -43,12 +43,6 @@ const (
 	apiKeyClientNoAttributes = "api-key"
 )
 
-// APIKeyCredential binds an opaque key to verified string attributes.
-type APIKeyCredential struct {
-	Key        string            `yaml:"key"`
-	Attributes map[string]string `yaml:"attributes,omitempty"`
-}
-
 // LoadAPIKeyCredentials reads one credentials YAML document.
 func LoadAPIKeyCredentials(r io.Reader) ([]APIKeyCredential, error) {
 	decoder := yaml.NewDecoder(r)

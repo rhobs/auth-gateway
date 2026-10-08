@@ -7,19 +7,16 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"math"
 	"net"
 	"net/http"
 	"net/url"
 	"path"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	mutationrules "github.com/envoyproxy/go-control-plane/envoy/config/common/mutation_rules/v3"
-	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	overload "github.com/envoyproxy/go-control-plane/envoy/config/overload/v3"
 	headermutation "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
 	connections "github.com/envoyproxy/go-control-plane/envoy/extensions/resource_monitors/downstream_connections/v3"
@@ -27,7 +24,6 @@ import (
 	"go.yaml.in/yaml/v3"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -76,123 +72,6 @@ const (
 const defaultKubernetesReplicas int32 = 2
 
 var apiNamePattern = regexp.MustCompile("^[a-z][a-z0-9-]{0,52}$")
-
-// Config describes gateway behavior, observability, and optional Kubernetes output.
-type Config struct {
-	Version               int                   `yaml:"version"`
-	Node                  EnvoyNode             `yaml:"node,omitempty"`
-	Listener              Listener              `yaml:"listener"`
-	Overload              *OverloadConfig       `yaml:"overload,omitempty"`
-	Authenticators        []Authenticator       `yaml:"authenticators,omitempty"`
-	AuthorizationPolicies []AuthorizationPolicy `yaml:"authorization_policies,omitempty"`
-	Processing            []Processor           `yaml:"processing,omitempty"`
-	Servers               []Server              `yaml:"servers"`
-	APIs                  []API                 `yaml:"apis"`
-	Observability         ObservabilityConfig   `yaml:"observability,omitempty"`
-	Kubernetes            *Kubernetes           `yaml:"kubernetes,omitempty"`
-}
-
-// EnvoyNode describes the identity and logical cluster of this Envoy instance.
-type EnvoyNode struct {
-	ID      string `yaml:"id,omitempty"`
-	Cluster string `yaml:"cluster,omitempty"`
-}
-
-// Listener describes the socket shared by the configured servers.
-type Listener struct {
-	Port                          *uint32       `yaml:"port,omitempty"`
-	PerConnectionBufferLimitBytes *uint32       `yaml:"per_connection_buffer_limit_bytes,omitempty"`
-	MaxRequestHeadersKB           *uint32       `yaml:"max_request_headers_kb,omitempty"`
-	MaxRequestHeadersCount        *uint32       `yaml:"max_request_headers_count,omitempty"`
-	RequestHeadersTimeout         *Duration     `yaml:"request_headers_timeout,omitempty"`
-	RequestTimeout                *Duration     `yaml:"request_timeout,omitempty"`
-	ConnectionIdleTimeout         *Duration     `yaml:"connection_idle_timeout,omitempty"`
-	StreamIdleTimeout             *Duration     `yaml:"stream_idle_timeout,omitempty"`
-	MaxStreamDuration             *Duration     `yaml:"max_stream_duration,omitempty"`
-	StreamFlushTimeout            *Duration     `yaml:"stream_flush_timeout,omitempty"`
-	TLSHandshakeTimeout           *Duration     `yaml:"tls_handshake_timeout,omitempty"`
-	HTTP2                         *HTTP2Options `yaml:"http2,omitempty"`
-}
-
-// API describes one upstream and its routes.
-type API struct {
-	Name            string                `yaml:"name"`
-	Routes          []Route               `yaml:"routes"`
-	Upstream        Upstream              `yaml:"upstream"`
-	Metrics         *APIMetrics           `yaml:"metrics,omitempty"`
-	CircuitBreakers *CircuitBreakerConfig `yaml:"circuit_breakers,omitempty"`
-	Timeouts        *RouteTimeouts        `yaml:"timeouts,omitempty"`
-}
-
-// CircuitBreakerConfig describes Envoy circuit breaker thresholds for an API's upstream cluster.
-type CircuitBreakerConfig struct {
-	MaxConnections     *uint32 `yaml:"max_connections,omitempty"`
-	MaxPendingRequests *uint32 `yaml:"max_pending_requests,omitempty"`
-	MaxRequests        *uint32 `yaml:"max_requests,omitempty"`
-	MaxRetries         *uint32 `yaml:"max_retries,omitempty"`
-}
-
-// Route describes the required methods and path matcher, plus optional rewrite and processing.
-type Route struct {
-	Methods    []string         `yaml:"methods"`
-	Path       PathMatch        `yaml:"path"`
-	Rewrite    *PathRewrite     `yaml:"rewrite,omitempty"`
-	Processing *RouteProcessing `yaml:"processing,omitempty"`
-	Timeouts   *RouteTimeouts   `yaml:"timeouts,omitempty"`
-}
-
-// PathMatch selects one exact path, path prefix, or safe regular expression.
-type PathMatch struct {
-	Exact  string `yaml:"exact,omitempty"`
-	Prefix string `yaml:"prefix,omitempty"`
-	Regex  string `yaml:"regex,omitempty"`
-}
-
-// PathRewrite optionally replaces a path, prefix, or regex match.
-type PathRewrite struct {
-	Path   string        `yaml:"path,omitempty"`
-	Prefix string        `yaml:"prefix,omitempty"`
-	Regex  *RegexRewrite `yaml:"regex,omitempty"`
-}
-
-// RegexRewrite replaces matches in the request path using RE2 capture groups.
-type RegexRewrite struct {
-	Pattern      string `yaml:"pattern"`
-	Substitution string `yaml:"substitution"`
-}
-
-// Upstream describes the service that receives routed requests.
-type Upstream struct {
-	Address                       string        `yaml:"address"`
-	Port                          uint32        `yaml:"port"`
-	ConnectTimeout                *Duration     `yaml:"connect_timeout,omitempty"`
-	PerConnectionBufferLimitBytes *uint32       `yaml:"per_connection_buffer_limit_bytes,omitempty"`
-	HTTPProtocol                  string        `yaml:"http_protocol,omitempty"`
-	HTTP2                         *HTTP2Options `yaml:"http2,omitempty"`
-	TLSConfig                     *UpstreamTLS  `yaml:"tls_config,omitempty"`
-}
-
-// Kubernetes contains the settings needed to generate a Deployment and Service.
-type Kubernetes struct {
-	Name      string `yaml:"name"`
-	Namespace string `yaml:"namespace"`
-	Image     string `yaml:"image"`
-	// OTelCollectorImage defaults to the OpenTelemetry Collector Contrib image used by the PoC.
-	OTelCollectorImage string                         `yaml:"otel_collector_image,omitempty"`
-	Replicas           *int32                         `yaml:"replicas,omitempty"`
-	ServicePort        *int32                         `yaml:"service_port,omitempty"`
-	HTTPSServicePort   *int32                         `yaml:"https_service_port,omitempty"`
-	Resources          KubernetesResourceRequirements `yaml:"resources,omitempty"`
-	EnvoyConcurrency   *uint32                        `yaml:"envoy_concurrency,omitempty"`
-	Metrics            KubernetesMetrics              `yaml:"metrics,omitempty"`
-}
-
-// KubernetesResourceRequirements configures resources for a container.
-// Values use Kubernetes resource quantity notation.
-type KubernetesResourceRequirements struct {
-	Requests map[string]string `yaml:"requests,omitempty"`
-	Limits   map[string]string `yaml:"limits,omitempty"`
-}
 
 // Load decodes one strict YAML document and applies defaults before validation.
 func Load(r io.Reader) (Config, error) {
@@ -389,9 +268,10 @@ func (c Config) validate() error {
 }
 
 func (c Config) withDefaults() Config {
-	c.Authenticators = cloneAuthenticators(c.Authenticators)
-	c.AuthorizationPolicies = cloneAuthorizationPolicies(c.AuthorizationPolicies)
-	c.Processing = cloneProcessors(c.Processing)
+	c = c.clone()
+	for i := range c.Authenticators {
+		c.Authenticators[i] = c.Authenticators[i].withDefaults()
+	}
 	if c.Node.ID == "" {
 		c.Node.ID = defaultNodeID
 	}
@@ -401,77 +281,31 @@ func (c Config) withDefaults() Config {
 	c.Listener = c.Listener.withDefaults()
 	c.Overload = c.Overload.withDefaults()
 	c.Observability = c.Observability.withDefaults(c.Node.Cluster)
-	if c.Servers != nil {
-		servers := make([]Server, len(c.Servers))
-		for i, server := range c.Servers {
-			servers[i] = server
-			servers[i].APIs = append([]string(nil), server.APIs...)
-			servers[i].Authentication = cloneAuthentication(server.Authentication)
-			servers[i].Authorization = cloneAuthorization(server.Authorization)
-			if server.TLSConfig != nil {
-				tlsConfig := server.TLSConfig.withDefaults()
-				servers[i].TLSConfig = &tlsConfig
-			}
+	for i := range c.Servers {
+		if c.Servers[i].TLSConfig != nil {
+			tlsConfig := c.Servers[i].TLSConfig.withDefaults()
+			c.Servers[i].TLSConfig = &tlsConfig
 		}
-		c.Servers = servers
 	}
-	if c.APIs != nil {
-		apis := make([]API, len(c.APIs))
-		for i, api := range c.APIs {
-			apis[i] = api
-			apis[i].Upstream = api.Upstream.withDefaults()
-			apis[i].Timeouts = cloneRouteTimeouts(api.Timeouts)
-			if api.Metrics != nil {
-				metrics := *api.Metrics
-				metrics.Labels = maps.Clone(api.Metrics.Labels)
-				apis[i].Metrics = &metrics
-			}
-			if api.Routes != nil {
-				apis[i].Routes = make([]Route, len(api.Routes))
-				for j, route := range api.Routes {
-					apis[i].Routes[j] = route
-					apis[i].Routes[j].Timeouts = cloneRouteTimeouts(route.Timeouts)
-					apis[i].Routes[j].Methods = append([]string(nil), route.Methods...)
-					if route.Processing != nil {
-						processing := *route.Processing
-						processing.RequestHeaders = append([]RequestHeaderMapping(nil), route.Processing.RequestHeaders...)
-						apis[i].Routes[j].Processing = &processing
-					}
-					if route.Rewrite != nil {
-						rewrite := *route.Rewrite
-						if route.Rewrite.Regex != nil {
-							regexRewrite := *route.Rewrite.Regex
-							rewrite.Regex = &regexRewrite
-						}
-						apis[i].Routes[j].Rewrite = &rewrite
-					}
-				}
-			}
-		}
-		c.APIs = apis
+	for i := range c.APIs {
+		c.APIs[i].Upstream = c.APIs[i].Upstream.withDefaults()
 	}
 	for i := range c.APIs {
 		c.APIs[i].CircuitBreakers = defaultCircuitBreakers(c.APIs[i].CircuitBreakers)
 	}
 	if c.Kubernetes != nil {
-		kubernetes := *c.Kubernetes
-		c.Kubernetes = &kubernetes
-		if kubernetes.Replicas == nil {
+		if c.Kubernetes.Replicas == nil {
 			defaultReplicas := defaultKubernetesReplicas
 			c.Kubernetes.Replicas = &defaultReplicas
-		} else {
-			replicas := *kubernetes.Replicas
-			c.Kubernetes.Replicas = &replicas
 		}
-		c.Kubernetes.ServicePort = defaultValue(kubernetes.ServicePort, int32(defaultServicePort))
-		c.Kubernetes.HTTPSServicePort = clonePointer(kubernetes.HTTPSServicePort)
+		c.Kubernetes.ServicePort = defaultValue(c.Kubernetes.ServicePort, int32(defaultServicePort))
 		if c.hasHTTPS() {
-			c.Kubernetes.HTTPSServicePort = defaultValue(kubernetes.HTTPSServicePort, int32(defaultHTTPSServicePort))
+			c.Kubernetes.HTTPSServicePort = defaultValue(c.Kubernetes.HTTPSServicePort, int32(defaultHTTPSServicePort))
 		}
 		if c.Kubernetes.OTelCollectorImage == "" {
 			c.Kubernetes.OTelCollectorImage = defaultOTelCollectorImage
 		}
-		resources := kubernetes.Resources
+		resources := c.Kubernetes.Resources
 		resources.Requests = copyResourcesOrDefault(resources.Requests, map[string]string{
 			kubernetesCPUResourceName:    defaultKubernetesCPURequest,
 			kubernetesMemoryResourceName: defaultKubernetesMemoryRequest,
@@ -481,8 +315,7 @@ func (c Config) withDefaults() Config {
 			kubernetesMemoryResourceName: defaultKubernetesMemoryLimit,
 		})
 		c.Kubernetes.Resources = resources
-		c.Kubernetes.EnvoyConcurrency = clonePointer(kubernetes.EnvoyConcurrency)
-		c.Kubernetes.Metrics = kubernetes.Metrics.withDefaults()
+		c.Kubernetes.Metrics = c.Kubernetes.Metrics.withDefaults()
 	}
 	return c
 }
@@ -1019,27 +852,6 @@ func validDNSHost(value string) bool {
 	return net.ParseIP(value) == nil && len(validation.IsDNS1123Subdomain(value)) == 0
 }
 
-// RouteTimeouts overrides API or listener fallbacks independently for each timer.
-type RouteTimeouts struct {
-	ResponseTimeout   *Duration `yaml:"response_timeout,omitempty"`
-	IdleTimeout       *Duration `yaml:"idle_timeout,omitempty"`
-	MaxStreamDuration *Duration `yaml:"max_stream_duration,omitempty"`
-}
-
-// HTTP2Options bounds streams and flow-control windows on one HTTP/2 connection.
-// Omitted fields retain Envoy's defaults.
-type HTTP2Options struct {
-	MaxConcurrentStreams        *uint32 `yaml:"max_concurrent_streams,omitempty"`
-	InitialStreamWindowSize     *uint32 `yaml:"initial_stream_window_size,omitempty"`
-	InitialConnectionWindowSize *uint32 `yaml:"initial_connection_window_size,omitempty"`
-}
-
-// UpstreamTLS enables server-authenticated TLS with a DNS or IP verification identity.
-type UpstreamTLS struct {
-	ServerName string     `yaml:"server_name,omitempty"`
-	TrustedCA  *TrustedCA `yaml:"trusted_ca,omitempty"`
-}
-
 type effectiveConfig struct {
 	Config
 }
@@ -1061,114 +873,6 @@ func resolveConfig(input Config) (effectiveConfig, error) {
 		}
 	}
 	return effectiveConfig{Config: c}, nil
-}
-
-func (l Listener) withDefaults() Listener {
-	l.Port = defaultValue(l.Port, defaultListenerPort)
-	l.PerConnectionBufferLimitBytes = defaultValue(l.PerConnectionBufferLimitBytes, 1048576)
-	l.MaxRequestHeadersKB = defaultValue(l.MaxRequestHeadersKB, 32)
-	l.MaxRequestHeadersCount = defaultValue(l.MaxRequestHeadersCount, 100)
-	l.RequestHeadersTimeout = defaultDuration(l.RequestHeadersTimeout, 5*time.Second)
-	l.RequestTimeout = defaultDuration(l.RequestTimeout, 30*time.Second)
-	l.ConnectionIdleTimeout = defaultDuration(l.ConnectionIdleTimeout, time.Minute)
-	l.StreamIdleTimeout = defaultDuration(l.StreamIdleTimeout, time.Minute)
-	l.MaxStreamDuration = defaultDuration(l.MaxStreamDuration, 30*time.Second)
-	l.StreamFlushTimeout = defaultDuration(l.StreamFlushTimeout, 5*time.Second)
-	l.TLSHandshakeTimeout = defaultDuration(l.TLSHandshakeTimeout, 5*time.Second)
-	l.HTTP2 = cloneHTTP2(l.HTTP2)
-	return l
-}
-
-func (l Listener) validate(metricsEnabled, tracingEnabled bool) error {
-	if *l.Port == 0 || *l.Port > 65535 {
-		return fmt.Errorf("listener.port must be between 1 and 65535")
-	}
-	if *l.Port == envoyAdminPort {
-		return fmt.Errorf("listener.port must not conflict with admin port %d or the metrics collector port %d", envoyAdminPort, defaultOTelMetricsPort)
-	}
-	if metricsEnabled && *l.Port == defaultOTelMetricsPort {
-		return fmt.Errorf("listener.port must not conflict with admin port %d or the metrics collector port %d", envoyAdminPort, defaultOTelMetricsPort)
-	}
-	if tracingEnabled && *l.Port == defaultOTelTracePort {
-		return fmt.Errorf("listener.port must not conflict with the OTLP trace collector port %d", defaultOTelTracePort)
-	}
-	for _, value := range []struct {
-		name  string
-		value *uint32
-		max   uint32
-	}{
-		{"per_connection_buffer_limit_bytes", l.PerConnectionBufferLimitBytes, ^uint32(0)},
-		{"max_request_headers_kb", l.MaxRequestHeadersKB, 8192},
-		{"max_request_headers_count", l.MaxRequestHeadersCount, ^uint32(0)},
-	} {
-		if *value.value == 0 || *value.value > value.max {
-			return fmt.Errorf("listener.%s must be between 1 and %d", value.name, value.max)
-		}
-	}
-	for _, value := range []struct {
-		name  string
-		value *Duration
-	}{
-		{"request_headers_timeout", l.RequestHeadersTimeout}, {"request_timeout", l.RequestTimeout},
-		{"connection_idle_timeout", l.ConnectionIdleTimeout}, {"stream_idle_timeout", l.StreamIdleTimeout},
-		{maxStreamDurationFieldName, l.MaxStreamDuration}, {"stream_flush_timeout", l.StreamFlushTimeout},
-		{"tls_handshake_timeout", l.TLSHandshakeTimeout},
-	} {
-		if err := validateDuration("listener."+value.name, value.value, false); err != nil {
-			return err
-		}
-	}
-	if *l.RequestHeadersTimeout > *l.RequestTimeout {
-		return fmt.Errorf("listener.request_headers_timeout (%s) must not exceed listener.request_timeout (%s)", l.RequestHeadersTimeout, l.RequestTimeout)
-	}
-	return l.HTTP2.validate("listener.http2")
-}
-
-func (u Upstream) withDefaults() Upstream {
-	u.ConnectTimeout = defaultDuration(u.ConnectTimeout, 5*time.Second)
-	u.PerConnectionBufferLimitBytes = defaultValue(u.PerConnectionBufferLimitBytes, 1048576)
-	if u.HTTPProtocol == "" {
-		u.HTTPProtocol = http1Protocol
-	}
-	u.HTTP2 = cloneHTTP2(u.HTTP2)
-	if u.TLSConfig != nil {
-		tls := *u.TLSConfig
-		tls.TrustedCA = cloneTrustedCA(tls.TrustedCA)
-		u.TLSConfig = &tls
-	}
-	return u
-}
-
-func (u Upstream) validate(name string, kubernetes bool) error {
-	if err := validateDuration(name+".connect_timeout", u.ConnectTimeout, false); err != nil {
-		return err
-	}
-	if *u.PerConnectionBufferLimitBytes == 0 {
-		return fmt.Errorf("%s.per_connection_buffer_limit_bytes must be positive", name)
-	}
-	if u.HTTPProtocol != http1Protocol && u.HTTPProtocol != http2Protocol {
-		return fmt.Errorf("%s.http_protocol must be http1 or http2", name)
-	}
-	if u.HTTP2 != nil && u.HTTPProtocol != http2Protocol {
-		return fmt.Errorf("%s.http2 requires http_protocol: http2", name)
-	}
-	if err := u.HTTP2.validate(name + ".http2"); err != nil {
-		return err
-	}
-	if u.TLSConfig != nil {
-		if u.TLSConfig.ServerName != "" && !validDNSHost(u.TLSConfig.ServerName) {
-			return fmt.Errorf("%s.tls_config.server_name must be an exact DNS hostname", name)
-		}
-		return validateTrustedCA(name+".tls_config.trusted_ca", u.TLSConfig.TrustedCA, kubernetes)
-	}
-	return nil
-}
-
-func cloneRouteTimeouts(t *RouteTimeouts) *RouteTimeouts {
-	if t == nil {
-		return nil
-	}
-	return &RouteTimeouts{ResponseTimeout: clonePointer(t.ResponseTimeout), IdleTimeout: clonePointer(t.IdleTimeout), MaxStreamDuration: clonePointer(t.MaxStreamDuration)}
 }
 
 func validateRouteTimeouts(name string, t *RouteTimeouts) error {
@@ -1211,105 +915,11 @@ func resolveRouteTimeouts(l Listener, api, route *RouteTimeouts) *RouteTimeouts 
 	return resolved
 }
 
-func cloneHTTP2(h *HTTP2Options) *HTTP2Options {
-	if h == nil {
-		return nil
-	}
-	return &HTTP2Options{MaxConcurrentStreams: clonePointer(h.MaxConcurrentStreams), InitialStreamWindowSize: clonePointer(h.InitialStreamWindowSize), InitialConnectionWindowSize: clonePointer(h.InitialConnectionWindowSize)}
-}
-
-func (h *HTTP2Options) validate(name string) error {
-	if h == nil {
-		return nil
-	}
-	for _, value := range []struct {
-		name  string
-		value *uint32
-		min   uint32
-	}{
-		{"max_concurrent_streams", h.MaxConcurrentStreams, 1},
-		{"initial_stream_window_size", h.InitialStreamWindowSize, 65535},
-		{"initial_connection_window_size", h.InitialConnectionWindowSize, 65535},
-	} {
-		if value.value != nil && (*value.value < value.min || *value.value > 2147483647) {
-			return fmt.Errorf("%s.%s must be between %d and 2147483647", name, value.name, value.min)
-		}
-	}
-	if err := h.envoy().ValidateAll(); err != nil {
-		return fmt.Errorf(fieldWrapErrorFormat, name, err)
-	}
-	return nil
-}
-
-func (h *HTTP2Options) envoy() *core.Http2ProtocolOptions {
-	if h == nil {
-		return nil
-	}
-	return &core.Http2ProtocolOptions{
-		MaxConcurrentStreams:        optionalUint32(h.MaxConcurrentStreams),
-		InitialStreamWindowSize:     optionalUint32(h.InitialStreamWindowSize),
-		InitialConnectionWindowSize: optionalUint32(h.InitialConnectionWindowSize),
-	}
-}
-
 func optionalUint32(value *uint32) *wrapperspb.UInt32Value {
 	if value == nil {
 		return nil
 	}
 	return wrapperspb.UInt32(*value)
-}
-
-// OverloadConfig enables process safeguards with explicit capacity budgets.
-type OverloadConfig struct {
-	MaxHeapBytes             uint64   `yaml:"max_heap_bytes"`
-	MaxDownstreamConnections uint32   `yaml:"max_downstream_connections"`
-	HeapShrinkThreshold      *float64 `yaml:"heap_shrink_threshold,omitempty"`
-	RequestRejectThreshold   *float64 `yaml:"request_reject_threshold,omitempty"`
-}
-
-func (o *OverloadConfig) withDefaults() *OverloadConfig {
-	if o == nil {
-		return nil
-	}
-	copy := *o
-	copy.HeapShrinkThreshold = defaultValue(o.HeapShrinkThreshold, 0.90)
-	copy.RequestRejectThreshold = defaultValue(o.RequestRejectThreshold, 0.95)
-	return &copy
-}
-
-func (o *OverloadConfig) validate(k *Kubernetes) error {
-	if o == nil {
-		return nil
-	}
-	if o.MaxHeapBytes == 0 {
-		return fmt.Errorf("overload.max_heap_bytes must be positive")
-	}
-	if o.MaxDownstreamConnections == 0 {
-		return fmt.Errorf("overload.max_downstream_connections must be positive")
-	}
-	for _, field := range []struct {
-		name  string
-		value float64
-	}{{"heap_shrink_threshold", *o.HeapShrinkThreshold}, {"request_reject_threshold", *o.RequestRejectThreshold}} {
-		if math.IsNaN(field.value) || math.IsInf(field.value, 0) || field.value <= 0 || field.value >= 1 {
-			return fmt.Errorf("overload.%s must be finite and between 0 and 1 (exclusive)", field.name)
-		}
-	}
-	if *o.HeapShrinkThreshold >= *o.RequestRejectThreshold {
-		return fmt.Errorf("overload.heap_shrink_threshold must be less than overload.request_reject_threshold")
-	}
-	if k != nil {
-		limit, err := resource.ParseQuantity(k.Resources.Limits[kubernetesMemoryResourceName])
-		if err != nil || limit.Sign() <= 0 {
-			return fmt.Errorf("overload requires a positive kubernetes.resources.limits.memory")
-		}
-		// Decimal quantities preserve the full uint64 budget without an int64 cast.
-		heapSize := resource.MustParse(strconv.FormatUint(o.MaxHeapBytes, 10))
-		if heapSize.Cmp(limit) >= 0 {
-			return fmt.Errorf("overload.max_heap_bytes (%d) must be less than kubernetes.resources.limits.memory (%s)", o.MaxHeapBytes, limit.String())
-		}
-	}
-	return nil
 }
 
 func overloadManager(o *OverloadConfig) (*overload.OverloadManager, error) {

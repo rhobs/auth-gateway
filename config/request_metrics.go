@@ -20,11 +20,6 @@ const (
 
 var prometheusNamePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
-// APIMetrics enables one request counter and optionally binds labels to working attributes.
-type APIMetrics struct {
-	Labels map[string]string `yaml:"labels,omitempty"`
-}
-
 func validateCustomMetricName(value *string) error {
 	if value != nil && (!prometheusNamePattern.MatchString(*value) || strings.HasPrefix(*value, "__")) {
 		return fmt.Errorf("observability.metrics.custom_metric_name must start with an ASCII letter or underscore, use only ASCII letters, numbers, and underscores, and not start with __")

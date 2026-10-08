@@ -8,22 +8,6 @@ import (
 
 const serverTLSSecretDirectory = "/etc"
 
-// Server binds an exact hostname and protocol to named APIs and optional access policies.
-type Server struct {
-	Hostname       string          `yaml:"hostname"`
-	TLSConfig      *ServerTLS      `yaml:"tls_config,omitempty"`
-	Authentication *Authentication `yaml:"authentication,omitempty"`
-	Authorization  *Authorization  `yaml:"authorization,omitempty"`
-	APIs           []string        `yaml:"apis,omitempty"`
-}
-
-// ServerTLS describes the certificate used by one HTTPS server.
-type ServerTLS struct {
-	Secret      string `yaml:"secret,omitempty"`
-	Certificate string `yaml:"certificate,omitempty"`
-	PrivateKey  string `yaml:"private_key,omitempty"`
-}
-
 func (s ServerTLS) withDefaults() ServerTLS {
 	certificate, privateKey := defaultServerTLSCertificate, defaultServerTLSPrivateKey
 	if s.Secret != "" {

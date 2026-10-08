@@ -1,7 +1,6 @@
 package config
 
 import (
-	"bytes"
 	"fmt"
 	"maps"
 	"path"
@@ -12,8 +11,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	kjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
@@ -37,43 +34,6 @@ const (
 	apiKeyDirectory          = "/etc/auth-gateway/api-keys"
 	collectorConfigDirectory = "/etc/collector"
 )
-
-// KubernetesResources contains native objects generated for a gateway.
-type KubernetesResources struct {
-	ConfigMap              corev1.ConfigMap
-	ProcessingConfigMap    *corev1.ConfigMap
-	OTelCollectorConfigMap *corev1.ConfigMap
-	ServiceAccount         corev1.ServiceAccount
-	Deployment             appsv1.Deployment
-	Service                corev1.Service
-}
-
-// Objects returns the resources in apply order.
-func (r *KubernetesResources) Objects() []runtime.Object {
-	objects := []runtime.Object{&r.ConfigMap}
-	if r.ProcessingConfigMap != nil {
-		objects = append(objects, r.ProcessingConfigMap)
-	}
-	if r.OTelCollectorConfigMap != nil {
-		objects = append(objects, r.OTelCollectorConfigMap)
-	}
-	return append(objects, &r.ServiceAccount, &r.Deployment, &r.Service)
-}
-
-// YAML serializes all resources as a Kubernetes manifest stream.
-func (r *KubernetesResources) YAML() ([]byte, error) {
-	serializer := kjson.NewSerializerWithOptions(kjson.DefaultMetaFactory, nil, nil, kjson.SerializerOptions{Yaml: true})
-	var output bytes.Buffer
-	for index, object := range r.Objects() {
-		if index > 0 {
-			output.WriteString("---\n")
-		}
-		if err := serializer.Encode(object, &output); err != nil {
-			return nil, fmt.Errorf("encode Kubernetes %T: %w", object, err)
-		}
-	}
-	return output.Bytes(), nil
-}
 
 // GenerateKubernetes builds Kubernetes resources for Envoy and optional observability collection.
 // It does not contact a cluster, read credentials, or write files.
@@ -386,21 +346,6 @@ func kubernetesResourceList(values map[string]string) corev1.ResourceList {
 		resources[corev1.ResourceName(name)] = resource.MustParse(value)
 	}
 	return resources
-}
-
-// KubernetesMetrics configures resources for the collector container.
-type KubernetesMetrics struct {
-	Resources KubernetesResourceRequirements `yaml:"resources,omitempty"`
-}
-
-func (m KubernetesMetrics) withDefaults() KubernetesMetrics {
-	m.Resources.Requests = copyResourcesOrDefault(m.Resources.Requests, map[string]string{kubernetesCPUResourceName: "20m", kubernetesMemoryResourceName: "64Mi"})
-	m.Resources.Limits = copyResourcesOrDefault(m.Resources.Limits, map[string]string{kubernetesMemoryResourceName: "256Mi"})
-	return m
-}
-
-func (m KubernetesMetrics) validate() error {
-	return validateKubernetesResourceRequirements("kubernetes.metrics.resources", m.Resources)
 }
 
 func validateKubernetesResourceRequirements(prefix string, requirements KubernetesResourceRequirements) error {

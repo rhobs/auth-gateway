@@ -75,6 +75,8 @@ const (
 	enableAttributesErrorFormat = "servers[%d] enable attributes: %w"
 )
 
+const upstreamHTTPProtocolOptionsTypeURL = "envoy.extensions.upstreams.http.v3.HttpProtocolOptions"
+
 // Generate builds Envoy bootstrap files from the high-level gateway configuration.
 func Generate(c Config) (map[string][]byte, error) {
 	effective, err := resolveConfig(c)
@@ -1287,7 +1289,7 @@ func apiClusters(apis []API) ([]*cluster.Cluster, error) {
 			ConnectTimeout:                api.Upstream.ConnectTimeout.protobuf(),
 			ClusterDiscoveryType:          &cluster.Cluster_Type{Type: cluster.Cluster_STRICT_DNS},
 			PerConnectionBufferLimitBytes: optionalUint32(api.Upstream.PerConnectionBufferLimitBytes),
-			TypedExtensionProtocolOptions: map[string]*anypb.Any{"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": options},
+			TypedExtensionProtocolOptions: map[string]*anypb.Any{upstreamHTTPProtocolOptionsTypeURL: options},
 			CircuitBreakers:               envoyCircuitBreakers(api.CircuitBreakers),
 			LoadAssignment: &endpoint.ClusterLoadAssignment{
 				ClusterName: name,
@@ -1330,7 +1332,7 @@ func otelTraceCluster() (*cluster.Cluster, error) {
 		Name:                          envoyTraceClusterName,
 		ConnectTimeout:                durationpb.New(5 * time.Second),
 		ClusterDiscoveryType:          &cluster.Cluster_Type{Type: cluster.Cluster_STATIC},
-		TypedExtensionProtocolOptions: map[string]*anypb.Any{"envoy.extensions.upstreams.http.v3.HttpProtocolOptions": protocolOptions},
+		TypedExtensionProtocolOptions: map[string]*anypb.Any{upstreamHTTPProtocolOptionsTypeURL: protocolOptions},
 		LoadAssignment: &endpoint.ClusterLoadAssignment{
 			ClusterName: envoyTraceClusterName,
 			Endpoints: []*endpoint.LocalityLbEndpoints{{

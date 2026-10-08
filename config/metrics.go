@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -115,90 +114,6 @@ const (
 	envoyTraceClusterName           = "otel-traces"
 	envoyOTelTracerName             = "envoy.tracers.opentelemetry"
 )
-
-// ObservabilityConfig groups gateway-wide telemetry settings.
-type ObservabilityConfig struct {
-	Metrics ObservabilityMetrics `yaml:"metrics,omitempty"`
-	Tracing ObservabilityTracing `yaml:"tracing,omitempty"`
-}
-
-// ObservabilityMetrics configures the scraping, exposure, and naming of Envoy metrics.
-type ObservabilityMetrics struct {
-	Enabled          *bool     `yaml:"enabled,omitempty"`
-	ScrapeInterval   *Duration `yaml:"scrape_interval,omitempty"`
-	ScrapeTimeout    *Duration `yaml:"scrape_timeout,omitempty"`
-	CustomMetricName *string   `yaml:"custom_metric_name,omitempty"`
-}
-
-// ObservabilityTracing configures Envoy tracing and the collector's OTLP exporter.
-type ObservabilityTracing struct {
-	Enabled            *bool    `yaml:"enabled,omitempty"`
-	Endpoint           string   `yaml:"endpoint,omitempty"`
-	ServiceName        string   `yaml:"service_name,omitempty"`
-	SamplingPercentage *float64 `yaml:"sampling_percentage,omitempty"`
-	Insecure           *bool    `yaml:"insecure,omitempty"`
-}
-
-func (o ObservabilityConfig) withDefaults(serviceName string) ObservabilityConfig {
-	if o.Metrics.CustomMetricName != nil {
-		customMetricName := *o.Metrics.CustomMetricName
-		o.Metrics.CustomMetricName = &customMetricName
-	}
-	o.Metrics.Enabled = defaultValue(o.Metrics.Enabled, true)
-	o.Metrics.ScrapeInterval = defaultDuration(o.Metrics.ScrapeInterval, 30*time.Second)
-	o.Metrics.ScrapeTimeout = defaultDuration(o.Metrics.ScrapeTimeout, 10*time.Second)
-	o.Tracing.Enabled = defaultValue(o.Tracing.Enabled, false)
-	if o.Tracing.ServiceName == "" {
-		o.Tracing.ServiceName = serviceName
-	}
-	o.Tracing.SamplingPercentage = defaultValue(o.Tracing.SamplingPercentage, defaultTraceSamplingPercentage)
-	o.Tracing.Insecure = defaultValue(o.Tracing.Insecure, false)
-	return o
-}
-
-func (m ObservabilityMetrics) validate() error {
-	if err := validateCustomMetricName(m.CustomMetricName); err != nil {
-		return err
-	}
-	for _, field := range []struct {
-		name  string
-		value *Duration
-	}{{"scrape_interval", m.ScrapeInterval}, {"scrape_timeout", m.ScrapeTimeout}} {
-		name := "observability.metrics." + field.name
-		if err := validateDuration(name, field.value, false); err != nil {
-			return err
-		}
-		if time.Duration(*field.value)%time.Millisecond != 0 {
-			return fmt.Errorf("%s must be a whole number of milliseconds", name)
-		}
-	}
-	if *m.ScrapeTimeout > *m.ScrapeInterval {
-		return fmt.Errorf("observability.metrics.scrape_timeout (%s) must not exceed observability.metrics.scrape_interval (%s)", m.ScrapeTimeout, m.ScrapeInterval)
-	}
-	return nil
-}
-
-func (t ObservabilityTracing) enabled() bool {
-	return t.Enabled != nil && *t.Enabled
-}
-
-func (t ObservabilityTracing) validate() error {
-	if t.enabled() && (strings.TrimSpace(t.ServiceName) == "" || strings.ContainsAny(t.ServiceName, invalidControlCharacters)) {
-		return fmt.Errorf("observability.tracing.service_name must not be empty or contain control characters")
-	}
-	if percentage := *t.SamplingPercentage; math.IsNaN(percentage) || math.IsInf(percentage, 0) || percentage < 0 || percentage > 100 {
-		return fmt.Errorf("observability.tracing.sampling_percentage must be between 0 and 100")
-	}
-	if t.Endpoint != "" {
-		if err := validateOTelTraceEndpoint(t.Endpoint); err != nil {
-			return err
-		}
-	}
-	if t.enabled() && t.Endpoint == "" {
-		return fmt.Errorf("observability.tracing.endpoint is required when tracing is enabled")
-	}
-	return nil
-}
 
 func validateOTelTraceEndpoint(endpoint string) error {
 	host, portText, err := net.SplitHostPort(endpoint)

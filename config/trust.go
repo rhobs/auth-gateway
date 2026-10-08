@@ -1,8 +1,6 @@
 package config
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net"
 	"path"
@@ -19,27 +17,6 @@ const (
 	systemCABundle         = "/etc/ssl/certs/ca-certificates.crt"
 	tlsTransportSocketName = "envoy.transport_sockets.tls"
 )
-
-// TrustedCA selects a replacement trust bundle. Omission uses the system bundle.
-type TrustedCA struct {
-	Filename  string       `yaml:"filename,omitempty"`
-	ConfigMap *CAConfigMap `yaml:"config_map,omitempty"`
-}
-
-// CAConfigMap references one key of an existing ConfigMap in the gateway namespace.
-type CAConfigMap struct {
-	Name string `yaml:"name"`
-	Key  string `yaml:"key"`
-}
-
-func cloneTrustedCA(value *TrustedCA) *TrustedCA {
-	if value == nil {
-		return nil
-	}
-	copy := *value
-	copy.ConfigMap = clonePointer(value.ConfigMap)
-	return &copy
-}
 
 func validateTrustedCA(name string, ca *TrustedCA, kubernetes bool) error {
 	if ca == nil {
@@ -67,21 +44,6 @@ func validateTrustedCA(name string, ca *TrustedCA, kubernetes bool) error {
 		return fmt.Errorf("%s.filename must be a clean absolute file path", name)
 	}
 	return nil
-}
-
-func (ref CAConfigMap) id() string {
-	digest := sha256.Sum256([]byte(ref.Name + "\x00" + ref.Key))
-	return hex.EncodeToString(digest[:16])
-}
-
-func (ca *TrustedCA) filename() string {
-	if ca == nil {
-		return systemCABundle
-	}
-	if ca.ConfigMap != nil {
-		return path.Join(caDirectory, ca.ConfigMap.id(), caCertificateFilename)
-	}
-	return ca.Filename
 }
 
 func verifiedTLS(identity string, ca *TrustedCA, alpn []string) (*core.TransportSocket, error) {
