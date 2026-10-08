@@ -118,7 +118,6 @@ data:
                                               string_match:
                                                 exact: GET
                                         safe_regex:
-                                            google_re2: {}
                                             regex: ^/metrics/api/v1/(query|query_range)$
                                       name: api-0-metrics-query-route-0-method-0
                                       route:
@@ -128,7 +127,6 @@ data:
                                             max_stream_duration: 30s
                                         regex_rewrite:
                                             pattern:
-                                                google_re2: {}
                                                 regex: ^/metrics/(.*)$
                                             substitution: /\1
                                         timeout: 30s
@@ -139,7 +137,6 @@ data:
                                               string_match:
                                                 exact: POST
                                         safe_regex:
-                                            google_re2: {}
                                             regex: ^/metrics/api/v1/(query|query_range)$
                                       name: api-0-metrics-query-route-0-method-1
                                       route:
@@ -149,7 +146,6 @@ data:
                                             max_stream_duration: 30s
                                         regex_rewrite:
                                             pattern:
-                                                google_re2: {}
                                                 regex: ^/metrics/(.*)$
                                             substitution: /\1
                                         timeout: 30s
@@ -188,7 +184,6 @@ data:
                                         status: 405
                                       match:
                                         safe_regex:
-                                            google_re2: {}
                                             regex: ^/metrics/api/v1/(query|query_range)$
                                       name: method-not-allowed-0
                                       response_headers_to_add:

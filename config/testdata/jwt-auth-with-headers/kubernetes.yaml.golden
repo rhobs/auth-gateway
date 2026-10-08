@@ -233,13 +233,11 @@ data:
                                                                             key: auth_gateway.attributes.tenant_id
                                                                             string_match:
                                                                                 safe_regex:
-                                                                                    google_re2: {}
                                                                                     regex: ^[^\x00-\x1f\x7f]+$
                                                                         - filter_state:
                                                                             key: auth_gateway.attributes.writer_id
                                                                             string_match:
                                                                                 safe_regex:
-                                                                                    google_re2: {}
                                                                                     regex: ^[^\x00-\x1f\x7f]+$
                                         envoy.filters.http.header_mutation:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute

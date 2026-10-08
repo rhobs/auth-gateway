@@ -870,8 +870,7 @@ func requiredHeaderRBACRules(mappings []RequestHeaderMapping) *rbac.RBAC {
 		principals = append(principals, &rbac.Principal{Identifier: &rbac.Principal_FilterState{FilterState: &matcher.FilterStateMatcher{
 			Key: filterStateKey(attribute),
 			Matcher: &matcher.FilterStateMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_SafeRegex{SafeRegex: &matcher.RegexMatcher{
-				EngineType: &matcher.RegexMatcher_GoogleRe2{GoogleRe2: &matcher.RegexMatcher_GoogleRE2{}}, //nolint:staticcheck // The pinned Envoy control-plane API exposes this RE2 engine field.
-				Regex:      headerValuePattern,
+				Regex: headerValuePattern,
 			}}}},
 		}}})
 	}
@@ -1208,8 +1207,7 @@ func methodHeader(method string) *route.HeaderMatcher {
 
 func envoySafeRegex(pattern string) *matcher.RegexMatcher {
 	return &matcher.RegexMatcher{
-		EngineType: &matcher.RegexMatcher_GoogleRe2{GoogleRe2: &matcher.RegexMatcher_GoogleRE2{}}, //nolint:staticcheck // The pinned Envoy control-plane API exposes this RE2 engine field.
-		Regex:      pattern,
+		Regex: pattern,
 	}
 }
 

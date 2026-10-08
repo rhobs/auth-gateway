@@ -369,8 +369,7 @@ func apiKeyClientPattern(attributes []string, capturedAttribute string) string {
 
 func apiKeyRegexMatcher(pattern string) *matcher.RegexMatcher {
 	return &matcher.RegexMatcher{
-		EngineType: &matcher.RegexMatcher_GoogleRe2{GoogleRe2: &matcher.RegexMatcher_GoogleRE2{}}, //nolint:staticcheck // The pinned Envoy API exposes this RE2 field.
-		Regex:      pattern,
+		Regex: pattern,
 	}
 }
 
@@ -465,8 +464,7 @@ func (c Config) toServerAuthenticationRBACRules(server Server) *rbac.RBAC {
 
 func nonemptyScalarValueMatcher() *matcher.ValueMatcher {
 	return &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_SafeRegex{SafeRegex: &matcher.RegexMatcher{
-		EngineType: &matcher.RegexMatcher_GoogleRe2{GoogleRe2: &matcher.RegexMatcher_GoogleRE2{}}, //nolint:staticcheck // The pinned Envoy API exposes this RE2 field.
-		Regex:      headerValuePattern,
+		Regex: headerValuePattern,
 	}}}}}
 }
 

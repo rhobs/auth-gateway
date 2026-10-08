@@ -256,7 +256,6 @@ data:
                                         metadata_namespace: auth_gateway.api_key
                                         regex_value_rewrite:
                                             pattern:
-                                                google_re2: {}
                                                 regex: ^tenant_id=([^;]*);writer_id=[^;]*$
                                             substitution: \1
                                     - header: x-auth-gateway-api-key-client
@@ -265,7 +264,6 @@ data:
                                         metadata_namespace: auth_gateway.api_key
                                         regex_value_rewrite:
                                             pattern:
-                                                google_re2: {}
                                                 regex: ^tenant_id=[^;]*;writer_id=([^;]*)$
                                             substitution: \1
                                       remove: true
@@ -453,13 +451,11 @@ data:
                                                                             key: auth_gateway.attributes.tenant_id
                                                                             string_match:
                                                                                 safe_regex:
-                                                                                    google_re2: {}
                                                                                     regex: ^[^\x00-\x1f\x7f]+$
                                                                         - filter_state:
                                                                             key: auth_gateway.attributes.writer_id
                                                                             string_match:
                                                                                 safe_regex:
-                                                                                    google_re2: {}
                                                                                     regex: ^[^\x00-\x1f\x7f]+$
                                         envoy.filters.http.header_mutation:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
@@ -520,7 +516,6 @@ data:
                                                                     value:
                                                                         string_match:
                                                                             safe_regex:
-                                                                                google_re2: {}
                                                                                 regex: ^tenant_id=[^;]*;writer_id=[^;]*$
                                     envoy.filters.http.api_key_auth:
                                         '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
@@ -555,7 +550,6 @@ data:
                                                                                     value:
                                                                                         string_match:
                                                                                             safe_regex:
-                                                                                                google_re2: {}
                                                                                                 regex: ^tenant_id=[^;]*;writer_id=[^;]*$
                                                                             - sourced_metadata:
                                                                                 metadata_matcher:
@@ -622,13 +616,11 @@ data:
                                                                             key: auth_gateway.attributes.tenant_id
                                                                             string_match:
                                                                                 safe_regex:
-                                                                                    google_re2: {}
                                                                                     regex: ^[^\x00-\x1f\x7f]+$
                                                                         - filter_state:
                                                                             key: auth_gateway.attributes.writer_id
                                                                             string_match:
                                                                                 safe_regex:
-                                                                                    google_re2: {}
                                                                                     regex: ^[^\x00-\x1f\x7f]+$
                                         envoy.filters.http.header_mutation:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
@@ -691,7 +683,6 @@ data:
                                                                             value:
                                                                                 string_match:
                                                                                     safe_regex:
-                                                                                        google_re2: {}
                                                                                         regex: ^tenant_id=[^;]*;writer_id=[^;]*$
                                                                     - header:
                                                                         name: x-auth-gateway-jwt-verified-issuer-one
@@ -772,7 +763,6 @@ data:
                                                                                     value:
                                                                                         string_match:
                                                                                             safe_regex:
-                                                                                                google_re2: {}
                                                                                                 regex: ^tenant_id=[^;]*;writer_id=[^;]*$
                                                                             - sourced_metadata:
                                                                                 metadata_matcher:
@@ -953,7 +943,6 @@ data:
                                         metadata_namespace: auth_gateway.api_key
                                         regex_value_rewrite:
                                             pattern:
-                                                google_re2: {}
                                                 regex: ^tenant_id=([^;]*);writer_id=[^;]*$
                                             substitution: \1
                                     - header: x-auth-gateway-api-key-client
@@ -962,7 +951,6 @@ data:
                                         metadata_namespace: auth_gateway.api_key
                                         regex_value_rewrite:
                                             pattern:
-                                                google_re2: {}
                                                 regex: ^tenant_id=[^;]*;writer_id=([^;]*)$
                                             substitution: \1
                                       remove: true
@@ -1087,13 +1075,11 @@ data:
                                                                             key: auth_gateway.attributes.tenant_id
                                                                             string_match:
                                                                                 safe_regex:
-                                                                                    google_re2: {}
                                                                                     regex: ^[^\x00-\x1f\x7f]+$
                                                                         - filter_state:
                                                                             key: auth_gateway.attributes.writer_id
                                                                             string_match:
                                                                                 safe_regex:
-                                                                                    google_re2: {}
                                                                                     regex: ^[^\x00-\x1f\x7f]+$
                                         envoy.filters.http.header_mutation:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
@@ -1274,7 +1260,6 @@ data:
                                                                             value:
                                                                                 string_match:
                                                                                     safe_regex:
-                                                                                        google_re2: {}
                                                                                         regex: ^tenant_id=[^;]*;writer_id=[^;]*$
                                                                     - sourced_metadata:
                                                                         metadata_matcher:
@@ -1286,7 +1271,6 @@ data:
                                                                             value:
                                                                                 string_match:
                                                                                     safe_regex:
-                                                                                        google_re2: {}
                                                                                         regex: ^[^\x00-\x1f\x7f]+$
                                                                     - sourced_metadata:
                                                                         metadata_matcher:
@@ -1296,7 +1280,6 @@ data:
                                                                             value:
                                                                                 string_match:
                                                                                     safe_regex:
-                                                                                        google_re2: {}
                                                                                         regex: ^[^\x00-\x1f\x7f]+$
                                                                     - sourced_metadata:
                                                                         metadata_matcher:
@@ -1307,7 +1290,6 @@ data:
                                                                             value:
                                                                                 string_match:
                                                                                     safe_regex:
-                                                                                        google_re2: {}
                                                                                         regex: ^[^\x00-\x1f\x7f]+$
                                                                     - sourced_metadata:
                                                                         metadata_matcher:
@@ -1317,7 +1299,6 @@ data:
                                                                             value:
                                                                                 string_match:
                                                                                     safe_regex:
-                                                                                        google_re2: {}
                                                                                         regex: ^[^\x00-\x1f\x7f]+$
                                     envoy.filters.http.api_key_auth:
                                         '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
@@ -1375,7 +1356,6 @@ data:
                                                                                             value:
                                                                                                 string_match:
                                                                                                     safe_regex:
-                                                                                                        google_re2: {}
                                                                                                         regex: ^tenant_id=[^;]*;writer_id=[^;]*$
                                                                                     - sourced_metadata:
                                                                                         metadata_matcher:
