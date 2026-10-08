@@ -53,11 +53,9 @@ authorization_policies:
         attributes:
           user_id: [logs-writer]
 
-request_metrics:
-  name: gateway_http_requests_total
-
 observability:
   metrics:
+    custom_metric_name: gateway_http_requests_total
     enabled: true
     scrape_interval: 5s
     scrape_timeout: 2s

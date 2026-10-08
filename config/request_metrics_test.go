@@ -43,8 +43,8 @@ func TestAPIMetricsConfigurationAndValidation(t *testing.T) {
 
 func TestRequestMetricNameConfigurationAndValidation(t *testing.T) {
 	c := loadAuthExample(t)
-	if c.RequestMetrics == nil || c.RequestMetrics.Name != "gateway_http_requests_total" {
-		t.Fatalf("request metric name = %#v", c.RequestMetrics)
+	if c.Observability.Metrics.CustomMetricName == nil || *c.Observability.Metrics.CustomMetricName != "gateway_http_requests_total" {
+		t.Fatalf("custom metric name = %#v", c.Observability.Metrics.CustomMetricName)
 	}
 	for _, test := range []struct{ name, value string }{
 		{name: "empty"},
@@ -56,9 +56,9 @@ func TestRequestMetricNameConfigurationAndValidation(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			config := loadAuthExample(t)
-			config.RequestMetrics.Name = test.value
-			if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "request_metrics.name") {
-				t.Fatalf("Validate error = %v, want request_metrics.name", err)
+			*config.Observability.Metrics.CustomMetricName = test.value
+			if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "observability.metrics.custom_metric_name") {
+				t.Fatalf("Validate error = %v, want observability.metrics.custom_metric_name", err)
 			}
 		})
 	}
@@ -137,7 +137,7 @@ func TestRequestMetricsGenerateTagsAndRouteMetadata(t *testing.T) {
 
 func TestRequestMetricsDefaultCounterName(t *testing.T) {
 	c := loadConfigCase(t, "jwt-auth-with-mappings")
-	c.RequestMetrics = nil
+	c.Observability.Metrics.CustomMetricName = nil
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +154,7 @@ func TestRequestMetricsDefaultCounterName(t *testing.T) {
 
 func TestRequestMetricNameAloneDoesNotEnableCounter(t *testing.T) {
 	c := loadConfigCase(t, "public-routing")
-	c.RequestMetrics = &RequestMetricsConfig{Name: "gateway_http_requests_total"}
+	c.Observability.Metrics.CustomMetricName = new("gateway_http_requests_total")
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)

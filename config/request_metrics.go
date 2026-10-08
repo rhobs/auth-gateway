@@ -20,19 +20,14 @@ const (
 
 var prometheusNamePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
-// RequestMetricsConfig names the request counter shared by enabled APIs.
-type RequestMetricsConfig struct {
-	Name string `yaml:"name"`
-}
-
 // APIMetrics enables one request counter and optionally binds labels to working attributes.
 type APIMetrics struct {
 	Labels map[string]string `yaml:"labels,omitempty"`
 }
 
-func validateRequestMetricsConfig(value *RequestMetricsConfig) error {
-	if value != nil && (!prometheusNamePattern.MatchString(value.Name) || strings.HasPrefix(value.Name, "__")) {
-		return fmt.Errorf("request_metrics.name must start with an ASCII letter or underscore, use only ASCII letters, numbers, and underscores, and not start with __")
+func validateCustomMetricName(value *string) error {
+	if value != nil && (!prometheusNamePattern.MatchString(*value) || strings.HasPrefix(*value, "__")) {
+		return fmt.Errorf("observability.metrics.custom_metric_name must start with an ASCII letter or underscore, use only ASCII letters, numbers, and underscores, and not start with __")
 	}
 	return nil
 }

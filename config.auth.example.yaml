@@ -115,15 +115,13 @@ authorization_policies:
           writer_id: [writer-17]
           requested_tenant: [client-123]
 
-# Optional. All metered APIs share this counter name. Envoy adds the
-# envoy_http_lua_ prefix; the collector removes it.
-request_metrics:
-  name: gateway_http_requests_total
-
 # Optional. Enabled by default. Set enabled to false to omit the collector and
 # metrics Service port.
 observability:
   metrics:
+    # Optional. All metered APIs share this counter name. Envoy adds the
+    # envoy_http_lua_ prefix; the collector removes it.
+    custom_metric_name: gateway_http_requests_total
     enabled: true
     scrape_interval: 30s
     scrape_timeout: 10s

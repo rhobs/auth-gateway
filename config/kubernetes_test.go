@@ -166,7 +166,7 @@ func TestRequestMetricNameChangesBootstrapOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.RequestMetrics.Name = "renamed_gateway_requests_total"
+	*c.Observability.Metrics.CustomMetricName = "renamed_gateway_requests_total"
 	after, err := GenerateKubernetes(c)
 	if err != nil {
 		t.Fatal(err)

@@ -88,7 +88,6 @@ type Config struct {
 	Processing            []Processor           `yaml:"processing,omitempty"`
 	Servers               []Server              `yaml:"servers"`
 	APIs                  []API                 `yaml:"apis"`
-	RequestMetrics        *RequestMetricsConfig `yaml:"request_metrics,omitempty"`
 	Observability         ObservabilityConfig   `yaml:"observability,omitempty"`
 	Kubernetes            *Kubernetes           `yaml:"kubernetes,omitempty"`
 }
@@ -256,9 +255,6 @@ func (c Config) validate() error {
 	if err := c.Listener.validate(metricsEnabled, tracingEnabled); err != nil {
 		return err
 	}
-	if err := validateRequestMetricsConfig(c.RequestMetrics); err != nil {
-		return err
-	}
 	if err := c.Observability.Metrics.validate(); err != nil {
 		return err
 	}
@@ -396,10 +392,6 @@ func (c Config) withDefaults() Config {
 	c.Authenticators = cloneAuthenticators(c.Authenticators)
 	c.AuthorizationPolicies = cloneAuthorizationPolicies(c.AuthorizationPolicies)
 	c.Processing = cloneProcessors(c.Processing)
-	if c.RequestMetrics != nil {
-		requestMetrics := *c.RequestMetrics
-		c.RequestMetrics = &requestMetrics
-	}
 	if c.Node.ID == "" {
 		c.Node.ID = defaultNodeID
 	}
@@ -803,8 +795,8 @@ func (c Config) hasRequestMetrics() bool {
 }
 
 func (c Config) requestMetricName() string {
-	if c.RequestMetrics != nil {
-		return c.RequestMetrics.Name
+	if c.Observability.Metrics.CustomMetricName != nil {
+		return *c.Observability.Metrics.CustomMetricName
 	}
 	return defaultRequestMetricCounterName
 }

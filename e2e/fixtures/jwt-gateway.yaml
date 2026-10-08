@@ -50,11 +50,9 @@ authorization_policies:
         apis: [metrics, status-only, unmetered]
         attributes:
           tenant_id: [customer-b]
-request_metrics:
-  name: gateway_http_requests_total
-
 observability:
   metrics:
+    custom_metric_name: gateway_http_requests_total
     scrape_interval: 1s
     scrape_timeout: 500ms
 

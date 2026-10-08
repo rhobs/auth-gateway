@@ -122,11 +122,12 @@ type ObservabilityConfig struct {
 	Tracing ObservabilityTracing `yaml:"tracing,omitempty"`
 }
 
-// ObservabilityMetrics configures scraping and exposure of Envoy metrics.
+// ObservabilityMetrics configures the scraping, exposure, and naming of Envoy metrics.
 type ObservabilityMetrics struct {
-	Enabled        *bool     `yaml:"enabled,omitempty"`
-	ScrapeInterval *Duration `yaml:"scrape_interval,omitempty"`
-	ScrapeTimeout  *Duration `yaml:"scrape_timeout,omitempty"`
+	Enabled          *bool     `yaml:"enabled,omitempty"`
+	ScrapeInterval   *Duration `yaml:"scrape_interval,omitempty"`
+	ScrapeTimeout    *Duration `yaml:"scrape_timeout,omitempty"`
+	CustomMetricName *string   `yaml:"custom_metric_name,omitempty"`
 }
 
 // ObservabilityTracing configures Envoy tracing and the collector's OTLP exporter.
@@ -139,6 +140,10 @@ type ObservabilityTracing struct {
 }
 
 func (o ObservabilityConfig) withDefaults(serviceName string) ObservabilityConfig {
+	if o.Metrics.CustomMetricName != nil {
+		customMetricName := *o.Metrics.CustomMetricName
+		o.Metrics.CustomMetricName = &customMetricName
+	}
 	o.Metrics.Enabled = defaultValue(o.Metrics.Enabled, true)
 	o.Metrics.ScrapeInterval = defaultDuration(o.Metrics.ScrapeInterval, 30*time.Second)
 	o.Metrics.ScrapeTimeout = defaultDuration(o.Metrics.ScrapeTimeout, 10*time.Second)
@@ -152,6 +157,9 @@ func (o ObservabilityConfig) withDefaults(serviceName string) ObservabilityConfi
 }
 
 func (m ObservabilityMetrics) validate() error {
+	if err := validateCustomMetricName(m.CustomMetricName); err != nil {
+		return err
+	}
 	for _, field := range []struct {
 		name  string
 		value *Duration

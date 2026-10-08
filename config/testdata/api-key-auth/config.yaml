@@ -31,8 +31,10 @@ authorization_policies:
         apis: [ingest]
         attributes:
           tenant_id: [client-a]
-request_metrics:
-  name: gateway_http_requests_total
+observability:
+  metrics:
+    custom_metric_name: gateway_http_requests_total
+
 apis:
   - name: ingest
     metrics:
