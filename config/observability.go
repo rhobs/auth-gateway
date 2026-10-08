@@ -227,8 +227,8 @@ func (o ObservabilityConfig) clone() ObservabilityConfig {
 
 func (o ObservabilityConfig) withDefaults(serviceName string) ObservabilityConfig {
 	o.Metrics.Enabled = defaultValue(o.Metrics.Enabled, true)
-	o.Metrics.ScrapeInterval = defaultDuration(o.Metrics.ScrapeInterval, 30*time.Second)
-	o.Metrics.ScrapeTimeout = defaultDuration(o.Metrics.ScrapeTimeout, 10*time.Second)
+	o.Metrics.ScrapeInterval = o.Metrics.ScrapeInterval.withDefault(30 * time.Second)
+	o.Metrics.ScrapeTimeout = o.Metrics.ScrapeTimeout.withDefault(10 * time.Second)
 	o.Tracing.Enabled = defaultValue(o.Tracing.Enabled, false)
 	if o.Tracing.ServiceName == "" {
 		o.Tracing.ServiceName = serviceName
@@ -267,16 +267,6 @@ func (m KubernetesMetrics) withDefaults() KubernetesMetrics {
 	m.Resources.Requests = copyResourcesOrDefault(m.Resources.Requests, map[string]string{kubernetesCPUResourceName: "20m", kubernetesMemoryResourceName: "64Mi"})
 	m.Resources.Limits = copyResourcesOrDefault(m.Resources.Limits, map[string]string{kubernetesMemoryResourceName: "256Mi"})
 	return m
-}
-
-func applyKubernetesObservabilityDefaults(k *Kubernetes) {
-	if k == nil {
-		return
-	}
-	if k.OTelCollectorImage == "" {
-		k.OTelCollectorImage = defaultOTelCollectorImage
-	}
-	k.Metrics = k.Metrics.withDefaults()
 }
 
 func (m ObservabilityMetrics) enabled() bool {

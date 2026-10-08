@@ -6,7 +6,7 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
-func defaultCircuitBreakers(c *CircuitBreakerConfig) *CircuitBreakerConfig {
+func (c *CircuitBreakerConfig) withDefaults() *CircuitBreakerConfig {
 	if c == nil {
 		c = &CircuitBreakerConfig{}
 	}
@@ -18,7 +18,7 @@ func defaultCircuitBreakers(c *CircuitBreakerConfig) *CircuitBreakerConfig {
 	}
 }
 
-func envoyCircuitBreakers(c *CircuitBreakerConfig) *cluster.CircuitBreakers {
+func (c *CircuitBreakerConfig) toCircuitBreakers() *cluster.CircuitBreakers {
 	return &cluster.CircuitBreakers{Thresholds: []*cluster.CircuitBreakers_Thresholds{{
 		Priority:           core.RoutingPriority_DEFAULT,
 		MaxConnections:     wrapperspb.UInt32(*c.MaxConnections),

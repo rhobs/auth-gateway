@@ -17,6 +17,10 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for local checks, code layout, and gol
 - Static bootstrap changes require an explicit Deployment rollout. There is no checksum annotation; document this behavior when relevant.
 - Keep reusable Kubernetes lifecycle, port-forwarding, readiness, and diagnostics in `e2e/internal/framework`. Keep fixture shaping, protocol-specific clients, and scenario assertions in the e2e test package.
 
+## Go style
+
+- Use one receiver style for every method on a type. If one method needs a pointer receiver, such as a mutating YAML unmarshaller, use pointer receivers for all methods on that type.
+
 ## Testing
 
 - Keep each test focused on a distinct behavior. Use valid baselines and assert the intended error field or cause for invalid configuration.

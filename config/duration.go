@@ -7,7 +7,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-func defaultDuration(value *Duration, fallback time.Duration) *Duration {
+func (value *Duration) withDefault(fallback time.Duration) *Duration {
 	return defaultValue(value, Duration(fallback))
 }
 

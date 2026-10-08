@@ -296,28 +296,11 @@ func (c Config) withDefaults() Config {
 		c.APIs[i].Upstream = c.APIs[i].Upstream.withDefaults()
 	}
 	for i := range c.APIs {
-		c.APIs[i].CircuitBreakers = defaultCircuitBreakers(c.APIs[i].CircuitBreakers)
+		c.APIs[i].CircuitBreakers = c.APIs[i].CircuitBreakers.withDefaults()
 	}
 	if c.Kubernetes != nil {
-		if c.Kubernetes.Replicas == nil {
-			defaultReplicas := defaultKubernetesReplicas
-			c.Kubernetes.Replicas = &defaultReplicas
-		}
-		c.Kubernetes.ServicePort = defaultValue(c.Kubernetes.ServicePort, int32(defaultServicePort))
-		if c.hasHTTPS() {
-			c.Kubernetes.HTTPSServicePort = defaultValue(c.Kubernetes.HTTPSServicePort, int32(defaultHTTPSServicePort))
-		}
-		applyKubernetesObservabilityDefaults(c.Kubernetes)
-		resources := c.Kubernetes.Resources
-		resources.Requests = copyResourcesOrDefault(resources.Requests, map[string]string{
-			kubernetesCPUResourceName:    defaultKubernetesCPURequest,
-			kubernetesMemoryResourceName: defaultKubernetesMemoryRequest,
-		})
-		resources.Limits = copyResourcesOrDefault(resources.Limits, map[string]string{
-			kubernetesCPUResourceName:    defaultKubernetesCPULimit,
-			kubernetesMemoryResourceName: defaultKubernetesMemoryLimit,
-		})
-		c.Kubernetes.Resources = resources
+		kubernetes := c.Kubernetes.withDefaults(c.hasHTTPS())
+		c.Kubernetes = &kubernetes
 	}
 	return c
 }
@@ -341,11 +324,11 @@ func (a Authenticator) withDefaults() Authenticator {
 }
 
 func (j JWKSConfig) withDefaults() JWKSConfig {
-	j.CacheDuration = defaultDuration(j.CacheDuration, 5*time.Minute)
-	j.FetchTimeout = defaultDuration(j.FetchTimeout, 5*time.Second)
-	j.ConnectTimeout = defaultDuration(j.ConnectTimeout, 5*time.Second)
+	j.CacheDuration = j.CacheDuration.withDefault(5 * time.Minute)
+	j.FetchTimeout = j.FetchTimeout.withDefault(5 * time.Second)
+	j.ConnectTimeout = j.ConnectTimeout.withDefault(5 * time.Second)
 	j.TrustedCA = cloneConfigPointer(j.TrustedCA)
-	j.CircuitBreakers = defaultCircuitBreakers(j.CircuitBreakers)
+	j.CircuitBreakers = j.CircuitBreakers.withDefaults()
 	return j
 }
 
@@ -354,18 +337,18 @@ func (l Listener) withDefaults() Listener {
 	l.PerConnectionBufferLimitBytes = defaultValue(l.PerConnectionBufferLimitBytes, 1048576)
 	l.MaxRequestHeadersKB = defaultValue(l.MaxRequestHeadersKB, 32)
 	l.MaxRequestHeadersCount = defaultValue(l.MaxRequestHeadersCount, 100)
-	l.RequestHeadersTimeout = defaultDuration(l.RequestHeadersTimeout, 5*time.Second)
-	l.RequestTimeout = defaultDuration(l.RequestTimeout, 30*time.Second)
-	l.ConnectionIdleTimeout = defaultDuration(l.ConnectionIdleTimeout, time.Minute)
-	l.StreamIdleTimeout = defaultDuration(l.StreamIdleTimeout, time.Minute)
-	l.MaxStreamDuration = defaultDuration(l.MaxStreamDuration, 30*time.Second)
-	l.StreamFlushTimeout = defaultDuration(l.StreamFlushTimeout, 5*time.Second)
-	l.TLSHandshakeTimeout = defaultDuration(l.TLSHandshakeTimeout, 5*time.Second)
+	l.RequestHeadersTimeout = l.RequestHeadersTimeout.withDefault(5 * time.Second)
+	l.RequestTimeout = l.RequestTimeout.withDefault(30 * time.Second)
+	l.ConnectionIdleTimeout = l.ConnectionIdleTimeout.withDefault(time.Minute)
+	l.StreamIdleTimeout = l.StreamIdleTimeout.withDefault(time.Minute)
+	l.MaxStreamDuration = l.MaxStreamDuration.withDefault(30 * time.Second)
+	l.StreamFlushTimeout = l.StreamFlushTimeout.withDefault(5 * time.Second)
+	l.TLSHandshakeTimeout = l.TLSHandshakeTimeout.withDefault(5 * time.Second)
 	return l
 }
 
 func (u Upstream) withDefaults() Upstream {
-	u.ConnectTimeout = defaultDuration(u.ConnectTimeout, 5*time.Second)
+	u.ConnectTimeout = u.ConnectTimeout.withDefault(5 * time.Second)
 	u.PerConnectionBufferLimitBytes = defaultValue(u.PerConnectionBufferLimitBytes, 1048576)
 	if u.HTTPProtocol == "" {
 		u.HTTPProtocol = http1Protocol
@@ -377,6 +360,27 @@ func (o OverloadConfig) withDefaults() OverloadConfig {
 	o.HeapShrinkThreshold = defaultValue(o.HeapShrinkThreshold, 0.90)
 	o.RequestRejectThreshold = defaultValue(o.RequestRejectThreshold, 0.95)
 	return o
+}
+
+func (k Kubernetes) withDefaults(hasHTTPS bool) Kubernetes {
+	k.Replicas = defaultValue(k.Replicas, defaultKubernetesReplicas)
+	k.ServicePort = defaultValue(k.ServicePort, int32(defaultServicePort))
+	if hasHTTPS {
+		k.HTTPSServicePort = defaultValue(k.HTTPSServicePort, int32(defaultHTTPSServicePort))
+	}
+	if k.OTelCollectorImage == "" {
+		k.OTelCollectorImage = defaultOTelCollectorImage
+	}
+	k.Metrics = k.Metrics.withDefaults()
+	k.Resources.Requests = copyResourcesOrDefault(k.Resources.Requests, map[string]string{
+		kubernetesCPUResourceName:    defaultKubernetesCPURequest,
+		kubernetesMemoryResourceName: defaultKubernetesMemoryRequest,
+	})
+	k.Resources.Limits = copyResourcesOrDefault(k.Resources.Limits, map[string]string{
+		kubernetesCPUResourceName:    defaultKubernetesCPULimit,
+		kubernetesMemoryResourceName: defaultKubernetesMemoryLimit,
+	})
+	return k
 }
 
 const serverTLSSecretDirectory = "/etc"
@@ -980,10 +984,7 @@ func optionalUint32(value *uint32) *wrapperspb.UInt32Value {
 	return wrapperspb.UInt32(*value)
 }
 
-func overloadManager(o *OverloadConfig) (*overload.OverloadManager, error) {
-	if o == nil {
-		return nil, nil
-	}
+func (o OverloadConfig) toOverloadManager() (*overload.OverloadManager, error) {
 	heapConfig, err := packEnvoy(&heap.FixedHeapConfig{MaxHeapSizeBytes: o.MaxHeapBytes})
 	if err != nil {
 		return nil, fmt.Errorf("encode heap resource monitor: %w", err)

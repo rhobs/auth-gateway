@@ -186,14 +186,9 @@ func generate(effective effectiveConfig) (map[string][]byte, error) {
 		}}
 	}
 
-	overload, err := overloadManager(c.Overload)
-	if err != nil {
-		return nil, err
-	}
 	bootstrapConfig := &bootstrap.Bootstrap{
-		OverloadManager: overload,
-		Node:            &core.Node{Id: c.Node.ID, Cluster: c.Node.Cluster},
-		Admin:           &bootstrap.Admin{Address: socket(envoyAdminAddress, envoyAdminPort)},
+		Node:  &core.Node{Id: c.Node.ID, Cluster: c.Node.Cluster},
+		Admin: &bootstrap.Admin{Address: socket(envoyAdminAddress, envoyAdminPort)},
 		StaticResources: &bootstrap.Bootstrap_StaticResources{
 			Listeners: []*listener.Listener{{
 				Name:                          ingestionListenerName,
@@ -204,6 +199,12 @@ func generate(effective effectiveConfig) (map[string][]byte, error) {
 			}},
 			Clusters: clusters,
 		},
+	}
+	if c.Overload != nil {
+		bootstrapConfig.OverloadManager, err = c.Overload.toOverloadManager()
+		if err != nil {
+			return nil, err
+		}
 	}
 	if c.hasRequestMetrics() {
 		bootstrapConfig.StatsConfig = requestMetricsStatsConfig(c.APIs, c.requestMetricName())
@@ -1004,7 +1005,7 @@ func jwksClusters(authenticators []Authenticator, servers []Server) ([]*cluster.
 		}
 		clusters = append(clusters, &cluster.Cluster{
 			Name: name, ConnectTimeout: authenticator.JWT.JWKS.ConnectTimeout.protobuf(),
-			CircuitBreakers:      envoyCircuitBreakers(authenticator.JWT.JWKS.CircuitBreakers),
+			CircuitBreakers:      authenticator.JWT.JWKS.CircuitBreakers.toCircuitBreakers(),
 			ClusterDiscoveryType: &cluster.Cluster_Type{Type: cluster.Cluster_STRICT_DNS},
 			LoadAssignment:       &endpoint.ClusterLoadAssignment{ClusterName: name, Endpoints: []*endpoint.LocalityLbEndpoints{{LbEndpoints: []*endpoint.LbEndpoint{{HostIdentifier: &endpoint.LbEndpoint_Endpoint{Endpoint: &endpoint.Endpoint{Address: socket(parsed.Hostname(), port)}}}}}}},
 			TransportSocket:      tlsSocket,
@@ -1254,7 +1255,7 @@ func apiClusters(apis []API) ([]*cluster.Cluster, error) {
 			ClusterDiscoveryType:          &cluster.Cluster_Type{Type: cluster.Cluster_STRICT_DNS},
 			PerConnectionBufferLimitBytes: optionalUint32(api.Upstream.PerConnectionBufferLimitBytes),
 			TypedExtensionProtocolOptions: map[string]*anypb.Any{upstreamHTTPProtocolOptionsTypeURL: options},
-			CircuitBreakers:               envoyCircuitBreakers(api.CircuitBreakers),
+			CircuitBreakers:               api.CircuitBreakers.toCircuitBreakers(),
 			LoadAssignment: &endpoint.ClusterLoadAssignment{
 				ClusterName: name,
 				Endpoints: []*endpoint.LocalityLbEndpoints{{

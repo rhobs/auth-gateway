@@ -366,17 +366,21 @@ func (a API) clone() API {
 	a.Routes = cloneSlice(a.Routes)
 	a.Upstream = a.Upstream.clone()
 	a.Metrics = cloneConfigPointer(a.Metrics)
-	a.CircuitBreakers = cloneConfigPointer(a.CircuitBreakers)
+	if a.CircuitBreakers != nil {
+		circuitBreakers := a.CircuitBreakers.clone()
+		a.CircuitBreakers = &circuitBreakers
+	}
 	a.Timeouts = cloneConfigPointer(a.Timeouts)
 	return a
 }
 
-func (c CircuitBreakerConfig) clone() CircuitBreakerConfig {
-	c.MaxConnections = clonePointer(c.MaxConnections)
-	c.MaxPendingRequests = clonePointer(c.MaxPendingRequests)
-	c.MaxRequests = clonePointer(c.MaxRequests)
-	c.MaxRetries = clonePointer(c.MaxRetries)
-	return c
+func (c *CircuitBreakerConfig) clone() CircuitBreakerConfig {
+	cloned := *c
+	cloned.MaxConnections = clonePointer(c.MaxConnections)
+	cloned.MaxPendingRequests = clonePointer(c.MaxPendingRequests)
+	cloned.MaxRequests = clonePointer(c.MaxRequests)
+	cloned.MaxRetries = clonePointer(c.MaxRetries)
+	return cloned
 }
 
 func (r Route) clone() Route {
@@ -526,7 +530,10 @@ func (j JWKSConfig) clone() JWKSConfig {
 	j.FetchTimeout = clonePointer(j.FetchTimeout)
 	j.ConnectTimeout = clonePointer(j.ConnectTimeout)
 	j.TrustedCA = cloneConfigPointer(j.TrustedCA)
-	j.CircuitBreakers = cloneConfigPointer(j.CircuitBreakers)
+	if j.CircuitBreakers != nil {
+		circuitBreakers := j.CircuitBreakers.clone()
+		j.CircuitBreakers = &circuitBreakers
+	}
 	return j
 }
 
@@ -624,7 +631,7 @@ func (r *KubernetesResources) YAML() ([]byte, error) {
 	return output.Bytes(), nil
 }
 
-func (d Duration) String() string { return time.Duration(d).String() }
+func (d *Duration) String() string { return time.Duration(*d).String() }
 
 func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" || node.Value == "" {
@@ -641,14 +648,14 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-func (d Duration) MarshalYAML() (any, error) {
-	if err := validateDurationValue(d, true); err != nil {
+func (d *Duration) MarshalYAML() (any, error) {
+	if err := validateDurationValue(*d, true); err != nil {
 		return nil, err
 	}
 	return d.String(), nil
 }
 
-func (d Duration) protobuf() *durationpb.Duration { return durationpb.New(time.Duration(d)) }
+func (d *Duration) protobuf() *durationpb.Duration { return durationpb.New(time.Duration(*d)) }
 
 func (l Listener) validate(metricsEnabled, tracingEnabled bool) error {
 	if *l.Port == 0 || *l.Port > 65535 {

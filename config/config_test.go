@@ -94,7 +94,7 @@ func TestDurationYAMLContract(t *testing.T) {
 		if err := yaml.Unmarshal([]byte(value), &parsed); err != nil {
 			t.Fatalf("parse %q: %v", value, err)
 		}
-		encoded, err := yaml.Marshal(parsed)
+		encoded, err := yaml.Marshal(&parsed)
 		if err != nil {
 			t.Fatal(err)
 		}
