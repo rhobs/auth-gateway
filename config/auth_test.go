@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAuthExampleContainsExpectedAuthenticationConfiguration(t *testing.T) {
@@ -226,5 +227,59 @@ func TestDuplicateJWTIssuersAreRejectedPerServer(t *testing.T) {
 	config.Servers[1].Authentication = &Authentication{AnyOf: []string{"external-jwt"}}
 	if err := config.Validate(); err != nil {
 		t.Fatalf("same issuer on separate servers was rejected: %v", err)
+	}
+}
+
+func TestJWKSValidationIncludesUnusedProviders(t *testing.T) {
+	tests := []struct {
+		name  string
+		edit  func(*Config)
+		field string
+	}{
+		{"zero", func(c *Config) { c.Authenticators[0].JWT.JWKS.CacheDuration = duration(0) }, ".cache_duration"},
+		{"negative Go duration", func(c *Config) { c.Authenticators[0].JWT.JWKS.CacheDuration = duration(-time.Second) }, ".cache_duration"},
+		{"connect exceeds fetch", func(c *Config) { c.Authenticators[0].JWT.JWKS.ConnectTimeout = duration(6 * time.Second) }, ".connect_timeout"},
+		{"empty CA", func(c *Config) { c.Authenticators[0].JWT.JWKS.TrustedCA = &TrustedCA{} }, ".trusted_ca"},
+		{"both sources", func(c *Config) {
+			c.Authenticators[0].JWT.JWKS.TrustedCA = &TrustedCA{Filename: "/ca.pem", ConfigMap: &CAConfigMap{Name: "ca", Key: "ca.pem"}}
+		}, ".trusted_ca"},
+		{"file in Kubernetes", func(c *Config) { c.Authenticators[0].JWT.JWKS.TrustedCA = &TrustedCA{Filename: "/ca.pem"} }, ".trusted_ca.filename"},
+		{"ConfigMap without Kubernetes", func(c *Config) {
+			c.Kubernetes = nil
+			c.Authenticators[0].JWT.JWKS.TrustedCA = &TrustedCA{ConfigMap: &CAConfigMap{Name: "ca", Key: "ca.pem"}}
+		}, ".trusted_ca.config_map"},
+		{"bad ConfigMap name", func(c *Config) {
+			c.Authenticators[0].JWT.JWKS.TrustedCA = &TrustedCA{ConfigMap: &CAConfigMap{Name: "bad/name", Key: "ca.pem"}}
+		}, ".trusted_ca.config_map.name"},
+		{"bad key", func(c *Config) {
+			c.Authenticators[0].JWT.JWKS.TrustedCA = &TrustedCA{ConfigMap: &CAConfigMap{Name: "ca", Key: "../ca.pem"}}
+		}, ".trusted_ca.config_map.key"},
+		{"relative file", func(c *Config) {
+			c.Kubernetes = nil
+			c.Authenticators[0].JWT.JWKS.TrustedCA = &TrustedCA{Filename: "ca.pem"}
+		}, ".trusted_ca.filename"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := loadConfigCase(t, "jwt-auth")
+			c.Servers[0].Authentication = nil
+			c.Servers[0].Authorization = nil
+			tt.edit(&c)
+			if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "authenticators[0].jwt.jwks"+tt.field) {
+				t.Fatalf("validation = %v", err)
+			}
+		})
+	}
+	c := loadConfigCase(t, "jwt-auth")
+	c.Kubernetes = nil
+	c.Authenticators[0].JWT.JWKS.TrustedCA = &TrustedCA{Filename: "/etc/company/ca.crt"}
+	if _, err := Generate(c); err != nil {
+		t.Fatal(err)
+	}
+	c = loadConfigCase(t, "server-tls")
+	c.Servers[1].TLSConfig.Certificate = caDirectory + "/roots/tls.crt"
+	c.Servers[1].TLSConfig.PrivateKey = caDirectory + "/roots/tls.key"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), caDirectory) {
+		t.Fatalf("reserved CA mount tree: %v", err)
 	}
 }

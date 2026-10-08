@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	jwt "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/jwt_authn/v3"
 	connections "github.com/envoyproxy/go-control-plane/envoy/extensions/resource_monitors/downstream_connections/v3"
 	heap "github.com/envoyproxy/go-control-plane/envoy/extensions/resource_monitors/fixed_heap/v3"
+	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -525,5 +527,77 @@ func TestEnvoyConcurrencyGeneration(t *testing.T) {
 	}
 	if slices.Contains(r.Deployment.Spec.Template.Spec.Containers[0].Args, "--concurrency") {
 		t.Fatal("worker count inferred from CPU limit")
+	}
+}
+
+func TestJWKSTransportAndTrust(t *testing.T) {
+	c := loadConfigCase(t, "jwt-auth-multiple-issuers")
+	ca := &TrustedCA{ConfigMap: &CAConfigMap{Name: "issuer-ca", Key: "roots.pem"}}
+	for i := range c.Authenticators {
+		c.Authenticators[i].JWT.JWKS.TrustedCA = ca
+	}
+	j := &c.Authenticators[0].JWT.JWKS
+	j.URI = "https://192.0.2.1:9443/keys"
+	j.CacheDuration = duration(15 * time.Second)
+	j.FetchTimeout = duration(2 * time.Second)
+	j.ConnectTimeout = duration(500 * time.Millisecond)
+	r, err := GenerateKubernetes(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := decodeBootstrap(t, []byte(r.ConfigMap.Data["envoy.yaml"]))
+	manager := decodeHTTPManager(t, b.StaticResources.Listeners[0].FilterChains[0])
+	var providers jwt.JwtAuthentication
+	for _, f := range manager.HttpFilters {
+		if f.Name == "envoy.filters.http.jwt_authn" {
+			if err := f.GetTypedConfig().UnmarshalTo(&providers); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	remote := providers.Providers[c.Authenticators[0].Name].GetRemoteJwks()
+	if remote.CacheDuration.AsDuration() != 15*time.Second || remote.HttpUri.Timeout.AsDuration() != 2*time.Second || remote.AsyncFetch != nil || remote.RetryPolicy != nil {
+		t.Fatalf("remote JWKS controls = %v", remote)
+	}
+	for _, cluster := range b.StaticResources.Clusters {
+		if !strings.HasPrefix(cluster.Name, "jwks-") {
+			continue
+		}
+		var transport tls.UpstreamTlsContext
+		if err := cluster.TransportSocket.GetTypedConfig().UnmarshalTo(&transport); err != nil {
+			t.Fatal(err)
+		}
+		validation := transport.CommonTlsContext.GetValidationContext()
+		if validation.TrustedCa.GetFilename() != ca.filename() || len(validation.MatchTypedSubjectAltNames) != 1 {
+			t.Fatalf("trust = %v", validation)
+		}
+		san := validation.MatchTypedSubjectAltNames[0]
+		if cluster.Name == jwksClusterName(c.Authenticators[0].Name) {
+			if transport.Sni != "" || san.SanType != tls.SubjectAltNameMatcher_IP_ADDRESS || san.Matcher.GetExact() != "192.0.2.1" {
+				t.Fatalf("IP identity = %v", &transport)
+			}
+			if cluster.ConnectTimeout.AsDuration() != 500*time.Millisecond {
+				t.Fatalf("JWKS cluster connection timeout = %v", cluster.ConnectTimeout)
+			}
+		} else if transport.Sni == "" || san.SanType != tls.SubjectAltNameMatcher_DNS || san.Matcher.GetExact() != transport.Sni {
+			t.Fatalf("DNS identity = %v", &transport)
+		}
+	}
+	volumes := 0
+	for _, volume := range r.Deployment.Spec.Template.Spec.Volumes {
+		if volume.ConfigMap != nil && volume.ConfigMap.Name == ca.ConfigMap.Name {
+			volumes++
+			if len(volume.ConfigMap.Items) != 1 || volume.ConfigMap.Items[0].Key != "roots.pem" || volume.ConfigMap.Items[0].Path != "ca.crt" {
+				t.Fatalf("CA projection = %v", volume)
+			}
+		}
+	}
+	if volumes != 1 {
+		t.Fatalf("CA mount count = %d, want deduplicated mount", volumes)
+	}
+	for _, mount := range r.Deployment.Spec.Template.Spec.Containers[0].VolumeMounts {
+		if strings.HasPrefix(mount.MountPath, caDirectory) && (!mount.ReadOnly || mount.SubPath != "") {
+			t.Fatalf("CA mount = %v", mount)
+		}
 	}
 }
