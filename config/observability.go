@@ -416,7 +416,7 @@ func requestMetricLabelNames(apis []API) []string {
 	return slices.Sorted(maps.Keys(labels))
 }
 
-func requestMetricsRouteMetadata(api API) *structpb.Struct {
+func (api API) toRequestMetricsRouteMetadata() *structpb.Struct {
 	labels := make(map[string]*structpb.Value, len(api.Metrics.Labels))
 	for label, attribute := range api.Metrics.Labels {
 		labels[label] = structpb.NewStringValue(attribute)
@@ -510,7 +510,7 @@ func (c Config) requestMetricName() string {
 	return defaultRequestMetricCounterName
 }
 
-func envoyTracingConfig(config ObservabilityTracing) (*hcm.HttpConnectionManager_Tracing, error) {
+func (config ObservabilityTracing) toEnvoyTracingConfig() (*hcm.HttpConnectionManager_Tracing, error) {
 	if !config.enabled() {
 		return nil, nil
 	}

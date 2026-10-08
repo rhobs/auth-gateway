@@ -93,7 +93,7 @@ func TestJWTProviderClustersAndTrust(t *testing.T) {
 
 func TestJWTAuthorizationReadsOriginalClaimsFromNamedProvider(t *testing.T) {
 	c := loadConfigCase(t, "jwt-auth-multiple-issuers")
-	rules := serverRBACRules(c, c.Servers[0])
+	rules := c.toServerRBACRules(c.Servers[0])
 	policy := rules.Policies["api-metrics"]
 	if policy == nil || len(policy.Principals) != 1 {
 		t.Fatalf("API authorization policy = %#v", policy)
@@ -134,7 +134,7 @@ func TestJWTAuthorizationReadsOriginalClaimsFromNamedProvider(t *testing.T) {
 		t.Fatalf("raw provider grants = %v", gotValues)
 	}
 
-	config, err := jwtFilterConfig(c)
+	config, err := c.toJWTFilterConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestJWTAuthorizationMatchesAnyAllowedListClaimValue(t *testing.T) {
 	grant := c.AuthorizationPolicies[0].Grants[0]
 	grant.Attributes = map[string][]string{"my_list": {"y", "z"}}
 
-	principal := grantPrincipal(c, grant)
+	principal := c.toGrantPrincipal(grant)
 	claim := principal.GetSourcedMetadata()
 	if claim == nil {
 		t.Fatalf("grant principal = %#v, want a JWT metadata matcher", principal)
@@ -454,7 +454,7 @@ func TestJWTExpressionsUseEnvoyCELVariablesAndGuardMissingAttributes(t *testing.
 
 func TestJWTAuthorizationPolicyCombinationsAreAPIScoped(t *testing.T) {
 	c := loadAuthExample(t)
-	rules := serverRBACRules(c, c.Servers[0])
+	rules := c.toServerRBACRules(c.Servers[0])
 	if rules.Policies["api-metrics-write"] == nil || rules.Policies["api-logs"] == nil {
 		t.Fatalf("any_of policies did not generate both granted API rules: %#v", rules.Policies)
 	}
@@ -464,7 +464,7 @@ func TestJWTAuthorizationPolicyCombinationsAreAPIScoped(t *testing.T) {
 	}
 
 	c.Servers[0].Authorization = &Authorization{AllOf: []string{"metrics-writers", "logs-writers"}}
-	rules = serverRBACRules(c, c.Servers[0])
+	rules = c.toServerRBACRules(c.Servers[0])
 	if rules.Policies["api-metrics-write"] != nil || rules.Policies["api-logs"] != nil {
 		t.Fatalf("all_of policies for disjoint APIs granted access: %#v", rules.Policies)
 	}

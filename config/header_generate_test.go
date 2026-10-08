@@ -58,7 +58,7 @@ func TestJWTHeaderOnlyGrantRequiresNamedVerifiedIssuer(t *testing.T) {
 		slices.Index(names, "envoy.filters.http.set_filter_state") >= 0 {
 		t.Fatalf("header-only grant needs capture but no working attributes: %v", names)
 	}
-	grant := grantPrincipal(c, c.AuthorizationPolicies[0].Grants[0]).GetAndIds().GetIds()
+	grant := c.toGrantPrincipal(c.AuthorizationPolicies[0].Grants[0]).GetAndIds().GetIds()
 	if len(grant) != 2 {
 		t.Fatalf("header-only JWT grant principals = %#v", grant)
 	}
@@ -112,7 +112,7 @@ func TestMixedAllOfComparesHeaderAndVerifiedAttributeSources(t *testing.T) {
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	policy := serverAuthenticationRBACRules(c, c.Servers[3]).Policies["authenticated"]
+	policy := c.toServerAuthenticationRBACRules(c.Servers[3]).Policies["authenticated"]
 	if len(policy.Principals[0].GetAndIds().GetIds()) != 5 {
 		t.Fatalf("all_of shared-attribute principals = %#v", policy.Principals)
 	}

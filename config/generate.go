@@ -128,18 +128,18 @@ func generate(effective effectiveConfig) (map[string][]byte, error) {
 				host.TypedPerFilterConfig[jwtAuthnFilterName] = perRoute
 			}
 			if serverUsesAPIKey(c, server) {
-				perRoute, err := apiKeyPerRouteConfig(c, server)
+				perRoute, err := c.toAPIKeyPerRouteConfig(server)
 				if err != nil {
 					return nil, fmt.Errorf("servers[%d] API-key matcher: %w", i, err)
 				}
 				host.TypedPerFilterConfig[apiKeyFilterName] = perRoute
-				authentication, err := packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: serverAuthenticationRBACRules(c, server)}})
+				authentication, err := packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: c.toServerAuthenticationRBACRules(server)}})
 				if err != nil {
 					return nil, fmt.Errorf("servers[%d] authentication rules: %w", i, err)
 				}
 				host.TypedPerFilterConfig[authenticationFilterName] = authentication
 			}
-			rbacConfig, err := packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: serverRBACRules(c, server)}})
+			rbacConfig, err := packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: c.toServerRBACRules(server)}})
 			if err != nil {
 				return nil, fmt.Errorf("servers[%d] RBAC rules: %w", i, err)
 			}
@@ -149,7 +149,7 @@ func generate(effective effectiveConfig) (map[string][]byte, error) {
 			httpHosts = append(httpHosts, host)
 			continue
 		}
-		chain, err := httpFilterChain([]*route.VirtualHost{host}, c)
+		chain, err := c.toHTTPFilterChain([]*route.VirtualHost{host})
 		if err != nil {
 			return nil, fmt.Errorf("servers[%d]: %w", i, err)
 		}
@@ -165,7 +165,7 @@ func generate(effective effectiveConfig) (map[string][]byte, error) {
 		filterChains = append(filterChains, chain)
 	}
 	if len(httpHosts) > 0 {
-		chain, err := httpFilterChain(httpHosts, c)
+		chain, err := c.toHTTPFilterChain(httpHosts)
 		if err != nil {
 			return nil, err
 		}
@@ -216,7 +216,7 @@ func generate(effective effectiveConfig) (map[string][]byte, error) {
 	}
 	files := map[string][]byte{envoyConfigFilename: append([]byte(generatedFileHeader), data...)}
 	if c.hasAttributeMappings() {
-		resource, err := processingECDSResource(c)
+		resource, err := c.toProcessingECDSResource()
 		if err != nil {
 			return nil, fmt.Errorf("encode attribute processing ECDS resource: %w", err)
 		}
@@ -230,7 +230,7 @@ func generate(effective effectiveConfig) (map[string][]byte, error) {
 		if server.TLSConfig == nil {
 			continue
 		}
-		secretData, err := marshalEnvoyFileDiscoveryResponse(serverTLSSecret(i, *server.TLSConfig))
+		secretData, err := marshalEnvoyFileDiscoveryResponse(server.TLSConfig.toEnvoySecret(i))
 		if err != nil {
 			return nil, fmt.Errorf("servers[%d] certificate SDS resource: %w", i, err)
 		}
@@ -239,8 +239,8 @@ func generate(effective effectiveConfig) (map[string][]byte, error) {
 	return files, nil
 }
 
-func httpFilterChain(hosts []*route.VirtualHost, c Config) (*listener.FilterChain, error) {
-	manager, err := httpManager(hosts, c)
+func (c Config) toHTTPFilterChain(hosts []*route.VirtualHost) (*listener.FilterChain, error) {
+	manager, err := c.toHTTPManager(hosts)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +254,7 @@ func httpFilterChain(hosts []*route.VirtualHost, c Config) (*listener.FilterChai
 	}}}, nil
 }
 
-func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManager, error) {
+func (c Config) toHTTPManager(hosts []*route.VirtualHost) (*hcm.HttpConnectionManager, error) {
 	serverIndexes := make([]int, 0, len(hosts))
 	for _, host := range hosts {
 		for index, server := range c.Servers {
@@ -304,9 +304,9 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 		if usesJWT {
 			var jwtConfig *jwt.JwtAuthentication
 			if c.usesAPIKeys() {
-				jwtConfig, err = jwtFilterConfig(c, serverIndexes...)
+				jwtConfig, err = c.toJWTFilterConfig(serverIndexes...)
 			} else {
-				jwtConfig, err = jwtFilterConfig(c)
+				jwtConfig, err = c.toJWTFilterConfig()
 			}
 			if err != nil {
 				return nil, err
@@ -324,7 +324,7 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 			keyAuthenticator, _ = c.apiKeyAuthenticator()
 		}
 		if usesKey || len(headers) > 0 {
-			metadata, err := requestMetadataFilter(keyAuthenticator, headers)
+			metadata, err := keyAuthenticator.toRequestMetadataFilter(headers)
 			if err != nil {
 				return nil, fmt.Errorf("encode request metadata filter: %w", err)
 			}
@@ -340,7 +340,7 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 		if needsWorkingAttributes(c) {
 			if c.usesAPIKeys() {
 				for hostIndex, serverIndex := range serverIndexes {
-					attributes := serverAttributeInitializationConfig(c, c.Servers[serverIndex])
+					attributes := c.toServerAttributeInitializationConfig(c.Servers[serverIndex])
 					if len(attributes.OnRequestHeaders) == 0 {
 						continue
 					}
@@ -363,7 +363,7 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 			} else {
 				attributeFilter := &hcm.HttpFilter{Name: attributeFilterName}
 				if !c.hasAttributeMappings() {
-					attributeConfig, err := packEnvoy(attributeInitializationConfig(c))
+					attributeConfig, err := packEnvoy(c.toAttributeInitializationConfig())
 					if err != nil {
 						return nil, fmt.Errorf("encode attribute initialization filter: %w", err)
 					}
@@ -393,7 +393,7 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 			filters = append(filters, &hcm.HttpFilter{Name: requiredHeaderFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: headerRBACConfig}})
 		}
 		if c.usesAPIKeys() {
-			cleanup, err := credentialCleanupFilter(c)
+			cleanup, err := c.toCredentialCleanupFilter()
 			if err != nil {
 				return nil, err
 			}
@@ -408,14 +408,14 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 		}
 	}
 	if c.usesAPIKeys() && !hasProtectedHosts(hosts) {
-		cleanup, err := credentialCleanupFilter(c)
+		cleanup, err := c.toCredentialCleanupFilter()
 		if err != nil {
 			return nil, err
 		}
 		filters = append(filters, cleanup)
 	}
 	filters = append(filters, &hcm.HttpFilter{Name: routerFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: routerConfig}})
-	tracing, err := envoyTracingConfig(c.Observability.Tracing)
+	tracing, err := c.Observability.Tracing.toEnvoyTracingConfig()
 	if err != nil {
 		return nil, err
 	}
@@ -462,7 +462,7 @@ func hasProtectedHosts(hosts []*route.VirtualHost) bool {
 
 func serverJWTRequirementName(index int) string { return "server-" + strconv.Itoa(index) }
 
-func jwtFilterConfig(c Config, serverIndexes ...int) (*jwt.JwtAuthentication, error) {
+func (c Config) toJWTFilterConfig(serverIndexes ...int) (*jwt.JwtAuthentication, error) {
 	config := &jwt.JwtAuthentication{Providers: map[string]*jwt.JwtProvider{}, RequirementMap: map[string]*jwt.JwtRequirement{}, StripFailureResponse: true}
 	if len(serverIndexes) == 0 {
 		for index := range c.Servers {
@@ -528,7 +528,7 @@ func jwtFilterConfig(c Config, serverIndexes ...int) (*jwt.JwtAuthentication, er
 	return config, nil
 }
 
-func serverRBACRules(c Config, server Server) *rbac.RBAC {
+func (c Config) toServerRBACRules(server Server) *rbac.RBAC {
 	policies := map[string]*rbac.Policy{
 		localResponsePolicyName: {
 			Permissions: []*rbac.Permission{apiPermission(localResponseAPIName)},
@@ -543,7 +543,7 @@ func serverRBACRules(c Config, server Server) *rbac.RBAC {
 				for _, policyName := range server.Authorization.AnyOf {
 					for _, grant := range authorizationPolicy(c, policyName).Grants {
 						if slices.Contains(grant.APIs, apiName) && (!c.usesAPIKeys() || serverSelectsAuthenticator(server, grant.Authenticator)) {
-							grants = append(grants, grantPrincipalForServer(c, server, grant))
+							grants = append(grants, c.toGrantPrincipalForServer(server, grant))
 						}
 					}
 				}
@@ -557,7 +557,7 @@ func serverRBACRules(c Config, server Server) *rbac.RBAC {
 					var grants []*rbac.Principal
 					for _, grant := range authorizationPolicy(c, policyName).Grants {
 						if slices.Contains(grant.APIs, apiName) && (!c.usesAPIKeys() || serverSelectsAuthenticator(server, grant.Authenticator)) {
-							grants = append(grants, grantPrincipalForServer(c, server, grant))
+							grants = append(grants, c.toGrantPrincipalForServer(server, grant))
 						}
 					}
 					if len(grants) == 0 {
@@ -594,10 +594,10 @@ func apiPermission(api string) *rbac.Permission {
 	}}}}
 }
 
-func grantPrincipal(c Config, grant AuthorizationGrant) *rbac.Principal {
+func (c Config) toGrantPrincipal(grant AuthorizationGrant) *rbac.Principal {
 	authenticator := findAuthenticator(c, grant.Authenticator)
 	if authenticator.APIKey != nil {
-		return keyGrantPrincipal(authenticator, grant)
+		return authenticator.toKeyGrantPrincipal(grant)
 	}
 	conditions := make([]*rbac.Principal, 0, len(grant.Attributes)+1)
 	hasClaim := false
@@ -682,7 +682,7 @@ func needsWorkingAttributes(c Config) bool {
 	return c.hasAttributeMappings() || hasRequestHeaderProcessing(c.APIs) || hasRequestMetricLabels(c.APIs)
 }
 
-func attributeInitializationConfig(c Config) *setfilterstate.Config {
+func (c Config) toAttributeInitializationConfig() *setfilterstate.Config {
 	config := &setfilterstate.Config{}
 	for _, authenticator := range c.Authenticators {
 		if !authenticatorUsed(c.Servers, authenticator.Name) || authenticator.JWT == nil {
@@ -703,26 +703,26 @@ func attributeInitializationConfig(c Config) *setfilterstate.Config {
 	return config
 }
 
-func attributeProcessingConfig(c Config) *setfilterstate.Config {
+func (c Config) toAttributeProcessingConfig() *setfilterstate.Config {
 	config := &setfilterstate.Config{}
 	if !c.usesAPIKeys() {
-		config = attributeInitializationConfig(c)
+		config = c.toAttributeInitializationConfig()
 	}
 	if c.hasAttributeMappings() {
-		config.OnRequestHeaders = append(config.OnRequestHeaders, processingMappingConfig(c).OnRequestHeaders...)
+		config.OnRequestHeaders = append(config.OnRequestHeaders, c.toProcessingMappingConfig().OnRequestHeaders...)
 	}
 	return config
 }
 
-func processingECDSResource(c Config) (*core.TypedExtensionConfig, error) {
-	filterConfig, err := packEnvoy(attributeProcessingConfig(c))
+func (c Config) toProcessingECDSResource() (*core.TypedExtensionConfig, error) {
+	filterConfig, err := packEnvoy(c.toAttributeProcessingConfig())
 	if err != nil {
 		return nil, fmt.Errorf("encode set_filter_state config: %w", err)
 	}
 	return &core.TypedExtensionConfig{Name: attributeFilterName, TypedConfig: filterConfig}, nil
 }
 
-func processingMappingConfig(c Config) *setfilterstate.Config {
+func (c Config) toProcessingMappingConfig() *setfilterstate.Config {
 	config := &setfilterstate.Config{}
 	for _, processor := range c.Processing {
 		for _, attribute := range slices.Sorted(maps.Keys(processor.Attributes)) {
@@ -1042,7 +1042,7 @@ func apiRoutesWithMetadata(apis []API, includeMetadata bool) []*route.Route {
 					MaxStreamDuration: &route.RouteAction_MaxStreamDuration{MaxStreamDuration: apiRoute.Timeouts.MaxStreamDuration.protobuf()},
 				}
 				applyPathRewrite(action, apiRoute.Rewrite)
-				match := pathMatch(apiRoute.Path)
+				match := apiRoute.Path.toRouteMatch()
 				match.Headers = []*route.HeaderMatcher{methodHeader(method)}
 				routeConfig := &route.Route{
 					Name:       name,
@@ -1057,7 +1057,7 @@ func apiRoutesWithMetadata(apis []API, includeMetadata bool) []*route.Route {
 					if routeConfig.Metadata == nil {
 						routeConfig.Metadata = &core.Metadata{FilterMetadata: make(map[string]*structpb.Struct)}
 					}
-					routeConfig.Metadata.FilterMetadata[requestMetricsFilterName] = requestMetricsRouteMetadata(api)
+					routeConfig.Metadata.FilterMetadata[requestMetricsFilterName] = api.toRequestMetricsRouteMetadata()
 				}
 				routes = append(routes, routeConfig)
 				fallbacks[fallbackIndex].methods = append(fallbacks[fallbackIndex].methods, method)
@@ -1077,7 +1077,7 @@ func apiRoutesWithMetadata(apis []API, includeMetadata bool) []*route.Route {
 		}
 		methodRoute := &route.Route{
 			Name:  "method-not-allowed-" + strconv.Itoa(i),
-			Match: pathMatch(fallback.path),
+			Match: fallback.path.toRouteMatch(),
 			Action: &route.Route_DirectResponse{DirectResponse: &route.DirectResponseAction{
 				Status: 405,
 			}},
@@ -1151,7 +1151,7 @@ func fileConfigSource(filename string) *core.ConfigSource {
 	}
 }
 
-func serverTLSSecret(index int, config ServerTLS) *tls.Secret {
+func (config ServerTLS) toEnvoySecret(index int) *tls.Secret {
 	return &tls.Secret{
 		Name: serverTLSSecretName(index),
 		Type: &tls.Secret_TlsCertificate{TlsCertificate: &tls.TlsCertificate{
@@ -1186,7 +1186,7 @@ func marshalEnvoyFileDiscoveryResponse(resource proto.Message) ([]byte, error) {
 	return data, nil
 }
 
-func pathMatch(path PathMatch) *route.RouteMatch {
+func (path PathMatch) toRouteMatch() *route.RouteMatch {
 	switch {
 	case path.Exact != "":
 		return &route.RouteMatch{PathSpecifier: &route.RouteMatch_Path{Path: path.Exact}}

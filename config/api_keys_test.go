@@ -461,17 +461,17 @@ func TestAPIKeyPipelineUsesFileECDSAndHostScopedFilters(t *testing.T) {
 
 func TestAPIKeyRawAuthorizationAndSharedAttributeEquality(t *testing.T) {
 	c := loadConfigCase(t, "api-key-auth")
-	keyOnly := serverAuthenticationRBACRules(c, c.Servers[1]).Policies["authenticated"].Principals[0]
+	keyOnly := c.toServerAuthenticationRBACRules(c.Servers[1]).Policies["authenticated"].Principals[0]
 	if matcher := keyOnly.GetSourcedMetadata().GetMetadataMatcher(); matcher == nil || matcher.Filter != apiKeyMetadataNamespace ||
 		!slices.Equal(metadataMatcherPath(matcher.GetPath()), []string{"identity"}) ||
 		matcher.GetValue().GetStringMatch().GetSafeRegex().GetRegex() != apiKeyClientPattern(c.Authenticators[1].credentialAttributeNames(), "") {
 		t.Fatalf("key-only authentication principal = %#v", keyOnly)
 	}
-	mixed := serverAuthenticationRBACRules(c, c.Servers[2]).Policies["authenticated"].Principals[0].GetOrIds().GetIds()
+	mixed := c.toServerAuthenticationRBACRules(c.Servers[2]).Policies["authenticated"].Principals[0].GetOrIds().GetIds()
 	if len(mixed) != 2 || mixed[0].GetSourcedMetadata() == nil || mixed[1].GetHeader().GetName() != jwtVerifiedHeaderName("issuer-one") {
 		t.Fatalf("mixed any_of authentication principal = %#v", mixed)
 	}
-	dualPolicy := serverAuthenticationRBACRules(c, c.Servers[3]).Policies["authenticated"]
+	dualPolicy := c.toServerAuthenticationRBACRules(c.Servers[3]).Policies["authenticated"]
 	principals := dualPolicy.Principals[0].GetAndIds().GetIds()
 	if len(principals) != 5 || dualPolicy.Condition.GetCallExpr().GetFunction() != "_&&_" {
 		t.Fatalf("all_of authentication policy = %#v", dualPolicy)
@@ -487,14 +487,14 @@ func TestAPIKeyRawAuthorizationAndSharedAttributeEquality(t *testing.T) {
 			t.Fatalf("shared attribute was not restricted to a nonempty scalar: %#v", principal)
 		}
 	}
-	grant := grantPrincipal(c, c.AuthorizationPolicies[1].Grants[0])
+	grant := c.toGrantPrincipal(c.AuthorizationPolicies[1].Grants[0])
 	parts := grant.GetAndIds().GetIds()
 	if len(parts) != 2 || parts[1].GetSourcedMetadata().GetMetadataMatcher().GetFilter() != apiKeyMetadataNamespace ||
 		!slices.Equal(metadataMatcherPath(parts[1].GetSourcedMetadata().GetMetadataMatcher().GetPath()), []string{"attribute.tenant_id"}) {
 		t.Fatalf("API-key grant reads unprocessed Secret attributes: %#v", grant)
 	}
 	c.Servers[1].Authorization.AnyOf = []string{"jwt-writers", "key-writers"}
-	grants := serverRBACRules(c, c.Servers[1]).Policies["api-ingest"].Principals[0].GetOrIds().GetIds()
+	grants := c.toServerRBACRules(c.Servers[1]).Policies["api-ingest"].Principals[0].GetOrIds().GetIds()
 	if len(grants) != 1 || grants[0].GetAndIds() == nil {
 		t.Fatalf("key-only host used an unselected JWT grant: %#v", grants)
 	}

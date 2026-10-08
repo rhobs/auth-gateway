@@ -246,10 +246,10 @@ func apiKeyFilter() *hcm.HttpFilter {
 	}
 }
 
-func apiKeyPerRouteConfig(c Config, server Server) (*anypb.Any, error) {
+func (c Config) toAPIKeyPerRouteConfig(server Server) (*anypb.Any, error) {
 	config := &matching.ExtensionWithMatcherPerRoute{}
 	if mixedAnyOf(c, server) {
-		matcher, err := apiKeySkipMatcher(c, server)
+		matcher, err := c.toAPIKeySkipMatcher(server)
 		if err != nil {
 			return nil, err
 		}
@@ -262,7 +262,7 @@ func apiKeyPerRouteConfig(c Config, server Server) (*anypb.Any, error) {
 	return packEnvoy(&route.FilterConfig{Config: perRoute})
 }
 
-func apiKeySkipMatcher(c Config, server Server) (*xdsmatcher.Matcher, error) {
+func (c Config) toAPIKeySkipMatcher(server Server) (*xdsmatcher.Matcher, error) {
 	packedSkip, err := packEnvoy(&skip.SkipFilter{})
 	if err != nil {
 		return nil, fmt.Errorf("encode API-key skip action: %w", err)
@@ -303,10 +303,10 @@ func requestHeaderSources(c Config, serverIndexes []int) []string {
 	return slices.Sorted(maps.Keys(headers))
 }
 
-func requestMetadataFilter(keyAuthenticator Authenticator, headers []string) (*hcm.HttpFilter, error) {
+func (authenticator Authenticator) toRequestMetadataFilter(headers []string) (*hcm.HttpFilter, error) {
 	var rules []*headertometadata.Config_Rule
-	if keyAuthenticator.APIKey != nil {
-		attributeNames := keyAuthenticator.credentialAttributeNames()
+	if authenticator.APIKey != nil {
+		attributeNames := authenticator.credentialAttributeNames()
 		rules = append(rules, &headertometadata.Config_Rule{
 			Header: apiKeyClientHeader, Remove: len(attributeNames) == 0,
 			OnHeaderPresent: &headertometadata.Config_KeyValuePair{
@@ -374,7 +374,7 @@ func apiKeyRegexMatcher(pattern string) *matcher.RegexMatcher {
 	}
 }
 
-func apiKeyIdentityPrincipal(authenticator Authenticator) *rbac.Principal {
+func (authenticator Authenticator) toAPIKeyIdentityPrincipal() *rbac.Principal {
 	return apiKeyMetadataPrincipal([]string{apiKeyMetadataKey}, &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_SafeRegex{SafeRegex: apiKeyRegexMatcher(apiKeyClientPattern(authenticator.credentialAttributeNames(), ""))}}}})
 }
 
@@ -382,18 +382,18 @@ func apiKeyMetadataPrincipal(keys []string, value *matcher.ValueMatcher) *rbac.P
 	return dynamicMetadataPrincipal(apiKeyMetadataNamespace, keys, value)
 }
 
-func jwtMarkerPrincipal(authenticator Authenticator) *rbac.Principal {
+func (authenticator Authenticator) toJWTMarkerPrincipal() *rbac.Principal {
 	return &rbac.Principal{Identifier: &rbac.Principal_Header{Header: &route.HeaderMatcher{
 		Name:                 jwtVerifiedHeaderName(authenticator.Name),
 		HeaderMatchSpecifier: &route.HeaderMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: authenticator.JWT.Issuer}}},
 	}}}
 }
 
-func grantPrincipalForServer(c Config, server Server, grant AuthorizationGrant) *rbac.Principal {
-	principal := grantPrincipal(c, grant)
+func (c Config) toGrantPrincipalForServer(server Server, grant AuthorizationGrant) *rbac.Principal {
+	principal := c.toGrantPrincipal(grant)
 	if mixedAnyOf(c, server) {
 		if authenticator := findAuthenticator(c, grant.Authenticator); authenticator.JWT != nil {
-			return andPrincipals(principal, jwtMarkerPrincipal(authenticator))
+			return andPrincipals(principal, authenticator.toJWTMarkerPrincipal())
 		}
 	}
 	return principal
@@ -406,7 +406,7 @@ func andPrincipals(values ...*rbac.Principal) *rbac.Principal {
 	return &rbac.Principal{Identifier: &rbac.Principal_AndIds{AndIds: &rbac.Principal_Set{Ids: values}}}
 }
 
-func serverAuthenticationRBACRules(c Config, server Server) *rbac.RBAC {
+func (c Config) toServerAuthenticationRBACRules(server Server) *rbac.RBAC {
 	var keyAuthenticator Authenticator
 	for _, name := range selectedAuthenticatorNames(server) {
 		if selected := findAuthenticator(c, name); selected.APIKey != nil {
@@ -414,13 +414,13 @@ func serverAuthenticationRBACRules(c Config, server Server) *rbac.RBAC {
 			break
 		}
 	}
-	principal := apiKeyIdentityPrincipal(keyAuthenticator)
+	principal := keyAuthenticator.toAPIKeyIdentityPrincipal()
 	policy := &rbac.Policy{Permissions: []*rbac.Permission{{Rule: &rbac.Permission_Any{Any: true}}}}
 	if mixedAnyOf(c, server) {
 		alternatives := []*rbac.Principal{principal}
 		for _, name := range selectedAuthenticatorNames(server) {
 			if authenticator := findAuthenticator(c, name); authenticator.JWT != nil {
-				alternatives = append(alternatives, jwtMarkerPrincipal(authenticator))
+				alternatives = append(alternatives, authenticator.toJWTMarkerPrincipal())
 			}
 		}
 		principal = &rbac.Principal{Identifier: &rbac.Principal_OrIds{OrIds: &rbac.Principal_Set{Ids: alternatives}}}
@@ -470,8 +470,8 @@ func nonemptyScalarValueMatcher() *matcher.ValueMatcher {
 	}}}}}
 }
 
-func keyGrantPrincipal(authenticator Authenticator, grant AuthorizationGrant) *rbac.Principal {
-	conditions := []*rbac.Principal{apiKeyIdentityPrincipal(authenticator)}
+func (authenticator Authenticator) toKeyGrantPrincipal(grant AuthorizationGrant) *rbac.Principal {
+	conditions := []*rbac.Principal{authenticator.toAPIKeyIdentityPrincipal()}
 	for _, attribute := range slices.Sorted(maps.Keys(grant.Attributes)) {
 		namespace, path := attributeMetadataPath(authenticator, attribute)
 		conditions = append(conditions, dynamicMetadataPrincipal(namespace, path, allowedStringValueMatcher(grant.Attributes[attribute])))
@@ -479,7 +479,7 @@ func keyGrantPrincipal(authenticator Authenticator, grant AuthorizationGrant) *r
 	return andPrincipals(conditions...)
 }
 
-func serverAttributeInitializationConfig(c Config, server Server) *setfilterstate.Config {
+func (c Config) toServerAttributeInitializationConfig(server Server) *setfilterstate.Config {
 	config := &setfilterstate.Config{}
 	for _, name := range selectedAuthenticatorNames(server) {
 		authenticator := findAuthenticator(c, name)
@@ -507,7 +507,7 @@ func apiKeyAttributeExpression(attribute string) string {
 	return "((\"" + apiKeyMetadataNamespace + "\" in metadata.filter_metadata" + celAndSeparator + key + " in " + namespace + ") && type(" + current + ") == string && " + current + " != \"\") ? " + current + " : \"\""
 }
 
-func credentialCleanupConfig(c Config) *headermutation.HeaderMutation {
+func (c Config) toCredentialCleanupConfig() *headermutation.HeaderMutation {
 	removed := map[string]struct{}{authorizationHeaderName: {}, apiKeyClientHeader: {}}
 	if authenticator, exists := c.apiKeyAuthenticator(); exists {
 		removed[strings.ToLower(authenticator.APIKey.Header)] = struct{}{}
@@ -524,8 +524,9 @@ func credentialCleanupConfig(c Config) *headermutation.HeaderMutation {
 	return &headermutation.HeaderMutation{Mutations: &headermutation.Mutations{RequestMutations: mutations}}
 }
 
-func credentialCleanupFilter(c Config) (*hcm.HttpFilter, error) {
-	cleanup, err := packEnvoy(credentialCleanupConfig(c))
+// toCredentialCleanupFilter builds the Envoy filter that removes gateway credentials and JWT verification markers before requests reach upstreams.
+func (c Config) toCredentialCleanupFilter() (*hcm.HttpFilter, error) {
+	cleanup, err := packEnvoy(c.toCredentialCleanupConfig())
 	if err != nil {
 		return nil, fmt.Errorf("encode credential cleanup filter: %w", err)
 	}

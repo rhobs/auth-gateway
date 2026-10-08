@@ -16,7 +16,7 @@ func validateDurationValue(value Duration, allowZero bool) error {
 		return nil
 	}
 	if value < Duration(time.Millisecond) {
-		return fmt.Errorf("must be at least 1ms, got %s", value)
+		return fmt.Errorf("must be at least 1ms, got %s", value.String())
 	}
 	return nil
 }
