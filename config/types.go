@@ -1,7 +1,6 @@
 package config
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -13,13 +12,9 @@ import (
 	"time"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
-	"go.yaml.in/yaml/v3"
-	"google.golang.org/protobuf/types/known/durationpb"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/runtime"
-	kjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 )
 
 // Config describes gateway behavior, observability, and optional Kubernetes output.
@@ -602,61 +597,6 @@ func (ca TrustedCA) filename() string {
 		return path.Join(caDirectory, ca.ConfigMap.id(), caCertificateFilename)
 	}
 	return ca.Filename
-}
-
-// Objects returns the resources in apply order.
-func (r *KubernetesResources) Objects() []runtime.Object {
-	objects := []runtime.Object{&r.ConfigMap}
-	if r.ProcessingConfigMap != nil {
-		objects = append(objects, r.ProcessingConfigMap)
-	}
-	if r.OTelCollectorConfigMap != nil {
-		objects = append(objects, r.OTelCollectorConfigMap)
-	}
-	return append(objects, &r.ServiceAccount, &r.Deployment, &r.Service)
-}
-
-// YAML serializes all resources as a Kubernetes manifest stream.
-func (r *KubernetesResources) YAML() ([]byte, error) {
-	serializer := kjson.NewSerializerWithOptions(kjson.DefaultMetaFactory, nil, nil, kjson.SerializerOptions{Yaml: true})
-	var output bytes.Buffer
-	for index, object := range r.Objects() {
-		if index > 0 {
-			output.WriteString("---\n")
-		}
-		if err := serializer.Encode(object, &output); err != nil {
-			return nil, fmt.Errorf("encode Kubernetes %T: %w", object, err)
-		}
-	}
-	return output.Bytes(), nil
-}
-
-func (duration *Duration) String() string { return time.Duration(*duration).String() }
-
-func (duration *Duration) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" || node.Value == "" {
-		return &durationYAMLError{line: node.Line, column: node.Column, err: fmt.Errorf("must be a duration string with units, such as 250ms or 5s")}
-	}
-	value, err := time.ParseDuration(node.Value)
-	if err != nil {
-		return &durationYAMLError{line: node.Line, column: node.Column, err: fmt.Errorf("invalid duration %q: %w", node.Value, err)}
-	}
-	if err := validateDurationValue(Duration(value), true); err != nil {
-		return &durationYAMLError{line: node.Line, column: node.Column, err: err}
-	}
-	*duration = Duration(value)
-	return nil
-}
-
-func (duration *Duration) MarshalYAML() (any, error) {
-	if err := validateDurationValue(*duration, true); err != nil {
-		return nil, err
-	}
-	return duration.String(), nil
-}
-
-func (duration *Duration) protobuf() *durationpb.Duration {
-	return durationpb.New(time.Duration(*duration))
 }
 
 func (l Listener) validate(metricsEnabled, tracingEnabled bool) error {

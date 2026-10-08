@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -13,6 +14,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	kjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
@@ -333,6 +336,33 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 		Deployment:             deployment,
 		Service:                service,
 	}, nil
+}
+
+// Objects returns the resources in apply order.
+func (r *KubernetesResources) Objects() []runtime.Object {
+	objects := []runtime.Object{&r.ConfigMap}
+	if r.ProcessingConfigMap != nil {
+		objects = append(objects, r.ProcessingConfigMap)
+	}
+	if r.OTelCollectorConfigMap != nil {
+		objects = append(objects, r.OTelCollectorConfigMap)
+	}
+	return append(objects, &r.ServiceAccount, &r.Deployment, &r.Service)
+}
+
+// YAML serializes all resources as a Kubernetes manifest stream.
+func (r *KubernetesResources) YAML() ([]byte, error) {
+	serializer := kjson.NewSerializerWithOptions(kjson.DefaultMetaFactory, nil, nil, kjson.SerializerOptions{Yaml: true})
+	var output bytes.Buffer
+	for index, object := range r.Objects() {
+		if index > 0 {
+			output.WriteString("---\n")
+		}
+		if err := serializer.Encode(object, &output); err != nil {
+			return nil, fmt.Errorf("encode Kubernetes %T: %w", object, err)
+		}
+	}
+	return output.Bytes(), nil
 }
 
 func stringFiles(files map[string][]byte) map[string]string {

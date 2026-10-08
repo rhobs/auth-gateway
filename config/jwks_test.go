@@ -9,8 +9,6 @@ import (
 	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 )
 
-func duration(value time.Duration) *Duration { return new(Duration(value)) }
-
 func TestJWKSFetchTimeoutDefaultsForNull(t *testing.T) {
 	c, err := Load(strings.NewReader(readFixture(t, "jwks-duration-null.yaml")))
 	if err != nil || *c.Authenticators[0].JWT.JWKS.FetchTimeout != Duration(5*time.Second) {

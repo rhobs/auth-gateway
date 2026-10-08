@@ -10,8 +10,53 @@ import (
 
 	connections "github.com/envoyproxy/go-control-plane/envoy/extensions/resource_monitors/downstream_connections/v3"
 	heap "github.com/envoyproxy/go-control-plane/envoy/extensions/resource_monitors/fixed_heap/v3"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+func TestKubernetesResourcesObjectsReturnsApplyOrder(t *testing.T) {
+	resources := &KubernetesResources{
+		ConfigMap:              corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "gateway"}},
+		ProcessingConfigMap:    &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "processing"}},
+		OTelCollectorConfigMap: &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "collector"}},
+		ServiceAccount:         corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "service-account"}},
+		Deployment:             appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "deployment"}},
+		Service:                corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "service"}},
+	}
+
+	for _, test := range []struct {
+		name string
+		want []string
+		edit func(*KubernetesResources)
+	}{
+		{name: "all resources", want: []string{"gateway", "processing", "collector", "service-account", "deployment", "service"}},
+		{name: "without optional config maps", want: []string{"gateway", "service-account", "deployment", "service"}, edit: func(r *KubernetesResources) {
+			r.ProcessingConfigMap = nil
+			r.OTelCollectorConfigMap = nil
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			current := *resources
+			if test.edit != nil {
+				test.edit(&current)
+			}
+			objects := current.Objects()
+			if len(objects) != len(test.want) {
+				t.Fatalf("object count = %d, want %d", len(objects), len(test.want))
+			}
+			for index, object := range objects {
+				metadata, ok := object.(metav1.Object)
+				if !ok {
+					t.Fatalf("object %d has type %T, want Kubernetes metadata", index, object)
+				}
+				if got := metadata.GetName(); got != test.want[index] {
+					t.Fatalf("object %d name = %q, want %q", index, got, test.want[index])
+				}
+			}
+		})
+	}
+}
 
 func TestGenerateKubernetesKeepsProcessingConfigOutsidePodTemplate(t *testing.T) {
 	config, err := Load(strings.NewReader(readFixture(t, "jwt-auth-with-mappings/config.yaml")))

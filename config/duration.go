@@ -5,10 +5,39 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v3"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 func (value *Duration) withDefault(fallback time.Duration) *Duration {
 	return defaultValue(value, Duration(fallback))
+}
+
+func (duration *Duration) String() string { return time.Duration(*duration).String() }
+
+func (duration *Duration) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" || node.Value == "" {
+		return &durationYAMLError{line: node.Line, column: node.Column, err: fmt.Errorf("must be a duration string with units, such as 250ms or 5s")}
+	}
+	value, err := time.ParseDuration(node.Value)
+	if err != nil {
+		return &durationYAMLError{line: node.Line, column: node.Column, err: fmt.Errorf("invalid duration %q: %w", node.Value, err)}
+	}
+	if err := validateDurationValue(Duration(value), true); err != nil {
+		return &durationYAMLError{line: node.Line, column: node.Column, err: err}
+	}
+	*duration = Duration(value)
+	return nil
+}
+
+func (duration *Duration) MarshalYAML() (any, error) {
+	if err := validateDurationValue(*duration, true); err != nil {
+		return nil, err
+	}
+	return duration.String(), nil
+}
+
+func (duration *Duration) protobuf() *durationpb.Duration {
+	return durationpb.New(time.Duration(*duration))
 }
 
 func validateDurationValue(value Duration, allowZero bool) error {
