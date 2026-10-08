@@ -37,8 +37,6 @@ const (
 	defaultHTTPSServicePort                 = 443
 	defaultServerTLSCertificate             = "/etc/auth-gateway-tls/tls.crt"
 	defaultServerTLSPrivateKey              = "/etc/auth-gateway-tls/tls.key"
-	defaultOTelCollectorImage               = "otel/opentelemetry-collector-contrib:0.135.0"
-	defaultOTelMetricsPort                  = 8889
 	defaultKubernetesCPURequest             = "50m"
 	defaultKubernetesMemoryRequest          = "64Mi"
 	defaultKubernetesCPULimit               = "1"
@@ -63,7 +61,6 @@ const (
 	httpsProtocolToken                      = "https"
 	kubernetesCPUResourceName               = "cpu"
 	kubernetesMemoryResourceName            = "memory"
-	collectorConfigFilename                 = "config.yaml"
 	caCertificateFilename                   = "ca.crt"
 	tlsCertificateSecretKey                 = "tls.crt"
 	tlsPrivateKeySecretKey                  = "tls.key"
@@ -129,7 +126,7 @@ func (c Config) validate() error {
 	if strings.TrimSpace(c.Node.Cluster) == "" {
 		return fmt.Errorf("node.cluster must not be empty")
 	}
-	metricsEnabled := c.Kubernetes != nil && c.Observability.Metrics.Enabled != nil && *c.Observability.Metrics.Enabled
+	metricsEnabled := c.Kubernetes != nil && c.Observability.Metrics.enabled()
 	tracingEnabled := c.Observability.Tracing.enabled()
 	if err := c.Listener.validate(metricsEnabled, tracingEnabled); err != nil {
 		return err
@@ -223,8 +220,8 @@ func (c Config) validate() error {
 		if strings.TrimSpace(c.Kubernetes.Image) == "" || strings.ContainsAny(c.Kubernetes.Image, imageWhitespaceCharacters) {
 			return fmt.Errorf("kubernetes.image must be an image reference")
 		}
-		if (metricsEnabled || tracingEnabled) && (strings.TrimSpace(c.Kubernetes.OTelCollectorImage) == "" || strings.ContainsAny(c.Kubernetes.OTelCollectorImage, imageWhitespaceCharacters)) {
-			return fmt.Errorf("kubernetes.otel_collector_image must be an image reference")
+		if err := validateOTelCollectorImage(c.Kubernetes.OTelCollectorImage, metricsEnabled || tracingEnabled); err != nil {
+			return err
 		}
 		if c.Kubernetes.Replicas != nil && *c.Kubernetes.Replicas < 0 {
 			return fmt.Errorf("kubernetes.replicas must not be negative")
@@ -234,8 +231,10 @@ func (c Config) validate() error {
 				return fmt.Errorf("kubernetes.service_port must be between 1 and 65535")
 			}
 		}
-		if metricsEnabled && c.hasHTTP() && *c.Kubernetes.ServicePort == defaultOTelMetricsPort {
-			return fmt.Errorf("kubernetes.service_port must not conflict with the metrics port")
+		if c.hasHTTP() {
+			if err := validateOTelMetricsServicePort("service_port", *c.Kubernetes.ServicePort, metricsEnabled); err != nil {
+				return err
+			}
 		}
 		if c.hasHTTPS() {
 			if err := c.validateTLSMounts(); err != nil {
@@ -244,8 +243,8 @@ func (c Config) validate() error {
 			if *c.Kubernetes.HTTPSServicePort < 1 || *c.Kubernetes.HTTPSServicePort > 65535 {
 				return fmt.Errorf("kubernetes.https_service_port must be between 1 and 65535")
 			}
-			if metricsEnabled && *c.Kubernetes.HTTPSServicePort == defaultOTelMetricsPort {
-				return fmt.Errorf("kubernetes.https_service_port must not conflict with the metrics port")
+			if err := validateOTelMetricsServicePort("https_service_port", *c.Kubernetes.HTTPSServicePort, metricsEnabled); err != nil {
+				return err
 			}
 			if c.hasHTTP() && *c.Kubernetes.HTTPSServicePort == *c.Kubernetes.ServicePort {
 				return fmt.Errorf("kubernetes.service_port and kubernetes.https_service_port must differ")
@@ -264,7 +263,10 @@ func (c Config) validate() error {
 		}
 	}
 
-	return c.Overload.validate(c.Kubernetes)
+	if c.Overload != nil {
+		return c.Overload.validate(c.Kubernetes)
+	}
+	return nil
 }
 
 func (c Config) withDefaults() Config {
@@ -279,7 +281,10 @@ func (c Config) withDefaults() Config {
 		c.Node.Cluster = defaultNodeCluster
 	}
 	c.Listener = c.Listener.withDefaults()
-	c.Overload = c.Overload.withDefaults()
+	if c.Overload != nil {
+		overload := c.Overload.withDefaults()
+		c.Overload = &overload
+	}
 	c.Observability = c.Observability.withDefaults(c.Node.Cluster)
 	for i := range c.Servers {
 		if c.Servers[i].TLSConfig != nil {
@@ -302,9 +307,7 @@ func (c Config) withDefaults() Config {
 		if c.hasHTTPS() {
 			c.Kubernetes.HTTPSServicePort = defaultValue(c.Kubernetes.HTTPSServicePort, int32(defaultHTTPSServicePort))
 		}
-		if c.Kubernetes.OTelCollectorImage == "" {
-			c.Kubernetes.OTelCollectorImage = defaultOTelCollectorImage
-		}
+		applyKubernetesObservabilityDefaults(c.Kubernetes)
 		resources := c.Kubernetes.Resources
 		resources.Requests = copyResourcesOrDefault(resources.Requests, map[string]string{
 			kubernetesCPUResourceName:    defaultKubernetesCPURequest,
@@ -315,9 +318,82 @@ func (c Config) withDefaults() Config {
 			kubernetesMemoryResourceName: defaultKubernetesMemoryLimit,
 		})
 		c.Kubernetes.Resources = resources
-		c.Kubernetes.Metrics = c.Kubernetes.Metrics.withDefaults()
 	}
 	return c
+}
+
+func (a APIKeyAuthenticator) withDefaults() APIKeyAuthenticator {
+	if a.Header == "" {
+		a.Header = defaultAPIKeyHeader
+	}
+	return a
+}
+
+func (a Authenticator) withDefaults() Authenticator {
+	if a.JWT != nil {
+		a.JWT.JWKS = a.JWT.JWKS.withDefaults()
+	}
+	if a.APIKey != nil {
+		apiKey := a.APIKey.withDefaults()
+		a.APIKey = &apiKey
+	}
+	return a
+}
+
+func (j JWKSConfig) withDefaults() JWKSConfig {
+	j.CacheDuration = defaultDuration(j.CacheDuration, 5*time.Minute)
+	j.FetchTimeout = defaultDuration(j.FetchTimeout, 5*time.Second)
+	j.ConnectTimeout = defaultDuration(j.ConnectTimeout, 5*time.Second)
+	j.TrustedCA = cloneConfigPointer(j.TrustedCA)
+	j.CircuitBreakers = defaultCircuitBreakers(j.CircuitBreakers)
+	return j
+}
+
+func (l Listener) withDefaults() Listener {
+	l.Port = defaultValue(l.Port, defaultListenerPort)
+	l.PerConnectionBufferLimitBytes = defaultValue(l.PerConnectionBufferLimitBytes, 1048576)
+	l.MaxRequestHeadersKB = defaultValue(l.MaxRequestHeadersKB, 32)
+	l.MaxRequestHeadersCount = defaultValue(l.MaxRequestHeadersCount, 100)
+	l.RequestHeadersTimeout = defaultDuration(l.RequestHeadersTimeout, 5*time.Second)
+	l.RequestTimeout = defaultDuration(l.RequestTimeout, 30*time.Second)
+	l.ConnectionIdleTimeout = defaultDuration(l.ConnectionIdleTimeout, time.Minute)
+	l.StreamIdleTimeout = defaultDuration(l.StreamIdleTimeout, time.Minute)
+	l.MaxStreamDuration = defaultDuration(l.MaxStreamDuration, 30*time.Second)
+	l.StreamFlushTimeout = defaultDuration(l.StreamFlushTimeout, 5*time.Second)
+	l.TLSHandshakeTimeout = defaultDuration(l.TLSHandshakeTimeout, 5*time.Second)
+	return l
+}
+
+func (u Upstream) withDefaults() Upstream {
+	u.ConnectTimeout = defaultDuration(u.ConnectTimeout, 5*time.Second)
+	u.PerConnectionBufferLimitBytes = defaultValue(u.PerConnectionBufferLimitBytes, 1048576)
+	if u.HTTPProtocol == "" {
+		u.HTTPProtocol = http1Protocol
+	}
+	return u
+}
+
+func (o OverloadConfig) withDefaults() OverloadConfig {
+	o.HeapShrinkThreshold = defaultValue(o.HeapShrinkThreshold, 0.90)
+	o.RequestRejectThreshold = defaultValue(o.RequestRejectThreshold, 0.95)
+	return o
+}
+
+const serverTLSSecretDirectory = "/etc"
+
+func (s ServerTLS) withDefaults() ServerTLS {
+	certificate, privateKey := defaultServerTLSCertificate, defaultServerTLSPrivateKey
+	if s.Secret != "" {
+		certificate = path.Join(serverTLSSecretDirectory, s.Secret, tlsCertificateSecretKey)
+		privateKey = path.Join(serverTLSSecretDirectory, s.Secret, tlsPrivateKeySecretKey)
+	}
+	if s.Certificate == "" {
+		s.Certificate = certificate
+	}
+	if s.PrivateKey == "" {
+		s.PrivateKey = privateKey
+	}
+	return s
 }
 
 func (c Config) apisByName() map[string]API {
@@ -618,22 +694,6 @@ func (c Config) hasAttributeMappings() bool {
 	return false
 }
 
-func (c Config) hasRequestMetrics() bool {
-	for _, api := range c.APIs {
-		if api.Metrics != nil {
-			return true
-		}
-	}
-	return false
-}
-
-func (c Config) requestMetricName() string {
-	if c.Observability.Metrics.CustomMetricName != nil {
-		return *c.Observability.Metrics.CustomMetricName
-	}
-	return defaultRequestMetricCounterName
-}
-
 func (c Config) hasAuthenticationConfig() bool {
 	if len(c.Authenticators) != 0 || len(c.AuthorizationPolicies) != 0 {
 		return true
@@ -693,19 +753,17 @@ func copyResourcesOrDefault(values, defaults map[string]string) map[string]strin
 	if values == nil {
 		values = defaults
 	}
-	copy := make(map[string]string, len(values))
-	for name, value := range values {
-		copy[name] = value
-	}
-	return copy
+	c := make(map[string]string, len(values))
+	maps.Copy(c, values)
+	return c
 }
 
 func defaultValue[T any](value *T, fallback T) *T {
 	if value == nil {
 		return &fallback
 	}
-	copy := *value
-	return &copy
+	c := *value
+	return &c
 }
 
 func addRouteKey(routes map[string]struct{}, path PathMatch, method string) error {

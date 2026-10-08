@@ -84,40 +84,40 @@ func TestValidateAuthenticatorAttributeSources(t *testing.T) {
 			c.Authenticators[0].Attributes["tenant_id"] = AttributeSource{}
 		}},
 		{name: "JWT multiple sources", want: "authenticators[0].attributes.tenant_id", edit: func(c *Config) {
-			c.Authenticators[0].Attributes["tenant_id"] = AttributeSource{ClaimPath: []string{"sub"}, Header: testStringPointer("X-Tenant")}
+			c.Authenticators[0].Attributes["tenant_id"] = AttributeSource{ClaimPath: []string{"sub"}, Header: new("X-Tenant")}
 		}},
 		{name: "JWT credential source", want: "authenticators[0].attributes.tenant_id", edit: func(c *Config) {
-			c.Authenticators[0].Attributes["tenant_id"] = AttributeSource{Credential: testBoolPointer(true)}
+			c.Authenticators[0].Attributes["tenant_id"] = AttributeSource{Credential: new(true)}
 		}},
 		{name: "empty header", want: "authenticators[0].attributes.requested_tenant.header", edit: func(c *Config) {
-			c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: testStringPointer("")}
+			c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: new("")}
 		}},
 		{name: "invalid header", want: "authenticators[0].attributes.requested_tenant.header", edit: func(c *Config) {
-			c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: testStringPointer("Bad Header")}
+			c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: new("Bad Header")}
 		}},
 		{name: "reserved header", want: "authenticators[0].attributes.requested_tenant.header", edit: func(c *Config) {
-			c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: testStringPointer("Authorization")}
+			c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: new("Authorization")}
 		}},
 		{name: "internal header", want: "authenticators[0].attributes.requested_tenant.header", edit: func(c *Config) {
-			c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: testStringPointer("X-Auth-Gateway-Identity")}
+			c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: new("X-Auth-Gateway-Identity")}
 		}},
 		{name: "underscore header", want: "authenticators[0].attributes.requested_tenant.header", edit: func(c *Config) {
-			c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: testStringPointer("X_Tenant")}
+			c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: new("X_Tenant")}
 		}},
 		{name: "key credential header", want: "authenticators[0].attributes.requested_tenant.header is reserved", edit: func(c *Config) {
-			c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: testStringPointer("x-partner-key")}
+			c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: new("x-partner-key")}
 		}},
 		{name: "key missing source", want: "authenticators[2].attributes.tenant_id", edit: func(c *Config) {
 			c.Authenticators[2].Attributes["tenant_id"] = AttributeSource{}
 		}},
 		{name: "key false credential", want: "authenticators[2].attributes.tenant_id.credential", edit: func(c *Config) {
-			c.Authenticators[2].Attributes["tenant_id"] = AttributeSource{Credential: testBoolPointer(false)}
+			c.Authenticators[2].Attributes["tenant_id"] = AttributeSource{Credential: new(false)}
 		}},
 		{name: "key claim source", want: "authenticators[2].attributes.tenant_id", edit: func(c *Config) {
 			c.Authenticators[2].Attributes["tenant_id"] = AttributeSource{ClaimPath: []string{"sub"}}
 		}},
 		{name: "key multiple sources", want: "authenticators[2].attributes.tenant_id", edit: func(c *Config) {
-			c.Authenticators[2].Attributes["tenant_id"] = AttributeSource{Credential: testBoolPointer(true), Header: testStringPointer("X-Tenant")}
+			c.Authenticators[2].Attributes["tenant_id"] = AttributeSource{Credential: new(true), Header: new("X-Tenant")}
 		}},
 	}
 	for _, test := range tests {
@@ -139,10 +139,6 @@ func TestValidateAcceptsHeaderOnlyGrant(t *testing.T) {
 		t.Fatalf("header-only grants were rejected: %v", err)
 	}
 }
-
-func testStringPointer(value string) *string { return &value }
-
-func testBoolPointer(value bool) *bool { return &value }
 
 func TestValidateRejectsInvalidAuthenticationAndAuthorization(t *testing.T) {
 	tests := []struct {

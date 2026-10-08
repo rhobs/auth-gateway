@@ -10,7 +10,6 @@ import (
 	"path"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -283,34 +282,6 @@ type ServerTLS struct {
 	PrivateKey  string `yaml:"private_key,omitempty"`
 }
 
-// ObservabilityConfig groups gateway-wide telemetry settings.
-type ObservabilityConfig struct {
-	Metrics ObservabilityMetrics `yaml:"metrics,omitempty"`
-	Tracing ObservabilityTracing `yaml:"tracing,omitempty"`
-}
-
-// ObservabilityMetrics configures the scraping, exposure, and naming of Envoy metrics.
-type ObservabilityMetrics struct {
-	Enabled          *bool     `yaml:"enabled,omitempty"`
-	ScrapeInterval   *Duration `yaml:"scrape_interval,omitempty"`
-	ScrapeTimeout    *Duration `yaml:"scrape_timeout,omitempty"`
-	CustomMetricName *string   `yaml:"custom_metric_name,omitempty"`
-}
-
-// ObservabilityTracing configures Envoy tracing and the collector's OTLP exporter.
-type ObservabilityTracing struct {
-	Enabled            *bool    `yaml:"enabled,omitempty"`
-	Endpoint           string   `yaml:"endpoint,omitempty"`
-	ServiceName        string   `yaml:"service_name,omitempty"`
-	SamplingPercentage *float64 `yaml:"sampling_percentage,omitempty"`
-	Insecure           *bool    `yaml:"insecure,omitempty"`
-}
-
-// APIMetrics enables one request counter and optionally binds labels to working attributes.
-type APIMetrics struct {
-	Labels map[string]string `yaml:"labels,omitempty"`
-}
-
 // APIKeyCredential binds an opaque key to verified string attributes.
 type APIKeyCredential struct {
 	Key        string            `yaml:"key"`
@@ -325,11 +296,6 @@ type KubernetesResources struct {
 	ServiceAccount         corev1.ServiceAccount
 	Deployment             appsv1.Deployment
 	Service                corev1.Service
-}
-
-// KubernetesMetrics configures resources for the collector container.
-type KubernetesMetrics struct {
-	Resources KubernetesResourceRequirements `yaml:"resources,omitempty"`
 }
 
 // Duration is a Go duration encoded as a YAML string, such as 250ms or 5s.
@@ -581,58 +547,9 @@ func (s ServerTLS) clone() ServerTLS {
 	return s
 }
 
-func (o ObservabilityConfig) clone() ObservabilityConfig {
-	o.Metrics = o.Metrics.clone()
-	o.Tracing = o.Tracing.clone()
-	return o
-}
-
-func (m ObservabilityMetrics) clone() ObservabilityMetrics {
-	m.Enabled = clonePointer(m.Enabled)
-	m.ScrapeInterval = clonePointer(m.ScrapeInterval)
-	m.ScrapeTimeout = clonePointer(m.ScrapeTimeout)
-	m.CustomMetricName = clonePointer(m.CustomMetricName)
-	return m
-}
-
-func (t ObservabilityTracing) clone() ObservabilityTracing {
-	t.Enabled = clonePointer(t.Enabled)
-	t.SamplingPercentage = clonePointer(t.SamplingPercentage)
-	t.Insecure = clonePointer(t.Insecure)
-	return t
-}
-
-func (m APIMetrics) clone() APIMetrics {
-	m.Labels = maps.Clone(m.Labels)
-	return m
-}
-
 func (c APIKeyCredential) clone() APIKeyCredential {
 	c.Attributes = maps.Clone(c.Attributes)
 	return c
-}
-
-func (m KubernetesMetrics) clone() KubernetesMetrics {
-	m.Resources = m.Resources.clone()
-	return m
-}
-
-func (a APIKeyAuthenticator) withDefaults() APIKeyAuthenticator {
-	if a.Header == "" {
-		a.Header = defaultAPIKeyHeader
-	}
-	return a
-}
-
-func (a Authenticator) withDefaults() Authenticator {
-	if a.JWT != nil {
-		a.JWT.JWKS = a.JWT.JWKS.withDefaults()
-	}
-	if a.APIKey != nil {
-		apiKey := a.APIKey.withDefaults()
-		a.APIKey = &apiKey
-	}
-	return a
 }
 
 func (a Authenticator) providesAttribute(name string) bool {
@@ -649,15 +566,6 @@ func (a Authenticator) credentialAttributeNames() []string {
 	}
 	slices.Sort(names)
 	return names
-}
-
-func (j JWKSConfig) withDefaults() JWKSConfig {
-	j.CacheDuration = defaultDuration(j.CacheDuration, 5*time.Minute)
-	j.FetchTimeout = defaultDuration(j.FetchTimeout, 5*time.Second)
-	j.ConnectTimeout = defaultDuration(j.ConnectTimeout, 5*time.Second)
-	j.TrustedCA = cloneConfigPointer(j.TrustedCA)
-	j.CircuitBreakers = defaultCircuitBreakers(j.CircuitBreakers)
-	return j
 }
 
 func (j JWKSConfig) validate(name string, kubernetes bool) error {
@@ -682,71 +590,11 @@ func (ref CAConfigMap) id() string {
 	return hex.EncodeToString(digest[:16])
 }
 
-func (ca *TrustedCA) filename() string {
-	if ca == nil {
-		return systemCABundle
-	}
+func (ca TrustedCA) filename() string {
 	if ca.ConfigMap != nil {
 		return path.Join(caDirectory, ca.ConfigMap.id(), caCertificateFilename)
 	}
 	return ca.Filename
-}
-
-func (o ObservabilityConfig) withDefaults(serviceName string) ObservabilityConfig {
-	o.Metrics.Enabled = defaultValue(o.Metrics.Enabled, true)
-	o.Metrics.ScrapeInterval = defaultDuration(o.Metrics.ScrapeInterval, 30*time.Second)
-	o.Metrics.ScrapeTimeout = defaultDuration(o.Metrics.ScrapeTimeout, 10*time.Second)
-	o.Tracing.Enabled = defaultValue(o.Tracing.Enabled, false)
-	if o.Tracing.ServiceName == "" {
-		o.Tracing.ServiceName = serviceName
-	}
-	o.Tracing.SamplingPercentage = defaultValue(o.Tracing.SamplingPercentage, defaultTraceSamplingPercentage)
-	o.Tracing.Insecure = defaultValue(o.Tracing.Insecure, false)
-	return o
-}
-
-func (m ObservabilityMetrics) validate() error {
-	if err := validateCustomMetricName(m.CustomMetricName); err != nil {
-		return err
-	}
-	for _, field := range []struct {
-		name  string
-		value *Duration
-	}{{"scrape_interval", m.ScrapeInterval}, {"scrape_timeout", m.ScrapeTimeout}} {
-		name := "observability.metrics." + field.name
-		if err := validateDuration(name, field.value, false); err != nil {
-			return err
-		}
-		if time.Duration(*field.value)%time.Millisecond != 0 {
-			return fmt.Errorf("%s must be a whole number of milliseconds", name)
-		}
-	}
-	if *m.ScrapeTimeout > *m.ScrapeInterval {
-		return fmt.Errorf("observability.metrics.scrape_timeout (%s) must not exceed observability.metrics.scrape_interval (%s)", m.ScrapeTimeout, m.ScrapeInterval)
-	}
-	return nil
-}
-
-func (t ObservabilityTracing) enabled() bool {
-	return t.Enabled != nil && *t.Enabled
-}
-
-func (t ObservabilityTracing) validate() error {
-	if t.enabled() && (strings.TrimSpace(t.ServiceName) == "" || strings.ContainsAny(t.ServiceName, invalidControlCharacters)) {
-		return fmt.Errorf("observability.tracing.service_name must not be empty or contain control characters")
-	}
-	if percentage := *t.SamplingPercentage; math.IsNaN(percentage) || math.IsInf(percentage, 0) || percentage < 0 || percentage > 100 {
-		return fmt.Errorf("observability.tracing.sampling_percentage must be between 0 and 100")
-	}
-	if t.Endpoint != "" {
-		if err := validateOTelTraceEndpoint(t.Endpoint); err != nil {
-			return err
-		}
-	}
-	if t.enabled() && t.Endpoint == "" {
-		return fmt.Errorf("observability.tracing.endpoint is required when tracing is enabled")
-	}
-	return nil
 }
 
 // Objects returns the resources in apply order.
@@ -776,16 +624,6 @@ func (r *KubernetesResources) YAML() ([]byte, error) {
 	return output.Bytes(), nil
 }
 
-func (m KubernetesMetrics) withDefaults() KubernetesMetrics {
-	m.Resources.Requests = copyResourcesOrDefault(m.Resources.Requests, map[string]string{kubernetesCPUResourceName: "20m", kubernetesMemoryResourceName: "64Mi"})
-	m.Resources.Limits = copyResourcesOrDefault(m.Resources.Limits, map[string]string{kubernetesMemoryResourceName: "256Mi"})
-	return m
-}
-
-func (m KubernetesMetrics) validate() error {
-	return validateKubernetesResourceRequirements("kubernetes.metrics.resources", m.Resources)
-}
-
 func (d Duration) String() string { return time.Duration(d).String() }
 
 func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
@@ -812,35 +650,12 @@ func (d Duration) MarshalYAML() (any, error) {
 
 func (d Duration) protobuf() *durationpb.Duration { return durationpb.New(time.Duration(d)) }
 
-func (l Listener) withDefaults() Listener {
-	l.Port = defaultValue(l.Port, defaultListenerPort)
-	l.PerConnectionBufferLimitBytes = defaultValue(l.PerConnectionBufferLimitBytes, 1048576)
-	l.MaxRequestHeadersKB = defaultValue(l.MaxRequestHeadersKB, 32)
-	l.MaxRequestHeadersCount = defaultValue(l.MaxRequestHeadersCount, 100)
-	l.RequestHeadersTimeout = defaultDuration(l.RequestHeadersTimeout, 5*time.Second)
-	l.RequestTimeout = defaultDuration(l.RequestTimeout, 30*time.Second)
-	l.ConnectionIdleTimeout = defaultDuration(l.ConnectionIdleTimeout, time.Minute)
-	l.StreamIdleTimeout = defaultDuration(l.StreamIdleTimeout, time.Minute)
-	l.MaxStreamDuration = defaultDuration(l.MaxStreamDuration, 30*time.Second)
-	l.StreamFlushTimeout = defaultDuration(l.StreamFlushTimeout, 5*time.Second)
-	l.TLSHandshakeTimeout = defaultDuration(l.TLSHandshakeTimeout, 5*time.Second)
-	return l
-}
-
-const listenerPortConflictErrorFormat = "listener.port must not conflict with admin port %d or the metrics collector port %d"
-
 func (l Listener) validate(metricsEnabled, tracingEnabled bool) error {
 	if *l.Port == 0 || *l.Port > 65535 {
 		return fmt.Errorf("listener.port must be between 1 and 65535")
 	}
-	if *l.Port == envoyAdminPort {
-		return fmt.Errorf(listenerPortConflictErrorFormat, envoyAdminPort, defaultOTelMetricsPort)
-	}
-	if metricsEnabled && *l.Port == defaultOTelMetricsPort {
-		return fmt.Errorf(listenerPortConflictErrorFormat, envoyAdminPort, defaultOTelMetricsPort)
-	}
-	if tracingEnabled && *l.Port == defaultOTelTracePort {
-		return fmt.Errorf("listener.port must not conflict with the OTLP trace collector port %d", defaultOTelTracePort)
+	if err := validateObservabilityListenerPort(l.Port, metricsEnabled, tracingEnabled); err != nil {
+		return err
 	}
 	for _, value := range []struct {
 		name  string
@@ -871,16 +686,10 @@ func (l Listener) validate(metricsEnabled, tracingEnabled bool) error {
 	if *l.RequestHeadersTimeout > *l.RequestTimeout {
 		return fmt.Errorf("listener.request_headers_timeout (%s) must not exceed listener.request_timeout (%s)", l.RequestHeadersTimeout, l.RequestTimeout)
 	}
-	return l.HTTP2.validate("listener.http2")
-}
-
-func (u Upstream) withDefaults() Upstream {
-	u.ConnectTimeout = defaultDuration(u.ConnectTimeout, 5*time.Second)
-	u.PerConnectionBufferLimitBytes = defaultValue(u.PerConnectionBufferLimitBytes, 1048576)
-	if u.HTTPProtocol == "" {
-		u.HTTPProtocol = http1Protocol
+	if l.HTTP2 != nil {
+		return l.HTTP2.validate("listener.http2")
 	}
-	return u
+	return nil
 }
 
 func (u Upstream) validate(name string, kubernetes bool) error {
@@ -896,8 +705,10 @@ func (u Upstream) validate(name string, kubernetes bool) error {
 	if u.HTTP2 != nil && u.HTTPProtocol != http2Protocol {
 		return fmt.Errorf("%s.http2 requires http_protocol: http2", name)
 	}
-	if err := u.HTTP2.validate(name + ".http2"); err != nil {
-		return err
+	if u.HTTP2 != nil {
+		if err := u.HTTP2.validate(name + ".http2"); err != nil {
+			return err
+		}
 	}
 	if u.TLSConfig != nil {
 		if u.TLSConfig.ServerName != "" && !validDNSHost(u.TLSConfig.ServerName) {
@@ -908,10 +719,7 @@ func (u Upstream) validate(name string, kubernetes bool) error {
 	return nil
 }
 
-func (h *HTTP2Options) validate(name string) error {
-	if h == nil {
-		return nil
-	}
+func (h HTTP2Options) validate(name string) error {
 	for _, value := range []struct {
 		name  string
 		value *uint32
@@ -931,10 +739,7 @@ func (h *HTTP2Options) validate(name string) error {
 	return nil
 }
 
-func (h *HTTP2Options) envoy() *core.Http2ProtocolOptions {
-	if h == nil {
-		return nil
-	}
+func (h HTTP2Options) envoy() *core.Http2ProtocolOptions {
 	return &core.Http2ProtocolOptions{
 		MaxConcurrentStreams:        optionalUint32(h.MaxConcurrentStreams),
 		InitialStreamWindowSize:     optionalUint32(h.InitialStreamWindowSize),
@@ -942,20 +747,7 @@ func (h *HTTP2Options) envoy() *core.Http2ProtocolOptions {
 	}
 }
 
-func (o *OverloadConfig) withDefaults() *OverloadConfig {
-	if o == nil {
-		return nil
-	}
-	copy := *o
-	copy.HeapShrinkThreshold = defaultValue(o.HeapShrinkThreshold, 0.90)
-	copy.RequestRejectThreshold = defaultValue(o.RequestRejectThreshold, 0.95)
-	return &copy
-}
-
-func (o *OverloadConfig) validate(k *Kubernetes) error {
-	if o == nil {
-		return nil
-	}
+func (o OverloadConfig) validate(k *Kubernetes) error {
 	if o.MaxHeapBytes == 0 {
 		return fmt.Errorf("overload.max_heap_bytes must be positive")
 	}

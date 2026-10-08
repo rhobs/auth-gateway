@@ -385,7 +385,6 @@ func TestTuningValidationAndOptionalZeros(t *testing.T) {
 	}{
 		{"listener.port", func(c *Config) { c.Listener.Port = new(uint32(0)) }},
 		{"listener.port", func(c *Config) { c.Listener.Port = new(uint32(9901)) }},
-		{"listener.port", func(c *Config) { c.Listener.Port = new(uint32(8889)) }},
 		{"listener.max_request_headers_kb", func(c *Config) { c.Listener.MaxRequestHeadersKB = new(uint32(8193)) }},
 		{"listener.max_request_headers_count", func(c *Config) { c.Listener.MaxRequestHeadersCount = new(uint32(0)) }},
 		{"listener.request_headers_timeout", func(c *Config) { c.Listener.RequestTimeout = duration(time.Second) }},
@@ -418,11 +417,5 @@ func TestTuningValidationAndOptionalZeros(t *testing.T) {
 		if err != nil || *c.Listener.Port != 8080 || c.Listener.HTTP2 == nil {
 			t.Fatalf("null/empty options: %v", err)
 		}
-	}
-	c := loadConfigCase(t, "public-routing")
-	c.Kubernetes = nil
-	c.Listener.Port = new(uint32(8889))
-	if err := c.Validate(); err != nil {
-		t.Fatal("file-only mode has no metrics listener:", err)
 	}
 }

@@ -193,24 +193,26 @@ func TestConditionalJWTFilterOrder(t *testing.T) {
 		requestControlsFilterName, jwtAuthnFilterName, attributeFilterName, authorizationFilterName,
 		requiredHeaderFilterName, headerMutationFilterName, routerFilterName,
 	}
-	meteredJWT := []string{
-		requestControlsFilterName, requestMetricsFilterName, jwtAuthnFilterName, attributeFilterName,
-		authorizationFilterName, requiredHeaderFilterName, headerMutationFilterName, routerFilterName,
-	}
 	tests := []struct {
-		name      string
-		fixture   string
-		wantOrder []string
-		wantFiles []string
+		name                  string
+		fixture               string
+		wantOrder             []string
+		wantFiles             []string
+		withoutRequestMetrics bool
 	}{
 		{name: "public", fixture: "public-routing", wantOrder: []string{requestControlsFilterName, routerFilterName}, wantFiles: []string{envoyConfigFilename}},
 		{name: "plain JWT", fixture: "jwt-auth", wantOrder: plainJWT, wantFiles: []string{envoyConfigFilename}},
 		{name: "direct headers", fixture: "jwt-auth-with-headers", wantOrder: processedJWT, wantFiles: []string{envoyConfigFilename}},
-		{name: "mapped headers and metrics", fixture: "jwt-auth-with-mappings", wantOrder: meteredJWT, wantFiles: []string{envoyConfigFilename, processingConfigFilename, "server-certificate-1.yaml"}},
+		{name: "mapped headers", fixture: "jwt-auth-with-mappings", wantOrder: processedJWT, wantFiles: []string{envoyConfigFilename, processingConfigFilename, "server-certificate-1.yaml"}, withoutRequestMetrics: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			c := loadConfigCase(t, test.fixture)
+			if test.withoutRequestMetrics {
+				for i := range c.APIs {
+					c.APIs[i].Metrics = nil
+				}
+			}
 			files, err := Generate(c)
 			if err != nil {
 				t.Fatal(err)

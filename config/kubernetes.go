@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"maps"
 	"path"
@@ -20,20 +22,32 @@ const kubernetesConfigMapKind = "ConfigMap"
 const (
 	httpPortName               = "http"
 	httpsPortName              = "https"
-	metricsPortName            = "metrics"
-	tracesPortName             = "traces"
 	gatewayConfigVolumeName    = "config"
-	metricsConfigVolumeName    = "metrics-config"
 	processingConfigVolumeName = "processing-config"
 	apiKeySecretVolumeName     = "api-keys"
 )
 
 const (
-	configDirectory          = "/etc/auth-gateway"
-	processingDirectory      = "/etc/auth-gateway/processing"
-	apiKeyDirectory          = "/etc/auth-gateway/api-keys"
-	collectorConfigDirectory = "/etc/collector"
+	configDirectory     = "/etc/auth-gateway"
+	processingDirectory = "/etc/auth-gateway/processing"
+	apiKeyDirectory     = "/etc/auth-gateway/api-keys"
 )
+
+func processingResourceName(name string) string {
+	return resourceNameWithSuffix(name, "-processing")
+}
+
+func resourceNameWithSuffix(name, suffix string) string {
+	const maxDNSLabelLength = 63
+	if len(name)+len(suffix) <= maxDNSLabelLength {
+		return name + suffix
+	}
+
+	digest := sha256.Sum256([]byte(name))
+	hash := hex.EncodeToString(digest[:5])
+	prefixLength := maxDNSLabelLength - len(suffix) - len(hash) - 1
+	return name[:prefixLength] + "-" + hash + suffix
+}
 
 // GenerateKubernetes builds Kubernetes resources for Envoy and optional observability collection.
 // It does not contact a cluster, read credentials, or write files.
@@ -68,7 +82,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 			Data: map[string]string{processingConfigFilename: string(processingData)},
 		}
 	}
-	metricsEnabled := c.Observability.Metrics.Enabled != nil && *c.Observability.Metrics.Enabled
+	metricsEnabled := c.Observability.Metrics.enabled()
 	tracingEnabled := c.Observability.Tracing.enabled()
 	collectorEnabled := metricsEnabled || tracingEnabled
 

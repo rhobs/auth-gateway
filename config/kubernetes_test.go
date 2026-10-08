@@ -10,9 +10,7 @@ import (
 
 	connections "github.com/envoyproxy/go-control-plane/envoy/extensions/resource_monitors/downstream_connections/v3"
 	heap "github.com/envoyproxy/go-control-plane/envoy/extensions/resource_monitors/fixed_heap/v3"
-	"go.yaml.in/yaml/v3"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 func TestGenerateKubernetesKeepsProcessingConfigOutsidePodTemplate(t *testing.T) {
@@ -138,50 +136,6 @@ func TestAPIKeyMappingUpdateChangesOnlyProcessingConfigMap(t *testing.T) {
 	}
 }
 
-func TestRequestMetricBindingChangesBootstrapOnly(t *testing.T) {
-	c := loadConfigCase(t, "jwt-auth-with-mappings")
-	before, err := GenerateKubernetes(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.APIs[0].Metrics.Labels["tenant"] = "writer_id"
-	after, err := GenerateKubernetes(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if before.ConfigMap.Data[envoyConfigFilename] == after.ConfigMap.Data[envoyConfigFilename] {
-		t.Fatal("changing a metric label binding did not change the static Envoy bootstrap")
-	}
-	if !reflect.DeepEqual(before.ProcessingConfigMap.Data, after.ProcessingConfigMap.Data) {
-		t.Fatal("changing a metric label binding changed the ECDS processing resource")
-	}
-	if !reflect.DeepEqual(before.Deployment.Spec.Template, after.Deployment.Spec.Template) {
-		t.Fatal("changing a metric label binding changed the Deployment template")
-	}
-}
-
-func TestRequestMetricNameChangesBootstrapOnly(t *testing.T) {
-	c := loadConfigCase(t, "jwt-auth-with-mappings")
-	before, err := GenerateKubernetes(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	*c.Observability.Metrics.CustomMetricName = "renamed_gateway_requests_total"
-	after, err := GenerateKubernetes(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if before.ConfigMap.Data[envoyConfigFilename] == after.ConfigMap.Data[envoyConfigFilename] {
-		t.Fatal("changing the request metric name did not change the static Envoy bootstrap")
-	}
-	if !reflect.DeepEqual(before.ProcessingConfigMap.Data, after.ProcessingConfigMap.Data) {
-		t.Fatal("changing the request metric name changed the ECDS processing resource")
-	}
-	if !reflect.DeepEqual(before.Deployment.Spec.Template, after.Deployment.Spec.Template) {
-		t.Fatal("changing the request metric name changed the Deployment template")
-	}
-}
-
 func TestGenerateKubernetesOmitsProcessingConfigWithoutMappings(t *testing.T) {
 	config := loadConfigCase(t, "jwt-auth-with-headers")
 	resources, err := GenerateKubernetes(config)
@@ -195,76 +149,6 @@ func TestGenerateKubernetesOmitsProcessingConfigWithoutMappings(t *testing.T) {
 		if volume.Name == "processing-config" {
 			t.Fatal("direct header attributes generated an unnecessary processing volume")
 		}
-	}
-}
-
-func TestGenerateKubernetesExposesMetricsWithoutAdminPort(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	resources, err := GenerateKubernetes(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	ports := make(map[string]struct {
-		port       int32
-		targetPort string
-	}, len(resources.Service.Spec.Ports))
-	for _, port := range resources.Service.Spec.Ports {
-		ports[port.Name] = struct {
-			port       int32
-			targetPort string
-		}{port: port.Port, targetPort: port.TargetPort.String()}
-	}
-	if len(ports) != 2 {
-		t.Fatalf("Service ports = %#v, want only HTTP and metrics ports", ports)
-	}
-	if got := ports["http"]; got.port != defaultServicePort || got.targetPort != "http" {
-		t.Fatalf("HTTP Service port = %#v, want port %d targeting Envoy HTTP", got, defaultServicePort)
-	}
-	if got := ports["metrics"]; got.port != defaultOTelMetricsPort || got.targetPort != "metrics" {
-		t.Fatalf("metrics Service port = %#v, want port %d targeting the collector", got, defaultOTelMetricsPort)
-	}
-}
-
-func TestGenerateKubernetesOmitsCollectorWhenMetricsAreDisabled(t *testing.T) {
-	c := loadConfigCase(t, "api-key-auth")
-	enabled, err := GenerateKubernetes(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.Observability.Metrics.Enabled = new(false)
-	// With no collector port reserved, the HTTP Service can use 8889.
-	c.Kubernetes.ServicePort = new(int32(defaultOTelMetricsPort))
-	disabled, err := GenerateKubernetes(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if enabled.OTelCollectorConfigMap == nil || disabled.OTelCollectorConfigMap != nil {
-		t.Fatalf("collector ConfigMaps when enabled/disabled = %v/%v", enabled.OTelCollectorConfigMap != nil, disabled.OTelCollectorConfigMap != nil)
-	}
-	if got := len(disabled.Deployment.Spec.Template.Spec.Containers); got != 1 {
-		t.Fatalf("disabled metrics deployment has %d containers, want only Envoy", got)
-	}
-	for _, volume := range disabled.Deployment.Spec.Template.Spec.Volumes {
-		if volume.Name == metricsConfigVolumeName {
-			t.Fatal("disabled metrics generated a collector config volume")
-		}
-	}
-	servicePorts := make(map[string]int32, len(disabled.Service.Spec.Ports))
-	for _, port := range disabled.Service.Spec.Ports {
-		servicePorts[port.Name] = port.Port
-	}
-	if servicePorts["http"] != defaultOTelMetricsPort {
-		t.Fatalf("disabled metrics HTTP Service port = %d, want %d", servicePorts["http"], defaultOTelMetricsPort)
-	}
-	if _, exists := servicePorts[metricsPortName]; exists {
-		t.Fatalf("disabled metrics Service still exposes the collector port: %#v", servicePorts)
-	}
-	if !reflect.DeepEqual(enabled.ConfigMap.Data, disabled.ConfigMap.Data) {
-		t.Fatal("disabling collector metrics changed the Envoy bootstrap")
 	}
 }
 
@@ -296,9 +180,6 @@ func TestGenerateKubernetesMountsServerTLSSecretAndSharesListenerPort(t *testing
 			port       int32
 			targetPort string
 		}{port: port.Port, targetPort: port.TargetPort.String()}
-	}
-	if len(ports) != 3 {
-		t.Fatalf("Service ports = %#v, want HTTP, HTTPS, and metrics", ports)
 	}
 	if got := ports["http"]; got.port != defaultServicePort || got.targetPort != "http" {
 		t.Fatalf("HTTP Service port = %#v", got)
@@ -350,11 +231,13 @@ func TestGenerateKubernetesOmitsHTTPServicePortForHTTPSOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resources.Service.Spec.Ports) != 2 {
-		t.Fatalf("HTTPS-only Service ports = %#v, want HTTPS and metrics", resources.Service.Spec.Ports)
-	}
 	if resources.Service.Spec.Ports[0].Name != "https" || resources.Service.Spec.Ports[0].Port != defaultHTTPSServicePort {
 		t.Fatalf("HTTPS-only Service port = %#v", resources.Service.Spec.Ports[0])
+	}
+	for _, port := range resources.Service.Spec.Ports {
+		if port.Name == "http" {
+			t.Fatalf("HTTPS-only Service exposes an HTTP port: %#v", resources.Service.Spec.Ports)
+		}
 	}
 }
 
@@ -531,14 +414,7 @@ func TestKubernetesValidationAndOverloadBudgets(t *testing.T) {
 			c.Kubernetes.Resources.Limits = map[string]string{"memory": "0"}
 		}},
 		{"zero concurrency", "kubernetes.envoy_concurrency", func(c *Config) { c.Kubernetes.EnvoyConcurrency = new(uint32(0)) }},
-		{"zero interval", "observability.metrics.scrape_interval", func(c *Config) { c.Observability.Metrics.ScrapeInterval = duration(0) }},
-		{"zero timeout", "observability.metrics.scrape_timeout", func(c *Config) { c.Observability.Metrics.ScrapeTimeout = duration(0) }},
-		{"timeout exceeds interval", "observability.metrics.scrape_timeout", func(c *Config) { c.Observability.Metrics.ScrapeInterval = duration(time.Second) }},
-		{"fractional milliseconds", "observability.metrics.scrape_timeout", func(c *Config) { c.Observability.Metrics.ScrapeTimeout = duration(time.Millisecond + time.Microsecond) }},
 		{"envoy request exceeds limit", "kubernetes.resources.requests.cpu", func(c *Config) { c.Kubernetes.Resources.Requests["cpu"] = "1001m" }},
-		{"collector request exceeds limit", "kubernetes.metrics.resources.requests.memory", func(c *Config) { c.Kubernetes.Metrics.Resources.Requests["memory"] = "257Mi" }},
-		{"invalid collector quantity", "kubernetes.metrics.resources.limits.memory", func(c *Config) { c.Kubernetes.Metrics.Resources.Limits["memory"] = "invalid" }},
-		{"negative collector quantity", "kubernetes.metrics.resources.requests.cpu", func(c *Config) { c.Kubernetes.Metrics.Resources.Requests["cpu"] = "-1m" }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -584,12 +460,9 @@ func TestHeapBudgetComparedExactly(t *testing.T) {
 	}
 }
 
-func TestMetricsAndConcurrencyGeneration(t *testing.T) {
+func TestEnvoyConcurrencyGeneration(t *testing.T) {
 	c := loadConfigCase(t, "public-routing")
 	c.Kubernetes.EnvoyConcurrency = new(uint32(3))
-	c.Observability.Metrics.ScrapeInterval = duration(1500 * time.Millisecond)
-	c.Observability.Metrics.ScrapeTimeout = duration(250 * time.Millisecond)
-	c.Kubernetes.Metrics = KubernetesMetrics{Resources: KubernetesResourceRequirements{Requests: map[string]string{"cpu": "30m"}, Limits: map[string]string{}}}
 	r, err := GenerateKubernetes(c)
 	if err != nil {
 		t.Fatal(err)
@@ -598,29 +471,6 @@ func TestMetricsAndConcurrencyGeneration(t *testing.T) {
 	index := slices.Index(args, "--concurrency")
 	if index < 0 || index+1 == len(args) || args[index+1] != "3" {
 		t.Fatalf("Envoy args = %v", args)
-	}
-	var collector struct {
-		Receivers struct {
-			Prometheus struct {
-				Config struct {
-					Scrapes []struct {
-						Interval string `yaml:"scrape_interval"`
-						Timeout  string `yaml:"scrape_timeout"`
-					} `yaml:"scrape_configs"`
-				} `yaml:"config"`
-			} `yaml:"prometheus"`
-		} `yaml:"receivers"`
-	}
-	if err := yaml.Unmarshal([]byte(r.OTelCollectorConfigMap.Data["config.yaml"]), &collector); err != nil {
-		t.Fatal(err)
-	}
-	scrapes := collector.Receivers.Prometheus.Config.Scrapes
-	if len(scrapes) != 1 || scrapes[0].Interval != "1500ms" || scrapes[0].Timeout != "250ms" {
-		t.Fatalf("scrape timing = %+v", scrapes)
-	}
-	resources := r.Deployment.Spec.Template.Spec.Containers[1].Resources
-	if len(resources.Requests) != 1 || resources.Requests.Cpu().Cmp(resource.MustParse("30m")) != 0 || len(resources.Limits) != 0 {
-		t.Fatalf("collector resource overrides = %v", resources)
 	}
 	c.Kubernetes.EnvoyConcurrency = nil
 	c.Kubernetes.Resources.Limits["cpu"] = "4"

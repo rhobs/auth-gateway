@@ -12,7 +12,7 @@ import (
 
 func TestHeaderMetadataCapturePreservesRequestHeader(t *testing.T) {
 	c := loadAuthExample(t)
-	c.Authenticators[2].Attributes["requested_tenant"] = AttributeSource{Header: testStringPointer("x-TENANT")}
+	c.Authenticators[2].Attributes["requested_tenant"] = AttributeSource{Header: new("x-TENANT")}
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +46,7 @@ func TestHeaderMetadataCapturePreservesRequestHeader(t *testing.T) {
 
 func TestJWTHeaderOnlyGrantRequiresNamedVerifiedIssuer(t *testing.T) {
 	c := loadConfigCase(t, "jwt-auth-multiple-issuers")
-	c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: testStringPointer("X-Tenant")}
+	c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: new("X-Tenant")}
 	c.AuthorizationPolicies[0].Grants[0].Attributes = map[string][]string{"requested_tenant": {"customer-a"}}
 	files, err := Generate(c)
 	if err != nil {
@@ -76,8 +76,8 @@ func TestJWTHeaderOnlyGrantRequiresNamedVerifiedIssuer(t *testing.T) {
 
 func TestHeaderWorkingAttributesRequireVerifiedAuthenticator(t *testing.T) {
 	c := loadConfigCase(t, "api-key-auth")
-	c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: testStringPointer("X-Tenant")}
-	c.Authenticators[1].Attributes["requested_tenant"] = AttributeSource{Header: testStringPointer("X-Tenant")}
+	c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: new("X-Tenant")}
+	c.Authenticators[1].Attributes["requested_tenant"] = AttributeSource{Header: new("X-Tenant")}
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)
@@ -107,8 +107,8 @@ func TestHeaderWorkingAttributesRequireVerifiedAuthenticator(t *testing.T) {
 
 func TestMixedAllOfComparesHeaderAndVerifiedAttributeSources(t *testing.T) {
 	c := loadConfigCase(t, "api-key-auth")
-	c.Authenticators[0].Attributes["writer_id"] = AttributeSource{Header: testStringPointer("X-Writer")}
-	c.Authenticators[1].Attributes["tenant_id"] = AttributeSource{Header: testStringPointer("X-Tenant")}
+	c.Authenticators[0].Attributes["writer_id"] = AttributeSource{Header: new("X-Writer")}
+	c.Authenticators[1].Attributes["tenant_id"] = AttributeSource{Header: new("X-Tenant")}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}

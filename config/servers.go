@@ -6,23 +6,6 @@ import (
 	"strings"
 )
 
-const serverTLSSecretDirectory = "/etc"
-
-func (s ServerTLS) withDefaults() ServerTLS {
-	certificate, privateKey := defaultServerTLSCertificate, defaultServerTLSPrivateKey
-	if s.Secret != "" {
-		certificate = path.Join(serverTLSSecretDirectory, s.Secret, tlsCertificateSecretKey)
-		privateKey = path.Join(serverTLSSecretDirectory, s.Secret, tlsPrivateKeySecretKey)
-	}
-	if s.Certificate == "" {
-		s.Certificate = certificate
-	}
-	if s.PrivateKey == "" {
-		s.PrivateKey = privateKey
-	}
-	return s
-}
-
 func (s Server) boundAPIs(apis map[string]API) ([]API, error) {
 	bound := make([]API, 0, len(s.APIs))
 	seen := make(map[string]struct{}, len(s.APIs))

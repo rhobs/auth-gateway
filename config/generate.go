@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	bootstrap "github.com/envoyproxy/go-control-plane/envoy/config/bootstrap/v3"
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
@@ -19,7 +18,6 @@ import (
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	rbac "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
-	traceconfig "github.com/envoyproxy/go-control-plane/envoy/config/trace/v3"
 	setfilterstatecommon "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
 	headermutation "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
 	jwt "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/jwt_authn/v3"
@@ -32,12 +30,10 @@ import (
 	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	upstreamhttp "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 	matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
-	envoytype "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	"go.yaml.in/yaml/v3"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
-	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -422,6 +418,10 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 	if err != nil {
 		return nil, err
 	}
+	var http2Options *core.Http2ProtocolOptions
+	if c.Listener.HTTP2 != nil {
+		http2Options = c.Listener.HTTP2.envoy()
+	}
 	return &hcm.HttpConnectionManager{
 		StatPrefix:            httpManagerStatPrefix,
 		CodecType:             hcm.HttpConnectionManager_AUTO,
@@ -429,7 +429,7 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 		RequestHeadersTimeout: c.Listener.RequestHeadersTimeout.protobuf(),
 		StreamIdleTimeout:     c.Listener.StreamIdleTimeout.protobuf(),
 		StreamFlushTimeout:    c.Listener.StreamFlushTimeout.protobuf(),
-		Http2ProtocolOptions:  c.Listener.HTTP2.envoy(),
+		Http2ProtocolOptions:  http2Options,
 		CommonHttpProtocolOptions: &core.HttpProtocolOptions{
 			IdleTimeout:                  c.Listener.ConnectionIdleTimeout.protobuf(),
 			MaxStreamDuration:            c.Listener.MaxStreamDuration.protobuf(),
@@ -450,47 +450,10 @@ func httpManager(hosts []*route.VirtualHost, c Config) (*hcm.HttpConnectionManag
 	}, nil
 }
 
-func envoyTracingConfig(config ObservabilityTracing) (*hcm.HttpConnectionManager_Tracing, error) {
-	if !config.enabled() {
-		return nil, nil
-	}
-	providerConfig, err := packEnvoy(&traceconfig.OpenTelemetryConfig{
-		GrpcService: &core.GrpcService{TargetSpecifier: &core.GrpcService_EnvoyGrpc_{EnvoyGrpc: &core.GrpcService_EnvoyGrpc{
-			ClusterName: envoyTraceClusterName,
-		}}},
-		ServiceName: config.ServiceName,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("encode OpenTelemetry tracing provider: %w", err)
-	}
-	percentage := *config.SamplingPercentage
-	return &hcm.HttpConnectionManager_Tracing{
-		ClientSampling:    &envoytype.Percent{Value: percentage},
-		RandomSampling:    &envoytype.Percent{Value: percentage},
-		OverallSampling:   &envoytype.Percent{Value: percentage},
-		SpawnUpstreamSpan: wrapperspb.Bool(true),
-		Provider: &traceconfig.Tracing_Http{
-			Name:       envoyOTelTracerName,
-			ConfigType: &traceconfig.Tracing_Http_TypedConfig{TypedConfig: providerConfig},
-		},
-	}, nil
-}
-
 func hasProtectedHosts(hosts []*route.VirtualHost) bool {
 	for _, host := range hosts {
 		if host.TypedPerFilterConfig[authorizationFilterName] != nil {
 			return true
-		}
-	}
-	return false
-}
-
-func hasRequestMetricRoutes(hosts []*route.VirtualHost) bool {
-	for _, host := range hosts {
-		for _, route := range host.Routes {
-			if route.Metadata != nil && route.Metadata.FilterMetadata[requestMetricsFilterName] != nil {
-				return true
-			}
 		}
 	}
 	return false
@@ -1006,10 +969,8 @@ func requestHeaderMutations(mappings []RequestHeaderMapping) []*mutationrules.He
 func authenticatorUsed(servers []Server, name string) bool {
 	for _, server := range servers {
 		if server.Authentication != nil {
-			for _, candidate := range append(append([]string{}, server.Authentication.AnyOf...), server.Authentication.AllOf...) {
-				if candidate == name {
-					return true
-				}
+			if slices.Contains(append(append([]string{}, server.Authentication.AnyOf...), server.Authentication.AllOf...), name) {
+				return true
 			}
 		}
 	}
@@ -1274,7 +1235,10 @@ func apiClusters(apis []API) ([]*cluster.Cluster, error) {
 		name := "api-" + api.Name
 		protocol := &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig{ProtocolConfig: &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig_HttpProtocolOptions{HttpProtocolOptions: &core.Http1ProtocolOptions{}}}
 		if api.Upstream.HTTPProtocol == http2Protocol {
-			http2 := api.Upstream.HTTP2.envoy()
+			var http2 *core.Http2ProtocolOptions
+			if api.Upstream.HTTP2 != nil {
+				http2 = api.Upstream.HTTP2.envoy()
+			}
 			if http2 == nil {
 				http2 = &core.Http2ProtocolOptions{}
 			}
@@ -1319,31 +1283,6 @@ func apiClusters(apis []API) ([]*cluster.Cluster, error) {
 		clusters = append(clusters, upstream)
 	}
 	return clusters, nil
-}
-
-func otelTraceCluster() (*cluster.Cluster, error) {
-	protocolOptions, err := packEnvoy(&upstreamhttp.HttpProtocolOptions{UpstreamProtocolOptions: &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig_{ExplicitHttpConfig: &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig{
-		ProtocolConfig: &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{Http2ProtocolOptions: &core.Http2ProtocolOptions{}},
-	}}})
-	if err != nil {
-		return nil, fmt.Errorf("encode OTLP upstream HTTP/2 options: %w", err)
-	}
-	return &cluster.Cluster{
-		Name:                          envoyTraceClusterName,
-		ConnectTimeout:                durationpb.New(5 * time.Second),
-		ClusterDiscoveryType:          &cluster.Cluster_Type{Type: cluster.Cluster_STATIC},
-		TypedExtensionProtocolOptions: map[string]*anypb.Any{upstreamHTTPProtocolOptionsTypeURL: protocolOptions},
-		LoadAssignment: &endpoint.ClusterLoadAssignment{
-			ClusterName: envoyTraceClusterName,
-			Endpoints: []*endpoint.LocalityLbEndpoints{{
-				LbEndpoints: []*endpoint.LbEndpoint{{
-					HostIdentifier: &endpoint.LbEndpoint_Endpoint{Endpoint: &endpoint.Endpoint{
-						Address: socket(defaultOTelTraceReceiverAddress, defaultOTelTracePort),
-					}},
-				}},
-			}},
-		},
-	}, nil
 }
 
 func socket(address string, port uint32) *core.Address {

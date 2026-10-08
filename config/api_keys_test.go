@@ -88,7 +88,7 @@ func TestAPIKeyClientIncludesMissingAttributesInNameOrder(t *testing.T) {
 func TestAPIKeyHeaderAttributesStayOutOfCredentialIdentity(t *testing.T) {
 	c := loadConfigCase(t, "api-key-auth")
 	authenticator := c.Authenticators[1]
-	authenticator.Attributes["requested_tenant"] = AttributeSource{Header: testStringPointer("X-Tenant")}
+	authenticator.Attributes["requested_tenant"] = AttributeSource{Header: new("X-Tenant")}
 	credential := []APIKeyCredential{{Key: "key-a", Attributes: map[string]string{"tenant_id": "client-a"}}}
 	file, err := GenerateAPIKeyECDS(authenticator, credential)
 	if err != nil {
@@ -102,7 +102,7 @@ func TestAPIKeyHeaderAttributesStayOutOfCredentialIdentity(t *testing.T) {
 		t.Fatalf("header attribute in credentials was accepted: %v", err)
 	}
 
-	authenticator.Attributes = map[string]AttributeSource{"requested_tenant": {Header: testStringPointer("X-Tenant")}}
+	authenticator.Attributes = map[string]AttributeSource{"requested_tenant": {Header: new("X-Tenant")}}
 	file, err = GenerateAPIKeyECDS(authenticator, []APIKeyCredential{{Key: "key-a"}})
 	if err != nil {
 		t.Fatal(err)
@@ -361,14 +361,18 @@ func TestAPIKeyPipelineUsesFileECDSAndHostScopedFilters(t *testing.T) {
 	}
 	manager := firstHTTPManager(t, files[envoyConfigFilename])
 	wantOrder := []string{
-		requestControlsFilterName, requestMetricsFilterName, jwtAuthnFilterName, apiKeyFilterName,
-		headerToMetadataFilterName, authenticationFilterName,
+		jwtAuthnFilterName, apiKeyFilterName, headerToMetadataFilterName, authenticationFilterName,
 		attributeInitializationFilterName(1), attributeInitializationFilterName(2), attributeFilterName,
 		authorizationFilterName, requiredHeaderFilterName, credentialCleanupFilterName,
 		headerMutationFilterName, routerFilterName,
 	}
-	if got := httpFilterNames(manager); !slices.Equal(got, wantOrder) {
-		t.Fatalf("HTTP filter order = %v, want %v", got, wantOrder)
+	got := httpFilterNames(manager)
+	start := slices.Index(got, jwtAuthnFilterName)
+	if start < 0 {
+		t.Fatal("JWT authentication filter is missing")
+	}
+	if !slices.Equal(got[start:], wantOrder) {
+		t.Fatalf("HTTP authentication filter order = %v, want %v", got[start:], wantOrder)
 	}
 	keyFilter := apiKeyHTTPFilter(t, manager, apiKeyFilterName)
 	discovery := keyFilter.GetConfigDiscovery()

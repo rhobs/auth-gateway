@@ -145,7 +145,6 @@ func TestValidateKubernetesTLSMounts(t *testing.T) {
 		{name: "conflicting filenames for a shared Secret", want: "servers[1].tls_config", edit: func(c *Config) {
 			c.Servers[1].TLSConfig = &ServerTLS{Secret: "tls-one", Certificate: "/etc/tls-one/server.pem", PrivateKey: "/etc/tls-one/key.pem"}
 		}},
-		{name: "metrics port conflict", want: "kubernetes.https_service_port", edit: func(c *Config) { c.Kubernetes.HTTPSServicePort = new(int32(8889)) }},
 		{name: "HTTP and HTTPS port conflict", want: "kubernetes.service_port and kubernetes.https_service_port", edit: func(c *Config) {
 			c.Servers = append(c.Servers, Server{Hostname: "http.example.com", APIs: []string{"metrics"}})
 			c.Kubernetes.HTTPSServicePort = new(int32(80))

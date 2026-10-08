@@ -31,9 +31,7 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for local checks, code layout, and gol
 - Keep work local for now. Do not push branches or open PRs/MRs until asked.
 - Keep documentation brief and use simple technical English.
 - Keep user-facing doc guides focused on gateway configuration, client
-  requests, observable behavior, and resources users must provide, such as the
-  API-key Secret. Put intermediate credential-file formats, Go library calls,
-  and generator internals in deployment or developer docs. Show API-key
-  attribute bindings in readable form and explain how they affect authorization
-  and forwarding.
+  requests, observable behavior, and resources users must provide.
+- Docs in docs/guides should provide user facing documentation and doesn't need to focus on envoy internals
+- We can create technical documentation elsewhere, but we should never discuss function names etc. It should focus on how envoy behaves rather than current implementation of code at a function level.
 - Use concise, natural-language commit messages without emojis.

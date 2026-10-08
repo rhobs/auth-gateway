@@ -54,6 +54,10 @@ func verifiedTLS(identity string, ca *TrustedCA, alpn []string) (*core.Transport
 		sni = ""
 		identity = ip.String()
 	}
+	caFilename := systemCABundle
+	if ca != nil {
+		caFilename = ca.filename()
+	}
 	packed, err := packEnvoy(&tls.UpstreamTlsContext{
 		Sni: sni,
 		CommonTlsContext: &tls.CommonTlsContext{
@@ -63,7 +67,7 @@ func verifiedTLS(identity string, ca *TrustedCA, alpn []string) (*core.Transport
 			},
 			AlpnProtocols: alpn,
 			ValidationContextType: &tls.CommonTlsContext_ValidationContext{ValidationContext: &tls.CertificateValidationContext{
-				TrustedCa: fileDataSource(ca.filename()),
+				TrustedCa: fileDataSource(caFilename),
 				MatchTypedSubjectAltNames: []*tls.SubjectAltNameMatcher{{
 					SanType: sanType,
 					Matcher: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: identity}},

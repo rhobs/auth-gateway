@@ -28,7 +28,6 @@ func TestGeneratedReferenceFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, inputPath := range cases {
-		inputPath := inputPath
 		name := filepath.Base(filepath.Dir(inputPath))
 		t.Run(name, func(t *testing.T) {
 			input, err := os.Open(inputPath)
@@ -90,8 +89,6 @@ func TestPlaygroundBootstrap(t *testing.T) {
 	}
 	checkReference(t, filepath.Join("..", "playground", "envoy.yaml.golden"), bootstrap)
 
-	collectorConfig := generateOTelCollectorConfig(c.Observability.Metrics, c.Observability.Tracing)
-	checkReference(t, filepath.Join("..", "playground", "otel-collector.yaml.golden"), collectorConfig)
 }
 
 func checkReference(t *testing.T, path string, want []byte) {

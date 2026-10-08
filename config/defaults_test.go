@@ -56,22 +56,16 @@ func TestAuthExampleAppliesAllDefaults(t *testing.T) {
 			}
 		}
 	}
-	wantObservability := ObservabilityConfig{Metrics: ObservabilityMetrics{
-		Enabled: new(true), ScrapeInterval: duration(30 * time.Second), ScrapeTimeout: duration(10 * time.Second), CustomMetricName: new("gateway_http_requests_total"),
-	}, Tracing: ObservabilityTracing{
-		Enabled: new(false), ServiceName: "auth-gateway", SamplingPercentage: new(100.0), Insecure: new(false),
-	}}
-	if !reflect.DeepEqual(c.Observability, wantObservability) {
-		t.Fatalf("observability defaults = %#v, want %#v", c.Observability, wantObservability)
+	wantKubernetesResources := KubernetesResourceRequirements{
+		Requests: map[string]string{"cpu": "50m", "memory": "64Mi"},
+		Limits:   map[string]string{"cpu": "1", "memory": "256Mi"},
 	}
-	wantKubernetes := &Kubernetes{
-		Name: "auth-gateway", Namespace: "observability", Image: c.Kubernetes.Image,
-		OTelCollectorImage: "otel/opentelemetry-collector-contrib:0.135.0", Replicas: new(int32(2)), ServicePort: new(int32(80)), HTTPSServicePort: new(int32(443)),
-		Resources: KubernetesResourceRequirements{Requests: map[string]string{"cpu": "50m", "memory": "64Mi"}, Limits: map[string]string{"cpu": "1", "memory": "256Mi"}},
-		Metrics:   KubernetesMetrics{Resources: KubernetesResourceRequirements{Requests: map[string]string{"cpu": "20m", "memory": "64Mi"}, Limits: map[string]string{"memory": "256Mi"}}},
-	}
-	if !reflect.DeepEqual(c.Kubernetes, wantKubernetes) {
-		t.Fatalf("Kubernetes defaults = %#v, want %#v", c.Kubernetes, wantKubernetes)
+	if c.Kubernetes.Name != "auth-gateway" || c.Kubernetes.Namespace != "observability" ||
+		c.Kubernetes.Replicas == nil || *c.Kubernetes.Replicas != 2 ||
+		c.Kubernetes.ServicePort == nil || *c.Kubernetes.ServicePort != 80 ||
+		c.Kubernetes.HTTPSServicePort == nil || *c.Kubernetes.HTTPSServicePort != 443 ||
+		c.Kubernetes.EnvoyConcurrency != nil || !reflect.DeepEqual(c.Kubernetes.Resources, wantKubernetesResources) {
+		t.Fatalf("Kubernetes defaults = %#v", c.Kubernetes)
 	}
 	wantTLS := &ServerTLS{Secret: "write-gateway-tls", Certificate: "/etc/write-gateway-tls/tls.crt", PrivateKey: "/etc/write-gateway-tls/tls.key"}
 	if !reflect.DeepEqual(c.Servers[1].TLSConfig, wantTLS) {
@@ -163,8 +157,6 @@ func TestDefaultsCloneInputs(t *testing.T) {
 		defaulted.Servers[0].Authentication.AnyOf[0] = "changed"
 		defaulted.Servers[0].Authorization.AnyOf[0] = "changed"
 		defaulted.APIs[0].Routes[0].Processing.RequestHeaders[0].Name = "changed"
-		defaulted.APIs[0].Metrics.Labels["tenant"] = "writer_id"
-		*defaulted.Observability.Metrics.CustomMetricName = "changed_requests_total"
 
 		if c.Authenticators[0].JWT.Audiences[0] == "changed" ||
 			c.Authenticators[0].Attributes["tenant_id"].ClaimPath[0] == "changed" ||
@@ -175,9 +167,7 @@ func TestDefaultsCloneInputs(t *testing.T) {
 			c.AuthorizationPolicies[0].Grants[0].Attributes["tenant_id"][0] == "changed" ||
 			c.Servers[0].Authentication.AnyOf[0] == "changed" ||
 			c.Servers[0].Authorization.AnyOf[0] == "changed" ||
-			c.APIs[0].Routes[0].Processing.RequestHeaders[0].Name == "changed" ||
-			c.APIs[0].Metrics.Labels["tenant"] == "writer_id" ||
-			*c.Observability.Metrics.CustomMetricName == "changed_requests_total" {
+			c.APIs[0].Routes[0].Processing.RequestHeaders[0].Name == "changed" {
 			t.Fatal("defaulting aliases authentication configuration")
 		}
 	})
@@ -219,17 +209,14 @@ func TestDefaultsCloneInputs(t *testing.T) {
 		c.Overload = &OverloadConfig{MaxHeapBytes: 128 << 20, MaxDownstreamConnections: 1, HeapShrinkThreshold: new(0.7)}
 		c.Kubernetes.EnvoyConcurrency = new(uint32(2))
 		c.Kubernetes.Resources.Limits = map[string]string{}
-		c.Kubernetes.Metrics.Resources = KubernetesResourceRequirements{Requests: map[string]string{"cpu": "5m"}, Limits: map[string]string{}}
 		defaulted := c.withDefaults()
-		if len(defaulted.Kubernetes.Resources.Limits) != 0 || len(defaulted.Kubernetes.Metrics.Resources.Limits) != 0 || !reflect.DeepEqual(defaulted.Kubernetes.Metrics.Resources.Requests, map[string]string{"cpu": "5m"}) {
+		if len(defaulted.Kubernetes.Resources.Limits) != 0 {
 			t.Fatal("resource defaults merged into supplied maps")
 		}
 		*defaulted.Overload.HeapShrinkThreshold = 0.2
 		*defaulted.Kubernetes.EnvoyConcurrency = 3
-		*defaulted.Observability.Metrics.ScrapeInterval = Duration(time.Second)
-		defaulted.Kubernetes.Metrics.Resources.Requests["cpu"] = "10m"
 		defaulted.Kubernetes.Resources.Limits["memory"] = "512Mi"
-		if *c.Overload.HeapShrinkThreshold != 0.7 || *c.Kubernetes.EnvoyConcurrency != 2 || *c.Observability.Metrics.ScrapeInterval != Duration(30*time.Second) || c.Kubernetes.Metrics.Resources.Requests["cpu"] != "5m" || len(c.Kubernetes.Resources.Limits) != 0 {
+		if *c.Overload.HeapShrinkThreshold != 0.7 || *c.Kubernetes.EnvoyConcurrency != 2 || len(c.Kubernetes.Resources.Limits) != 0 {
 			t.Fatal("defaulting aliases resource maps or optional pointers")
 		}
 	})
@@ -264,31 +251,14 @@ func TestPublicOperationsPreserveConfiguration(t *testing.T) {
 }
 
 func TestKubernetesYAMLOptions(t *testing.T) {
-	defaults := []struct {
-		name string
-		file string
-	}{
-		{name: "metrics omitted", file: "public-routing/config.yaml"},
-		{name: "metrics null", file: "kubernetes-options/metrics-null.yaml"},
-		{name: "metrics empty", file: "kubernetes-options/metrics-empty.yaml"},
-		{name: "nested nulls", file: "kubernetes-options/nested-null.yaml"},
-	}
-	for _, test := range defaults {
-		t.Run(test.name, func(t *testing.T) {
-			c := loadTestConfig(t, readFixture(t, test.file), test.name)
-			metrics := c.Observability.Metrics
-			collectorResources := c.Kubernetes.Metrics.Resources
-			if c.Overload != nil || c.Kubernetes.EnvoyConcurrency != nil || metrics.Enabled == nil || !*metrics.Enabled || *metrics.ScrapeInterval != Duration(30*time.Second) || *metrics.ScrapeTimeout != Duration(10*time.Second) || !reflect.DeepEqual(collectorResources.Requests, map[string]string{"cpu": "20m", "memory": "64Mi"}) || !reflect.DeepEqual(collectorResources.Limits, map[string]string{"memory": "256Mi"}) {
-				t.Fatalf("defaulted Kubernetes settings = %#v", c.Kubernetes)
-			}
-		})
+	c := loadTestConfig(t, readFixture(t, "kubernetes-options/nested-null.yaml"), "nested nulls")
+	if c.Overload != nil || c.Kubernetes.EnvoyConcurrency != nil {
+		t.Fatalf("defaulted Kubernetes settings = %#v", c.Kubernetes)
 	}
 
-	c := loadTestConfig(t, readFixture(t, "kubernetes-options/empty-resource-maps.yaml"), "empty resource maps")
+	c = loadTestConfig(t, readFixture(t, "kubernetes-options/empty-resource-maps.yaml"), "empty resource maps")
 	if c.Kubernetes.Resources.Requests == nil || c.Kubernetes.Resources.Limits == nil ||
-		len(c.Kubernetes.Resources.Requests) != 0 || len(c.Kubernetes.Resources.Limits) != 0 ||
-		c.Kubernetes.Metrics.Resources.Limits == nil || len(c.Kubernetes.Metrics.Resources.Limits) != 0 ||
-		!reflect.DeepEqual(c.Kubernetes.Metrics.Resources.Requests, map[string]string{"cpu": "5m"}) {
+		len(c.Kubernetes.Resources.Requests) != 0 || len(c.Kubernetes.Resources.Limits) != 0 {
 		t.Fatal("supplied empty resource maps were merged with defaults")
 	}
 	if _, err := Load(strings.NewReader(readFixture(t, "kubernetes-options/overload-empty.yaml"))); err == nil || !strings.Contains(err.Error(), "overload.max_heap_bytes") {
