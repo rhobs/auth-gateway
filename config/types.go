@@ -449,17 +449,17 @@ func (o OverloadConfig) clone() OverloadConfig {
 	return o
 }
 
-func (a Authenticator) clone() Authenticator {
-	if a.Attributes != nil {
-		attributes := make(map[string]AttributeSource, len(a.Attributes))
-		for name, source := range a.Attributes {
+func (authenticator Authenticator) clone() Authenticator {
+	if authenticator.Attributes != nil {
+		attributes := make(map[string]AttributeSource, len(authenticator.Attributes))
+		for name, source := range authenticator.Attributes {
 			attributes[name] = source.clone()
 		}
-		a.Attributes = attributes
+		authenticator.Attributes = attributes
 	}
-	a.JWT = cloneConfigPointer(a.JWT)
-	a.APIKey = clonePointer(a.APIKey)
-	return a
+	authenticator.JWT = cloneConfigPointer(authenticator.JWT)
+	authenticator.APIKey = clonePointer(authenticator.APIKey)
+	return authenticator
 }
 
 func (j JWTAuthenticator) clone() JWTAuthenticator {
@@ -559,14 +559,14 @@ func (c APIKeyCredential) clone() APIKeyCredential {
 	return c
 }
 
-func (a Authenticator) providesAttribute(name string) bool {
-	_, exists := a.Attributes[name]
+func (authenticator Authenticator) providesAttribute(name string) bool {
+	_, exists := authenticator.Attributes[name]
 	return exists
 }
 
-func (a Authenticator) credentialAttributeNames() []string {
+func (authenticator Authenticator) credentialAttributeNames() []string {
 	var names []string
-	for name, source := range a.Attributes {
+	for name, source := range authenticator.Attributes {
 		if source.Credential != nil && *source.Credential {
 			names = append(names, name)
 		}
@@ -631,9 +631,9 @@ func (r *KubernetesResources) YAML() ([]byte, error) {
 	return output.Bytes(), nil
 }
 
-func (d *Duration) String() string { return time.Duration(*d).String() }
+func (duration *Duration) String() string { return time.Duration(*duration).String() }
 
-func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
+func (duration *Duration) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" || node.Value == "" {
 		return &durationYAMLError{line: node.Line, column: node.Column, err: fmt.Errorf("must be a duration string with units, such as 250ms or 5s")}
 	}
@@ -644,18 +644,20 @@ func (d *Duration) UnmarshalYAML(node *yaml.Node) error {
 	if err := validateDurationValue(Duration(value), true); err != nil {
 		return &durationYAMLError{line: node.Line, column: node.Column, err: err}
 	}
-	*d = Duration(value)
+	*duration = Duration(value)
 	return nil
 }
 
-func (d *Duration) MarshalYAML() (any, error) {
-	if err := validateDurationValue(*d, true); err != nil {
+func (duration *Duration) MarshalYAML() (any, error) {
+	if err := validateDurationValue(*duration, true); err != nil {
 		return nil, err
 	}
-	return d.String(), nil
+	return duration.String(), nil
 }
 
-func (d *Duration) protobuf() *durationpb.Duration { return durationpb.New(time.Duration(*d)) }
+func (duration *Duration) protobuf() *durationpb.Duration {
+	return durationpb.New(time.Duration(*duration))
+}
 
 func (l Listener) validate(metricsEnabled, tracingEnabled bool) error {
 	if *l.Port == 0 || *l.Port > 65535 {
