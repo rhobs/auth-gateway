@@ -314,15 +314,15 @@ func (a APIKeyAuthenticator) withDefaults() APIKeyAuthenticator {
 	return a
 }
 
-func (a Authenticator) withDefaults() Authenticator {
-	if a.JWT != nil {
-		a.JWT.JWKS = a.JWT.JWKS.withDefaults()
+func (authenticator Authenticator) withDefaults() Authenticator {
+	if authenticator.JWT != nil {
+		authenticator.JWT.JWKS = authenticator.JWT.JWKS.withDefaults()
 	}
-	if a.APIKey != nil {
-		apiKey := a.APIKey.withDefaults()
-		a.APIKey = &apiKey
+	if authenticator.APIKey != nil {
+		apiKey := authenticator.APIKey.withDefaults()
+		authenticator.APIKey = &apiKey
 	}
-	return a
+	return authenticator
 }
 
 func (j JWKSConfig) withDefaults() JWKSConfig {
