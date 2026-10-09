@@ -219,7 +219,7 @@ Export a small set of helpers, at minimum one for `Duration`. Note that Go 1.26
 Done when: an example in `config/example_test.go` builds a non-trivial `Config`
 in Go without defining local helpers.
 
-### 1.7 Remove internal history from public documentation
+### 1.7 Remove internal history from public documentation [x]
 
 These are written relative to a refactor the reader never saw:
 

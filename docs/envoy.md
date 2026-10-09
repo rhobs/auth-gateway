@@ -48,7 +48,7 @@ Each server exposes only the APIs in its `apis` list. The list order controls AP
 
 ## Conditional HTTP filter chain
 
-Public requests use request-control header removal and the router. Metered routes add the existing Lua response counter. Protected requests select these native Envoy filters as needed:
+Public requests use request-control header removal and the router. Metered routes add a response counter. Protected requests select these native Envoy filters as needed:
 
 ```text
 auth_gateway.request_controls
@@ -68,7 +68,7 @@ auth_gateway.request_controls
 
 The request-control filter removes fixed Envoy retry, timeout, and alternate-stat headers on both public and protected chains. These controls cannot be passed through as identity headers.
 
-The JWT filter validates signature, issuer, expiration, and not-before values. If an authenticator sets `audiences`, the filter also requires the token's `aud` claim to match one of them. It reads the bearer token from `Authorization` and stores each provider's verified claims in separate Envoy dynamic metadata. The API-key filter reads the configured header, validates it against one ECDS credential set, and forwards a verified identity through an internal header. The identity has alphabetically ordered credential `attribute=value` fields. Generated `header_to_metadata` rules copy the identity, extract each credential attribute with a regex, then remove the internal header. The same filter captures each distinct declared source header once in separate dynamic metadata without removing it. Request controls remove caller-supplied identity markers before either credential filter runs. No new Lua handles authentication or attributes.
+The JWT filter validates signature, issuer, expiration, and not-before values. If an authenticator sets `audiences`, the filter also requires the token's `aud` claim to match one of them. It reads the bearer token from `Authorization` and stores each provider's verified claims in separate Envoy dynamic metadata. The API-key filter reads the configured header, validates it against one ECDS credential set, and forwards a verified identity through an internal header. The identity has alphabetically ordered credential `attribute=value` fields. Generated `header_to_metadata` rules copy the identity, extract each credential attribute with a regex, then remove the internal header. The same filter captures each distinct declared source header once in separate dynamic metadata without removing it. Request controls remove caller-supplied identity markers before either credential filter runs. Envoy's native filters handle authentication and attribute processing.
 
 On mixed `authentication.any_of`, the JWT filter permits a missing or failed token so a key can be tried. A verified JWT writes a marker that makes the API-key matcher skip key validation, including when a key is also present. Authorization then uses the JWT's named metadata. A valid but unprivileged JWT does not fall back to a key. On mixed `all_of`, JWT verification is strict and the key filter also runs. The authentication RBAC rule requires both credentials. For every attribute declared by both authenticators, it also requires nonempty scalar strings with exact equality in their original claim, credential, or header sources. Missing or invalid credentials return `401`; a valid identity without a matching grant, or with unequal shared attributes, returns `403`.
 

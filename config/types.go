@@ -109,7 +109,8 @@ type Kubernetes struct {
 	Name      string `yaml:"name"`
 	Namespace string `yaml:"namespace"`
 	Image     string `yaml:"image"`
-	// OTelCollectorImage defaults to the OpenTelemetry Collector Contrib image used by the PoC.
+	// OTelCollectorImage sets the OpenTelemetry Collector sidecar image. When empty,
+	// it defaults to otel/opentelemetry-collector-contrib:0.135.0.
 	OTelCollectorImage string                         `yaml:"otel_collector_image,omitempty"`
 	Replicas           *int32                         `yaml:"replicas,omitempty"`
 	ServicePort        *int32                         `yaml:"service_port,omitempty"`
