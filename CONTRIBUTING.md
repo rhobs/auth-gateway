@@ -1,6 +1,6 @@
 # Contributing
 
-Use Go `1.26.0` or later. The module targets Go 1.26. The lint tool is pinned to golangci-lint `v2.14.0`.
+Use Go `1.26.0` or later. The module targets Go 1.26. The lint tool is pinned to golangci-lint `v2.14.0` in `go.mod`. E2E tools are pinned with Go's tool directive in their module files.
 
 ## Local checks
 
@@ -23,8 +23,8 @@ The framework command runs Kubernetes helper tests.
 `make e2e` runs the live Kind suite.
 
 
-The live end-to-end (e2e) suite needs Docker with a reachable daemon, Kind, Go, curl, and network access.
-It downloads cmctl `v2.6.1` on first use, creates or reuses the `auth-gateway-e2e` cluster, and uses two Ginkgo processes by default.
+The live end-to-end (e2e) suite needs Docker with a reachable daemon, Kind, Go, and network access.
+It builds cmctl `v2.6.1` on first use, creates or reuses the `auth-gateway-e2e` cluster, and uses two Ginkgo processes by default.
 It removes the test namespaces when it finishes.
 Reports go to `e2e/.state/reports`; scenario diagnostics use the framework's context-specific state directory.
 

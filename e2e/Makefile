@@ -10,19 +10,14 @@ CERT_MANAGER_CONTROLLER_IMAGE ?= quay.io/jetstack/cert-manager-controller:$(CERT
 CERT_MANAGER_CAINJECTOR_IMAGE ?= quay.io/jetstack/cert-manager-cainjector:$(CERT_MANAGER_VERSION)
 CERT_MANAGER_WEBHOOK_IMAGE ?= quay.io/jetstack/cert-manager-webhook:$(CERT_MANAGER_VERSION)
 CERT_MANAGER_MANIFEST ?= https://github.com/cert-manager/cert-manager/releases/download/$(CERT_MANAGER_VERSION)/cert-manager.yaml
-CMCTL_VERSION ?= v2.6.1
-CMCTL_OS ?= $(shell go env GOOS)
-CMCTL_ARCH ?= $(shell go env GOARCH)
-CMCTL_SUFFIX = $(if $(filter windows,$(CMCTL_OS)),.exe,)
-CMCTL_BIN ?= $(CURDIR)/.bin/cmctl-$(CMCTL_VERSION)$(CMCTL_SUFFIX)
-CMCTL_ASSET = cmctl_$(CMCTL_OS)_$(CMCTL_ARCH)$(CMCTL_SUFFIX)
+CMCTL_BIN ?= $(CURDIR)/tools/cmctl
 CERT_MANAGER_MANIFEST_ARG = $(if $(filter http://% https://%,$(CERT_MANAGER_MANIFEST)),$(CERT_MANAGER_MANIFEST),$(abspath $(CERT_MANAGER_MANIFEST)))
 GINKGO_ARGS ?=
 GINKGO_PROCS ?= 2
 
 check-tools:
 	@set -eu; \
-	for tool in docker kind go curl; do \
+	for tool in docker kind go; do \
 		command -v "$$tool" >/dev/null || { echo "$$tool is required" >&2; exit 1; }; \
 	done
 	@docker info >/dev/null
@@ -44,14 +39,9 @@ setup: check-tools
 	kind load docker-image --name '$(CLUSTER_NAME)' '$(ENVOY_IMAGE)' '$(HTTPBIN_IMAGE)' '$(OTEL_COLLECTOR_IMAGE)' '$(CERT_MANAGER_CONTROLLER_IMAGE)' '$(CERT_MANAGER_CAINJECTOR_IMAGE)' '$(CERT_MANAGER_WEBHOOK_IMAGE)'
 
 cmctl:
-	@set -eu; \
-	if [ ! -x '$(CMCTL_BIN)' ]; then \
-		mkdir -p '$(dir $(CMCTL_BIN))'; \
-		curl -fsSL 'https://github.com/cert-manager/cmctl/releases/download/$(CMCTL_VERSION)/$(CMCTL_ASSET)' -o '$(CMCTL_BIN)'; \
-		chmod +x '$(CMCTL_BIN)'; \
-	fi
+	go -C tools tool cmctl --help >/dev/null
 
-test: setup cmctl
+test: cmctl setup
 	@mkdir -p .state/reports
 	cd .. && go test -tags=e2e ./e2e/internal/framework
 	cd .. && AUTH_GATEWAY_E2E_CONTEXT='kind-$(CLUSTER_NAME)' AUTH_GATEWAY_E2E_CMCTL='$(abspath $(CMCTL_BIN))' AUTH_GATEWAY_E2E_CERT_MANAGER_MANIFEST='$(CERT_MANAGER_MANIFEST_ARG)' go tool ginkgo --tags=e2e --procs='$(GINKGO_PROCS)' --timeout=30m --no-color --output-dir=e2e/.state/reports --json-report=auth-gateway.json $(GINKGO_ARGS) ./e2e
