@@ -54,24 +54,21 @@ matching header policy if the organisation requires one.
 
 Done when: `LICENSE` exists at the repository root and the README states the license.
 
-### 0.2 Fix six broken documentation links
+### 0.2 Fix six broken documentation links [x]
 
-The auth guides moved to `docs/guides/auth/` and no link was updated. Every
-README link into the guides is broken, and every guide link back to the example
-config is broken. The guide tree is unreachable by clicking from the README.
+The README already linked to `docs/auth/`, but the guides lived under
+`docs/guides/auth/`. Their extra nesting level also made the four links from the
+guides point to the wrong files. Moving the guides to `docs/auth/` keeps the
+README links intact and makes all six links resolve.
 
-| Location | Target written | Resolves to | Should be |
-| --- | --- | --- | --- |
-| `README.md:66` | `docs/auth/api-key.md` | missing | `docs/guides/auth/api-key.md` |
-| `README.md:81` | `docs/auth/README.md` | missing | `docs/guides/auth/README.md` |
-| `docs/guides/auth/README.md:5` | `../../config.auth.example.yaml` | `docs/config.auth.example.yaml` | `../../../config.auth.example.yaml` |
-| `docs/guides/auth/api-key.md:31` | `../envoy.md#api-key-secret-format` | `docs/guides/envoy.md` | `../../envoy.md#api-key-secret-format` |
-| `docs/guides/auth/api-key.md:81` | `../../config.auth.example.yaml` | `docs/config.auth.example.yaml` | `../../../config.auth.example.yaml` |
-| `docs/guides/auth/jwt.md:56` | `../../config.auth.example.yaml` | `docs/config.auth.example.yaml` | `../../../config.auth.example.yaml` |
-
-`docs/guides/` holds exactly one subdirectory. The extra nesting level buys
-nothing today and causes four of the six breaks. Prefer flattening to
-`docs/auth/`, which also makes both README links correct as written.
+| Location | Target | Resolves to |
+| --- | --- | --- |
+| `README.md:66` | `docs/auth/api-key.md` | `docs/auth/api-key.md` |
+| `README.md:81` | `docs/auth/README.md` | `docs/auth/README.md` |
+| `docs/auth/README.md:5` | `../../config.auth.example.yaml` | `config.auth.example.yaml` |
+| `docs/auth/api-key.md:31` | `../envoy.md#api-key-secret-format` | `docs/envoy.md` |
+| `docs/auth/api-key.md:81` | `../../config.auth.example.yaml` | `config.auth.example.yaml` |
+| `docs/auth/jwt.md:56` | `../../config.auth.example.yaml` | `config.auth.example.yaml` |
 
 Done when: every relative link in every markdown file resolves to an existing path.
 
