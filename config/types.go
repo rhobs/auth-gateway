@@ -277,12 +277,20 @@ type APIKeyCredential struct {
 
 // KubernetesResources contains native objects generated for a gateway.
 type KubernetesResources struct {
-	ConfigMap              corev1.ConfigMap
-	ProcessingConfigMap    *corev1.ConfigMap
+	// ConfigMap contains the Envoy bootstrap and static Envoy resources.
+	ConfigMap corev1.ConfigMap
+	// ProcessingConfigMap contains mapped-attribute configuration. It is nil
+	// when the gateway has no attribute mappings.
+	ProcessingConfigMap *corev1.ConfigMap
+	// OTelCollectorConfigMap contains collector configuration. It is nil when
+	// both metrics and tracing are disabled.
 	OTelCollectorConfigMap *corev1.ConfigMap
-	ServiceAccount         corev1.ServiceAccount
-	Deployment             appsv1.Deployment
-	Service                corev1.Service
+	// ServiceAccount is assigned to the gateway Deployment.
+	ServiceAccount corev1.ServiceAccount
+	// Deployment runs Envoy and, when enabled, the OpenTelemetry Collector.
+	Deployment appsv1.Deployment
+	// Service exposes the configured gateway and metrics ports.
+	Service corev1.Service
 }
 
 // Duration is a Go duration encoded as a YAML string, such as 250ms or 5s.

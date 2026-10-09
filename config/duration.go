@@ -12,8 +12,10 @@ func (value *Duration) withDefault(fallback time.Duration) *Duration {
 	return defaultValue(value, Duration(fallback))
 }
 
+// String returns the duration in Go's standard duration format.
 func (duration *Duration) String() string { return time.Duration(*duration).String() }
 
+// UnmarshalYAML parses and validates a duration string with units.
 func (duration *Duration) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" || node.Value == "" {
 		return &durationYAMLError{line: node.Line, column: node.Column, err: fmt.Errorf("must be a duration string with units, such as 250ms or 5s")}
@@ -29,6 +31,7 @@ func (duration *Duration) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+// MarshalYAML validates the duration and returns its string form.
 func (duration *Duration) MarshalYAML() (any, error) {
 	if err := validateDurationValue(*duration, true); err != nil {
 		return nil, err

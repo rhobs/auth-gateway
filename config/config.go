@@ -1,9 +1,10 @@
 // Package config loads and validates auth-gateway YAML, then generates Envoy
 // files or Kubernetes resources.
 //
-// Start with Load. Use Generate for file-based Envoy output or
-// GenerateKubernetes for Kubernetes resources. LoadAPIKeyCredentials and
-// APIKeySecret build the external API-key Secret separately.
+// Start with Load for YAML, or Config.Validate for a Config built in Go.
+// Use Generate for file-based Envoy output or GenerateKubernetes for
+// Kubernetes resources. LoadAPIKeyCredentials and APIKeySecret build the
+// external API-key Secret separately.
 //
 // The package defines no exported error types or sentinel values and has no
 // stable error-message contract. Callers should treat error text as diagnostic
@@ -123,7 +124,8 @@ func Load(r io.Reader) (Config, error) {
 	return c, nil
 }
 
-// Validate checks the public configuration contract.
+// Validate checks whether c follows the public configuration contract.
+// Use it when building a Config in Go instead of loading YAML with Load.
 func (c Config) Validate() error {
 	_, err := resolveConfig(c)
 	return err

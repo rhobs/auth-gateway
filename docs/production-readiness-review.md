@@ -190,17 +190,19 @@ alternative.
 Done when: the README and `docs/envoy.md` state that the CA field differs by
 deployment mode, and at least one example shows `filename`.
 
-### 1.5 Fill the godoc gaps
+### 1.5 Fill the godoc gaps [x]
 
-- The package comment is one sentence (`config/config.go:1`). Expand it into an
-  overview with an entry-point map. It is the first thing on pkg.go.dev.
+- The package comment was one sentence at the reviewed commit. It has since been
+  expanded with an entry-point map, including `Config.Validate` for configurations
+  built in Go.
 - Three exported methods have no doc comment: `Duration.String`,
   `Duration.UnmarshalYAML`, `Duration.MarshalYAML` (`config/duration.go:15,17,32`).
 - `KubernetesResources` (`config/types.go:279`) has six exported fields and no
   field comments, despite being the primary return value. Nothing says
   `ProcessingConfigMap` and `OTelCollectorConfigMap` are nil-able. They are.
-- `Config.Validate` is exported and appears in no document. A consumer building
-  a `Config` in Go rather than through `Load` has no way to learn it exists.
+- `Config.Validate` already had a Go doc comment in the reviewed source, so the
+  claim that it was undocumented was incorrect. The package overview now points
+  Go callers building a `Config` directly to it.
 
 Done when: every exported identifier has a conventional doc comment.
 
