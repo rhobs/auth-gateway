@@ -231,7 +231,7 @@ These are written relative to a refactor the reader never saw:
 
 Done when: no public document or doc comment refers to a prior state of the code.
 
-### 1.8 Add a configuration field reference
+### 1.8 Add a configuration field reference [x]
 
 There is no page listing fields, types, defaults, and constraints. The four
 example YAMLs are the de-facto reference. About thirty fields appear only as

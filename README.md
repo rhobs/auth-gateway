@@ -64,7 +64,7 @@ The library also exposes two output paths:
 
 For a local Envoy demo with unprotected, API-key, JWT, and mixed servers, see [playground/README.md](playground/README.md).
 
-The loader applies defaults, validates references, rejects unknown YAML fields, and requires exactly one document. See [config.example.yaml](config.example.yaml) for routing, [config.auth.example.yaml](config.auth.example.yaml) for JWT, API keys, and request processing, and [config.production.example.yaml](config.production.example.yaml) for capacity settings.
+The loader applies defaults, validates references, rejects unknown YAML fields, and requires exactly one document. See the [configuration reference](docs/configuration-reference.md) for every supported field, its default, and its constraints. See [config.example.yaml](config.example.yaml) for routing, [config.auth.example.yaml](config.auth.example.yaml) for JWT, API keys, and request processing, and [config.production.example.yaml](config.production.example.yaml) for capacity settings.
 
 ## Routing
 
