@@ -280,7 +280,7 @@ func (c Config) validateKubernetes(metricsEnabled, tracingEnabled bool) error {
 	if k.EnvoyConcurrency != nil && *k.EnvoyConcurrency == 0 {
 		return fmt.Errorf("kubernetes.envoy_concurrency must be positive")
 	}
-	if err := validateKubernetesResourceRequirements("kubernetes.resources", k.Resources); err != nil {
+	if err := validateKubernetesResourceRequirements(kubernetesResourcesFieldPath, k.Resources); err != nil {
 		return err
 	}
 	return k.Metrics.validate()

@@ -360,7 +360,7 @@ an error when a host does not match.
 Done when: the pairing is structural rather than positional, and no path can
 write into a nil `TypedPerFilterConfig`.
 
-### 2.4 Guard the unchecked slice index
+### 2.4 Guard the unchecked slice index [x]
 
 `config/generate.go:700` does `principal := principals[0]` with no length check.
 It is safe today because the caller only runs with a non-empty mapping list, but

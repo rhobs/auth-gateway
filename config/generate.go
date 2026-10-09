@@ -852,7 +852,7 @@ func filterStateKey(attribute string) string {
 	return managedAttributePrefix + attribute
 }
 
-func requiredHeaderRBACRules(mappings []RequestHeaderMapping) *rbac.RBAC {
+func requiredHeaderRBACRules(mappings []RequestHeaderMapping) (*rbac.RBAC, error) {
 	attributes := make(map[string]struct{}, len(mappings))
 	for _, mapping := range mappings {
 		attributes[mapping.FromAttribute] = struct{}{}
@@ -866,6 +866,9 @@ func requiredHeaderRBACRules(mappings []RequestHeaderMapping) *rbac.RBAC {
 			}}}},
 		}}})
 	}
+	if len(principals) == 0 {
+		return nil, fmt.Errorf("at least one request header mapping is required")
+	}
 	principal := principals[0]
 	if len(principals) > 1 {
 		principal = &rbac.Principal{Identifier: &rbac.Principal_AndIds{AndIds: &rbac.Principal_Set{Ids: principals}}}
@@ -875,7 +878,7 @@ func requiredHeaderRBACRules(mappings []RequestHeaderMapping) *rbac.RBAC {
 			Permissions: []*rbac.Permission{{Rule: &rbac.Permission_Any{Any: true}}},
 			Principals:  []*rbac.Principal{principal},
 		},
-	}}
+	}}, nil
 }
 
 func apiRoutesWithRequestHeaderMutations(apis []API, includeMetadata bool) ([]*route.Route, error) {
@@ -899,7 +902,11 @@ func apiRoutesWithRequestHeaderMutations(apis []API, includeMetadata bool) ([]*r
 				if err != nil {
 					return nil, fmt.Errorf("encode request header mutations for route %q: %w", name, err)
 				}
-				headerRBACConfig, err := packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: requiredHeaderRBACRules(apiRoute.Processing.RequestHeaders)}})
+				rules, err := requiredHeaderRBACRules(apiRoute.Processing.RequestHeaders)
+				if err != nil {
+					return nil, fmt.Errorf("build required-header RBAC rules for route %q: %w", name, err)
+				}
+				headerRBACConfig, err := packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: rules}})
 				if err != nil {
 					return nil, fmt.Errorf("encode required-header RBAC rules for route %q: %w", name, err)
 				}

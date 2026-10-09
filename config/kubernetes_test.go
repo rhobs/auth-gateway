@@ -17,6 +17,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+func TestKubernetesResourceRequirementsRejectsInvalidQuantity(t *testing.T) {
+	_, err := kubernetesResourceRequirements("kubernetes.resources", KubernetesResourceRequirements{
+		Requests: map[string]string{"cpu": "not-a-quantity"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "kubernetes.resources.requests.cpu") {
+		t.Fatalf("resource requirements error = %v, want invalid CPU quantity error", err)
+	}
+}
+
 func TestKubernetesResourcesObjectsReturnsApplyOrder(t *testing.T) {
 	resources := &KubernetesResources{
 		ConfigMap:              corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "gateway"}},

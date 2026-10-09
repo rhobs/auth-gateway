@@ -31,6 +31,13 @@ import (
 
 var updateGoldens = flag.Bool("update", false, "update generated reference files")
 
+func TestRequiredHeaderRBACRulesRejectsEmptyMappings(t *testing.T) {
+	_, err := requiredHeaderRBACRules(nil)
+	if err == nil || !strings.Contains(err.Error(), "at least one request header mapping") {
+		t.Fatalf("required header rules error = %v, want empty mapping error", err)
+	}
+}
+
 func TestGeneratedReferenceFiles(t *testing.T) {
 	cases, err := filepath.Glob(filepath.Join("testdata", "*", "config.yaml"))
 	if err != nil {

@@ -20,7 +20,11 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
-const kubernetesConfigMapKind = "ConfigMap"
+const (
+	kubernetesConfigMapKind             = "ConfigMap"
+	kubernetesResourcesFieldPath        = "kubernetes.resources"
+	kubernetesMetricsResourcesFieldPath = "kubernetes.metrics.resources"
+)
 
 const (
 	httpPortName               = "http"
@@ -71,12 +75,16 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	configName := c.Kubernetes.Name + "-config"
 	metricsName := metricsResourceName(c.Kubernetes.Name)
 	metricsEnabled := c.Observability.Metrics.enabled()
+	deployment, err := newGatewayDeployment(c, configFiles, configName, metricsName, processingConfigMap)
+	if err != nil {
+		return nil, err
+	}
 	return &KubernetesResources{
 		ConfigMap:              newGatewayConfigMap(c, configName, configFiles),
 		ProcessingConfigMap:    processingConfigMap,
 		OTelCollectorConfigMap: newOTelCollectorConfigMap(c, metricsName),
 		ServiceAccount:         newGatewayServiceAccount(c),
-		Deployment:             newGatewayDeployment(c, configFiles, configName, metricsName, processingConfigMap),
+		Deployment:             deployment,
 		Service:                newGatewayService(c, metricsEnabled),
 	}, nil
 }
@@ -136,8 +144,16 @@ func newGatewayServiceAccount(c Config) corev1.ServiceAccount {
 	}
 }
 
-func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, metricsName string, processingConfigMap *corev1.ConfigMap) appsv1.Deployment {
+func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, metricsName string, processingConfigMap *corev1.ConfigMap) (appsv1.Deployment, error) {
 	k := c.Kubernetes
+	gatewayResources, err := kubernetesResourceRequirements(kubernetesResourcesFieldPath, k.Resources)
+	if err != nil {
+		return appsv1.Deployment{}, err
+	}
+	collectorResources, err := kubernetesResourceRequirements(kubernetesMetricsResourcesFieldPath, k.Metrics.Resources)
+	if err != nil {
+		return appsv1.Deployment{}, err
+	}
 	envoyArgs := []string{"-c", EnvoyBootstrapPath, "--log-level", "info"}
 	if k.EnvoyConcurrency != nil {
 		envoyArgs = append(envoyArgs, "--concurrency", strconv.FormatUint(uint64(*k.EnvoyConcurrency), 10))
@@ -172,10 +188,7 @@ func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, m
 							PeriodSeconds:    5,
 							FailureThreshold: 12,
 						},
-						Resources: corev1.ResourceRequirements{
-							Requests: kubernetesResourceList(k.Resources.Requests),
-							Limits:   kubernetesResourceList(k.Resources.Limits),
-						},
+						Resources: gatewayResources,
 						SecurityContext: &corev1.SecurityContext{
 							AllowPrivilegeEscalation: new(false),
 							ReadOnlyRootFilesystem:   new(true),
@@ -201,15 +214,15 @@ func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, m
 			},
 		},
 	}
-	addCollectorContainer(&deployment, c, metricsName)
+	addCollectorContainer(&deployment, c, metricsName, collectorResources)
 	addProcessingConfigVolume(&deployment, processingConfigMap)
 	addAPIKeySecretVolume(&deployment, c)
 	addServerTLSVolumes(&deployment, c)
 	addTrustedCAVolumes(&deployment, c)
-	return deployment
+	return deployment, nil
 }
 
-func addCollectorContainer(deployment *appsv1.Deployment, c Config, metricsName string) {
+func addCollectorContainer(deployment *appsv1.Deployment, c Config, metricsName string, resources corev1.ResourceRequirements) {
 	metricsEnabled := c.Observability.Metrics.enabled()
 	tracingEnabled := c.Observability.Tracing.enabled()
 	if !metricsEnabled && !tracingEnabled {
@@ -233,10 +246,7 @@ func addCollectorContainer(deployment *appsv1.Deployment, c Config, metricsName 
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Args:            []string{"--config=" + path.Join(collectorConfigDirectory, collectorConfigFilename)},
 		Ports:           collectorPorts,
-		Resources: corev1.ResourceRequirements{
-			Requests: kubernetesResourceList(k.Metrics.Resources.Requests),
-			Limits:   kubernetesResourceList(k.Metrics.Resources.Limits),
-		},
+		Resources:       resources,
 		VolumeMounts: []corev1.VolumeMount{{
 			Name:      metricsConfigVolumeName,
 			MountPath: collectorConfigDirectory,
@@ -411,24 +421,43 @@ func configMapItems(files map[string][]byte) []corev1.KeyToPath {
 	return items
 }
 
-func kubernetesResourceList(values map[string]string) corev1.ResourceList {
+func kubernetesResourceRequirements(prefix string, requirements KubernetesResourceRequirements) (corev1.ResourceRequirements, error) {
+	requests, err := kubernetesResourceList(prefix+".requests", requirements.Requests)
+	if err != nil {
+		return corev1.ResourceRequirements{}, err
+	}
+	limits, err := kubernetesResourceList(prefix+".limits", requirements.Limits)
+	if err != nil {
+		return corev1.ResourceRequirements{}, err
+	}
+	return corev1.ResourceRequirements{Requests: requests, Limits: limits}, nil
+}
+
+func kubernetesResourceList(prefix string, values map[string]string) (corev1.ResourceList, error) {
 	if values == nil {
-		return nil
+		return nil, nil
 	}
 	resources := make(corev1.ResourceList, len(values))
-	for name, value := range values {
-		resources[corev1.ResourceName(name)] = resource.MustParse(value)
+	for _, name := range slices.Sorted(maps.Keys(values)) {
+		quantity, err := resource.ParseQuantity(values[name])
+		if err != nil {
+			return nil, fmt.Errorf("%s.%s must be a valid Kubernetes resource quantity: %w", prefix, name, err)
+		}
+		resources[corev1.ResourceName(name)] = quantity
 	}
-	return resources
+	return resources, nil
 }
 
 func validateKubernetesResourceRequirements(prefix string, requirements KubernetesResourceRequirements) error {
+	requestQuantities := make(map[string]resource.Quantity, len(requirements.Requests))
+	limitQuantities := make(map[string]resource.Quantity, len(requirements.Limits))
 	for _, list := range []struct {
-		name   string
-		values map[string]string
+		name       string
+		values     map[string]string
+		quantities map[string]resource.Quantity
 	}{
-		{name: "requests", values: requirements.Requests},
-		{name: "limits", values: requirements.Limits},
+		{name: "requests", values: requirements.Requests, quantities: requestQuantities},
+		{name: "limits", values: requirements.Limits, quantities: limitQuantities},
 	} {
 		for _, name := range slices.Sorted(maps.Keys(list.values)) {
 			if problems := validation.IsQualifiedName(name); len(problems) > 0 {
@@ -441,12 +470,13 @@ func validateKubernetesResourceRequirements(prefix string, requirements Kubernet
 			if quantity.Sign() < 0 {
 				return fmt.Errorf("%s.%s.%s must not be negative", prefix, list.name, name)
 			}
+			list.quantities[name] = quantity
 		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(requirements.Requests)) {
-		if limit, ok := requirements.Limits[name]; ok {
-			request := resource.MustParse(requirements.Requests[name])
-			if request.Cmp(resource.MustParse(limit)) > 0 {
+		if limit, ok := limitQuantities[name]; ok {
+			request := requestQuantities[name]
+			if request.Cmp(limit) > 0 {
 				return fmt.Errorf("%s.requests.%s must not exceed %s.limits.%s", prefix, name, prefix, name)
 			}
 		}

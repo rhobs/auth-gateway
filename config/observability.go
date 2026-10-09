@@ -318,7 +318,7 @@ func (t ObservabilityTracing) validate() error {
 }
 
 func (m KubernetesMetrics) validate() error {
-	return validateKubernetesResourceRequirements("kubernetes.metrics.resources", m.Resources)
+	return validateKubernetesResourceRequirements(kubernetesMetricsResourcesFieldPath, m.Resources)
 }
 
 func validateObservabilityListenerPort(port *uint32, metricsEnabled, tracingEnabled bool) error {
