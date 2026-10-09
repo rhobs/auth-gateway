@@ -6,10 +6,8 @@
 // Kubernetes resources. LoadAPIKeyCredentials and APIKeySecret build the
 // external API-key Secret separately.
 //
-// The package defines no exported error types or sentinel values and has no
-// stable error-message contract. Callers should treat error text as diagnostic
-// only, without matching on it or relying on errors.Is or errors.As to classify
-// failures.
+// Callers should treat error text as diagnostic only, without matching
+// on it or relying on errors.Is or errors.As to classify failures.
 package config
 
 import (
@@ -132,6 +130,36 @@ func (c Config) Validate() error {
 }
 
 func (c Config) validate() error {
+	metricsEnabled := c.Kubernetes != nil && c.Observability.Metrics.enabled()
+	tracingEnabled := c.Observability.Tracing.enabled()
+	if err := c.validateBaseSettings(metricsEnabled, tracingEnabled); err != nil {
+		return err
+	}
+	apis, err := c.validateAPIs()
+	if err != nil {
+		return err
+	}
+	if err := c.validateServers(apis); err != nil {
+		return err
+	}
+	if err := c.validateProcessing(); err != nil {
+		return err
+	}
+	if err := c.validateAuthentication(apis); err != nil {
+		return err
+	}
+	if c.Kubernetes != nil {
+		if err := c.validateKubernetes(metricsEnabled, tracingEnabled); err != nil {
+			return err
+		}
+	}
+	if c.Overload != nil {
+		return c.Overload.validate(c.Kubernetes)
+	}
+	return nil
+}
+
+func (c Config) validateBaseSettings(metricsEnabled, tracingEnabled bool) error {
 	if c.Version != configVersion {
 		return fmt.Errorf("version must be %d", configVersion)
 	}
@@ -141,8 +169,6 @@ func (c Config) validate() error {
 	if strings.TrimSpace(c.Node.Cluster) == "" {
 		return fmt.Errorf("node.cluster must not be empty")
 	}
-	metricsEnabled := c.Kubernetes != nil && c.Observability.Metrics.enabled()
-	tracingEnabled := c.Observability.Tracing.enabled()
 	if err := c.Listener.validate(metricsEnabled, tracingEnabled); err != nil {
 		return err
 	}
@@ -152,134 +178,141 @@ func (c Config) validate() error {
 	if err := c.Observability.Tracing.validate(); err != nil {
 		return err
 	}
-	if len(c.APIs) == 0 {
-		return fmt.Errorf("at least one API must be configured")
-	}
+	return nil
+}
 
+func (c Config) validateAPIs() (map[string]API, error) {
+	if len(c.APIs) == 0 {
+		return nil, fmt.Errorf("at least one API must be configured")
+	}
 	names := make(map[string]API, len(c.APIs))
 	for i, api := range c.APIs {
 		name := fmt.Sprintf("apis[%d]", i)
 		if !apiNamePattern.MatchString(api.Name) {
-			return fmt.Errorf(apiNameValidationErrorFormat, name)
+			return nil, fmt.Errorf(apiNameValidationErrorFormat, name)
 		}
 		if _, exists := names[api.Name]; exists {
-			return fmt.Errorf("duplicate API name %q", api.Name)
+			return nil, fmt.Errorf("duplicate API name %q", api.Name)
 		}
 		names[api.Name] = api
-
-		if !validHost(api.Upstream.Address) {
-			return fmt.Errorf("%s.upstream.address must be an IP address or DNS name", name)
-		}
-		if api.Upstream.Port == 0 || api.Upstream.Port > 65535 {
-			return fmt.Errorf("%s.upstream.port must be between 1 and 65535", name)
-		}
-		if err := api.Upstream.validate(name+".upstream", c.Kubernetes != nil); err != nil {
-			return err
-		}
-		if err := validateRouteTimeouts(name+".timeouts", api.Timeouts); err != nil {
-			return err
-		}
-		if err := validateAPIMetrics(name+".metrics", api.Metrics); err != nil {
-			return err
-		}
-
-		if len(api.Routes) == 0 {
-			return fmt.Errorf("%s.routes must contain at least one route", name)
-		}
-		routes := make(map[string]struct{}, len(api.Routes))
-		for routeIndex, route := range api.Routes {
-			routeName := fmt.Sprintf("%s.routes[%d]", name, routeIndex)
-			if err := validateRouteTimeouts(routeName+".timeouts", route.Timeouts); err != nil {
-				return err
-			}
-			if err := validateRouteProcessing(routeName+".processing", route.Processing); err != nil {
-				return err
-			}
-			if err := validatePathMatch(routeName+".path", route.Path); err != nil {
-				return err
-			}
-			if err := validatePathRewrite(routeName+".rewrite", route.Rewrite); err != nil {
-				return err
-			}
-			if len(route.Methods) == 0 {
-				return fmt.Errorf("%s.methods must contain at least one supported HTTP method", routeName)
-			}
-
-			seenMethods := make(map[string]struct{}, len(route.Methods))
-			for _, method := range route.Methods {
-				if !validMethod(method) {
-					return fmt.Errorf("%s.methods must contain supported HTTP methods", routeName)
-				}
-				if _, exists := seenMethods[method]; exists {
-					return fmt.Errorf("%s.methods contains duplicate method %q", routeName, method)
-				}
-				seenMethods[method] = struct{}{}
-				if err := addRouteKey(routes, route.Path, method); err != nil {
-					return err
-				}
-			}
+		if err := validateAPI(name, api, c.Kubernetes != nil); err != nil {
+			return nil, err
 		}
 	}
+	return names, nil
+}
 
-	if err := c.validateServers(names); err != nil {
+func validateAPI(name string, api API, hasKubernetes bool) error {
+	if !validHost(api.Upstream.Address) {
+		return fmt.Errorf("%s.upstream.address must be an IP address or DNS name", name)
+	}
+	if api.Upstream.Port == 0 || api.Upstream.Port > 65535 {
+		return fmt.Errorf("%s.upstream.port must be between 1 and 65535", name)
+	}
+	if err := api.Upstream.validate(name+".upstream", hasKubernetes); err != nil {
 		return err
 	}
-	if err := c.validateProcessing(); err != nil {
+	if err := validateRouteTimeouts(name+".timeouts", api.Timeouts); err != nil {
 		return err
 	}
-	if err := c.validateAuthentication(names); err != nil {
+	if err := validateAPIMetrics(name+".metrics", api.Metrics); err != nil {
 		return err
 	}
-
-	if c.Kubernetes != nil {
-		if strings.TrimSpace(c.Kubernetes.Image) == "" || strings.ContainsAny(c.Kubernetes.Image, imageWhitespaceCharacters) {
-			return fmt.Errorf("kubernetes.image must be an image reference")
-		}
-		if err := validateOTelCollectorImage(c.Kubernetes.OTelCollectorImage, metricsEnabled || tracingEnabled); err != nil {
+	if len(api.Routes) == 0 {
+		return fmt.Errorf("%s.routes must contain at least one route", name)
+	}
+	routes := make(map[string]struct{}, len(api.Routes))
+	for routeIndex, route := range api.Routes {
+		routeName := fmt.Sprintf("%s.routes[%d]", name, routeIndex)
+		if err := validateAPIRoute(routeName, route, routes); err != nil {
 			return err
 		}
-		if c.Kubernetes.Replicas != nil && *c.Kubernetes.Replicas < 0 {
-			return fmt.Errorf("kubernetes.replicas must not be negative")
+	}
+	return nil
+}
+
+func validateAPIRoute(name string, route Route, routes map[string]struct{}) error {
+	if err := validateRouteTimeouts(name+".timeouts", route.Timeouts); err != nil {
+		return err
+	}
+	if err := validateRouteProcessing(name+".processing", route.Processing); err != nil {
+		return err
+	}
+	if err := validatePathMatch(name+".path", route.Path); err != nil {
+		return err
+	}
+	if err := validatePathRewrite(name+".rewrite", route.Rewrite); err != nil {
+		return err
+	}
+	if len(route.Methods) == 0 {
+		return fmt.Errorf("%s.methods must contain at least one supported HTTP method", name)
+	}
+	seenMethods := make(map[string]struct{}, len(route.Methods))
+	for _, method := range route.Methods {
+		if !validMethod(method) {
+			return fmt.Errorf("%s.methods must contain supported HTTP methods", name)
 		}
-		if *c.Kubernetes.ServicePort < 1 || *c.Kubernetes.ServicePort > 65535 {
-			if c.hasHTTP() {
-				return fmt.Errorf("kubernetes.service_port must be between 1 and 65535")
-			}
+		if _, exists := seenMethods[method]; exists {
+			return fmt.Errorf("%s.methods contains duplicate method %q", name, method)
 		}
+		seenMethods[method] = struct{}{}
+		if err := addRouteKey(routes, route.Path, method); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c Config) validateKubernetes(metricsEnabled, tracingEnabled bool) error {
+	k := c.Kubernetes
+	if strings.TrimSpace(k.Image) == "" || strings.ContainsAny(k.Image, imageWhitespaceCharacters) {
+		return fmt.Errorf("kubernetes.image must be an image reference")
+	}
+	if err := validateOTelCollectorImage(k.OTelCollectorImage, metricsEnabled || tracingEnabled); err != nil {
+		return err
+	}
+	if k.Replicas != nil && *k.Replicas < 0 {
+		return fmt.Errorf("kubernetes.replicas must not be negative")
+	}
+	if err := c.validateKubernetesServicePorts(metricsEnabled); err != nil {
+		return err
+	}
+	if k.EnvoyConcurrency != nil && *k.EnvoyConcurrency == 0 {
+		return fmt.Errorf("kubernetes.envoy_concurrency must be positive")
+	}
+	if err := validateKubernetesResourceRequirements("kubernetes.resources", k.Resources); err != nil {
+		return err
+	}
+	return k.Metrics.validate()
+}
+
+func (c Config) validateKubernetesServicePorts(metricsEnabled bool) error {
+	k := c.Kubernetes
+	if *k.ServicePort < 1 || *k.ServicePort > 65535 {
 		if c.hasHTTP() {
-			if err := validateOTelMetricsServicePort("service_port", *c.Kubernetes.ServicePort, metricsEnabled); err != nil {
-				return err
-			}
+			return fmt.Errorf("kubernetes.service_port must be between 1 and 65535")
 		}
-		if c.hasHTTPS() {
-			if err := c.validateTLSMounts(); err != nil {
-				return err
-			}
-			if *c.Kubernetes.HTTPSServicePort < 1 || *c.Kubernetes.HTTPSServicePort > 65535 {
-				return fmt.Errorf("kubernetes.https_service_port must be between 1 and 65535")
-			}
-			if err := validateOTelMetricsServicePort("https_service_port", *c.Kubernetes.HTTPSServicePort, metricsEnabled); err != nil {
-				return err
-			}
-			if c.hasHTTP() && *c.Kubernetes.HTTPSServicePort == *c.Kubernetes.ServicePort {
-				return fmt.Errorf("kubernetes.service_port and kubernetes.https_service_port must differ")
-			}
-		} else if c.Kubernetes.HTTPSServicePort != nil {
-			return fmt.Errorf("kubernetes.https_service_port requires an HTTPS server")
-		}
-		if c.Kubernetes.EnvoyConcurrency != nil && *c.Kubernetes.EnvoyConcurrency == 0 {
-			return fmt.Errorf("kubernetes.envoy_concurrency must be positive")
-		}
-		if err := validateKubernetesResourceRequirements("kubernetes.resources", c.Kubernetes.Resources); err != nil {
-			return err
-		}
-		if err := c.Kubernetes.Metrics.validate(); err != nil {
+	}
+	if c.hasHTTP() {
+		if err := validateOTelMetricsServicePort("service_port", *k.ServicePort, metricsEnabled); err != nil {
 			return err
 		}
 	}
-
-	if c.Overload != nil {
-		return c.Overload.validate(c.Kubernetes)
+	if c.hasHTTPS() {
+		if err := c.validateTLSMounts(); err != nil {
+			return err
+		}
+		if *k.HTTPSServicePort < 1 || *k.HTTPSServicePort > 65535 {
+			return fmt.Errorf("kubernetes.https_service_port must be between 1 and 65535")
+		}
+		if err := validateOTelMetricsServicePort("https_service_port", *k.HTTPSServicePort, metricsEnabled); err != nil {
+			return err
+		}
+		if c.hasHTTP() && *k.HTTPSServicePort == *k.ServicePort {
+			return fmt.Errorf("kubernetes.service_port and kubernetes.https_service_port must differ")
+		}
+	} else if k.HTTPSServicePort != nil {
+		return fmt.Errorf("kubernetes.https_service_port requires an HTTPS server")
 	}
 	return nil
 }
@@ -557,74 +590,112 @@ func (c Config) hasHTTPS() bool {
 }
 
 func (c Config) validateAuthentication(apis map[string]API) error {
+	authenticators, apiKeyHeader, err := c.validateAuthenticators()
+	if err != nil {
+		return err
+	}
+	if err := c.validateAuthenticatorAttributes(apiKeyHeader); err != nil {
+		return err
+	}
+	if apiKeyHeader != "" {
+		if err := c.validateAPIKeyHeaderUse(apiKeyHeader); err != nil {
+			return err
+		}
+	}
+	if err := validateMetricAttributeReferences(c.APIs, authenticators); err != nil {
+		return err
+	}
+	policies, err := c.validateAuthorizationPolicies()
+	if err != nil {
+		return err
+	}
+	if err := c.validateAuthorizationPolicyGrants(apis, authenticators); err != nil {
+		return err
+	}
+	if err := c.validateServerAuthentication(apis, authenticators, policies); err != nil {
+		return err
+	}
+	return validatePermissiveJWTIssuerBindings(c.Servers, authenticators)
+}
+
+func (c Config) validateAuthenticators() (map[string]Authenticator, string, error) {
 	authenticators := make(map[string]Authenticator, len(c.Authenticators))
 	apiKeyCount := 0
 	apiKeyHeader := ""
 	for i, authenticator := range c.Authenticators {
 		name := fmt.Sprintf(authenticatorFieldPathFormat, i)
 		if !apiNamePattern.MatchString(authenticator.Name) {
-			return fmt.Errorf(apiNameValidationErrorFormat, name)
+			return nil, "", fmt.Errorf(apiNameValidationErrorFormat, name)
 		}
 		if _, exists := authenticators[authenticator.Name]; exists {
-			return fmt.Errorf("duplicate authenticator name %q", authenticator.Name)
+			return nil, "", fmt.Errorf("duplicate authenticator name %q", authenticator.Name)
 		}
 		if (authenticator.JWT == nil) == (authenticator.APIKey == nil) {
-			return fmt.Errorf("%s must set exactly one of jwt or api_key", name)
+			return nil, "", fmt.Errorf("%s must set exactly one of jwt or api_key", name)
 		}
 		if authenticator.JWT != nil {
 			if err := validateJWTAuthenticator(name+".jwt", *authenticator.JWT); err != nil {
-				return err
+				return nil, "", err
 			}
 			if err := authenticator.JWT.JWKS.validate(name+".jwt.jwks", c.Kubernetes != nil); err != nil {
-				return err
+				return nil, "", err
 			}
 		} else {
 			apiKeyCount++
 			if apiKeyCount > 1 {
-				return fmt.Errorf("%s.api_key: only one API-key authenticator is supported", name)
+				return nil, "", fmt.Errorf("%s.api_key: only one API-key authenticator is supported", name)
 			}
 			if err := validateAPIKeyAuthenticator(name+".api_key", *authenticator.APIKey, c.Kubernetes != nil); err != nil {
-				return err
+				return nil, "", err
 			}
 			apiKeyHeader = authenticator.APIKey.Header
 		}
 		authenticators[authenticator.Name] = authenticator
 	}
+	return authenticators, apiKeyHeader, nil
+}
+
+func (c Config) validateAuthenticatorAttributes(apiKeyHeader string) error {
 	for i, authenticator := range c.Authenticators {
 		if err := validateAuthenticatorAttributes(fmt.Sprintf(authenticatorFieldPathFormat, i), authenticator, apiKeyHeader); err != nil {
 			return err
 		}
 	}
-	if apiKeyHeader != "" {
-		for i, api := range c.APIs {
-			for j, route := range api.Routes {
-				if route.Processing == nil {
-					continue
-				}
-				for k, header := range route.Processing.RequestHeaders {
-					if strings.EqualFold(header.Name, apiKeyHeader) {
-						return fmt.Errorf("apis[%d].routes[%d].processing.request_headers[%d].name is reserved for API-key credentials", i, j, k)
-					}
+	return nil
+}
+
+func (c Config) validateAPIKeyHeaderUse(apiKeyHeader string) error {
+	for i, api := range c.APIs {
+		for j, route := range api.Routes {
+			if route.Processing == nil {
+				continue
+			}
+			for k, header := range route.Processing.RequestHeaders {
+				if strings.EqualFold(header.Name, apiKeyHeader) {
+					return fmt.Errorf("apis[%d].routes[%d].processing.request_headers[%d].name is reserved for API-key credentials", i, j, k)
 				}
 			}
 		}
 	}
-	if err := validateMetricAttributeReferences(c.APIs, authenticators); err != nil {
-		return err
-	}
+	return nil
+}
 
+func (c Config) validateAuthorizationPolicies() (map[string]AuthorizationPolicy, error) {
 	policies := make(map[string]AuthorizationPolicy, len(c.AuthorizationPolicies))
 	for i, policy := range c.AuthorizationPolicies {
 		name := fmt.Sprintf("authorization_policies[%d]", i)
 		if !apiNamePattern.MatchString(policy.Name) {
-			return fmt.Errorf(apiNameValidationErrorFormat, name)
+			return nil, fmt.Errorf(apiNameValidationErrorFormat, name)
 		}
 		if _, exists := policies[policy.Name]; exists {
-			return fmt.Errorf("duplicate authorization policy name %q", policy.Name)
+			return nil, fmt.Errorf("duplicate authorization policy name %q", policy.Name)
 		}
 		policies[policy.Name] = policy
 	}
+	return policies, nil
+}
 
+func (c Config) validateAuthorizationPolicyGrants(apis map[string]API, authenticators map[string]Authenticator) error {
 	apiNames := make(map[string]struct{}, len(apis))
 	for name := range apis {
 		apiNames[name] = struct{}{}
@@ -632,44 +703,60 @@ func (c Config) validateAuthentication(apis map[string]API) error {
 	for i, policy := range c.AuthorizationPolicies {
 		for j, grant := range policy.Grants {
 			name := fmt.Sprintf("authorization_policies[%d].grants[%d]", i, j)
-			authenticator, exists := authenticators[grant.Authenticator]
-			if !exists {
-				return fmt.Errorf("%s.authenticator references unknown authenticator %q", name, grant.Authenticator)
-			}
-			if len(grant.APIs) == 0 {
-				return fmt.Errorf("%s.apis must contain at least one API", name)
-			}
-			if err := validateUniqueReferences(name+".apis", grant.APIs, apiNames); err != nil {
+			if err := validateAuthorizationGrant(name, grant, apiNames, authenticators); err != nil {
 				return err
-			}
-			if len(grant.Attributes) == 0 {
-				return fmt.Errorf("%s.attributes must contain at least one attribute allowlist", name)
-			}
-			for _, attribute := range slices.Sorted(maps.Keys(grant.Attributes)) {
-				if !attributeNamePattern.MatchString(attribute) {
-					return fmt.Errorf(attributeNameValidationErrorFormat, name, attribute)
-				}
-				if !authenticator.providesAttribute(attribute) {
-					return fmt.Errorf("%s.attributes references attribute %q not provided by authenticator %q", name, attribute, grant.Authenticator)
-				}
-				values := grant.Attributes[attribute]
-				if len(values) == 0 {
-					return fmt.Errorf("%s.attributes.%s must contain at least one allowed value", name, attribute)
-				}
-				seenValues := make(map[string]struct{}, len(values))
-				for _, value := range values {
-					if value == "" || strings.TrimSpace(value) != value {
-						return fmt.Errorf("%s.attributes.%s values must not be empty or have surrounding whitespace", name, attribute)
-					}
-					if _, exists := seenValues[value]; exists {
-						return fmt.Errorf("%s.attributes.%s contains duplicate value %q", name, attribute, value)
-					}
-					seenValues[value] = struct{}{}
-				}
 			}
 		}
 	}
+	return nil
+}
 
+func validateAuthorizationGrant(name string, grant AuthorizationGrant, apiNames map[string]struct{}, authenticators map[string]Authenticator) error {
+	authenticator, exists := authenticators[grant.Authenticator]
+	if !exists {
+		return fmt.Errorf("%s.authenticator references unknown authenticator %q", name, grant.Authenticator)
+	}
+	if len(grant.APIs) == 0 {
+		return fmt.Errorf("%s.apis must contain at least one API", name)
+	}
+	if err := validateUniqueReferences(name+".apis", grant.APIs, apiNames); err != nil {
+		return err
+	}
+	if len(grant.Attributes) == 0 {
+		return fmt.Errorf("%s.attributes must contain at least one attribute allowlist", name)
+	}
+	for _, attribute := range slices.Sorted(maps.Keys(grant.Attributes)) {
+		if err := validateGrantAttribute(name, grant.Authenticator, attribute, grant.Attributes[attribute], authenticator); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateGrantAttribute(name, authenticatorName, attribute string, values []string, authenticator Authenticator) error {
+	if !attributeNamePattern.MatchString(attribute) {
+		return fmt.Errorf(attributeNameValidationErrorFormat, name, attribute)
+	}
+	if !authenticator.providesAttribute(attribute) {
+		return fmt.Errorf("%s.attributes references attribute %q not provided by authenticator %q", name, attribute, authenticatorName)
+	}
+	if len(values) == 0 {
+		return fmt.Errorf("%s.attributes.%s must contain at least one allowed value", name, attribute)
+	}
+	seenValues := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value == "" || strings.TrimSpace(value) != value {
+			return fmt.Errorf("%s.attributes.%s values must not be empty or have surrounding whitespace", name, attribute)
+		}
+		if _, exists := seenValues[value]; exists {
+			return fmt.Errorf("%s.attributes.%s contains duplicate value %q", name, attribute, value)
+		}
+		seenValues[value] = struct{}{}
+	}
+	return nil
+}
+
+func (c Config) validateServerAuthentication(apis map[string]API, authenticators map[string]Authenticator, policies map[string]AuthorizationPolicy) error {
 	for i, server := range c.Servers {
 		name := fmt.Sprintf(serverFieldPathFormat, i)
 		if server.Authentication != nil {
@@ -701,9 +788,6 @@ func (c Config) validateAuthentication(apis map[string]API) error {
 		if err := validateRouteAttributeSources(name, server, apis, authenticators); err != nil {
 			return err
 		}
-	}
-	if err := validatePermissiveJWTIssuerBindings(c.Servers, authenticators); err != nil {
-		return err
 	}
 	return nil
 }

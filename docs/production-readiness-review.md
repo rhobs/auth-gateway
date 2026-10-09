@@ -297,7 +297,7 @@ relationship between the schema version and the module version.
 No bugs were found that produce wrong output today. These are structural issues
 that make the code hard to change safely, plus three latent hazards.
 
-### 2.1 Split the five oversized functions
+### 2.1 Split the five oversized functions [x]
 
 | Function | Lines | File |
 | --- | --- | --- |

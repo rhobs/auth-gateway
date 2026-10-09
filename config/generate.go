@@ -108,109 +108,26 @@ func Generate(c Config) (GeneratedFiles, error) {
 }
 
 func generate(effective effectiveConfig) (map[string][]byte, error) {
-	c := effective.Config
-	clusters, err := apiClusters(c.APIs)
+	bootstrapConfig, err := generateBootstrap(effective.Config)
 	if err != nil {
 		return nil, err
 	}
-	jwks, err := jwksClusters(c.Authenticators, c.Servers)
-	if err != nil {
-		return nil, err
-	}
-	clusters = append(clusters, jwks...)
-	if c.Observability.Tracing.enabled() {
-		tracingCluster, err := otelTraceCluster()
-		if err != nil {
-			return nil, fmt.Errorf("OpenTelemetry trace cluster: %w", err)
-		}
-		clusters = append(clusters, tracingCluster)
-	}
-	apis := c.apisByName()
-	var filterChains []*listener.FilterChain
-	var httpHosts []*route.VirtualHost
-	for i, server := range c.Servers {
-		bound, err := server.boundAPIs(apis)
-		if err != nil {
-			return nil, fmt.Errorf("servers[%d].apis: %w", i, err)
-		}
-		routes, err := apiRoutesWithRequestHeaderMutations(bound, c.hasAuthenticationConfig())
-		if err != nil {
-			return nil, fmt.Errorf("servers[%d] routes: %w", i, err)
-		}
-		host := &route.VirtualHost{
-			Name:    server.Hostname,
-			Domains: []string{server.Hostname},
-			Routes:  routes,
-		}
-		if server.Authentication != nil {
-			host.TypedPerFilterConfig = map[string]*anypb.Any{}
-			if serverUsesJWT(c, server) {
-				requirementName := serverJWTRequirementName(i)
-				perRoute, err := packEnvoy(&jwt.PerRouteConfig{RequirementSpecifier: &jwt.PerRouteConfig_RequirementName{RequirementName: requirementName}})
-				if err != nil {
-					return nil, fmt.Errorf("servers[%d] JWT requirement: %w", i, err)
-				}
-				host.TypedPerFilterConfig[jwtAuthnFilterName] = perRoute
-			}
-			if serverUsesAPIKey(c, server) {
-				perRoute, err := c.toAPIKeyPerRouteConfig(server)
-				if err != nil {
-					return nil, fmt.Errorf("servers[%d] API-key matcher: %w", i, err)
-				}
-				host.TypedPerFilterConfig[apiKeyFilterName] = perRoute
-				authentication, err := packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: c.toServerAuthenticationRBACRules(server)}})
-				if err != nil {
-					return nil, fmt.Errorf("servers[%d] authentication rules: %w", i, err)
-				}
-				host.TypedPerFilterConfig[authenticationFilterName] = authentication
-			}
-			rbacConfig, err := packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: c.toServerRBACRules(server)}})
-			if err != nil {
-				return nil, fmt.Errorf("servers[%d] RBAC rules: %w", i, err)
-			}
-			host.TypedPerFilterConfig[authorizationFilterName] = rbacConfig
-		}
-		if server.TLSConfig == nil {
-			httpHosts = append(httpHosts, host)
-			continue
-		}
-		chain, err := c.toHTTPFilterChain([]*route.VirtualHost{host})
-		if err != nil {
-			return nil, fmt.Errorf("servers[%d]: %w", i, err)
-		}
-		chain.FilterChainMatch = &listener.FilterChainMatch{
-			TransportProtocol: "tls",
-			ServerNames:       []string{server.Hostname},
-		}
-		chain.TransportSocket, err = serverTLSTransportSocket(i)
-		if err != nil {
-			return nil, fmt.Errorf("servers[%d] downstream TLS context: %w", i, err)
-		}
-		chain.TransportSocketConnectTimeout = c.Listener.TLSHandshakeTimeout.protobuf()
-		filterChains = append(filterChains, chain)
-	}
-	if len(httpHosts) > 0 {
-		chain, err := c.toHTTPFilterChain(httpHosts)
-		if err != nil {
-			return nil, err
-		}
-		if c.hasHTTPS() {
-			chain.FilterChainMatch = &listener.FilterChainMatch{TransportProtocol: "raw_buffer"}
-		}
-		filterChains = append([]*listener.FilterChain{chain}, filterChains...)
-	}
-	var listenerFilters []*listener.ListenerFilter
-	if c.hasHTTPS() {
-		inspectorConfig, err := packEnvoy(&inspector.TlsInspector{})
-		if err != nil {
-			return nil, fmt.Errorf("encode TLS inspector: %w", err)
-		}
-		listenerFilters = []*listener.ListenerFilter{{
-			Name:       tlsInspectorFilterName,
-			ConfigType: &listener.ListenerFilter_TypedConfig{TypedConfig: inspectorConfig},
-		}}
-	}
+	return generateFiles(effective.Config, bootstrapConfig)
+}
 
+func generateBootstrap(c Config) (*bootstrap.Bootstrap, error) {
+	clusters, err := generateClusters(c)
+	if err != nil {
+		return nil, err
+	}
+	filterChains, err := generateFilterChains(c)
+	if err != nil {
+		return nil, err
+	}
+	listenerFilters, err := generateListenerFilters(c)
+	if err != nil {
+		return nil, err
+	}
 	bootstrapConfig := &bootstrap.Bootstrap{
 		Node:  &core.Node{Id: c.Node.ID, Cluster: c.Node.Cluster},
 		Admin: &bootstrap.Admin{Address: socket(envoyAdminAddress, envoyAdminPort)},
@@ -234,34 +151,181 @@ func generate(effective effectiveConfig) (map[string][]byte, error) {
 	if c.hasRequestMetrics() {
 		bootstrapConfig.StatsConfig = requestMetricsStatsConfig(c.APIs, c.requestMetricName())
 	}
+	return bootstrapConfig, nil
+}
 
+func generateClusters(c Config) ([]*cluster.Cluster, error) {
+	clusters, err := apiClusters(c.APIs)
+	if err != nil {
+		return nil, err
+	}
+	jwks, err := jwksClusters(c.Authenticators, c.Servers)
+	if err != nil {
+		return nil, err
+	}
+	clusters = append(clusters, jwks...)
+	if c.Observability.Tracing.enabled() {
+		tracingCluster, err := otelTraceCluster()
+		if err != nil {
+			return nil, fmt.Errorf("OpenTelemetry trace cluster: %w", err)
+		}
+		clusters = append(clusters, tracingCluster)
+	}
+	return clusters, nil
+}
+
+func generateFilterChains(c Config) ([]*listener.FilterChain, error) {
+	apis := c.apisByName()
+	var filterChains []*listener.FilterChain
+	var httpHosts []*route.VirtualHost
+	for i, server := range c.Servers {
+		host, err := serverVirtualHost(c, i, server, apis)
+		if err != nil {
+			return nil, err
+		}
+		if server.TLSConfig == nil {
+			httpHosts = append(httpHosts, host)
+			continue
+		}
+		chain, err := c.toHTTPFilterChain([]*route.VirtualHost{host})
+		if err != nil {
+			return nil, fmt.Errorf("servers[%d]: %w", i, err)
+		}
+		chain.FilterChainMatch = &listener.FilterChainMatch{TransportProtocol: "tls", ServerNames: []string{server.Hostname}}
+		chain.TransportSocket, err = serverTLSTransportSocket(i)
+		if err != nil {
+			return nil, fmt.Errorf("servers[%d] downstream TLS context: %w", i, err)
+		}
+		chain.TransportSocketConnectTimeout = c.Listener.TLSHandshakeTimeout.protobuf()
+		filterChains = append(filterChains, chain)
+	}
+	if len(httpHosts) > 0 {
+		chain, err := c.toHTTPFilterChain(httpHosts)
+		if err != nil {
+			return nil, err
+		}
+		if c.hasHTTPS() {
+			chain.FilterChainMatch = &listener.FilterChainMatch{TransportProtocol: "raw_buffer"}
+		}
+		filterChains = append([]*listener.FilterChain{chain}, filterChains...)
+	}
+	return filterChains, nil
+}
+
+func serverVirtualHost(c Config, index int, server Server, apis map[string]API) (*route.VirtualHost, error) {
+	bound, err := server.boundAPIs(apis)
+	if err != nil {
+		return nil, fmt.Errorf("servers[%d].apis: %w", index, err)
+	}
+	routes, err := apiRoutesWithRequestHeaderMutations(bound, c.hasAuthenticationConfig())
+	if err != nil {
+		return nil, fmt.Errorf("servers[%d] routes: %w", index, err)
+	}
+	host := &route.VirtualHost{Name: server.Hostname, Domains: []string{server.Hostname}, Routes: routes}
+	if server.Authentication == nil {
+		return host, nil
+	}
+	host.TypedPerFilterConfig = make(map[string]*anypb.Any)
+	if err := addServerJWTRequirement(c, host, index, server); err != nil {
+		return nil, err
+	}
+	if err := addServerAPIKeyConfig(c, host, index, server); err != nil {
+		return nil, err
+	}
+	rbacConfig, err := packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: c.toServerRBACRules(server)}})
+	if err != nil {
+		return nil, fmt.Errorf("servers[%d] RBAC rules: %w", index, err)
+	}
+	host.TypedPerFilterConfig[authorizationFilterName] = rbacConfig
+	return host, nil
+}
+
+func addServerJWTRequirement(c Config, host *route.VirtualHost, index int, server Server) error {
+	if !serverUsesJWT(c, server) {
+		return nil
+	}
+	requirementName := serverJWTRequirementName(index)
+	perRoute, err := packEnvoy(&jwt.PerRouteConfig{RequirementSpecifier: &jwt.PerRouteConfig_RequirementName{RequirementName: requirementName}})
+	if err != nil {
+		return fmt.Errorf("servers[%d] JWT requirement: %w", index, err)
+	}
+	host.TypedPerFilterConfig[jwtAuthnFilterName] = perRoute
+	return nil
+}
+
+func addServerAPIKeyConfig(c Config, host *route.VirtualHost, index int, server Server) error {
+	if !serverUsesAPIKey(c, server) {
+		return nil
+	}
+	perRoute, err := c.toAPIKeyPerRouteConfig(server)
+	if err != nil {
+		return fmt.Errorf("servers[%d] API-key matcher: %w", index, err)
+	}
+	host.TypedPerFilterConfig[apiKeyFilterName] = perRoute
+	authentication, err := packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: c.toServerAuthenticationRBACRules(server)}})
+	if err != nil {
+		return fmt.Errorf("servers[%d] authentication rules: %w", index, err)
+	}
+	host.TypedPerFilterConfig[authenticationFilterName] = authentication
+	return nil
+}
+
+func generateListenerFilters(c Config) ([]*listener.ListenerFilter, error) {
+	if !c.hasHTTPS() {
+		return nil, nil
+	}
+	inspectorConfig, err := packEnvoy(&inspector.TlsInspector{})
+	if err != nil {
+		return nil, fmt.Errorf("encode TLS inspector: %w", err)
+	}
+	return []*listener.ListenerFilter{{
+		Name:       tlsInspectorFilterName,
+		ConfigType: &listener.ListenerFilter_TypedConfig{TypedConfig: inspectorConfig},
+	}}, nil
+}
+
+func generateFiles(c Config, bootstrapConfig *bootstrap.Bootstrap) (map[string][]byte, error) {
 	data, err := marshalEnvoyYAML(bootstrapConfig)
 	if err != nil {
 		return nil, fmt.Errorf("encode Envoy bootstrap: %w", err)
 	}
 	files := map[string][]byte{envoyConfigFilename: append([]byte(generatedFileHeader), data...)}
 	if c.hasAttributeMappings() {
-		resource, err := c.toProcessingECDSResource()
-		if err != nil {
-			return nil, fmt.Errorf("encode attribute processing ECDS resource: %w", err)
+		if err := addProcessingConfigFile(c, files); err != nil {
+			return nil, err
 		}
-		processingData, err := marshalEnvoyFileDiscoveryResponse(resource)
-		if err != nil {
-			return nil, fmt.Errorf("encode attribute processing ECDS response: %w", err)
-		}
-		files[processingConfigFilename] = append([]byte(generatedFileHeader), processingData...)
 	}
+	if err := addServerCertificateFiles(c, files); err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
+func addProcessingConfigFile(c Config, files map[string][]byte) error {
+	resource, err := c.toProcessingECDSResource()
+	if err != nil {
+		return fmt.Errorf("encode attribute processing ECDS resource: %w", err)
+	}
+	data, err := marshalEnvoyFileDiscoveryResponse(resource)
+	if err != nil {
+		return fmt.Errorf("encode attribute processing ECDS response: %w", err)
+	}
+	files[processingConfigFilename] = append([]byte(generatedFileHeader), data...)
+	return nil
+}
+
+func addServerCertificateFiles(c Config, files map[string][]byte) error {
 	for i, server := range c.Servers {
 		if server.TLSConfig == nil {
 			continue
 		}
-		secretData, err := marshalEnvoyFileDiscoveryResponse(server.TLSConfig.toEnvoySecret(i))
+		data, err := marshalEnvoyFileDiscoveryResponse(server.TLSConfig.toEnvoySecret(i))
 		if err != nil {
-			return nil, fmt.Errorf("servers[%d] certificate SDS resource: %w", i, err)
+			return fmt.Errorf("servers[%d] certificate SDS resource: %w", i, err)
 		}
-		files[serverTLSResourceFilename(i)] = append([]byte(generatedFileHeader), secretData...)
+		files[serverTLSResourceFilename(i)] = append([]byte(generatedFileHeader), data...)
 	}
-	return files, nil
+	return nil
 }
 
 func (c Config) toHTTPFilterChain(hosts []*route.VirtualHost) (*listener.FilterChain, error) {
@@ -280,15 +344,6 @@ func (c Config) toHTTPFilterChain(hosts []*route.VirtualHost) (*listener.FilterC
 }
 
 func (c Config) toHTTPManager(hosts []*route.VirtualHost) (*hcm.HttpConnectionManager, error) {
-	serverIndexes := make([]int, 0, len(hosts))
-	for _, host := range hosts {
-		for index, server := range c.Servers {
-			if server.Hostname == host.Name {
-				serverIndexes = append(serverIndexes, index)
-				break
-			}
-		}
-	}
 	routerConfig, err := packEnvoy(&router.Router{SuppressEnvoyHeaders: true})
 	if err != nil {
 		return nil, err
@@ -297,147 +352,11 @@ func (c Config) toHTTPManager(hosts []*route.VirtualHost) (*hcm.HttpConnectionMa
 	if err != nil {
 		return nil, err
 	}
-	var identityHeaders []string
-	if c.usesAPIKeys() {
-		identityHeaders = append(identityHeaders, apiKeyClientHeader)
-		for _, authenticator := range c.Authenticators {
-			if authenticator.JWT != nil {
-				identityHeaders = append(identityHeaders, jwtVerifiedHeaderName(authenticator.Name))
-			}
-		}
-	}
-	controls, err := packEnvoy(requestControlMutations(identityHeaders...))
+	serverIndexes := c.serverIndexes(hosts)
+	protected := hasProtectedHosts(hosts)
+	filters, err := c.toHTTPFilters(hosts, serverIndexes, protected)
 	if err != nil {
-		return nil, fmt.Errorf("encode request-control header removal: %w", err)
-	}
-	filters := []*hcm.HttpFilter{{Name: requestControlsFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: controls}}}
-	if hasRequestMetricRoutes(hosts) {
-		metricConfig, err := packEnvoy(&lua.Lua{DefaultSourceCode: &core.DataSource{
-			Specifier: &core.DataSource_InlineString{InlineString: requestMetricsLuaScript(c.APIs, c.requestMetricName())},
-		}})
-		if err != nil {
-			return nil, fmt.Errorf("encode request metrics Lua filter: %w", err)
-		}
-		filters = append(filters, &hcm.HttpFilter{Name: requestMetricsFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: metricConfig}})
-	}
-	if hasProtectedHosts(hosts) {
-		usesJWT, usesKey := false, false
-		for _, index := range serverIndexes {
-			usesJWT = usesJWT || serverUsesJWT(c, c.Servers[index])
-			usesKey = usesKey || serverUsesAPIKey(c, c.Servers[index])
-		}
-		if usesJWT {
-			var jwtConfig *jwt.JwtAuthentication
-			if c.usesAPIKeys() {
-				jwtConfig, err = c.toJWTFilterConfig(serverIndexes...)
-			} else {
-				jwtConfig, err = c.toJWTFilterConfig()
-			}
-			if err != nil {
-				return nil, err
-			}
-			packed, err := packEnvoy(jwtConfig)
-			if err != nil {
-				return nil, fmt.Errorf("encode JWT authentication filter: %w", err)
-			}
-			filters = append(filters, &hcm.HttpFilter{Name: jwtAuthnFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: packed}})
-		}
-		headers := requestHeaderSources(c, serverIndexes)
-		var keyAuthenticator Authenticator
-		if usesKey {
-			filters = append(filters, apiKeyFilter())
-			keyAuthenticator, _ = c.apiKeyAuthenticator()
-		}
-		if usesKey || len(headers) > 0 {
-			metadata, err := keyAuthenticator.toRequestMetadataFilter(headers)
-			if err != nil {
-				return nil, fmt.Errorf("encode request metadata filter: %w", err)
-			}
-			filters = append(filters, metadata)
-		}
-		if usesKey {
-			authentication, err := packEnvoy(&httpRBAC.RBAC{})
-			if err != nil {
-				return nil, fmt.Errorf("encode authentication RBAC filter: %w", err)
-			}
-			filters = append(filters, &hcm.HttpFilter{Name: authenticationFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: authentication}})
-		}
-		if needsWorkingAttributes(c) {
-			if c.usesAPIKeys() {
-				for hostIndex, serverIndex := range serverIndexes {
-					attributes := c.toServerAttributeInitializationConfig(c.Servers[serverIndex])
-					if len(attributes.OnRequestHeaders) == 0 {
-						continue
-					}
-					packed, err := packEnvoy(attributes)
-					if err != nil {
-						return nil, fmt.Errorf("servers[%d] attribute initialization: %w", serverIndex, err)
-					}
-					name := attributeInitializationFilterName(serverIndex)
-					filters = append(filters, &hcm.HttpFilter{Name: name, Disabled: true, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: packed}})
-					enableConfig, err := packEnvoy(&setfilterstate.Config{})
-					if err != nil {
-						return nil, fmt.Errorf(enableAttributesErrorFormat, serverIndex, err)
-					}
-					enabled, err := packEnvoy(&route.FilterConfig{Config: enableConfig})
-					if err != nil {
-						return nil, fmt.Errorf(enableAttributesErrorFormat, serverIndex, err)
-					}
-					hosts[hostIndex].TypedPerFilterConfig[name] = enabled
-				}
-			} else {
-				attributeFilter := &hcm.HttpFilter{Name: attributeFilterName}
-				if !c.hasAttributeMappings() {
-					attributeConfig, err := packEnvoy(c.toAttributeInitializationConfig())
-					if err != nil {
-						return nil, fmt.Errorf("encode attribute initialization filter: %w", err)
-					}
-					attributeFilter.ConfigType = &hcm.HttpFilter_TypedConfig{TypedConfig: attributeConfig}
-				}
-				if !c.hasAttributeMappings() {
-					filters = append(filters, attributeFilter)
-				}
-			}
-			if c.hasAttributeMappings() {
-				filters = append(filters, &hcm.HttpFilter{Name: attributeFilterName, ConfigType: &hcm.HttpFilter_ConfigDiscovery{ConfigDiscovery: &core.ExtensionConfigSource{
-					ConfigSource: fileConfigSource(ProcessingConfigPath),
-					TypeUrls:     []string{string((&setfilterstate.Config{}).ProtoReflect().Descriptor().FullName())},
-				}}})
-			}
-		}
-		rbacConfig, err := packEnvoy(&httpRBAC.RBAC{})
-		if err != nil {
-			return nil, fmt.Errorf("encode RBAC filter: %w", err)
-		}
-		filters = append(filters, &hcm.HttpFilter{Name: authorizationFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: rbacConfig}})
-		if hasRequestHeaderProcessing(c.APIs) {
-			headerRBACConfig, err := packEnvoy(&httpRBAC.RBAC{})
-			if err != nil {
-				return nil, fmt.Errorf("encode required-header RBAC filter: %w", err)
-			}
-			filters = append(filters, &hcm.HttpFilter{Name: requiredHeaderFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: headerRBACConfig}})
-		}
-		if c.usesAPIKeys() {
-			cleanup, err := c.toCredentialCleanupFilter()
-			if err != nil {
-				return nil, err
-			}
-			filters = append(filters, cleanup)
-		}
-		if hasRequestHeaderProcessing(c.APIs) {
-			headerMutationConfig, err := packEnvoy(requestHeaderMutationConfig(c.APIs))
-			if err != nil {
-				return nil, fmt.Errorf("encode request header mutation filter: %w", err)
-			}
-			filters = append(filters, &hcm.HttpFilter{Name: headerMutationFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: headerMutationConfig}})
-		}
-	}
-	if c.usesAPIKeys() && !hasProtectedHosts(hosts) {
-		cleanup, err := c.toCredentialCleanupFilter()
-		if err != nil {
-			return nil, err
-		}
-		filters = append(filters, cleanup)
+		return nil, err
 	}
 	filters = append(filters, &hcm.HttpFilter{Name: routerFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: routerConfig}})
 	tracing, err := c.Observability.Tracing.toEnvoyTracingConfig()
@@ -474,6 +393,228 @@ func (c Config) toHTTPManager(hosts []*route.VirtualHost) (*hcm.HttpConnectionMa
 		AccessLog:   accessLogs,
 		HttpFilters: filters,
 	}, nil
+}
+
+func (c Config) serverIndexes(hosts []*route.VirtualHost) []int {
+	serverIndexes := make([]int, 0, len(hosts))
+	for _, host := range hosts {
+		for index, server := range c.Servers {
+			if server.Hostname == host.Name {
+				serverIndexes = append(serverIndexes, index)
+				break
+			}
+		}
+	}
+	return serverIndexes
+}
+
+func (c Config) toHTTPFilters(hosts []*route.VirtualHost, serverIndexes []int, protected bool) ([]*hcm.HttpFilter, error) {
+	filters, err := c.requestControlFilters(hosts)
+	if err != nil {
+		return nil, err
+	}
+	if protected {
+		filters, err = c.protectedHTTPFilters(filters, hosts, serverIndexes)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if c.usesAPIKeys() && !protected {
+		cleanup, err := c.toCredentialCleanupFilter()
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, cleanup)
+	}
+	return filters, nil
+}
+
+func (c Config) requestControlFilters(hosts []*route.VirtualHost) ([]*hcm.HttpFilter, error) {
+	var identityHeaders []string
+	if c.usesAPIKeys() {
+		identityHeaders = append(identityHeaders, apiKeyClientHeader)
+		for _, authenticator := range c.Authenticators {
+			if authenticator.JWT != nil {
+				identityHeaders = append(identityHeaders, jwtVerifiedHeaderName(authenticator.Name))
+			}
+		}
+	}
+	controls, err := packEnvoy(requestControlMutations(identityHeaders...))
+	if err != nil {
+		return nil, fmt.Errorf("encode request-control header removal: %w", err)
+	}
+	filters := []*hcm.HttpFilter{{Name: requestControlsFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: controls}}}
+	if !hasRequestMetricRoutes(hosts) {
+		return filters, nil
+	}
+	metricConfig, err := packEnvoy(&lua.Lua{DefaultSourceCode: &core.DataSource{
+		Specifier: &core.DataSource_InlineString{InlineString: requestMetricsLuaScript(c.APIs, c.requestMetricName())},
+	}})
+	if err != nil {
+		return nil, fmt.Errorf("encode request metrics Lua filter: %w", err)
+	}
+	filters = append(filters, &hcm.HttpFilter{Name: requestMetricsFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: metricConfig}})
+	return filters, nil
+}
+
+func (c Config) protectedHTTPFilters(filters []*hcm.HttpFilter, hosts []*route.VirtualHost, serverIndexes []int) ([]*hcm.HttpFilter, error) {
+	usesJWT, usesKey := false, false
+	for _, index := range serverIndexes {
+		usesJWT = usesJWT || serverUsesJWT(c, c.Servers[index])
+		usesKey = usesKey || serverUsesAPIKey(c, c.Servers[index])
+	}
+	var err error
+	filters, err = c.authenticationHTTPFilters(filters, serverIndexes, usesJWT, usesKey)
+	if err != nil {
+		return nil, err
+	}
+	if needsWorkingAttributes(c) {
+		filters, err = c.attributeHTTPFilters(filters, hosts, serverIndexes)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return c.authorizationHTTPFilters(filters)
+}
+
+func (c Config) authenticationHTTPFilters(filters []*hcm.HttpFilter, serverIndexes []int, usesJWT, usesKey bool) ([]*hcm.HttpFilter, error) {
+	if usesJWT {
+		var jwtConfig *jwt.JwtAuthentication
+		var err error
+		if c.usesAPIKeys() {
+			jwtConfig, err = c.toJWTFilterConfig(serverIndexes...)
+		} else {
+			jwtConfig, err = c.toJWTFilterConfig()
+		}
+		if err != nil {
+			return nil, err
+		}
+		packed, err := packEnvoy(jwtConfig)
+		if err != nil {
+			return nil, fmt.Errorf("encode JWT authentication filter: %w", err)
+		}
+		filters = append(filters, &hcm.HttpFilter{Name: jwtAuthnFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: packed}})
+	}
+	headers := requestHeaderSources(c, serverIndexes)
+	var keyAuthenticator Authenticator
+	if usesKey {
+		filters = append(filters, apiKeyFilter())
+		keyAuthenticator, _ = c.apiKeyAuthenticator()
+	}
+	if usesKey || len(headers) > 0 {
+		metadata, err := keyAuthenticator.toRequestMetadataFilter(headers)
+		if err != nil {
+			return nil, fmt.Errorf("encode request metadata filter: %w", err)
+		}
+		filters = append(filters, metadata)
+	}
+	if usesKey {
+		var err error
+		filters, err = appendAuthenticationRBAC(filters)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return filters, nil
+}
+
+func appendAuthenticationRBAC(filters []*hcm.HttpFilter) ([]*hcm.HttpFilter, error) {
+	authentication, err := packEnvoy(&httpRBAC.RBAC{})
+	if err != nil {
+		return nil, fmt.Errorf("encode authentication RBAC filter: %w", err)
+	}
+	return append(filters, &hcm.HttpFilter{Name: authenticationFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: authentication}}), nil
+}
+
+func (c Config) attributeHTTPFilters(filters []*hcm.HttpFilter, hosts []*route.VirtualHost, serverIndexes []int) ([]*hcm.HttpFilter, error) {
+	if c.usesAPIKeys() {
+		var err error
+		filters, err = c.apiKeyAttributeFilters(filters, hosts, serverIndexes)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		attributeFilter := &hcm.HttpFilter{Name: attributeFilterName}
+		if !c.hasAttributeMappings() {
+			attributeConfig, err := packEnvoy(c.toAttributeInitializationConfig())
+			if err != nil {
+				return nil, fmt.Errorf("encode attribute initialization filter: %w", err)
+			}
+			attributeFilter.ConfigType = &hcm.HttpFilter_TypedConfig{TypedConfig: attributeConfig}
+		}
+		if !c.hasAttributeMappings() {
+			filters = append(filters, attributeFilter)
+		}
+	}
+	if c.hasAttributeMappings() {
+		filters = append(filters, &hcm.HttpFilter{Name: attributeFilterName, ConfigType: &hcm.HttpFilter_ConfigDiscovery{ConfigDiscovery: &core.ExtensionConfigSource{
+			ConfigSource: fileConfigSource(ProcessingConfigPath),
+			TypeUrls:     []string{string((&setfilterstate.Config{}).ProtoReflect().Descriptor().FullName())},
+		}}})
+	}
+	return filters, nil
+}
+
+func (c Config) apiKeyAttributeFilters(filters []*hcm.HttpFilter, hosts []*route.VirtualHost, serverIndexes []int) ([]*hcm.HttpFilter, error) {
+	for hostIndex, serverIndex := range serverIndexes {
+		attributes := c.toServerAttributeInitializationConfig(c.Servers[serverIndex])
+		if len(attributes.OnRequestHeaders) == 0 {
+			continue
+		}
+		packed, err := packEnvoy(attributes)
+		if err != nil {
+			return nil, fmt.Errorf("servers[%d] attribute initialization: %w", serverIndex, err)
+		}
+		name := attributeInitializationFilterName(serverIndex)
+		filters = append(filters, &hcm.HttpFilter{Name: name, Disabled: true, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: packed}})
+		enableConfig, err := packEnvoy(&setfilterstate.Config{})
+		if err != nil {
+			return nil, fmt.Errorf(enableAttributesErrorFormat, serverIndex, err)
+		}
+		enabled, err := packEnvoy(&route.FilterConfig{Config: enableConfig})
+		if err != nil {
+			return nil, fmt.Errorf(enableAttributesErrorFormat, serverIndex, err)
+		}
+		hosts[hostIndex].TypedPerFilterConfig[name] = enabled
+	}
+	return filters, nil
+}
+
+func (c Config) authorizationHTTPFilters(filters []*hcm.HttpFilter) ([]*hcm.HttpFilter, error) {
+	rbacConfig, err := packEnvoy(&httpRBAC.RBAC{})
+	if err != nil {
+		return nil, fmt.Errorf("encode RBAC filter: %w", err)
+	}
+	filters = append(filters, &hcm.HttpFilter{Name: authorizationFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: rbacConfig}})
+	if hasRequestHeaderProcessing(c.APIs) {
+		filters, err = appendRequiredHeaderRBAC(filters)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if c.usesAPIKeys() {
+		cleanup, err := c.toCredentialCleanupFilter()
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, cleanup)
+	}
+	if hasRequestHeaderProcessing(c.APIs) {
+		headerMutationConfig, err := packEnvoy(requestHeaderMutationConfig(c.APIs))
+		if err != nil {
+			return nil, fmt.Errorf("encode request header mutation filter: %w", err)
+		}
+		filters = append(filters, &hcm.HttpFilter{Name: headerMutationFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: headerMutationConfig}})
+	}
+	return filters, nil
+}
+
+func appendRequiredHeaderRBAC(filters []*hcm.HttpFilter) ([]*hcm.HttpFilter, error) {
+	headerRBACConfig, err := packEnvoy(&httpRBAC.RBAC{})
+	if err != nil {
+		return nil, fmt.Errorf("encode required-header RBAC filter: %w", err)
+	}
+	return append(filters, &hcm.HttpFilter{Name: requiredHeaderFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: headerRBACConfig}}), nil
 }
 
 func hasProtectedHosts(hosts []*route.VirtualHost) bool {
@@ -864,15 +1005,20 @@ func jwksClusters(authenticators []Authenticator, servers []Server) ([]*cluster.
 	return clusters, nil
 }
 
+type methodFallback struct {
+	path    PathMatch
+	methods []string
+}
+
 func apiRoutesWithMetadata(apis []API, includeMetadata bool) []*route.Route {
+	routes, fallbacks := apiMethodRoutes(apis, includeMetadata)
+	return append(routes, apiFallbackRoutes(fallbacks, includeMetadata)...)
+}
+
+func apiMethodRoutes(apis []API, includeMetadata bool) ([]*route.Route, []methodFallback) {
 	var routes []*route.Route
-	type methodFallback struct {
-		path    PathMatch
-		methods []string
-	}
 	fallbacks := make([]methodFallback, 0, len(apis))
 	fallbackIndexes := make(map[string]int, len(apis))
-
 	for apiIndex, api := range apis {
 		for routeIndex, apiRoute := range api.Routes {
 			key := pathMatchKey(apiRoute.Path)
@@ -882,39 +1028,44 @@ func apiRoutesWithMetadata(apis []API, includeMetadata bool) []*route.Route {
 				fallbackIndexes[key] = fallbackIndex
 				fallbacks = append(fallbacks, methodFallback{path: apiRoute.Path})
 			}
-
 			for methodIndex, method := range apiRoute.Methods {
-				name := apiRouteName(apiIndex, api.Name, routeIndex, methodIndex)
-				action := &route.RouteAction{
-					ClusterSpecifier:  &route.RouteAction_Cluster{Cluster: "api-" + api.Name},
-					Timeout:           apiRoute.Timeouts.ResponseTimeout.protobuf(),
-					IdleTimeout:       apiRoute.Timeouts.IdleTimeout.protobuf(),
-					MaxStreamDuration: &route.RouteAction_MaxStreamDuration{MaxStreamDuration: apiRoute.Timeouts.MaxStreamDuration.protobuf()},
-				}
-				applyPathRewrite(action, apiRoute.Rewrite)
-				match := apiRoute.Path.toRouteMatch()
-				match.Headers = []*route.HeaderMatcher{methodHeader(method)}
-				routeConfig := &route.Route{
-					Name:       name,
-					StatPrefix: name,
-					Match:      match,
-					Action:     &route.Route_Route{Route: action},
-				}
-				if includeMetadata {
-					routeConfig.Metadata = apiRouteMetadata(api.Name)
-				}
-				if api.Metrics != nil {
-					if routeConfig.Metadata == nil {
-						routeConfig.Metadata = &core.Metadata{FilterMetadata: make(map[string]*structpb.Struct)}
-					}
-					routeConfig.Metadata.FilterMetadata[requestMetricsFilterName] = api.toRequestMetricsRouteMetadata()
-				}
-				routes = append(routes, routeConfig)
+				routes = append(routes, apiMethodRoute(api, apiIndex, routeIndex, methodIndex, method, apiRoute, includeMetadata))
 				fallbacks[fallbackIndex].methods = append(fallbacks[fallbackIndex].methods, method)
 			}
 		}
 	}
+	return routes, fallbacks
+}
 
+func apiMethodRoute(api API, apiIndex, routeIndex, methodIndex int, method string, apiRoute Route, includeMetadata bool) *route.Route {
+	name := apiRouteName(apiIndex, api.Name, routeIndex, methodIndex)
+	action := &route.RouteAction{
+		ClusterSpecifier:  &route.RouteAction_Cluster{Cluster: "api-" + api.Name},
+		Timeout:           apiRoute.Timeouts.ResponseTimeout.protobuf(),
+		IdleTimeout:       apiRoute.Timeouts.IdleTimeout.protobuf(),
+		MaxStreamDuration: &route.RouteAction_MaxStreamDuration{MaxStreamDuration: apiRoute.Timeouts.MaxStreamDuration.protobuf()},
+	}
+	applyPathRewrite(action, apiRoute.Rewrite)
+	match := apiRoute.Path.toRouteMatch()
+	match.Headers = []*route.HeaderMatcher{methodHeader(method)}
+	routeConfig := &route.Route{
+		Name: name, StatPrefix: name, Match: match,
+		Action: &route.Route_Route{Route: action},
+	}
+	if includeMetadata {
+		routeConfig.Metadata = apiRouteMetadata(api.Name)
+	}
+	if api.Metrics != nil {
+		if routeConfig.Metadata == nil {
+			routeConfig.Metadata = &core.Metadata{FilterMetadata: make(map[string]*structpb.Struct)}
+		}
+		routeConfig.Metadata.FilterMetadata[requestMetricsFilterName] = api.toRequestMetricsRouteMetadata()
+	}
+	return routeConfig
+}
+
+func apiFallbackRoutes(fallbacks []methodFallback, includeMetadata bool) []*route.Route {
+	routes := make([]*route.Route, 0, len(fallbacks)+1)
 	for i, fallback := range fallbacks {
 		methods := fallback.methods
 		sort.Strings(methods)
@@ -925,7 +1076,7 @@ func apiRoutesWithMetadata(apis []API, includeMetadata bool) []*route.Route {
 			}
 			allow.WriteString(method)
 		}
-		methodRoute := &route.Route{
+		routeConfig := &route.Route{
 			Name:  "method-not-allowed-" + strconv.Itoa(i),
 			Match: fallback.path.toRouteMatch(),
 			Action: &route.Route_DirectResponse{DirectResponse: &route.DirectResponseAction{
@@ -937,20 +1088,18 @@ func apiRoutesWithMetadata(apis []API, includeMetadata bool) []*route.Route {
 			}},
 		}
 		if includeMetadata {
-			methodRoute.Metadata = apiRouteMetadata(localResponseAPIName)
+			routeConfig.Metadata = apiRouteMetadata(localResponseAPIName)
 		}
-		routes = append(routes, methodRoute)
+		routes = append(routes, routeConfig)
 	}
 	notFound := &route.Route{
-		Name:   "not-found",
-		Match:  &route.RouteMatch{PathSpecifier: &route.RouteMatch_Prefix{Prefix: "/"}},
+		Name: "not-found", Match: &route.RouteMatch{PathSpecifier: &route.RouteMatch_Prefix{Prefix: "/"}},
 		Action: &route.Route_DirectResponse{DirectResponse: &route.DirectResponseAction{Status: 404}},
 	}
 	if includeMetadata {
 		notFound.Metadata = apiRouteMetadata(localResponseAPIName)
 	}
-	routes = append(routes, notFound)
-	return routes
+	return append(routes, notFound)
 }
 
 func apiRouteMetadata(apiName string) *core.Metadata {

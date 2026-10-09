@@ -67,79 +67,93 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	if err != nil {
 		return nil, err
 	}
-	configFiles := files
-	var processingConfigMap *corev1.ConfigMap
-	if processingData, ok := files[processingConfigFilename]; ok {
-		configFiles = make(map[string][]byte, len(files)-1)
-		for name, contents := range files {
-			if name != processingConfigFilename {
-				configFiles[name] = contents
-			}
-		}
-		processingConfigMap = &corev1.ConfigMap{
-			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: kubernetesConfigMapKind},
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      processingResourceName(c.Kubernetes.Name),
-				Namespace: c.Kubernetes.Namespace,
-			},
-			Data: map[string]string{processingConfigFilename: string(processingData)},
+	configFiles, processingConfigMap := splitProcessingConfigMap(c, files)
+	configName := c.Kubernetes.Name + "-config"
+	metricsName := metricsResourceName(c.Kubernetes.Name)
+	metricsEnabled := c.Observability.Metrics.enabled()
+	return &KubernetesResources{
+		ConfigMap:              newGatewayConfigMap(c, configName, configFiles),
+		ProcessingConfigMap:    processingConfigMap,
+		OTelCollectorConfigMap: newOTelCollectorConfigMap(c, metricsName),
+		ServiceAccount:         newGatewayServiceAccount(c),
+		Deployment:             newGatewayDeployment(c, configFiles, configName, metricsName, processingConfigMap),
+		Service:                newGatewayService(c, metricsEnabled),
+	}, nil
+}
+
+func splitProcessingConfigMap(c Config, files map[string][]byte) (map[string][]byte, *corev1.ConfigMap) {
+	processingData, ok := files[processingConfigFilename]
+	if !ok {
+		return files, nil
+	}
+	configFiles := make(map[string][]byte, len(files)-1)
+	for name, contents := range files {
+		if name != processingConfigFilename {
+			configFiles[name] = contents
 		}
 	}
-	metricsEnabled := c.Observability.Metrics.enabled()
-	tracingEnabled := c.Observability.Tracing.enabled()
-	collectorEnabled := metricsEnabled || tracingEnabled
+	processingConfigMap := &corev1.ConfigMap{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: kubernetesConfigMapKind},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      processingResourceName(c.Kubernetes.Name),
+			Namespace: c.Kubernetes.Namespace,
+		},
+		Data: map[string]string{processingConfigFilename: string(processingData)},
+	}
+	return configFiles, processingConfigMap
+}
 
+func newGatewayConfigMap(c Config, name string, files map[string][]byte) corev1.ConfigMap {
+	return corev1.ConfigMap{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: kubernetesConfigMapKind},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: c.Kubernetes.Namespace},
+		Data:       stringFiles(files),
+	}
+}
+
+func newOTelCollectorConfigMap(c Config, name string) *corev1.ConfigMap {
+	if !c.Observability.Metrics.enabled() && !c.Observability.Tracing.enabled() {
+		return nil
+	}
+	otelConfig := generateOTelCollectorConfig(c.Observability.Metrics, c.Observability.Tracing)
+	return &corev1.ConfigMap{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: kubernetesConfigMapKind},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: c.Kubernetes.Namespace},
+		Data:       map[string]string{collectorConfigFilename: string(otelConfig)},
+	}
+}
+
+func newGatewayServiceAccount(c Config) corev1.ServiceAccount {
+	k := c.Kubernetes
+	return corev1.ServiceAccount{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ServiceAccount"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      k.Name,
+			Namespace: k.Namespace,
+			Labels:    kubernetesLabels(c),
+		},
+		AutomountServiceAccountToken: new(false),
+	}
+}
+
+func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, metricsName string, processingConfigMap *corev1.ConfigMap) appsv1.Deployment {
 	k := c.Kubernetes
 	envoyArgs := []string{"-c", EnvoyBootstrapPath, "--log-level", "info"}
 	if k.EnvoyConcurrency != nil {
 		envoyArgs = append(envoyArgs, "--concurrency", strconv.FormatUint(uint64(*k.EnvoyConcurrency), 10))
 	}
-	configName := k.Name + "-config"
-	metricsName := metricsResourceName(k.Name)
-	labels := func() map[string]string {
-		return map[string]string{
-			"app.kubernetes.io/name":     "auth-gateway",
-			"app.kubernetes.io/instance": c.Node.Cluster,
-		}
-	}
-	configMap := corev1.ConfigMap{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: kubernetesConfigMapKind},
-		ObjectMeta: metav1.ObjectMeta{Name: configName, Namespace: k.Namespace},
-		Data:       stringFiles(configFiles),
-	}
-	var otelConfigMap *corev1.ConfigMap
-	if collectorEnabled {
-		otelConfig := generateOTelCollectorConfig(c.Observability.Metrics, c.Observability.Tracing)
-		otelConfigMap = &corev1.ConfigMap{
-			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: kubernetesConfigMapKind},
-			ObjectMeta: metav1.ObjectMeta{Name: metricsName, Namespace: k.Namespace},
-			Data:       map[string]string{collectorConfigFilename: string(otelConfig)},
-		}
-	}
-	serviceAccount := corev1.ServiceAccount{
-		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ServiceAccount"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      k.Name,
-			Namespace: k.Namespace,
-			Labels:    labels(),
-		},
-		AutomountServiceAccountToken: new(false),
-	}
-
 	deployment := appsv1.Deployment{
 		TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      k.Name,
 			Namespace: k.Namespace,
-			Labels:    labels(),
+			Labels:    kubernetesLabels(c),
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: k.Replicas,
-			Selector: &metav1.LabelSelector{MatchLabels: labels()},
+			Selector: &metav1.LabelSelector{MatchLabels: kubernetesLabels(c)},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: labels(),
-				},
+				ObjectMeta: metav1.ObjectMeta{Labels: kubernetesLabels(c)},
 				Spec: corev1.PodSpec{
 					ServiceAccountName:            k.Name,
 					AutomountServiceAccountToken:  new(false),
@@ -187,69 +201,92 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 			},
 		},
 	}
-	if collectorEnabled {
-		collectorPorts := make([]corev1.ContainerPort, 0, 2)
-		if metricsEnabled {
-			collectorPorts = append(collectorPorts, corev1.ContainerPort{
-				Name: metricsPortName, ContainerPort: defaultOTelMetricsPort, Protocol: corev1.ProtocolTCP,
-			})
-		}
-		if tracingEnabled {
-			collectorPorts = append(collectorPorts, corev1.ContainerPort{
-				Name: tracesPortName, ContainerPort: defaultOTelTracePort, Protocol: corev1.ProtocolTCP,
-			})
-		}
-		deployment.Spec.Template.Spec.Containers = append(deployment.Spec.Template.Spec.Containers, corev1.Container{
-			Name:            metricsPortName,
-			Image:           k.OTelCollectorImage,
-			ImagePullPolicy: corev1.PullIfNotPresent,
-			Args:            []string{"--config=" + path.Join(collectorConfigDirectory, collectorConfigFilename)},
-			Ports:           collectorPorts,
-			Resources: corev1.ResourceRequirements{
-				Requests: kubernetesResourceList(k.Metrics.Resources.Requests),
-				Limits:   kubernetesResourceList(k.Metrics.Resources.Limits),
-			},
-			VolumeMounts: []corev1.VolumeMount{{
-				Name:      metricsConfigVolumeName,
-				MountPath: collectorConfigDirectory,
-				ReadOnly:  true,
-			}},
-		})
-		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
-			Name: metricsConfigVolumeName,
-			VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-				LocalObjectReference: corev1.LocalObjectReference{Name: metricsName},
-			}},
+	addCollectorContainer(&deployment, c, metricsName)
+	addProcessingConfigVolume(&deployment, processingConfigMap)
+	addAPIKeySecretVolume(&deployment, c)
+	addServerTLSVolumes(&deployment, c)
+	addTrustedCAVolumes(&deployment, c)
+	return deployment
+}
+
+func addCollectorContainer(deployment *appsv1.Deployment, c Config, metricsName string) {
+	metricsEnabled := c.Observability.Metrics.enabled()
+	tracingEnabled := c.Observability.Tracing.enabled()
+	if !metricsEnabled && !tracingEnabled {
+		return
+	}
+	collectorPorts := make([]corev1.ContainerPort, 0, 2)
+	if metricsEnabled {
+		collectorPorts = append(collectorPorts, corev1.ContainerPort{
+			Name: metricsPortName, ContainerPort: defaultOTelMetricsPort, Protocol: corev1.ProtocolTCP,
 		})
 	}
-	if processingConfigMap != nil {
-		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
-			Name: processingConfigVolumeName,
-			VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-				LocalObjectReference: corev1.LocalObjectReference{Name: processingConfigMap.Name},
-				Items:                []corev1.KeyToPath{{Key: processingConfigFilename, Path: processingConfigFilename}},
-			}},
+	if tracingEnabled {
+		collectorPorts = append(collectorPorts, corev1.ContainerPort{
+			Name: tracesPortName, ContainerPort: defaultOTelTracePort, Protocol: corev1.ProtocolTCP,
 		})
-		envoy := &deployment.Spec.Template.Spec.Containers[0]
-		envoy.VolumeMounts = append(envoy.VolumeMounts, corev1.VolumeMount{
-			Name:      "processing-config",
-			MountPath: processingDirectory,
+	}
+	k := c.Kubernetes
+	deployment.Spec.Template.Spec.Containers = append(deployment.Spec.Template.Spec.Containers, corev1.Container{
+		Name:            metricsPortName,
+		Image:           k.OTelCollectorImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Args:            []string{"--config=" + path.Join(collectorConfigDirectory, collectorConfigFilename)},
+		Ports:           collectorPorts,
+		Resources: corev1.ResourceRequirements{
+			Requests: kubernetesResourceList(k.Metrics.Resources.Requests),
+			Limits:   kubernetesResourceList(k.Metrics.Resources.Limits),
+		},
+		VolumeMounts: []corev1.VolumeMount{{
+			Name:      metricsConfigVolumeName,
+			MountPath: collectorConfigDirectory,
 			ReadOnly:  true,
-		})
+		}},
+	})
+	deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
+		Name: metricsConfigVolumeName,
+		VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+			LocalObjectReference: corev1.LocalObjectReference{Name: metricsName},
+		}},
+	})
+}
+
+func addProcessingConfigVolume(deployment *appsv1.Deployment, processingConfigMap *corev1.ConfigMap) {
+	if processingConfigMap == nil {
+		return
 	}
-	if authenticator, exists := c.apiKeyAuthenticator(); exists && c.usesAPIKeys() {
-		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
-			Name: apiKeySecretVolumeName,
-			VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
-				SecretName: authenticator.APIKey.Secret,
-				Items:      []corev1.KeyToPath{{Key: apiKeySecretFilename, Path: apiKeySecretFilename}},
-			}},
-		})
-		envoy := &deployment.Spec.Template.Spec.Containers[0]
-		envoy.VolumeMounts = append(envoy.VolumeMounts, corev1.VolumeMount{
-			Name: apiKeySecretVolumeName, MountPath: apiKeyDirectory, ReadOnly: true,
-		})
+	deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
+		Name: processingConfigVolumeName,
+		VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+			LocalObjectReference: corev1.LocalObjectReference{Name: processingConfigMap.Name},
+			Items:                []corev1.KeyToPath{{Key: processingConfigFilename, Path: processingConfigFilename}},
+		}},
+	})
+	envoy := &deployment.Spec.Template.Spec.Containers[0]
+	envoy.VolumeMounts = append(envoy.VolumeMounts, corev1.VolumeMount{
+		Name: processingConfigVolumeName, MountPath: processingDirectory, ReadOnly: true,
+	})
+}
+
+func addAPIKeySecretVolume(deployment *appsv1.Deployment, c Config) {
+	authenticator, exists := c.apiKeyAuthenticator()
+	if !exists || !c.usesAPIKeys() {
+		return
 	}
+	deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
+		Name: apiKeySecretVolumeName,
+		VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+			SecretName: authenticator.APIKey.Secret,
+			Items:      []corev1.KeyToPath{{Key: apiKeySecretFilename, Path: apiKeySecretFilename}},
+		}},
+	})
+	envoy := &deployment.Spec.Template.Spec.Containers[0]
+	envoy.VolumeMounts = append(envoy.VolumeMounts, corev1.VolumeMount{
+		Name: apiKeySecretVolumeName, MountPath: apiKeyDirectory, ReadOnly: true,
+	})
+}
+
+func addServerTLSVolumes(deployment *appsv1.Deployment, c Config) {
 	for _, mount := range c.tlsMounts() {
 		tlsConfig := mount.config
 		certificateFilename := path.Base(tlsConfig.Certificate)
@@ -269,11 +306,12 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 		})
 		envoy := &deployment.Spec.Template.Spec.Containers[0]
 		envoy.VolumeMounts = append(envoy.VolumeMounts, corev1.VolumeMount{
-			Name:      volumeName,
-			MountPath: path.Dir(tlsConfig.Certificate),
-			ReadOnly:  true,
+			Name: volumeName, MountPath: path.Dir(tlsConfig.Certificate), ReadOnly: true,
 		})
 	}
+}
+
+func addTrustedCAVolumes(deployment *appsv1.Deployment, c Config) {
 	for _, ref := range c.caMounts() {
 		volumeName := "ca-" + ref.id()
 		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
@@ -289,53 +327,45 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 			Name: volumeName, MountPath: path.Join(caDirectory, ref.id()), ReadOnly: true,
 		})
 	}
+}
+
+func newGatewayService(c Config, metricsEnabled bool) corev1.Service {
+	k := c.Kubernetes
 	servicePorts := make([]corev1.ServicePort, 0, 3)
 	if c.hasHTTP() {
 		servicePorts = append(servicePorts, corev1.ServicePort{
-			Name:       httpPortName,
-			Port:       *k.ServicePort,
-			TargetPort: intstr.FromString(httpPortName),
-			Protocol:   corev1.ProtocolTCP,
+			Name: httpPortName, Port: *k.ServicePort,
+			TargetPort: intstr.FromString(httpPortName), Protocol: corev1.ProtocolTCP,
 		})
 	}
 	if c.hasHTTPS() {
 		servicePorts = append(servicePorts, corev1.ServicePort{
-			Name:       httpsPortName,
-			Port:       *k.HTTPSServicePort,
-			TargetPort: intstr.FromString(httpPortName),
-			Protocol:   corev1.ProtocolTCP,
+			Name: httpsPortName, Port: *k.HTTPSServicePort,
+			TargetPort: intstr.FromString(httpPortName), Protocol: corev1.ProtocolTCP,
 		})
 	}
 	if metricsEnabled {
 		servicePorts = append(servicePorts, corev1.ServicePort{
-			Name:       metricsPortName,
-			Port:       defaultOTelMetricsPort,
-			TargetPort: intstr.FromString(metricsPortName),
-			Protocol:   corev1.ProtocolTCP,
+			Name: metricsPortName, Port: defaultOTelMetricsPort,
+			TargetPort: intstr.FromString(metricsPortName), Protocol: corev1.ProtocolTCP,
 		})
 	}
-	service := corev1.Service{
+	return corev1.Service{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      k.Name,
-			Namespace: k.Namespace,
-			Labels:    labels(),
+			Name: k.Name, Namespace: k.Namespace, Labels: kubernetesLabels(c),
 		},
 		Spec: corev1.ServiceSpec{
-			Type:     corev1.ServiceTypeClusterIP,
-			Selector: labels(),
-			Ports:    servicePorts,
+			Type: corev1.ServiceTypeClusterIP, Selector: kubernetesLabels(c), Ports: servicePorts,
 		},
 	}
+}
 
-	return &KubernetesResources{
-		ConfigMap:              configMap,
-		ProcessingConfigMap:    processingConfigMap,
-		OTelCollectorConfigMap: otelConfigMap,
-		ServiceAccount:         serviceAccount,
-		Deployment:             deployment,
-		Service:                service,
-	}, nil
+func kubernetesLabels(c Config) map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/name":     "auth-gateway",
+		"app.kubernetes.io/instance": c.Node.Cluster,
+	}
 }
 
 // Objects returns the resources in apply order.
