@@ -4,6 +4,11 @@
 // Start with Load. Use Generate for file-based Envoy output or
 // GenerateKubernetes for Kubernetes resources. LoadAPIKeyCredentials and
 // APIKeySecret build the external API-key Secret separately.
+//
+// The package defines no exported error types or sentinel values and has no
+// stable error-message contract. Callers should treat error text as diagnostic
+// only, without matching on it or relying on errors.Is or errors.As to classify
+// failures.
 package config
 
 import (
@@ -77,7 +82,8 @@ const defaultKubernetesReplicas int32 = 2
 
 var apiNamePattern = regexp.MustCompile("^[a-z][a-z0-9-]{0,52}$")
 
-// Load decodes one strict YAML document and applies defaults before validation.
+// Load decodes one strict YAML document, applies defaults, and validates it.
+// On failure, Load returns the zero Config and a non-nil error.
 func Load(r io.Reader) (Config, error) {
 	if r == nil {
 		return Config{}, fmt.Errorf("read gateway configuration: input is nil")

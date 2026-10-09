@@ -158,7 +158,7 @@ Done when: a consumer can place every generated file correctly without reading
 unexported identifiers, and `docs/envoy.md` states the required on-disk layout
 for file-based output in one place.
 
-### 1.3 Define the error contract
+### 1.3 Define the error contract [x]
 
 Every failure is a bare `fmt.Errorf` string. There are no exported sentinel
 errors and no exported error types, so `errors.Is` and `errors.As` are unusable.
