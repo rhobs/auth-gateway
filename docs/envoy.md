@@ -102,64 +102,17 @@ The Envoy bootstrap and SDS resource files are projected from the main ConfigMap
 
 When mappings exist, the generator puts `processing.yaml` in the separate processing ConfigMap and mounts it at `/etc/auth-gateway/processing`. This file is an ECDS resource for `envoy.filters.http.set_filter_state`. With keys, it contains only mapping updates; host-scoped initializers in the bootstrap extract claims, credential attributes, or source headers first. JWT-only configurations keep attribute extraction in the ECDS resource. Envoy watches the mounted directory. Updating mapping values changes only that ConfigMap. The bootstrap, Deployment template, and Pod identity remain unchanged.
 
-All keys used by this gateway's servers live in one same-namespace Secret with an `api-keys.yaml` entry. The Deployment mounts that Secret as a read-only directory at `/etc/auth-gateway/api-keys`, without `subPath`, and Envoy watches it through ECDS. Each credential binds an opaque key to the named authenticator and its original attributes. Replacing the Secret entry replaces the complete accepted key set across HTTP and HTTPS chains without changing the Pod. Envoy keeps its last accepted set if a projected update is invalid. Apply a valid resource with `credentials: []` to revoke every key; deleting or corrupting the Secret is not a revocation method. Kubernetes volumes cannot read Secrets across namespaces, so each gateway Deployment uses a Secret in its own namespace. The same Secret name may have independent contents in another namespace.
-
-### API-key Secret format
-
-The application that provisions keys can load a small credential document with
-`config.LoadAPIKeyCredentials`, then use `config.APIKeySecret` to produce the
-Kubernetes Secret. For a key authenticator declaring `tenant_id` and
-`writer_id` with `credential: true`, the input is:
-
-```yaml
-credentials:
-  - key: example-partner-key
-    attributes:
-      tenant_id: client-123
-      writer_id: writer-17
-```
-
-Only credential-backed attributes belong in this document. Header-backed
-attributes come from each request. `config.APIKeySecret` writes the generated
-ECDS resource into `Secret.data["api-keys.yaml"]`. The equivalent manually
-written Secret below uses `stringData` for readability. The `client` field
-lists credential attributes alphabetically, with empty values for missing
-bindings:
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: auth-gateway-api-keys
-  namespace: observability
-type: Opaque
-stringData:
-  api-keys.yaml: |
-    resources:
-      - '@type': type.googleapis.com/envoy.config.core.v3.TypedExtensionConfig
-        name: envoy.filters.http.api_key_auth
-        typed_config:
-          '@type': type.googleapis.com/envoy.extensions.common.matching.v3.ExtensionWithMatcher
-          extension_config:
-            name: envoy.filters.http.api_key_auth
-            typed_config:
-              '@type': type.googleapis.com/envoy.extensions.filters.http.api_key_auth.v3.ApiKeyAuth
-              credentials:
-                - client: tenant_id=client-123;writer_id=writer-17
-                  key: example-partner-key
-              forwarding:
-                header: x-auth-gateway-api-key-client
-                hide_credentials: true
-              key_sources:
-                - cookie: ""
-                  header: x-partner-key
-                  query: ""
-```
-
-The example `key_sources.header` matches `api_key.header: X-Partner-Key`.
-Credential values cannot contain semicolons. Use a different key for real
-clients. An input document with `credentials: []`, or an Envoy Secret
-resource with `ApiKeyAuth.credentials: []`, revokes all keys.
+All keys used by this gateway's servers live in one same-namespace Secret with
+an `api-keys.yaml` entry. The Deployment mounts that Secret as a read-only
+directory at `/etc/auth-gateway/api-keys`, without `subPath`, and Envoy watches
+it through ECDS. Each credential binds an opaque key to the named authenticator
+and its original attributes. Replacing the Secret entry replaces the complete
+accepted key set across HTTP and HTTPS chains without changing the Pod. Envoy
+keeps its last accepted set if a projected update is invalid. Kubernetes
+volumes cannot read Secrets across namespaces, so each gateway Deployment uses
+a Secret in its own namespace. The same Secret name may have independent
+contents in another namespace. See the [API-key guide](auth/api-key.md#api-key-secret-format)
+for the credential document and Secret layout.
 
 ### Mapping and rollout behavior
 

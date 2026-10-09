@@ -28,10 +28,64 @@ contain these values:
 | `example-partner-key` | `client-123` | `writer-17` |
 
 Create the `auth-gateway-api-keys` Secret in the gateway Deployment's
-`kubernetes.namespace` before deploying. The [Secret file format](../envoy.md#api-key-secret-format)
-is documented with the deployment details. The `secret` field can be omitted
-for file-based Envoy deployments. Keep issued keys and Secret manifests out
-of version control.
+`kubernetes.namespace` before deploying. See [API-key Secret format](#api-key-secret-format)
+for the credential document and Secret layout. The `secret` field can be omitted
+for file-based Envoy deployments. Keep issued keys and Secret manifests out of
+version control.
+
+### API-key Secret format
+
+The library accepts one credential document. Load it with
+`config.LoadAPIKeyCredentials` and pass the result with the selected
+authenticator to `config.APIKeySecret` to build the Kubernetes Secret:
+
+```yaml
+credentials:
+  - key: example-partner-key
+    attributes:
+      tenant_id: client-123
+      writer_id: writer-17
+```
+
+Only credential-backed attributes belong in this document. Header-backed
+attributes come from each request. The generated Secret stores the Envoy
+resource in `Secret.data["api-keys.yaml"]`. The equivalent manually written
+Secret below uses `stringData` for readability. The `client` field lists
+credential attributes alphabetically, with empty values for missing bindings:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: auth-gateway-api-keys
+  namespace: observability
+type: Opaque
+stringData:
+  api-keys.yaml: |
+    resources:
+      - '@type': type.googleapis.com/envoy.config.core.v3.TypedExtensionConfig
+        name: envoy.filters.http.api_key_auth
+        typed_config:
+          '@type': type.googleapis.com/envoy.extensions.common.matching.v3.ExtensionWithMatcher
+          extension_config:
+            name: envoy.filters.http.api_key_auth
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.filters.http.api_key_auth.v3.ApiKeyAuth
+              credentials:
+                - client: tenant_id=client-123;writer_id=writer-17
+                  key: example-partner-key
+              forwarding:
+                header: x-auth-gateway-api-key-client
+                hide_credentials: true
+              key_sources:
+                - cookie: ""
+                  header: x-partner-key
+                  query: ""
+```
+
+The example `key_sources.header` matches `api_key.header: X-Partner-Key`.
+Credential values cannot contain semicolons. Replace the example key with a
+unique value for each client.
 
 A client sends both the key and the tenant it requests:
 
@@ -45,8 +99,9 @@ Content-Length: 0
 
 The key must be valid even when a grant checks only a header-backed attribute.
 A missing or empty `X-Tenant` leaves `requested_tenant` unset. Updating the
-Secret replaces the accepted key set without restarting the gateway. Use an
-explicit empty credential set in the Secret to revoke every key.
+Secret replaces the accepted key set without restarting the gateway. Setting
+`credentials: []` in a valid credential document revokes every key. Deleting or
+corrupting the Secret is not a revocation method.
 
 ## Authorization and forwarding
 

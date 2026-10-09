@@ -66,7 +66,7 @@ README links intact and makes all six links resolve.
 | `README.md:66` | `docs/auth/api-key.md` | `docs/auth/api-key.md` |
 | `README.md:81` | `docs/auth/README.md` | `docs/auth/README.md` |
 | `docs/auth/README.md:5` | `../../config.auth.example.yaml` | `config.auth.example.yaml` |
-| `docs/auth/api-key.md:31` | `../envoy.md#api-key-secret-format` | `docs/envoy.md` |
+| `docs/auth/api-key.md:31` | `#api-key-secret-format` | `docs/auth/api-key.md#api-key-secret-format` |
 | `docs/auth/api-key.md:81` | `../../config.auth.example.yaml` | `config.auth.example.yaml` |
 | `docs/auth/jwt.md:56` | `../../config.auth.example.yaml` | `config.auth.example.yaml` |
 
@@ -246,17 +246,16 @@ The reference tier is missing.
 Done when: `docs/` contains a reference page covering every YAML field with its
 type, default, and constraint, generated or hand-written.
 
-### 1.9 Move the API-key Secret format into the user guide
+### 1.9 Move the API-key Secret format into the user guide [x]
 
-`docs/envoy.md:83-138` holds the API-key Secret format. That is the single most
-important thing a consumer must provide out-of-band, and it is buried in the
-internals document under "Kubernetes files and reloads". The user guide has to
-link out to it, through one of the broken links in item 0.2.
+The format now lives in `docs/auth/api-key.md`, alongside guidance on the
+resources users provide. `docs/envoy.md` describes reload behavior and links to
+the guide rather than owning the format.
 
 `AGENTS.md` says user guides should cover "resources users must provide", which
 is exactly this section.
 
-Done when: the Secret format lives in `docs/guides/auth/api-key.md` and
+Done when: the Secret format lives in `docs/auth/api-key.md` and
 `docs/envoy.md` links to it rather than owning it.
 
 ### 1.10 Correct the `any_of` wording
