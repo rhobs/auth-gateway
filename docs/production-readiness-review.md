@@ -279,16 +279,13 @@ scenario and framework tests.
 Done when: every named config test file exists and every config test file on
 disk appears in the table.
 
-### 1.12 State the Go version and versioning policy
+### 1.12 State the Go version and versioning policy [x]
 
-`CONTRIBUTING.md:3` records the Go 1.26 floor, but that is a contributor
-document. A consumer reading only the README has no idea the module needs a very
-recent toolchain. Go 1.26 is also an aggressive floor for a library; most target
-one or two releases back. If the floor is deliberate, say so and say why.
-
-Separately: there are no tags, so consumers get a pseudo-version. Nothing states
-whether the YAML schema version and the Go API version move together, or what
-happens at schema `version: 2`.
+The README now states the Go 1.26 floor and explains that the code uses its
+`new(expr)` syntax to create pointers. It documents the pre-v1 Go API policy and
+that the YAML schema version is independent of the Go module version. The loader
+currently accepts only `version: 1`; other schema versions are rejected and need
+an explicitly documented migration.
 
 Done when: the README states the Go floor, the stability policy, and the
 relationship between the schema version and the module version.

@@ -4,6 +4,14 @@ RHOBS Auth Gateway is a Go configuration library. It loads one YAML document and
 
 The current implementation supports exact-host routing, HTTP and HTTPS listeners, upstream HTTP/1 and HTTP/2, optional JSON Web Token (JWT) and API-key authentication and authorization, attributes from claims, key credentials, and request headers, route-selected request headers, ordered attribute mappings, per-API request counters, Kubernetes packaging, error access logs, Prometheus metrics, and optional Envoy OpenTelemetry traces. Mutual TLS (mTLS) client-certificate authentication is future work. [config.mtls.example.yaml](config.mtls.example.yaml) is an unsupported design sketch and is rejected by the loader.
 
+## Requirements and versioning
+
+Building applications that import this module requires Go 1.26 or later. The floor is deliberate: the code uses Go 1.26's `new(expr)` syntax to create pointers to values.
+
+The module is pre-v1.0 and has no stable Go API compatibility guarantee. Before v1.0, a minor release may contain an incompatible Go API change. After v1.0, incompatible API changes will follow Go module versioning and require a new major version.
+
+The YAML `version` field describes the configuration format and is independent of the Go module version. This code accepts only `version: 1` and rejects unsupported schema versions. A future breaking schema change will increment the YAML version and include migration guidance; the loader will not migrate old configurations automatically.
+
 ## Generate and deploy
 
 To deploy on Kubernetes, load a gateway YAML document with `config.Load`, call `config.GenerateKubernetes`, then write `resources.YAML()` to a manifest file. These library calls do not connect to Kubernetes or create referenced credentials. Create the target namespace and any referenced Transport Layer Security (TLS) Secrets, API-key Secret, and certificate authority (CA) ConfigMaps first. TLS Secrets must contain `tls.crt` and `tls.key`; CA ConfigMaps must contain the configured key. Then apply the manifest:
