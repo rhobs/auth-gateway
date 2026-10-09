@@ -21,11 +21,9 @@ import (
 	apikey "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/api_key_auth/v3"
 	headermutation "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
 	headertometadata "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_to_metadata/v3"
-	setfilterstate "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"go.yaml.in/yaml/v3"
-	expr "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/anypb"
 	corev1 "k8s.io/api/core/v1"
@@ -432,29 +430,10 @@ func (c Config) toServerAuthenticationRBACRules(server Server) *rbac.RBAC {
 			}
 		}
 		principals := []*rbac.Principal{principal}
-		builder := &celExpressionBuilder{}
-		var equality []*expr.Expr
-		for _, attribute := range slices.Sorted(maps.Keys(keyAuthenticator.Attributes)) {
-			_, shared := jwtAuthenticator.Attributes[attribute]
-			if !shared {
-				continue
-			}
-			jwtNamespace, jwtPath := attributeMetadataPath(jwtAuthenticator, attribute)
-			keyNamespace, keyPath := attributeMetadataPath(keyAuthenticator, attribute)
-			valueMatcher := nonemptyScalarValueMatcher()
-			principals = append(principals,
-				dynamicMetadataPrincipal(jwtNamespace, jwtPath, valueMatcher),
-				dynamicMetadataPrincipal(keyNamespace, keyPath, valueMatcher))
-			equality = append(equality, builder.call("_==_",
-				builder.metadataValue(jwtNamespace, jwtPath),
-				builder.metadataValue(keyNamespace, keyPath)))
-		}
+		sharedPrincipals, condition := sharedAttributeConditions(jwtAuthenticator, keyAuthenticator)
+		principals = append(principals, sharedPrincipals...)
 		principal = andPrincipals(principals...)
-		if len(equality) > 0 {
-			condition := equality[0]
-			for _, next := range equality[1:] {
-				condition = builder.call("_&&_", condition, next)
-			}
+		if condition != nil {
 			policy.Condition = condition
 		}
 	}
@@ -475,34 +454,6 @@ func (authenticator Authenticator) toKeyGrantPrincipal(grant AuthorizationGrant)
 		conditions = append(conditions, dynamicMetadataPrincipal(namespace, path, allowedStringValueMatcher(grant.Attributes[attribute])))
 	}
 	return andPrincipals(conditions...)
-}
-
-func (c Config) toServerAttributeInitializationConfig(server Server) *setfilterstate.Config {
-	config := &setfilterstate.Config{}
-	for _, name := range selectedAuthenticatorNames(server) {
-		authenticator := findAuthenticator(c, name)
-		for _, attribute := range slices.Sorted(maps.Keys(authenticator.Attributes)) {
-			source := authenticator.Attributes[attribute]
-			var expression string
-			switch {
-			case source.Header != nil:
-				expression = headerAttributeExpression(authenticator, *source.Header)
-			case authenticator.JWT != nil:
-				expression = jwtClaimExpression(append([]string{name}, source.ClaimPath...))
-			default:
-				expression = apiKeyAttributeExpression(attribute)
-			}
-			config.OnRequestHeaders = append(config.OnRequestHeaders, filterStateValue(filterStateKey(attribute), expression))
-		}
-	}
-	return config
-}
-
-func apiKeyAttributeExpression(attribute string) string {
-	namespace := `metadata.filter_metadata["` + apiKeyMetadataNamespace + `"]`
-	key := celStringLiteral(apiKeyAttributeMetadataKey(attribute))
-	current := namespace + "[" + key + "]"
-	return "((\"" + apiKeyMetadataNamespace + "\" in metadata.filter_metadata" + celAndSeparator + key + " in " + namespace + ") && type(" + current + ") == string && " + current + " != \"\") ? " + current + " : \"\""
 }
 
 func (c Config) toCredentialCleanupConfig() *headermutation.HeaderMutation {
@@ -533,25 +484,4 @@ func (c Config) toCredentialCleanupFilter() (*hcm.HttpFilter, error) {
 
 func attributeInitializationFilterName(index int) string {
 	return "auth_gateway.attributes.server-" + strconv.Itoa(index)
-}
-
-type celExpressionBuilder struct{ next int64 }
-
-func (b *celExpressionBuilder) id() int64 {
-	b.next++
-	return b.next
-}
-
-func (b *celExpressionBuilder) call(name string, args ...*expr.Expr) *expr.Expr {
-	return &expr.Expr{Id: b.id(), ExprKind: &expr.Expr_CallExpr{CallExpr: &expr.Expr_Call{Function: name, Args: args}}}
-}
-
-func (b *celExpressionBuilder) metadataValue(namespace string, keys []string) *expr.Expr {
-	value := &expr.Expr{Id: b.id(), ExprKind: &expr.Expr_IdentExpr{IdentExpr: &expr.Expr_Ident{Name: "metadata"}}}
-	value = &expr.Expr{Id: b.id(), ExprKind: &expr.Expr_SelectExpr{SelectExpr: &expr.Expr_Select{Operand: value, Field: "filter_metadata"}}}
-	for _, key := range append([]string{namespace}, keys...) {
-		literal := &expr.Expr{Id: b.id(), ExprKind: &expr.Expr_ConstExpr{ConstExpr: &expr.Constant{ConstantKind: &expr.Constant_StringValue{StringValue: key}}}}
-		value = b.call("_[_]", value, literal)
-	}
-	return value
 }

@@ -6,7 +6,6 @@ import (
 	"flag"
 	"maps"
 	"os"
-	"path"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -15,7 +14,6 @@ import (
 
 	bootstrap "github.com/envoyproxy/go-control-plane/envoy/config/bootstrap/v3"
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
-	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	rbac "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
@@ -972,84 +970,6 @@ func TestJWTRequiredHeadersAreRouteScopedAndManaged(t *testing.T) {
 	}
 }
 
-func TestJWTProcessingUsesFileBasedECDSConfiguration(t *testing.T) {
-	c := loadConfigCase(t, "jwt-auth-with-mappings")
-	files, err := Generate(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manager := firstHTTPManager(t, files["envoy.yaml"])
-	if files[processingConfigFilename] == nil {
-		t.Fatal("mapping configuration is missing its ECDS response file")
-	}
-	var processingFilter *hcm.HttpFilter
-	for _, filter := range manager.HttpFilters {
-		if filter.Name != attributeFilterName {
-			continue
-		}
-		processingFilter = filter
-	}
-	if processingFilter == nil || processingFilter.GetTypedConfig() != nil || processingFilter.GetConfigDiscovery() == nil {
-		t.Fatalf("attribute processing filter = %#v, want file-based ECDS", processingFilter)
-	}
-	configDiscovery := processingFilter.GetConfigDiscovery()
-	if got := configDiscovery.GetConfigSource().GetPathConfigSource().GetPath(); got != path.Join(processingDirectory, processingConfigFilename) {
-		t.Fatalf("ECDS config path = %q", got)
-	}
-	wantTypeURL := string((&setfilterstate.Config{}).ProtoReflect().Descriptor().FullName())
-	if !reflect.DeepEqual(configDiscovery.GetTypeUrls(), []string{wantTypeURL}) {
-		t.Fatalf("ECDS type URLs = %v, want %q", configDiscovery.GetTypeUrls(), wantTypeURL)
-	}
-	processing := decodeProcessingECDSConfig(t, files[processingConfigFilename])
-	if got := len(processing.OnRequestHeaders); got == 0 {
-		t.Fatal("ECDS set_filter_state config has no updates")
-	}
-	wantKeys := []string{
-		filterStateKey("tenant_id"), filterStateKey("writer_id"),
-		filterStateKey("tenant_id"), filterStateKey("writer_id"), filterStateKey("tenant_id"),
-	}
-	if len(processing.OnRequestHeaders) != len(wantKeys) {
-		t.Fatalf("attribute processing updates = %d, want %d", len(processing.OnRequestHeaders), len(wantKeys))
-	}
-	for i, update := range processing.OnRequestHeaders {
-		key, ok := update.GetKey().(*setfilterstatecommon.FilterStateValue_ObjectKey)
-		if !ok || key.ObjectKey != wantKeys[i] || !update.SkipIfEmpty {
-			t.Fatalf("attribute processing update %d key/skip behavior = %#v/%t", i, update.GetKey(), update.SkipIfEmpty)
-		}
-	}
-	update := processing.OnRequestHeaders[len(processing.OnRequestHeaders)-1]
-	value, ok := update.GetValue().(*setfilterstatecommon.FilterStateValue_FormatString)
-	if !ok {
-		t.Fatalf("mapping value = %#v, want a format string", update.GetValue())
-	}
-	format := value.FormatString
-	if format == nil || !format.OmitEmptyValues {
-		t.Fatalf("mapping formatter = %#v", update.GetValue())
-	}
-	textFormat, ok := format.GetFormat().(*core.SubstitutionFormatString_TextFormat)
-	if !ok || !strings.HasPrefix(textFormat.TextFormat, "%CEL(") || !strings.HasSuffix(textFormat.TextFormat, ")%") { //nolint:staticcheck // Assert the existing Envoy wire format without changing it during cleanup.
-		t.Fatalf("mapping formatter = %#v", update.GetValue())
-	}
-}
-
-func TestJWTExpressionsUseEnvoyCELVariablesAndGuardMissingAttributes(t *testing.T) {
-	claim := jwtClaimExpression([]string{"issuer-one", "organization", "id"})
-	claimMetadata := `metadata.filter_metadata["envoy.filters.http.jwt_authn"]`
-	claimValue := claimMetadata + `["issuer-one"]["organization"]["id"]`
-	if !strings.Contains(claim, `"issuer-one" in `+claimMetadata) || !strings.Contains(claim, `"organization" in `+claimMetadata+`["issuer-one"]`) || !strings.Contains(claim, `"id" in `+claimMetadata+`["issuer-one"]["organization"]`) || !strings.Contains(claim, "type("+claimValue+") == string") || !strings.Contains(claim, claimValue+` != ""`) || strings.Contains(claim, "dynamicMetadata(") || strings.Contains(claim, "dynamic_metadata[") {
-		t.Fatalf("JWT claim expression does not use Envoy CEL metadata: %s", claim)
-	}
-
-	mapping := attributeMappingExpression("tenant_id", map[string]string{"client-123": "team-a"})
-	key := `"auth_gateway.attributes.tenant_id"`
-	if !strings.Contains(mapping, key+" in filter_state") || !strings.Contains(mapping, "filter_state["+key+"]") || strings.Contains(mapping, "filterState(") {
-		t.Fatalf("attribute mapping expression does not safely read Envoy CEL filter state: %s", mapping)
-	}
-	if strings.Contains(mapping, "string(") || !strings.Contains(mapping, `? "team-a" : ""`) {
-		t.Fatalf("unmatched mapping must skip the update without converting bytes: %s", mapping)
-	}
-}
-
 func TestJWTAuthorizationPolicyCombinationsAreAPIScoped(t *testing.T) {
 	c := loadAuthExample(t)
 	rules := c.toServerRBACRules(c.Servers[0])
@@ -1069,38 +989,6 @@ func TestJWTAuthorizationPolicyCombinationsAreAPIScoped(t *testing.T) {
 	if rules.Policies["local-responses"] == nil {
 		t.Fatal("all_of denied APIs but removed local 404/405 responses")
 	}
-}
-
-func decodeProcessingECDSConfig(t testing.TB, data []byte) *setfilterstate.Config {
-	t.Helper()
-	var document map[string]any
-	if err := yaml.Unmarshal(data, &document); err != nil {
-		t.Fatalf("decode ECDS response YAML: %v", err)
-	}
-	resources, ok := document["resources"].([]any)
-	if !ok || len(resources) != 1 {
-		t.Fatalf("processing ECDS resources = %#v, want one resource", document["resources"])
-	}
-	resourceJSON, err := json.Marshal(resources[0])
-	if err != nil {
-		t.Fatalf("encode processing ECDS resource: %v", err)
-	}
-	var packed anypb.Any
-	if err := protojson.Unmarshal(resourceJSON, &packed); err != nil {
-		t.Fatalf("decode packed processing ECDS resource: %v", err)
-	}
-	var extension core.TypedExtensionConfig
-	if err := packed.UnmarshalTo(&extension); err != nil {
-		t.Fatalf("decode processing extension config: %v", err)
-	}
-	if extension.Name != attributeFilterName {
-		t.Fatalf("ECDS resource name = %q, want %q", extension.Name, attributeFilterName)
-	}
-	var processing setfilterstate.Config
-	if err := extension.TypedConfig.UnmarshalTo(&processing); err != nil {
-		t.Fatalf("decode processing filter config: %v", err)
-	}
-	return &processing
 }
 
 func firstHTTPManager(t testing.TB, data []byte) *hcm.HttpConnectionManager {
