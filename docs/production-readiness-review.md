@@ -96,7 +96,7 @@ Add a workflow that runs, on pull request:
 
 Done when: a pull request runs all five checks and fails on any of them.
 
-### 0.5 Add repository governance files
+### 0.5 Add repository governance files [x]
 
 Missing from the root: `SECURITY.md`, `OWNERS` or `CODEOWNERS`, `CHANGELOG.md`.
 For an authentication component, a vulnerability reporting path is not optional.
