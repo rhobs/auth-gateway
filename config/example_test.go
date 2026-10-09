@@ -3,10 +3,8 @@ package config_test
 import (
 	"fmt"
 	"log"
-	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/rhobs/auth-gateway/config"
@@ -81,15 +79,16 @@ func ExampleGenerate() {
 	}
 	defer cleanup()
 
-	for _, filename := range slices.Sorted(maps.Keys(files)) {
-		outputPath := filepath.Join(outputDirectory, filename)
+	for _, file := range files.All() {
+		relativePath := strings.TrimPrefix(filepath.FromSlash(file.Path), string(filepath.Separator))
+		outputPath := filepath.Join(outputDirectory, relativePath)
 		if err := os.MkdirAll(filepath.Dir(outputPath), 0o750); err != nil {
 			log.Fatal(err)
 		}
-		if err := os.WriteFile(outputPath, files[filename], 0o600); err != nil {
+		if err := os.WriteFile(outputPath, file.Contents, 0o600); err != nil {
 			log.Fatal(err)
 		}
-		fmt.Println(filename)
+		fmt.Println(filepath.Base(file.Path))
 	}
 	// Output: envoy.yaml
 }

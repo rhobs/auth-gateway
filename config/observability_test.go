@@ -150,7 +150,7 @@ func TestRequestMetricsGenerateTagsAndRouteMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bootstrap := decodeBootstrap(t, files[envoyConfigFilename])
+	bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	tags := bootstrap.GetStatsConfig().GetStatsTags()
 	if len(tags) != 3 {
 		t.Fatalf("stats tags = %#v, want API, status, and tenant", tags)
@@ -170,7 +170,7 @@ func TestRequestMetricsGenerateTagsAndRouteMetadata(t *testing.T) {
 		}
 	}
 
-	manager := firstHTTPManager(t, files[envoyConfigFilename])
+	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
 	var luaConfig lua.Lua
 	for _, filter := range manager.HttpFilters {
 		if filter.Name == requestMetricsFilterName {
@@ -222,12 +222,12 @@ func TestRequestMetricsDefaultCounterName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bootstrap := decodeBootstrap(t, files[envoyConfigFilename])
+	bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	if tags := bootstrap.GetStatsConfig().GetStatsTags(); len(tags) == 0 ||
 		!strings.Contains(tags[0].GetRegex(), "auth_gateway_http_requests_total") {
 		t.Fatalf("default request metric stats tags = %#v", tags)
 	}
-	if !strings.Contains(string(files[envoyConfigFilename]), `local counter_name = "auth_gateway_http_requests_total"`) {
+	if !strings.Contains(string(files.EnvoyBootstrap.Contents), `local counter_name = "auth_gateway_http_requests_total"`) {
 		t.Fatal("default request metric name is missing from Lua")
 	}
 }
@@ -239,7 +239,7 @@ func TestRequestMetricNameAloneDoesNotEnableCounter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bootstrap := decodeBootstrap(t, files[envoyConfigFilename])
+	bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	if bootstrap.GetStatsConfig() != nil {
 		t.Fatal("name-only request metric configuration added stats tags")
 	}
@@ -256,10 +256,10 @@ func TestRequestMetricsUseAttributesWithoutHeaderProcessing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := files[processingConfigFilename]; exists {
+	if files.ProcessingConfig != nil {
 		t.Fatal("a label binding without mappings created an ECDS file")
 	}
-	manager := firstHTTPManager(t, files[envoyConfigFilename])
+	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
 	want := []string{requestControlsFilterName, requestMetricsFilterName, jwtAuthnFilterName, attributeFilterName, authorizationFilterName, routerFilterName}
 	if got := httpFilterNames(manager); !slices.Equal(got, want) {
 		t.Fatalf("HTTP filters = %v, want %v", got, want)
@@ -272,7 +272,7 @@ func TestRequestMetricsFilterPrecedesMappedJWTProcessing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := firstHTTPManager(t, files[envoyConfigFilename])
+	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
 	want := []string{
 		requestControlsFilterName, requestMetricsFilterName, jwtAuthnFilterName, attributeFilterName,
 		authorizationFilterName, requiredHeaderFilterName, headerMutationFilterName, routerFilterName,
@@ -288,7 +288,7 @@ func TestRequestMetricsFilterPrecedesAPIKeyAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := firstHTTPManager(t, files[envoyConfigFilename])
+	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
 	got := httpFilterNames(manager)
 	want := []string{requestControlsFilterName, requestMetricsFilterName, jwtAuthnFilterName, apiKeyFilterName}
 	if len(got) < len(want) || !slices.Equal(got[:len(want)], want) {
@@ -303,7 +303,7 @@ func TestStatusOnlyRequestMetricsOnPublicAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bootstrap := decodeBootstrap(t, files[envoyConfigFilename])
+	bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	if got := len(bootstrap.GetStatsConfig().GetStatsTags()); got != 2 {
 		t.Fatalf("status-only stats tags = %d, want API and status", got)
 	}
@@ -322,7 +322,7 @@ func TestRequestMetricsOnlyOnSelectedAPIs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bootstrap := decodeBootstrap(t, files[envoyConfigFilename])
+	bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	for _, chain := range bootstrap.StaticResources.Listeners[0].FilterChains {
 		manager := decodeHTTPManager(t, chain)
 		metered := chain.GetFilterChainMatch().GetTransportProtocol() != "tls"
@@ -414,7 +414,7 @@ func TestGenerateEnvoyOpenTelemetryTracing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bootstrapConfig := decodeBootstrap(t, files[envoyConfigFilename])
+	bootstrapConfig := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	var traceCluster *cluster.Cluster
 	for _, generatedCluster := range bootstrapConfig.GetStaticResources().GetClusters() {
 		if generatedCluster.GetName() == envoyTraceClusterName {

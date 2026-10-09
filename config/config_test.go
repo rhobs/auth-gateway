@@ -163,7 +163,7 @@ func TestSupportedExamplesGenerate(t *testing.T) {
 			if err != nil {
 				t.Fatalf("generate Envoy configuration: %v", err)
 			}
-			if len(files["envoy.yaml"]) == 0 {
+			if len(files.EnvoyBootstrap.Contents) == 0 {
 				t.Fatal("Envoy output is empty")
 			}
 			resources, err := GenerateKubernetes(config)
@@ -191,7 +191,7 @@ func TestListenerLimitsOnEveryChainAndFixedControls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := decodeBootstrap(t, files["envoy.yaml"])
+	b := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	l := b.StaticResources.Listeners[0]
 	if l.Address.GetSocketAddress().GetPortValue() != 8088 || l.PerConnectionBufferLimitBytes.Value != 65536 {
 		t.Fatalf("listener = %v", l)
@@ -254,7 +254,7 @@ func TestResolvedRouteTimeoutsAndReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := decodeHTTPManager(t, decodeBootstrap(t, files["envoy.yaml"]).StaticResources.Listeners[0].FilterChains[0])
+	m := decodeHTTPManager(t, decodeBootstrap(t, files.EnvoyBootstrap.Contents).StaticResources.Listeners[0].FilterChains[0])
 	for _, host := range m.GetRouteConfig().VirtualHosts {
 		for i, route := range host.Routes {
 			if route.GetRoute() == nil {
@@ -275,7 +275,7 @@ func TestResolvedRouteTimeoutsAndReuse(t *testing.T) {
 		}
 	}
 	resources, err := GenerateKubernetes(c)
-	if err != nil || resources.ConfigMap.Data["envoy.yaml"] != string(files["envoy.yaml"]) {
+	if err != nil || resources.ConfigMap.Data["envoy.yaml"] != string(files.EnvoyBootstrap.Contents) {
 		t.Fatalf("generators resolved differently: %v", err)
 	}
 	after, _ := yaml.Marshal(c)

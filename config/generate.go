@@ -70,13 +70,41 @@ const (
 
 const upstreamHTTPProtocolOptionsTypeURL = "envoy.extensions.upstreams.http.v3.HttpProtocolOptions"
 
-// Generate builds Envoy bootstrap files from the high-level gateway configuration.
-func Generate(c Config) (map[string][]byte, error) {
+// Generate builds Envoy files from the high-level gateway configuration. Each
+// returned file includes its absolute path and contents.
+func Generate(c Config) (GeneratedFiles, error) {
 	effective, err := resolveConfig(c)
 	if err != nil {
-		return nil, err
+		return GeneratedFiles{}, err
 	}
-	return generate(effective)
+	contents, err := generate(effective)
+	if err != nil {
+		return GeneratedFiles{}, err
+	}
+
+	files := GeneratedFiles{
+		EnvoyBootstrap: GeneratedFile{
+			Path:     EnvoyBootstrapPath,
+			Contents: contents[envoyConfigFilename],
+		},
+	}
+	if processing, ok := contents[processingConfigFilename]; ok {
+		files.ProcessingConfig = &GeneratedFile{
+			Path:     ProcessingConfigPath,
+			Contents: processing,
+		}
+	}
+	for index, server := range effective.Servers {
+		if server.TLSConfig == nil {
+			continue
+		}
+		filename := serverTLSResourceFilename(index)
+		files.ServerCertificateResources = append(files.ServerCertificateResources, GeneratedFile{
+			Path:     path.Join(EnvoyConfigDirectory, filename),
+			Contents: contents[filename],
+		})
+	}
+	return files, nil
 }
 
 func generate(effective effectiveConfig) (map[string][]byte, error) {
@@ -372,7 +400,7 @@ func (c Config) toHTTPManager(hosts []*route.VirtualHost) (*hcm.HttpConnectionMa
 			}
 			if c.hasAttributeMappings() {
 				filters = append(filters, &hcm.HttpFilter{Name: attributeFilterName, ConfigType: &hcm.HttpFilter_ConfigDiscovery{ConfigDiscovery: &core.ExtensionConfigSource{
-					ConfigSource: fileConfigSource(path.Join(processingDirectory, processingConfigFilename)),
+					ConfigSource: fileConfigSource(ProcessingConfigPath),
 					TypeUrls:     []string{string((&setfilterstate.Config{}).ProtoReflect().Descriptor().FullName())},
 				}}})
 			}

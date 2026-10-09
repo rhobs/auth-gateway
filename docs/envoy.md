@@ -14,9 +14,31 @@ one strict YAML document
 
 `Load` rejects unknown fields and extra YAML documents. It returns a defaulted configuration without materializing inherited API and route timeout overrides. Validation and generation resolve effective timeouts on a copy, so caller-owned maps, slices, and pointers remain unchanged.
 
-`Generate` returns `envoy.yaml`, plus `processing.yaml` when attribute mappings are configured and one file-based Secret Discovery Service (SDS) resource for each HTTPS server. It does not require Kubernetes settings.
+`Generate` returns a `config.GeneratedFiles` value with named Envoy bootstrap, optional processing configuration, and one file-based Secret Discovery Service (SDS) resource for each HTTPS server. Each generated file includes its required absolute path and contents. It does not require Kubernetes settings.
 
 `GenerateKubernetes` requires the `kubernetes` section. It returns the main `<name>-config` ConfigMap, an optional `<name>-processing` ConfigMap, an optional collector ConfigMap when metrics or traces are enabled, a ServiceAccount, a Deployment, and a Service. The main ConfigMap contains the Envoy bootstrap and file-based Transport Layer Security (TLS) SDS resources. Certificate authority (CA) ConfigMaps, TLS Secrets, and the API-key Secret remain external references. `config.APIKeySecret` builds the latter. `YAML` serializes the resources as a multi-document stream. `Objects` returns typed Kubernetes objects in apply order.
+
+### File-based output layout
+
+`GeneratedFiles.All()` returns every file created by `Generate`. Each file's
+`Path` is the absolute location Envoy uses, and `Contents` contains the resource
+to write there.
+
+| Resource | Required path | Source |
+| --- | --- | --- |
+| Envoy bootstrap | `/etc/auth-gateway/envoy.yaml` | `config.GeneratedFiles.EnvoyBootstrap` |
+| Attribute processing ECDS resource, when mappings are configured | `/etc/auth-gateway/processing/processing.yaml` | `config.GeneratedFiles.ProcessingConfig` |
+| One TLS SDS resource per HTTPS server | `/etc/auth-gateway/server-certificate-N.yaml`, where `N` is its zero-based position in `servers` | `config.GeneratedFiles.ServerCertificateResources` |
+| API-key ECDS resource, when API keys are used | `/etc/auth-gateway/api-keys/api-keys.yaml` | `config.GenerateAPIKeyECDS`; path constant `config.APIKeyECDSPath` |
+| CA ConfigMap entry | `/etc/auth-gateway-ca/<hashed-id>/ca.crt` | `config.CAConfigMap.FilePath()` |
+
+`Generate` creates the bootstrap, processing, and TLS SDS files. It does not
+copy downstream certificate or private-key material; those files must exist at
+the paths configured for the HTTPS server. API-key ECDS content is generated
+separately. `GenerateKubernetes` mounts API-key Secrets and CA ConfigMaps at the
+same paths automatically; file-based Envoy deployments must provide those
+external resources at the paths above. A `TrustedCA.Filename` is already the
+required path for file-based CA configuration.
 
 ## Listener, hosts, and routes
 

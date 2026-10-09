@@ -3,7 +3,6 @@ package config
 import (
 	"bytes"
 	"encoding/json"
-	"path"
 	"slices"
 	"strings"
 	"testing"
@@ -358,7 +357,7 @@ func TestAPIKeyPipelineUsesFileECDSAndHostScopedFilters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := firstHTTPManager(t, files[envoyConfigFilename])
+	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
 	wantOrder := []string{
 		jwtAuthnFilterName, apiKeyFilterName, headerToMetadataFilterName, authenticationFilterName,
 		attributeInitializationFilterName(1), attributeInitializationFilterName(2), attributeFilterName,
@@ -376,8 +375,8 @@ func TestAPIKeyPipelineUsesFileECDSAndHostScopedFilters(t *testing.T) {
 	keyFilter := apiKeyHTTPFilter(t, manager, apiKeyFilterName)
 	discovery := keyFilter.GetConfigDiscovery()
 	if !keyFilter.Disabled || discovery == nil || keyFilter.GetTypedConfig() != nil ||
-		discovery.GetConfigSource().GetPathConfigSource().GetPath() != path.Join(apiKeyDirectory, apiKeySecretFilename) ||
-		discovery.GetConfigSource().GetPathConfigSource().GetWatchedDirectory().GetPath() != apiKeyDirectory ||
+		discovery.GetConfigSource().GetPathConfigSource().GetPath() != APIKeyECDSPath ||
+		discovery.GetConfigSource().GetPathConfigSource().GetWatchedDirectory().GetPath() != APIKeyConfigDirectory ||
 		!slices.Equal(discovery.GetTypeUrls(), []string{"envoy.extensions.common.matching.v3.ExtensionWithMatcher"}) {
 		t.Fatalf("API-key ECDS filter = %#v", keyFilter)
 	}
@@ -446,7 +445,7 @@ func TestAPIKeyPipelineUsesFileECDSAndHostScopedFilters(t *testing.T) {
 		marker.Providers["issuer-one"].ClaimToHeaders[0].HeaderName != jwtVerifiedHeaderName("issuer-one") {
 		t.Fatalf("mixed any_of JWT marker and requirement = %#v", &marker)
 	}
-	bootstrap := decodeBootstrap(t, files[envoyConfigFilename])
+	bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	tlsManager := decodeHTTPManager(t, bootstrap.StaticResources.Listeners[0].FilterChains[1])
 	var strict jwt.JwtAuthentication
 	if err := apiKeyHTTPFilter(t, tlsManager, jwtAuthnFilterName).GetTypedConfig().UnmarshalTo(&strict); err != nil {
@@ -465,7 +464,7 @@ func TestPublicOnlyChainRemovesConfiguredCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bootstrap := decodeBootstrap(t, files[envoyConfigFilename])
+	bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	manager := decodeHTTPManager(t, bootstrap.StaticResources.Listeners[0].FilterChains[0])
 	if got, want := httpFilterNames(manager), []string{requestControlsFilterName, credentialCleanupFilterName, routerFilterName}; !slices.Equal(got, want) {
 		t.Fatalf("public-only HTTP filter order = %v, want %v", got, want)
@@ -479,7 +478,7 @@ func TestHeaderMetadataCapturePreservesRequestHeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := firstHTTPManager(t, files[envoyConfigFilename])
+	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
 	names := httpFilterNames(manager)
 	headerFilter := slices.Index(names, "envoy.filters.http.header_to_metadata")
 	if headerFilter < 0 || headerFilter <= slices.Index(names, "envoy.filters.http.api_key_auth") ||

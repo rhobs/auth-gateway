@@ -31,9 +31,9 @@ const (
 )
 
 const (
-	configDirectory     = "/etc/auth-gateway"
-	processingDirectory = "/etc/auth-gateway/processing"
-	apiKeyDirectory     = "/etc/auth-gateway/api-keys"
+	configDirectory     = EnvoyConfigDirectory
+	processingDirectory = ProcessingConfigDirectory
+	apiKeyDirectory     = APIKeyConfigDirectory
 )
 
 func processingResourceName(name string) string {
@@ -90,7 +90,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	collectorEnabled := metricsEnabled || tracingEnabled
 
 	k := c.Kubernetes
-	envoyArgs := []string{"-c", path.Join(configDirectory, "envoy.yaml"), "--log-level", "info"}
+	envoyArgs := []string{"-c", EnvoyBootstrapPath, "--log-level", "info"}
 	if k.EnvoyConcurrency != nil {
 		envoyArgs = append(envoyArgs, "--concurrency", strconv.FormatUint(uint64(*k.EnvoyConcurrency), 10))
 	}

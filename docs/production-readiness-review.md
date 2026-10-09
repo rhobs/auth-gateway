@@ -134,7 +134,7 @@ into the README with the import line and a `go get`.
 Done when: `go doc github.com/rhobs/auth-gateway/config` shows usage, and the
 README contains one compiling Go snippet.
 
-### 1.2 Export the generated file layout
+### 1.2 Export the generated file layout [x]
 
 `Generate` returns `map[string][]byte` with keys the consumer must guess, and the
 generated bootstrap hardcodes absolute paths that the consumer must reproduce on

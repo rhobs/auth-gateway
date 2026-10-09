@@ -59,7 +59,7 @@ The examples use Envoy `v1.39.1`. Use an Envoy image compatible with the generat
 
 The library also exposes two output paths:
 
-- `config.Generate(cfg)` returns a map of Envoy filenames to file contents. Use it for file-based Envoy deployments. It does not require Kubernetes settings. For API keys, `config.GenerateAPIKeyECDS` returns the separate `api-keys.yaml` file.
+- `config.Generate(cfg)` returns a `config.GeneratedFiles` value with named Envoy files, required absolute paths, and contents. Use it for file-based Envoy deployments. It does not require Kubernetes settings. For API keys, `config.GenerateAPIKeyECDS` returns the separate `api-keys.yaml` file for `config.APIKeyECDSPath`.
 - `config.GenerateKubernetes(cfg)` requires the `kubernetes` section and returns typed resources. Call `resources.YAML()` for a multi-document manifest, or `resources.Objects()` when a Kubernetes client needs typed objects.
 
 For a local Envoy demo with unprotected, API-key, JWT, and mixed servers, see [playground/README.md](playground/README.md).

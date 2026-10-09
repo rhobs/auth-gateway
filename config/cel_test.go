@@ -2,7 +2,6 @@ package config
 
 import (
 	"encoding/json"
-	"path"
 	"reflect"
 	"slices"
 	"strings"
@@ -24,8 +23,8 @@ func TestJWTProcessingUsesFileBasedECDSConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := firstHTTPManager(t, files["envoy.yaml"])
-	if files[processingConfigFilename] == nil {
+	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
+	if files.ProcessingConfig == nil {
 		t.Fatal("mapping configuration is missing its ECDS response file")
 	}
 	var processingFilter *hcm.HttpFilter
@@ -39,14 +38,14 @@ func TestJWTProcessingUsesFileBasedECDSConfiguration(t *testing.T) {
 		t.Fatalf("attribute processing filter = %#v, want file-based ECDS", processingFilter)
 	}
 	configDiscovery := processingFilter.GetConfigDiscovery()
-	if got := configDiscovery.GetConfigSource().GetPathConfigSource().GetPath(); got != path.Join(processingDirectory, processingConfigFilename) {
+	if got := configDiscovery.GetConfigSource().GetPathConfigSource().GetPath(); got != ProcessingConfigPath {
 		t.Fatalf("ECDS config path = %q", got)
 	}
 	wantTypeURL := string((&setfilterstate.Config{}).ProtoReflect().Descriptor().FullName())
 	if !reflect.DeepEqual(configDiscovery.GetTypeUrls(), []string{wantTypeURL}) {
 		t.Fatalf("ECDS type URLs = %v, want %q", configDiscovery.GetTypeUrls(), wantTypeURL)
 	}
-	processing := decodeProcessingECDSConfig(t, files[processingConfigFilename])
+	processing := decodeProcessingECDSConfig(t, files.ProcessingConfig.Contents)
 	if got := len(processing.OnRequestHeaders); got == 0 {
 		t.Fatal("ECDS set_filter_state config has no updates")
 	}
@@ -143,11 +142,11 @@ func TestAPIKeyInitializersKeepMappingECDSSeparate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	processing := decodeProcessingECDSConfig(t, files[processingConfigFilename])
+	processing := decodeProcessingECDSConfig(t, files.ProcessingConfig.Contents)
 	if len(processing.OnRequestHeaders) != 1 || processing.OnRequestHeaders[0].GetObjectKey() != filterStateKey("tenant_id") {
 		t.Fatalf("processing ECDS contains credential extraction: %#v", processing.OnRequestHeaders)
 	}
-	manager := firstHTTPManager(t, files[envoyConfigFilename])
+	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
 	for _, test := range []struct {
 		index int
 		want  int
@@ -183,7 +182,7 @@ func TestHeaderWorkingAttributesRequireVerifiedAuthenticator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := firstHTTPManager(t, files[envoyConfigFilename])
+	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
 	filter := apiKeyHTTPFilter(t, manager, attributeInitializationFilterName(2))
 	var initialization setfilterstate.Config
 	if err := filter.GetTypedConfig().UnmarshalTo(&initialization); err != nil {
@@ -200,7 +199,7 @@ func TestHeaderWorkingAttributesRequireVerifiedAuthenticator(t *testing.T) {
 		!strings.Contains(sources[1], `metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"] == "https://issuer-one.jwt.test"`) {
 		t.Fatalf("mixed any_of header initializers lack credential guards: %v", sources)
 	}
-	processing := decodeProcessingECDSConfig(t, files[processingConfigFilename])
+	processing := decodeProcessingECDSConfig(t, files.ProcessingConfig.Contents)
 	if len(processing.OnRequestHeaders) != 1 || strings.Contains(processing.OnRequestHeaders[0].GetFormatString().GetTextFormat(), "auth_gateway.request_headers") { //nolint:staticcheck // Assert the generated Envoy wire format.
 		t.Fatalf("mapping ECDS contains header extraction: %#v", processing.OnRequestHeaders)
 	}

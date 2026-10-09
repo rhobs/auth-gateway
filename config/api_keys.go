@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -238,7 +237,7 @@ func apiKeyFilter() *hcm.HttpFilter {
 	return &hcm.HttpFilter{
 		Name: apiKeyFilterName, Disabled: true,
 		ConfigType: &hcm.HttpFilter_ConfigDiscovery{ConfigDiscovery: &core.ExtensionConfigSource{
-			ConfigSource: fileConfigSource(path.Join(apiKeyDirectory, apiKeySecretFilename)),
+			ConfigSource: fileConfigSource(APIKeyECDSPath),
 			TypeUrls:     []string{string((&matching.ExtensionWithMatcher{}).ProtoReflect().Descriptor().FullName())},
 		}},
 	}

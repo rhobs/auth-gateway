@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
-	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -57,10 +57,10 @@ func TestGeneratedReferenceFiles(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			checkReference(t, filepath.Join(caseDir, "envoy.yaml.golden"), envoyFiles["envoy.yaml"])
+			checkReference(t, filepath.Join(caseDir, "envoy.yaml.golden"), envoyFiles.EnvoyBootstrap.Contents)
 			processingPath := filepath.Join(caseDir, "processing.yaml.golden")
-			if data, ok := envoyFiles[processingConfigFilename]; ok {
-				checkReference(t, processingPath, data)
+			if envoyFiles.ProcessingConfig != nil {
+				checkReference(t, processingPath, envoyFiles.ProcessingConfig.Contents)
 			} else if *updateGoldens {
 				if err := os.Remove(processingPath); err != nil && !os.IsNotExist(err) {
 					t.Fatal(err)
@@ -89,12 +89,12 @@ func TestPlaygroundBootstrap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bootstrap, exists := files[envoyConfigFilename]
-	if !exists {
+	bootstrap := files.EnvoyBootstrap.Contents
+	if files.EnvoyBootstrap.Path != EnvoyBootstrapPath || len(bootstrap) == 0 {
 		t.Fatal("playground bootstrap is missing")
 	}
-	if len(files) != 1 {
-		t.Fatalf("playground needs a file layout for %d generated files", len(files))
+	if len(files.All()) != 1 {
+		t.Fatalf("playground needs a file layout for %d generated files", len(files.All()))
 	}
 	checkReference(t, filepath.Join("..", "playground", "envoy.yaml.golden"), bootstrap)
 
@@ -140,10 +140,10 @@ func TestGenerateBuildsNamedAPIClustersAndRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 1 || len(files["envoy.yaml"]) == 0 {
+	if len(files.All()) != 1 || files.EnvoyBootstrap.Path != EnvoyBootstrapPath || len(files.EnvoyBootstrap.Contents) == 0 {
 		t.Fatalf("generated files = %v", files)
 	}
-	bootstrapConfig := decodeBootstrap(t, files["envoy.yaml"])
+	bootstrapConfig := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	if got := bootstrapConfig.Node.GetId(); got != "auth-gateway" {
 		t.Fatalf("node ID = %q", got)
 	}
@@ -222,7 +222,7 @@ func TestGenerateAllowsMethodsOnOnePath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bootstrapConfig := decodeBootstrap(t, files["envoy.yaml"])
+	bootstrapConfig := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	var manager hcm.HttpConnectionManager
 	if err := bootstrapConfig.StaticResources.Listeners[0].FilterChains[0].Filters[0].GetTypedConfig().UnmarshalTo(&manager); err != nil {
 		t.Fatal(err)
@@ -242,7 +242,7 @@ func TestGenerateBuildsRoutesFromRouteLists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bootstrapConfig := decodeBootstrap(t, files["envoy.yaml"])
+	bootstrapConfig := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	var manager hcm.HttpConnectionManager
 	if err := bootstrapConfig.StaticResources.Listeners[0].FilterChains[0].Filters[0].GetTypedConfig().UnmarshalTo(&manager); err != nil {
 		t.Fatal(err)
@@ -312,10 +312,10 @@ func TestGenerateBuildsHTTPAndSNISelectedHTTPSChains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 2 {
+	if len(files.All()) != 2 {
 		t.Fatalf("generated files = %v, want bootstrap and server certificate SDS resource", files)
 	}
-	bootstrapConfig := decodeBootstrap(t, files["envoy.yaml"])
+	bootstrapConfig := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	generatedListener := bootstrapConfig.StaticResources.Listeners[0]
 	if len(generatedListener.ListenerFilters) != 1 || generatedListener.ListenerFilters[0].Name != "envoy.filters.listener.tls_inspector" {
 		t.Fatalf("listener filters = %#v, want TLS inspector", generatedListener.ListenerFilters)
@@ -362,7 +362,7 @@ func TestGenerateBuildsHTTPAndSNISelectedHTTPSChains(t *testing.T) {
 		t.Fatalf("certificate SDS resource path = %q", got)
 	}
 
-	secret := decodeTLSSecret(t, files["server-certificate-1.yaml"])
+	secret := decodeTLSSecret(t, generatedContentsByPath(t, files, "/etc/auth-gateway/server-certificate-1.yaml"))
 	certificate := secret.GetTlsCertificate()
 	if secret.GetName() != "gateway_server_1" || certificate == nil {
 		t.Fatalf("generated SDS resource = %#v", secret)
@@ -386,6 +386,30 @@ func TestGenerateRejectsInvalidConfiguration(t *testing.T) {
 	config.Version = 2
 	if _, err := Generate(config); err == nil || !strings.Contains(err.Error(), "version must") {
 		t.Fatalf("Generate error = %v, want unsupported config version", err)
+	}
+}
+
+func TestGenerateReturnsNamedFilesWithRequiredPaths(t *testing.T) {
+	files, err := Generate(loadConfigCase(t, "jwt-auth-with-mappings"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.ProcessingConfig == nil {
+		t.Fatal("mapped configuration has no processing file")
+	}
+	wantPaths := []string{
+		EnvoyBootstrapPath,
+		ProcessingConfigPath,
+		path.Join(EnvoyConfigDirectory, "server-certificate-1.yaml"),
+	}
+	generated := files.All()
+	if len(generated) != len(wantPaths) {
+		t.Fatalf("generated files = %#v, want paths %v", generated, wantPaths)
+	}
+	for i, file := range generated {
+		if file.Path != wantPaths[i] || len(file.Contents) == 0 {
+			t.Fatalf("generated file %d = %#v, want nonempty file at %q", i, file, wantPaths[i])
+		}
 	}
 }
 
@@ -414,10 +438,10 @@ func TestGenerateScopesAPIExposureToServers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 3 {
-		t.Fatalf("file count = %d, want bootstrap and two SDS files", len(files))
+	if len(files.All()) != 3 {
+		t.Fatalf("file count = %d, want bootstrap and two SDS files", len(files.All()))
 	}
-	bootstrap := decodeBootstrap(t, files["envoy.yaml"])
+	bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	if len(bootstrap.StaticResources.Clusters) != 3 {
 		t.Fatal("API bindings duplicated upstream clusters")
 	}
@@ -479,7 +503,7 @@ func TestGenerateScopesAPIExposureToServers(t *testing.T) {
 		}
 	}
 	for i, filename := range []string{"server-certificate-3.yaml", "server-certificate-4.yaml"} {
-		secret := decodeTLSSecret(t, files[filename])
+		secret := decodeTLSSecret(t, generatedContentsByPath(t, files, path.Join(EnvoyConfigDirectory, filename)))
 		wantName := []string{"gateway_server_3", "gateway_server_4"}[i]
 		if secret.Name != wantName || secret.GetTlsCertificate().GetWatchedDirectory().GetPath() != "/etc/shared-tls" {
 			t.Fatalf("SDS file %s does not reference the shared certificate with a distinct name", filename)
@@ -583,17 +607,30 @@ func resourceMap(entries []struct{ name, value string }, reverse bool) map[strin
 	return values
 }
 
-func assertGeneratedFilesEqual(t testing.TB, left, right map[string][]byte) {
+func assertGeneratedFilesEqual(t testing.TB, left, right GeneratedFiles) {
 	t.Helper()
-	if len(left) != len(right) {
-		t.Fatalf("generated file counts differ: %d and %d", len(left), len(right))
+	leftFiles := left.All()
+	rightFiles := right.All()
+	if len(leftFiles) != len(rightFiles) {
+		t.Fatalf("generated file counts differ: %d and %d", len(leftFiles), len(rightFiles))
 	}
-	for name, contents := range left {
-		other, ok := right[name]
-		if !ok || !bytes.Equal(contents, other) {
-			t.Fatalf("generated file %q differs", name)
+	for i, file := range leftFiles {
+		other := rightFiles[i]
+		if file.Path != other.Path || !bytes.Equal(file.Contents, other.Contents) {
+			t.Fatalf("generated file %q differs from %q", file.Path, other.Path)
 		}
 	}
+}
+
+func generatedContentsByPath(t testing.TB, files GeneratedFiles, filePath string) []byte {
+	t.Helper()
+	for _, file := range files.All() {
+		if file.Path == filePath {
+			return file.Contents
+		}
+	}
+	t.Fatalf("generated file %q is missing", filePath)
+	return nil
 }
 
 func TestGenerateUsesAPIBindingOrder(t *testing.T) {
@@ -611,7 +648,7 @@ func TestGenerateUsesAPIBindingOrder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		bootstrap := decodeBootstrap(t, files["envoy.yaml"])
+		bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 		manager := decodeHTTPManager(t, bootstrap.StaticResources.Listeners[0].FilterChains[0])
 		routes := manager.GetRouteConfig().VirtualHosts[0].Routes
 		for i, apiName := range order {
@@ -630,7 +667,7 @@ func TestJWTHeaderOnlyGrantRequiresNamedVerifiedIssuer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := firstHTTPManager(t, files[envoyConfigFilename])
+	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
 	names := httpFilterNames(manager)
 	if slices.Index(names, "envoy.filters.http.header_to_metadata") < 0 ||
 		slices.Index(names, "envoy.filters.http.set_filter_state") >= 0 {
@@ -658,7 +695,7 @@ func TestJWTProviderClustersAndTrust(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	generated := decodeBootstrap(t, files["envoy.yaml"])
+	generated := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	manager := decodeHTTPManager(t, generated.StaticResources.Listeners[0].FilterChains[0])
 
 	var jwtConfig jwt.JwtAuthentication
@@ -845,12 +882,17 @@ func TestConditionalJWTFilterOrder(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			bootstrap := decodeBootstrap(t, files[envoyConfigFilename])
+			bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 			manager := decodeHTTPManager(t, bootstrap.StaticResources.Listeners[0].FilterChains[0])
 			if got := httpFilterNames(manager); !slices.Equal(got, test.wantOrder) {
 				t.Fatalf("HTTP filter order = %v, want %v", got, test.wantOrder)
 			}
-			if got := slices.Sorted(maps.Keys(files)); !slices.Equal(got, test.wantFiles) {
+			got := make([]string, 0, len(files.All()))
+			for _, file := range files.All() {
+				got = append(got, filepath.Base(file.Path))
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, test.wantFiles) {
 				t.Fatalf("generated files = %v, want %v", got, test.wantFiles)
 			}
 		})
@@ -863,7 +905,7 @@ func TestJWTRequiredHeadersAreRouteScopedAndManaged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := firstHTTPManager(t, files["envoy.yaml"])
+	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
 	var globalMutation headermutation.HeaderMutation
 	for _, filter := range manager.HttpFilters {
 		if filter.Name == "envoy.filters.http.header_mutation" {

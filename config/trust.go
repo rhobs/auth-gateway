@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	caDirectory            = "/etc/auth-gateway-ca"
+	caDirectory            = TrustedCADirectory
 	systemCABundle         = "/etc/ssl/certs/ca-certificates.crt"
 	tlsTransportSocketName = "envoy.transport_sockets.tls"
 )

@@ -407,7 +407,7 @@ func TestOverloadGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decodeBootstrap(t, files["envoy.yaml"]).OverloadManager != nil {
+	if decodeBootstrap(t, files.EnvoyBootstrap.Contents).OverloadManager != nil {
 		t.Fatal("overload enabled without explicit budgets")
 	}
 	c.Overload = &OverloadConfig{MaxHeapBytes: 128 << 20, MaxDownstreamConnections: 1024, HeapShrinkThreshold: new(0.8), RequestRejectThreshold: new(0.85)}
@@ -415,7 +415,7 @@ func TestOverloadGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	o := decodeBootstrap(t, files["envoy.yaml"]).OverloadManager
+	o := decodeBootstrap(t, files.EnvoyBootstrap.Contents).OverloadManager
 	if o == nil || o.RefreshInterval.AsDuration() != 250*time.Millisecond || len(o.ResourceMonitors) != 2 || len(o.Actions) != 2 || len(o.LoadshedPoints) != 0 {
 		t.Fatalf("overload manager = %v", o)
 	}

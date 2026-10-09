@@ -51,12 +51,16 @@ func TestPinnedImagesValidateGeneratedFiles(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			for name, data := range files {
-				dir := configDir
-				if name == processingConfigFilename {
-					dir = processingDir
+			for _, file := range files.All() {
+				relativePath, err := filepath.Rel(EnvoyConfigDirectory, filepath.FromSlash(file.Path))
+				if err != nil {
+					t.Fatalf("make generated path relative: %v", err)
 				}
-				runtimeWrite(t, filepath.Join(dir, name), data)
+				outputPath := filepath.Join(configDir, relativePath)
+				if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				runtimeWrite(t, outputPath, file.Contents)
 			}
 			if authenticator, exists := c.apiKeyAuthenticator(); exists {
 				secret, err := APIKeySecret(c.Kubernetes.Namespace, authenticator, nil)

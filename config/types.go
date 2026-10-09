@@ -575,9 +575,14 @@ func (ref CAConfigMap) id() string {
 	return hex.EncodeToString(digest[:16])
 }
 
+// FilePath returns the absolute Envoy path used for this CA ConfigMap entry.
+func (ref CAConfigMap) FilePath() string {
+	return path.Join(TrustedCADirectory, ref.id(), caCertificateFilename)
+}
+
 func (ca TrustedCA) filename() string {
 	if ca.ConfigMap != nil {
-		return path.Join(caDirectory, ca.ConfigMap.id(), caCertificateFilename)
+		return ca.ConfigMap.FilePath()
 	}
 	return ca.Filename
 }
