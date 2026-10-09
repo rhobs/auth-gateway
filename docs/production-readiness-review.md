@@ -176,7 +176,7 @@ there and is being thrown away into a string.
 Done when: the package doc states the contract, and if a typed error is added,
 `Load` and `Validate` return it for every validation failure.
 
-### 1.4 Document the deployment-mode split on trusted CAs
+### 1.4 Document the deployment-mode split on trusted CAs [x]
 
 `TrustedCA.Filename` (`config/types.go:246`) appears in no example and no
 document. It is also the only CA option that works without Kubernetes:

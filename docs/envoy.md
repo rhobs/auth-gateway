@@ -90,7 +90,9 @@ A route that selects output headers also selects required working attributes. If
 
 Each JWT authenticator gets its own JSON Web Key Set (JWKS) cluster and cache, even when providers share a URI. JWKS fetching is on demand and cache state is per worker. A usable cached key may survive a short issuer outage. A cold cache or expired key fails closed when the issuer is unavailable. Cache duration does not guarantee immediate key revocation; rotate keys with an overlap period.
 
-JWKS and TLS upstream connections verify certificate chains and endpoint identity. The default trust bundle is `/etc/ssl/certs/ca-certificates.crt`. A configured CA replaces system trust. DNS identities use SNI and hostname validation. IP upstreams use IP Subject Alternative Name validation. Kubernetes CA ConfigMaps are mounted under `/etc/auth-gateway-ca`; a changed CA bundle requires a rollout.
+JWKS and TLS upstream connections verify certificate chains and endpoint identity. The default trust bundle is `/etc/ssl/certs/ca-certificates.crt`. A configured CA replaces system trust. DNS identities use SNI and hostname validation. IP upstreams use IP Subject Alternative Name validation.
+
+The `trusted_ca` form depends on the deployment mode. With Kubernetes settings, use `config_map` to select a key from an existing ConfigMap in the gateway namespace; the generated resources mount it under `/etc/auth-gateway-ca/<hashed-id>/ca.crt`. For file-based configuration without Kubernetes settings, use `filename` with a clean absolute path to a CA bundle that Envoy can read. These options apply to both JWKS and upstream TLS trust. A changed CA ConfigMap requires a rollout.
 
 Upstreams use HTTP/1 unless `http_protocol: http2` is set. HTTP/2 connection options are emitted only for explicit HTTP/2 configuration. Circuit-breaker values control cluster limits; a nonzero retry breaker does not add a retry policy.
 

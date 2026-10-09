@@ -96,7 +96,19 @@ All servers share one Envoy listener, port `8080` by default. An entry without `
 
 Kubernetes output exposes Service port `80` when HTTP servers exist and port `443` when HTTPS servers exist. Both target the Envoy listener. For an HTTPS server, set `tls_config.secret` to an existing Kubernetes TLS Secret. Certificate and key paths default to `/etc/<secret>/tls.crt` and `/etc/<secret>/tls.key`. HTTPS termination at Envoy does not request client certificates.
 
-Upstreams use HTTP/1 by default. Set `upstream.http_protocol: http2` only when the backend supports HTTP/2. For TLS upstreams, configure `upstream.tls_config` with the expected DNS name and, when needed, a trusted CA. JSON Web Key Set (JWKS) endpoints use HTTPS and validate the endpoint identity.
+Upstreams use HTTP/1 by default. Set `upstream.http_protocol: http2` only when the backend supports HTTP/2. For TLS upstreams, configure `upstream.tls_config` with the expected DNS name. A configured trusted CA replaces Envoy's system trust bundle. Its YAML form depends on the deployment: use `config_map` for Kubernetes output and `filename` for file-based output without Kubernetes settings. The same choice applies to JWT JWKS trust. JSON Web Key Set (JWKS) endpoints use HTTPS and validate the endpoint identity.
+
+For file-based output, point `trusted_ca.filename` at an absolute CA bundle path that Envoy can read:
+
+```yaml
+upstream:
+  address: query.backend.example.com
+  port: 9091
+  tls_config:
+    server_name: query.backend.example.com
+    trusted_ca:
+      filename: /etc/auth-gateway-ca/backend-ca.pem
+```
 
 ## Authentication and request processing
 
