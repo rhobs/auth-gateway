@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rhobs/auth-gateway/config"
 )
@@ -145,4 +146,39 @@ func ExampleAPIKeySecret() {
 	// Output:
 	// auth-gateway-api-keys observability
 	// true
+}
+
+func ExampleNewDuration() {
+	gateway := config.Config{
+		Version: 1,
+		Listener: config.Listener{
+			Port:           new(uint32(8080)),
+			RequestTimeout: config.NewDuration(30 * time.Second),
+		},
+		Servers: []config.Server{{
+			Hostname: "metrics.example.com",
+			APIs:     []string{"metrics"},
+		}},
+		APIs: []config.API{{
+			Name: "metrics",
+			Upstream: config.Upstream{
+				Address:        "thanos-receive",
+				Port:           19291,
+				ConnectTimeout: config.NewDuration(5 * time.Second),
+			},
+			Routes: []config.Route{{
+				Methods: []string{"POST"},
+				Path:    config.PathMatch{Exact: "/metrics/api/v1/receive"},
+			}},
+		}},
+	}
+	if err := gateway.Validate(); err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(gateway.Listener.RequestTimeout)
+	fmt.Println(gateway.APIs[0].Upstream.ConnectTimeout)
+	// Output:
+	// 30s
+	// 5s
 }

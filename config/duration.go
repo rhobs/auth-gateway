@@ -8,6 +8,11 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
+// NewDuration returns a pointer to a Duration with the given value.
+func NewDuration(value time.Duration) *Duration {
+	return new(Duration(value))
+}
+
 func (value *Duration) withDefault(fallback time.Duration) *Duration {
 	return defaultValue(value, Duration(fallback))
 }

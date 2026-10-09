@@ -206,7 +206,7 @@ deployment mode, and at least one example shows `filename`.
 
 Done when: every exported identifier has a conventional doc comment.
 
-### 1.6 Add constructors for pointer fields
+### 1.6 Add constructors for pointer fields [x]
 
 The schema uses pointers throughout to distinguish "unset" from "zero". A
 consumer building a `Config` programmatically has to hand-roll a pointer for
