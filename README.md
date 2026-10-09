@@ -121,3 +121,7 @@ Label values must be 1 to 128 printable ASCII bytes and cannot contain `|`. Labe
 Set `observability.tracing.enabled: true` to enable Envoy's native OpenTelemetry HTTP tracer. Envoy sends sampled OTLP/gRPC spans to the local collector at `127.0.0.1:4317`, and the collector exports them to the required `observability.tracing.endpoint` (`host:port`). TLS is enabled by default; set `insecure: true` only for a trusted plaintext endpoint. The service name defaults to `node.cluster`, and `sampling_percentage` defaults to `100` and accepts values from `0` to `100`. Tracing starts the collector even when metrics are disabled; the OTLP receiver remains local to the Pod and is not exposed by the Service. For file-based Envoy output, configure a collector yourself to receive on the local OTLP port and export to the same endpoint.
 
 For generator details, filter order, trust, and reload mechanics, see [docs/envoy.md](docs/envoy.md). For local checks, test ownership, and golden updates, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE).

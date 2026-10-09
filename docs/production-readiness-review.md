@@ -43,7 +43,7 @@ root cause closes more than one item.
 
 Small, cheap, and they unblock everything else. Do these first.
 
-### 0.1 Add a LICENSE file
+### 0.1 Add a LICENSE file [x]
 
 There is no `LICENSE` in the repository root. Without one the default is "all
 rights reserved", and no downstream consumer can legally vendor or import the
