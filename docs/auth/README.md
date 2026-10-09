@@ -9,9 +9,10 @@ JWT, API-key, and mixed server configurations. A server without
 ## Authentication
 
 Define named methods in `authenticators`, then select them on each server
-with `authentication.any_of` or `authentication.all_of`. `any_of` accepts
-one selected method; `all_of` requires every selected method. A gateway
-can define multiple JWT authenticators but only one API-key authenticator.
+with `authentication.any_of` or `authentication.all_of`. `any_of` accepts a
+request when any selected method succeeds; `all_of` requires every selected
+method to succeed. A gateway can define multiple JWT authenticators but only
+one API-key authenticator.
 
 For a mixed JWT and API-key `any_of` server, a valid JWT takes precedence
 when both credentials are sent. If the JWT is absent or fails verification,

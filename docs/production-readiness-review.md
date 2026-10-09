@@ -258,13 +258,13 @@ is exactly this section.
 Done when: the Secret format lives in `docs/auth/api-key.md` and
 `docs/envoy.md` links to it rather than owning it.
 
-### 1.10 Correct the `any_of` wording
+### 1.10 Correct the `any_of` wording [x]
 
-`docs/guides/auth/README.md:12` says "`any_of` accepts one selected method".
-Read literally that says the list may hold only one authenticator, which
-contradicts `config.auth.example.yaml:206` and the code. The intended meaning is
-that one of the selected methods must succeed. `README.md:71` and
-`docs/envoy.md:51` both state it correctly.
+`docs/auth/README.md:12` said "`any_of` accepts one selected method". This could
+imply that only one method may be selected, which contradicts
+`config.auth.example.yaml:206` and the code. The guide now says a request is
+accepted when any selected method succeeds. `README.md:71` and `docs/envoy.md:51`
+describe mixed credential selection consistently.
 
 Done when: the guide matches the README.
 
