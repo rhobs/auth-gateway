@@ -113,7 +113,7 @@ Done when: the three files exist and `.gitignore` covers `.idea/`.
 The package is documented as a library but cannot be adopted as one without
 reading the source. This phase is the highest-value work in the review.
 
-### 1.1 Add runnable Go examples
+### 1.1 Add runnable Go examples [x]
 
 There is no Go code in any documentation file, no `example_test.go` anywhere, and
 the module import path `github.com/rhobs/auth-gateway` appears in no document.

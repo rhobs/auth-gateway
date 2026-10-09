@@ -1,4 +1,9 @@
-// Package config provides the consumer-facing configuration API for auth-gateway.
+// Package config loads and validates auth-gateway YAML, then generates Envoy
+// files or Kubernetes resources.
+//
+// Start with Load. Use Generate for file-based Envoy output or
+// GenerateKubernetes for Kubernetes resources. LoadAPIKeyCredentials and
+// APIKeySecret build the external API-key Secret separately.
 package config
 
 import (

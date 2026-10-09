@@ -8,6 +8,49 @@ The current implementation supports exact-host routing, HTTP and HTTPS listeners
 
 To deploy on Kubernetes, load a gateway YAML document with `config.Load`, call `config.GenerateKubernetes`, then write `resources.YAML()` to a manifest file. These library calls do not connect to Kubernetes or create referenced credentials. Create the target namespace and any referenced Transport Layer Security (TLS) Secrets, API-key Secret, and certificate authority (CA) ConfigMaps first. TLS Secrets must contain `tls.crt` and `tls.key`; CA ConfigMaps must contain the configured key. Then apply the manifest:
 
+Install the module:
+
+```sh
+go get github.com/rhobs/auth-gateway
+```
+
+Load and validate YAML from Go:
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+	"strings"
+
+	"github.com/rhobs/auth-gateway/config"
+)
+
+func main() {
+	gateway, err := config.Load(strings.NewReader(`version: 1
+servers:
+  - hostname: auth.example.com
+    apis: [metrics]
+apis:
+  - name: metrics
+    upstream:
+      address: thanos-receive
+      port: 19291
+    routes:
+      - methods: [POST]
+        path:
+          exact: /metrics/api/v1/receive
+`))
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(gateway.APIs[0].Name)
+}
+```
+
+Then apply the generated Kubernetes manifest:
+
 ```sh
 kubectl apply -f auth-gateway.yaml
 ```
