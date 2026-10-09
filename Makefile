@@ -9,6 +9,7 @@ test:
 lint:
 	@unformatted=$$(gofmt -l config e2e playground); \
 	if [ -n "$$unformatted" ]; then printf '%s\n' "$$unformatted"; exit 1; fi
+	sh scripts/check-markdown-links.sh
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run
 
 test-runtime:

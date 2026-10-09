@@ -72,7 +72,7 @@ README links intact and makes all six links resolve.
 
 Done when: every relative link in every markdown file resolves to an existing path.
 
-### 0.3 Add a link checker to the lint target
+### 0.3 Add a link checker to the lint target [x]
 
 Item 0.2 was a silent regression that survived several commits. Add a link check
 so it cannot happen again. A short shell loop over `grep`-extracted targets is
