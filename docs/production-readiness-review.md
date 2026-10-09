@@ -268,15 +268,16 @@ describe mixed credential selection consistently.
 
 Done when: the guide matches the README.
 
-### 1.11 Fix the stale test ownership table
+### 1.11 Fix the stale test ownership table [x]
 
-`CONTRIBUTING.md:52-53` names three files that do not exist
+At review time, `CONTRIBUTING.md:52-53` named three files that did not exist
 (`config/defaults_test.go`, `config/jwks_test.go`, `config/jwt_generate_test.go`)
-and omits five that do (`api_keys_test.go`, `cel_test.go`, `duration_test.go`,
-`observability_test.go`, `runtime_test.go`). The recent test consolidation
-commits moved the content and left the table behind.
+and omitted test files added during consolidation. The table now names all files
+in `config/`, including the compiled examples, and keeps the e2e suite globs for
+scenario and framework tests.
 
-Done when: the table matches the files on disk.
+Done when: every named config test file exists and every config test file on
+disk appears in the table.
 
 ### 1.12 State the Go version and versioning policy
 

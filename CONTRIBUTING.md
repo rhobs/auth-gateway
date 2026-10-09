@@ -47,12 +47,16 @@ Comments should be short and explain behavior that is not clear from the code.
 
 ## Test ownership
 
-| Suite                                                                                          | Owns                                                                                                                                                    |
-|------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `config/config_test.go`, `defaults_test.go`, `servers_test.go`, `auth_test.go`, `jwks_test.go` | Strict YAML loading, defaults, validation, references, TLS trust, timeout inheritance, and input immutability.                                          |
-| `config/generate_test.go`, `jwt_generate_test.go`, `kubernetes_test.go`                        | Generated Envoy behavior, conditional filter order, complete reference output, Kubernetes packaging, ports, mounts, and reload boundaries.              |
-| `e2e/internal/framework/*_test.go`                                                             | Infrastructure behavior needed by e2e tests, including ready-Pod choice and named target-port resolution.                                               |
-| `e2e/*_test.go`                                                                                | Observable gateway behavior: routing, authentication, authorization, request transformation, TLS rotation, mapping reload, JWKS lifecycle, and metrics. |
+| Suite | Owns |
+| --- | --- |
+| `config/config_test.go`, `config/servers_test.go`, `config/auth_test.go`, `config/duration_test.go` | Strict YAML loading, defaults, schema and semantic validation, timeout inheritance, duration serialization, and input immutability. |
+| `config/api_keys_test.go` | API-key credential loading and validation, generated Secret resources, and key authentication behavior. |
+| `config/cel_test.go`, `config/generate_test.go` | Generated Envoy expressions, filters, routes, authorization policies, and reference output. |
+| `config/kubernetes_test.go`, `config/observability_test.go` | Kubernetes packaging and observability defaults, validation, and generated resources. |
+| `config/runtime_test.go` | Validation of generated files against the pinned runtime images. |
+| `config/example_test.go` | Compiled consumer examples for loading configuration and generating files and resources. |
+| `e2e/internal/framework/*_test.go` | Infrastructure behavior needed by e2e tests, including ready-Pod choice and named target-port resolution. |
+| `e2e/*_test.go` | Observable gateway behavior: routing, authentication, authorization, request transformation, TLS rotation, mapping reload, JWKS lifecycle, and metrics. |
 
 Give each test a distinct contract and an observable expected result. Use a valid baseline and change one property for validation cases. Assert the expected error field or cause. Use fresh typed configurations for generation variants. Keep YAML inputs explicit; do not create test configurations with string replacement. Use independent expected values for generated structures.
 
