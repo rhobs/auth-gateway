@@ -80,7 +80,7 @@ enough; no new tool dependency is needed.
 
 Done when: `make lint` fails if any relative markdown link does not resolve.
 
-### 0.4 Add continuous integration
+### 0.4 Add continuous integration [x]
 
 There is no `.github/` directory and no CI definition anywhere. `make test`,
 `make lint`, `make test-runtime`, and `make e2e` all exist and all pass, but
@@ -91,14 +91,8 @@ Add a workflow that runs, on pull request:
 1. `make lint`
 2. `make test`
 3. `go test -tags=e2e,envoyruntime -run '^$' ./...` to compile tagged packages
-4. `go test -tags=e2e ./e2e/internal/framework`
+4. `make e2e`
 5. `make test-runtime`
-
-Run `make e2e` on a schedule or on a label rather than on every pull request.
-It needs Docker and Kind and takes about five and a half minutes once images are
-cached, considerably longer cold.
-
-Depends on: 0.3, so the link check lands inside the lint job.
 
 Done when: a pull request runs all five checks and fails on any of them.
 

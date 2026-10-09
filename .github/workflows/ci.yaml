@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            e2e/tools/go.sum
+
+      - name: Lint
+        run: make lint
+
+      - name: Unit and golden tests
+        run: make test
+
+      - name: Compile tagged packages
+        run: go test -tags=e2e,envoyruntime -run '^$' ./...
+
+      - name: Install Kind
+        run: |
+          curl --fail --silent --show-error --location \
+            --output kind \
+            https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64
+          chmod +x kind
+          sudo install -m 0755 kind /usr/local/bin/kind
+
+      - name: End-to-end tests
+        run: make e2e
+
+      - name: Runtime image checks
+        run: make test-runtime
