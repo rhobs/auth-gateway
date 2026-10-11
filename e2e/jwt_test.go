@@ -17,7 +17,7 @@ import (
 
 var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authentication", "authorization", "namespace-"+jwtPlainNamespace), Ordered, func() {
 	BeforeAll(func(ctx SpecContext) {
-		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, jwtPlainNamespace)).To(Succeed()) }, NodeTimeout(3*time.Minute))
+		DeferCleanup(func() { deleteNamespaceInBackground(jwtPlainNamespace) })
 		var err error
 		jwtPlainGateway, err = setupJWTGateway(ctx, jwtPlainNamespace, "jwt-auth.yaml")
 		Expect(err).NotTo(HaveOccurred())
@@ -186,7 +186,7 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 
 var _ = Describe("Direct JWT headers", Label("gateway", "jwt", "authentication", "authorization", "namespace-"+jwtHeadersNamespace), Ordered, func() {
 	BeforeAll(func(ctx SpecContext) {
-		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, jwtHeadersNamespace)).To(Succeed()) }, NodeTimeout(3*time.Minute))
+		DeferCleanup(func() { deleteNamespaceInBackground(jwtHeadersNamespace) })
 		var err error
 		jwtHeadersGateway, err = setupJWTGateway(ctx, jwtHeadersNamespace, "jwt-auth-with-headers.yaml")
 		Expect(err).NotTo(HaveOccurred())
@@ -260,7 +260,7 @@ var _ = Describe("Direct JWT headers", Label("gateway", "jwt", "authentication",
 
 var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "authentication", "authorization", "namespace-"+jwtNamespace), Ordered, func() {
 	BeforeAll(func(ctx SpecContext) {
-		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, jwtNamespace)).To(Succeed()) }, NodeTimeout(3*time.Minute))
+		DeferCleanup(func() { deleteNamespaceInBackground(jwtNamespace) })
 		var err error
 		jwtGateway, err = setupJWTGateway(ctx, jwtNamespace, "jwt-gateway.yaml")
 		Expect(err).NotTo(HaveOccurred())

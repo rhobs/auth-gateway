@@ -44,9 +44,7 @@ func setupGateway(ctx SpecContext, namespace string, useTLS bool) {
 	routingRootCAs = nil
 
 	Expect(resetE2ENamespace(ctx, namespace)).To(Succeed())
-	DeferCleanup(func(ctx SpecContext) {
-		Expect(env.DeleteNamespace(ctx, namespace)).To(Succeed())
-	}, NodeTimeout(3*time.Minute))
+	DeferCleanup(func() { deleteNamespaceInBackground(namespace) })
 
 	if useTLS {
 		Expect(env.EnsureCertManager(ctx, os.Getenv("AUTH_GATEWAY_E2E_CERT_MANAGER_MANIFEST"))).To(Succeed())

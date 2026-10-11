@@ -57,7 +57,7 @@ var _ = Describe("API-key request decisions", Label("gateway", "api-key", "authe
 	var gateway *apiKeyE2E
 
 	BeforeAll(func(ctx SpecContext) {
-		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, apiKeyBehaviorNS)).To(Succeed()) }, NodeTimeout(3*time.Minute))
+		DeferCleanup(func() { deleteNamespaceInBackground(apiKeyBehaviorNS) })
 		var err error
 		gateway, err = setupAPIKeyGateway(ctx, apiKeyBehaviorNS, false, baselineAPIKeyCredentials(), apiKeySharedSecretKey)
 		Expect(err).NotTo(HaveOccurred())
@@ -207,7 +207,7 @@ var _ = Describe("API-key Secret projection", Label("gateway", "api-key", "authe
 	var gateway *apiKeyE2E
 
 	BeforeAll(func(ctx SpecContext) {
-		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, apiKeyProjectionNS)).To(Succeed()) }, NodeTimeout(3*time.Minute))
+		DeferCleanup(func() { deleteNamespaceInBackground(apiKeyProjectionNS) })
 		var err error
 		gateway, err = setupAPIKeyGateway(ctx, apiKeyProjectionNS, false, baselineAPIKeyCredentials(), apiKeySharedSecretKey)
 		Expect(err).NotTo(HaveOccurred())
@@ -259,7 +259,7 @@ var _ = Describe("API-key namespace isolation", Label("gateway", "api-key", "aut
 	var gateway *apiKeyE2E
 
 	BeforeAll(func(ctx SpecContext) {
-		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, apiKeyIsolatedNS)).To(Succeed()) }, NodeTimeout(3*time.Minute))
+		DeferCleanup(func() { deleteNamespaceInBackground(apiKeyIsolatedNS) })
 		var err error
 		gateway, err = setupAPIKeyGatewayWithShape(ctx, apiKeyIsolatedNS, true, []config.APIKeyCredential{
 			{Key: "isolated-key", Attributes: map[string]string{"tenant_id": "client-b", "writer_id": "writer-b"}},

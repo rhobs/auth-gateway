@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -32,6 +34,42 @@ func TestGatewayE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Auth Gateway E2E", Label("e2e", "auth-gateway"))
 }
+
+// backgroundNamespaceCleanup tracks namespace deletions started with
+// deleteNamespaceInBackground so AfterSuite can confirm they all finished without
+// making every container's teardown wait on Kubernetes actually removing the
+// namespace. Errors are collected rather than asserted inline because a goroutine
+// outliving its spec must not attribute a Ginkgo failure to whatever spec happens to
+// be running when it completes.
+var backgroundNamespaceCleanup struct {
+	sync.Mutex
+	sync.WaitGroup
+	errs []error
+}
+
+func deleteNamespaceInBackground(namespace string) {
+	wait, err := env.DeleteNamespaceAsync(context.Background(), namespace, 120*time.Second)
+	if err != nil {
+		backgroundNamespaceCleanup.Lock()
+		backgroundNamespaceCleanup.errs = append(backgroundNamespaceCleanup.errs, err)
+		backgroundNamespaceCleanup.Unlock()
+		return
+	}
+	backgroundNamespaceCleanup.Add(1)
+	go func() {
+		defer backgroundNamespaceCleanup.Done()
+		if err := wait(); err != nil {
+			backgroundNamespaceCleanup.Lock()
+			backgroundNamespaceCleanup.errs = append(backgroundNamespaceCleanup.errs, err)
+			backgroundNamespaceCleanup.Unlock()
+		}
+	}()
+}
+
+var _ = AfterSuite(func() {
+	backgroundNamespaceCleanup.Wait()
+	Expect(backgroundNamespaceCleanup.errs).To(BeEmpty(), "background namespace cleanup")
+})
 
 func currentE2ERunID() string {
 	if runID := os.Getenv(e2eRunIDEnvironmentVariable); runID != "" {

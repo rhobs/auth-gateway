@@ -37,9 +37,7 @@ var _ = Describe("Upstream TLS and HTTP/2", Label("gateway", "upstream-transport
 	var backendCertificates *jwtTestCertificates
 
 	BeforeAll(func(ctx SpecContext) {
-		DeferCleanup(func(ctx SpecContext) {
-			Expect(env.DeleteNamespace(ctx, upstreamTransportNamespace)).To(Succeed())
-		}, NodeTimeout(3*time.Minute))
+		DeferCleanup(func() { deleteNamespaceInBackground(upstreamTransportNamespace) })
 
 		Expect(resetE2ENamespace(ctx, upstreamTransportNamespace)).To(Succeed())
 

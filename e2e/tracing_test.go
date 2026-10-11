@@ -85,9 +85,7 @@ var _ = Describe("Tracing", Label("gateway", "tracing", "metrics", "namespace-"+
 
 func setupTracingGateway(ctx SpecContext) *tracingE2E {
 	Expect(resetE2ENamespace(ctx, tracingNamespace)).To(Succeed())
-	DeferCleanup(func(ctx SpecContext) {
-		Expect(env.DeleteNamespace(ctx, tracingNamespace)).To(Succeed())
-	}, NodeTimeout(3*time.Minute))
+	DeferCleanup(func() { deleteNamespaceInBackground(tracingNamespace) })
 
 	sinkManifest, err := tracingSinkManifest(tracingNamespace)
 	Expect(err).NotTo(HaveOccurred())

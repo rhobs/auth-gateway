@@ -30,7 +30,7 @@ var _ = Describe("Header-sourced attributes", Label("gateway", "authentication",
 	var gateway *apiKeyE2E
 
 	BeforeAll(func(ctx SpecContext) {
-		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, headerAttributesNamespace)).To(Succeed()) }, NodeTimeout(3*time.Minute))
+		DeferCleanup(func() { deleteNamespaceInBackground(headerAttributesNamespace) })
 		var err error
 		gateway, err = setupAPIKeyGatewayWithShape(ctx, headerAttributesNamespace, false, []config.APIKeyCredential{{
 			Key: "header-key", Attributes: map[string]string{"tenant_id": "client-a", "writer_id": "writer-a"},

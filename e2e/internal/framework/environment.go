@@ -229,7 +229,11 @@ func (e *Environment) DeleteNamespace(ctx context.Context, namespace string) err
 	if err != nil {
 		return fmt.Errorf("delete Namespace %q: %w", namespace, err)
 	}
-	if err := utilwait.PollUntilContextTimeout(ctx, time.Second, 120*time.Second, true, func(ctx context.Context) (bool, error) {
+	return e.waitForNamespaceDeleted(ctx, namespace, 120*time.Second)
+}
+
+func (e *Environment) waitForNamespaceDeleted(ctx context.Context, namespace string, timeout time.Duration) error {
+	if err := utilwait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		_, err := e.client.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
 			return true, nil
@@ -239,6 +243,23 @@ func (e *Environment) DeleteNamespace(ctx context.Context, namespace string) err
 		return fmt.Errorf("wait for Namespace %q deletion: %w", namespace, err)
 	}
 	return nil
+}
+
+// DeleteNamespaceAsync issues the Delete request synchronously, so a caller that
+// immediately recreates the namespace still observes a real conflict, but leaves
+// waiting for Kubernetes to finish tearing it down to the returned func. This lets a
+// caller run that wait in the background instead of blocking on it.
+func (e *Environment) DeleteNamespaceAsync(ctx context.Context, namespace string, timeout time.Duration) (wait func() error, err error) {
+	deleteErr := e.client.CoreV1().Namespaces().Delete(ctx, namespace, metav1.DeleteOptions{})
+	if apierrors.IsNotFound(deleteErr) {
+		return func() error { return nil }, nil
+	}
+	if deleteErr != nil {
+		return nil, fmt.Errorf("delete Namespace %q: %w", namespace, deleteErr)
+	}
+	return func() error {
+		return e.waitForNamespaceDeleted(context.Background(), namespace, timeout)
+	}, nil
 }
 
 func (e *Environment) CreateNamespace(ctx context.Context, namespace string) error {
