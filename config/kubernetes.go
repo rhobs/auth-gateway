@@ -75,6 +75,10 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	configName := c.Kubernetes.Name + "-config"
 	metricsName := metricsResourceName(c.Kubernetes.Name)
 	metricsEnabled := c.Observability.Metrics.enabled()
+	collectorConfigMap, err := newOTelCollectorConfigMap(c, metricsName)
+	if err != nil {
+		return nil, err
+	}
 	deployment, err := newGatewayDeployment(c, configFiles, configName, metricsName, processingConfigMap)
 	if err != nil {
 		return nil, err
@@ -82,7 +86,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	return &KubernetesResources{
 		ConfigMap:              newGatewayConfigMap(c, configName, configFiles),
 		ProcessingConfigMap:    processingConfigMap,
-		OTelCollectorConfigMap: newOTelCollectorConfigMap(c, metricsName),
+		OTelCollectorConfigMap: collectorConfigMap,
 		ServiceAccount:         newGatewayServiceAccount(c),
 		Deployment:             deployment,
 		Service:                newGatewayService(c, metricsEnabled),
@@ -119,16 +123,19 @@ func newGatewayConfigMap(c Config, name string, files map[string][]byte) corev1.
 	}
 }
 
-func newOTelCollectorConfigMap(c Config, name string) *corev1.ConfigMap {
+func newOTelCollectorConfigMap(c Config, name string) (*corev1.ConfigMap, error) {
 	if !c.Observability.Metrics.enabled() && !c.Observability.Tracing.enabled() {
-		return nil
+		return nil, nil
 	}
-	otelConfig := generateOTelCollectorConfig(c.Observability.Metrics, c.Observability.Tracing)
+	otelConfig, err := generateOTelCollectorConfig(c.Observability.Metrics, c.Observability.Tracing)
+	if err != nil {
+		return nil, err
+	}
 	return &corev1.ConfigMap{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: kubernetesConfigMapKind},
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: c.Kubernetes.Namespace},
 		Data:       map[string]string{collectorConfigFilename: string(otelConfig)},
-	}
+	}, nil
 }
 
 func newGatewayServiceAccount(c Config) corev1.ServiceAccount {

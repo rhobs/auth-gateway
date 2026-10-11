@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"maps"
 	"math"
@@ -20,6 +22,7 @@ import (
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	upstreamhttp "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 	envoytype "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"go.yaml.in/yaml/v3"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -78,102 +81,98 @@ type KubernetesMetrics struct {
 	Resources KubernetesResourceRequirements `yaml:"resources,omitempty"`
 }
 
-const otelCollectorConfigTemplate = `receivers:
-  prometheus:
-    config:
-      scrape_configs:
-        - job_name: auth-gateway
-          scrape_interval: %s
-          scrape_timeout: %s
-          metrics_path: /stats/prometheus
-          static_configs:
-            - targets:
-                - 127.0.0.1:%d
-processors:
-  transform:
-    metric_statements:
-      - context: metric
-        statements:
-          - replace_pattern(name, "^envoy_http_lua_", "")
-exporters:
-  prometheus:
-    endpoint: 0.0.0.0:%d
-service:
-  pipelines:
-    metrics:
-      receivers:
-        - prometheus
-      processors:
-        - transform
-      exporters:
-        - prometheus
-`
+type otelCollectorConfig struct {
+	Receivers  otelCollectorReceivers  `yaml:"receivers"`
+	Processors otelCollectorProcessors `yaml:"processors"`
+	Exporters  otelCollectorExporters  `yaml:"exporters"`
+	Service    otelCollectorService    `yaml:"service"`
+}
 
-const otelCollectorTracingOnlyConfigTemplate = `receivers:
-  otlp:
-    protocols:
-      grpc:
-        endpoint: 127.0.0.1:%d
-processors:
-  batch: {}
-exporters:
-  otlp:
-    endpoint: %s
-%sservice:
-  pipelines:
-    traces:
-      receivers:
-        - otlp
-      processors:
-        - batch
-      exporters:
-        - otlp
-`
+type otelCollectorReceivers struct {
+	OTLP       *otelOTLPReceiver       `yaml:"otlp,omitempty"`
+	Prometheus *otelPrometheusReceiver `yaml:"prometheus,omitempty"`
+}
 
-const otelCollectorTracingAndMetricsConfigTemplate = `receivers:
-  otlp:
-    protocols:
-      grpc:
-        endpoint: 127.0.0.1:%d
-  prometheus:
-    config:
-      scrape_configs:
-        - job_name: auth-gateway
-          scrape_interval: %s
-          scrape_timeout: %s
-          metrics_path: /stats/prometheus
-          static_configs:
-            - targets:
-                - 127.0.0.1:%d
-processors:
-  batch: {}
-  transform:
-    metric_statements:
-      - context: metric
-        statements:
-          - replace_pattern(name, "^envoy_http_lua_", "")
-exporters:
-  otlp:
-    endpoint: %s
-%s  prometheus:
-    endpoint: 0.0.0.0:%d
-service:
-  pipelines:
-    metrics:
-      receivers:
-        - prometheus
-      processors:
-        - transform
-      exporters:
-        - prometheus
-    traces:
-      receivers:
-        - otlp
-      processors:
-        - batch
-      exporters:
-        - otlp
-`
+type otelOTLPReceiver struct {
+	Protocols otelOTLPReceiverProtocols `yaml:"protocols"`
+}
+
+type otelOTLPReceiverProtocols struct {
+	GRPC otelOTLPGRPCReceiver `yaml:"grpc"`
+}
+
+type otelOTLPGRPCReceiver struct {
+	Endpoint string `yaml:"endpoint"`
+}
+
+type otelPrometheusReceiver struct {
+	Config otelPrometheusReceiverConfig `yaml:"config"`
+}
+
+type otelPrometheusReceiverConfig struct {
+	ScrapeConfigs []otelPrometheusScrapeConfig `yaml:"scrape_configs"`
+}
+
+type otelPrometheusScrapeConfig struct {
+	JobName        string                       `yaml:"job_name"`
+	ScrapeInterval string                       `yaml:"scrape_interval"`
+	ScrapeTimeout  string                       `yaml:"scrape_timeout"`
+	MetricsPath    string                       `yaml:"metrics_path"`
+	StaticConfigs  []otelPrometheusStaticConfig `yaml:"static_configs"`
+}
+
+type otelPrometheusStaticConfig struct {
+	Targets []string `yaml:"targets"`
+}
+
+type otelCollectorProcessors struct {
+	Batch     *otelBatchProcessor     `yaml:"batch,omitempty"`
+	Transform *otelTransformProcessor `yaml:"transform,omitempty"`
+}
+
+type otelBatchProcessor struct{}
+
+type otelTransformProcessor struct {
+	MetricStatements []otelTransformMetricStatements `yaml:"metric_statements"`
+}
+
+type otelTransformMetricStatements struct {
+	Context    string   `yaml:"context"`
+	Statements []string `yaml:"statements"`
+}
+
+type otelCollectorExporters struct {
+	OTLP       *otelOTLPExporter       `yaml:"otlp,omitempty"`
+	Prometheus *otelPrometheusExporter `yaml:"prometheus,omitempty"`
+}
+
+type otelOTLPExporter struct {
+	Endpoint string         `yaml:"endpoint"`
+	TLS      *otelTLSConfig `yaml:"tls,omitempty"`
+}
+
+type otelTLSConfig struct {
+	Insecure bool `yaml:"insecure"`
+}
+
+type otelPrometheusExporter struct {
+	Endpoint string `yaml:"endpoint"`
+}
+
+type otelCollectorService struct {
+	Pipelines otelCollectorPipelines `yaml:"pipelines"`
+}
+
+type otelCollectorPipelines struct {
+	Metrics *otelCollectorPipeline `yaml:"metrics,omitempty"`
+	Traces  *otelCollectorPipeline `yaml:"traces,omitempty"`
+}
+
+type otelCollectorPipeline struct {
+	Receivers  []string `yaml:"receivers"`
+	Processors []string `yaml:"processors"`
+	Exporters  []string `yaml:"exporters"`
+}
 
 func validateOTelTraceEndpoint(endpoint string) error {
 	host, portText, err := net.SplitHostPort(endpoint)
@@ -190,22 +189,70 @@ func validateOTelTraceEndpoint(endpoint string) error {
 	return nil
 }
 
-func generateOTelCollectorConfig(metrics ObservabilityMetrics, tracing ObservabilityTracing) []byte {
+func generateOTelCollectorConfig(metrics ObservabilityMetrics, tracing ObservabilityTracing) ([]byte, error) {
 	metricsEnabled := metrics.enabled()
-	if !tracing.enabled() {
-		if !metricsEnabled {
-			return nil
+	tracingEnabled := tracing.enabled()
+	if !metricsEnabled && !tracingEnabled {
+		return nil, nil
+	}
+
+	collectorConfig := otelCollectorConfig{}
+	if metricsEnabled {
+		collectorConfig.Receivers.Prometheus = &otelPrometheusReceiver{
+			Config: otelPrometheusReceiverConfig{
+				ScrapeConfigs: []otelPrometheusScrapeConfig{{
+					JobName:        "auth-gateway",
+					ScrapeInterval: prometheusDuration(*metrics.ScrapeInterval),
+					ScrapeTimeout:  prometheusDuration(*metrics.ScrapeTimeout),
+					MetricsPath:    "/stats/prometheus",
+					StaticConfigs: []otelPrometheusStaticConfig{{
+						Targets: []string{fmt.Sprintf("127.0.0.1:%d", envoyAdminPort)},
+					}},
+				}},
+			},
 		}
-		return []byte(fmt.Sprintf(otelCollectorConfigTemplate, prometheusDuration(*metrics.ScrapeInterval), prometheusDuration(*metrics.ScrapeTimeout), envoyAdminPort, defaultOTelMetricsPort))
+		collectorConfig.Processors.Transform = &otelTransformProcessor{
+			MetricStatements: []otelTransformMetricStatements{{
+				Context:    "metric",
+				Statements: []string{`replace_pattern(name, "^envoy_http_lua_", "")`},
+			}},
+		}
+		collectorConfig.Exporters.Prometheus = &otelPrometheusExporter{
+			Endpoint: fmt.Sprintf("0.0.0.0:%d", defaultOTelMetricsPort),
+		}
+		collectorConfig.Service.Pipelines.Metrics = &otelCollectorPipeline{
+			Receivers:  []string{"prometheus"},
+			Processors: []string{"transform"},
+			Exporters:  []string{"prometheus"},
+		}
 	}
-	traceExporterTLS := ""
-	if *tracing.Insecure {
-		traceExporterTLS = "    tls:\n      insecure: true\n"
+	if tracingEnabled {
+		collectorConfig.Receivers.OTLP = &otelOTLPReceiver{
+			Protocols: otelOTLPReceiverProtocols{
+				GRPC: otelOTLPGRPCReceiver{Endpoint: fmt.Sprintf("%s:%d", defaultOTelTraceReceiverAddress, defaultOTelTracePort)},
+			},
+		}
+		collectorConfig.Processors.Batch = &otelBatchProcessor{}
+		collectorConfig.Exporters.OTLP = &otelOTLPExporter{Endpoint: tracing.Endpoint}
+		if *tracing.Insecure {
+			collectorConfig.Exporters.OTLP.TLS = &otelTLSConfig{Insecure: true}
+		}
+		collectorConfig.Service.Pipelines.Traces = &otelCollectorPipeline{
+			Receivers:  []string{"otlp"},
+			Processors: []string{"batch"},
+			Exporters:  []string{"otlp"},
+		}
 	}
-	if !metricsEnabled {
-		return []byte(fmt.Sprintf(otelCollectorTracingOnlyConfigTemplate, defaultOTelTracePort, tracing.Endpoint, traceExporterTLS))
+
+	var output bytes.Buffer
+	encoder := yaml.NewEncoder(&output)
+	encoder.SetIndent(2)
+	encodeErr := encoder.Encode(collectorConfig)
+	closeErr := encoder.Close()
+	if err := errors.Join(encodeErr, closeErr); err != nil {
+		return nil, fmt.Errorf("marshal OpenTelemetry Collector configuration: %w", err)
 	}
-	return []byte(fmt.Sprintf(otelCollectorTracingAndMetricsConfigTemplate, defaultOTelTracePort, prometheusDuration(*metrics.ScrapeInterval), prometheusDuration(*metrics.ScrapeTimeout), envoyAdminPort, tracing.Endpoint, traceExporterTLS, defaultOTelMetricsPort))
+	return output.Bytes(), nil
 }
 
 func prometheusDuration(d Duration) string {

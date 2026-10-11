@@ -414,7 +414,7 @@ message consistent without a format-string constant.
 Done when: operation and wrapping errors are inline at their call sites, common
 validation rules have named helpers, and `make lint` passes.
 
-### 2.8 Deduplicate the collector configuration templates
+### 2.8 Deduplicate the collector configuration templates [x]
 
 `config/observability.go:81-176` holds three hand-written YAML templates filled
 by positional `fmt.Sprintf` arguments. The scrape block appears in two of them,

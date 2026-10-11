@@ -680,7 +680,10 @@ func TestOTelCollectorScrapeSettingsAndResourceOverrides(t *testing.T) {
 func TestPlaygroundOTelCollectorConfiguration(t *testing.T) {
 	inputPath := filepath.Join("..", "playground", "config.yaml")
 	c := loadTestConfig(t, readTestFile(t, inputPath), inputPath)
-	collectorConfig := generateOTelCollectorConfig(c.Observability.Metrics, c.Observability.Tracing)
+	collectorConfig, err := generateOTelCollectorConfig(c.Observability.Metrics, c.Observability.Tracing)
+	if err != nil {
+		t.Fatal(err)
+	}
 	checkReference(t, filepath.Join("..", "playground", "otel-collector.yaml.golden"), collectorConfig)
 }
 
