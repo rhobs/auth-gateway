@@ -39,3 +39,4 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for local checks, code layout, and gol
 - Docs in docs/guides should provide user facing documentation and doesn't need to focus on envoy internals
 - We can create technical documentation elsewhere, but we should never discuss function names etc. It should focus on how envoy behaves rather than current implementation of code at a function level.
 - Use concise, natural-language commit messages without emojis.
+- Ensure docs/configuration-reference.md is up to date with the checked-in schema and examples.

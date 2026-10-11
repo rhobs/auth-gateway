@@ -340,7 +340,7 @@ one block.
 
 Done when: one guarded block remains and goldens are byte-identical.
 
-### 2.3 Fix the host-to-server index alignment hazard
+### 2.3 Fix the host-to-server index alignment hazard [x]
 
 `config/generate.go:255-263` builds `serverIndexes` by matching
 `server.Hostname == host.Name` and appending on match. `config/generate.go:339`

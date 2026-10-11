@@ -174,20 +174,34 @@ func generateClusters(c Config) ([]*cluster.Cluster, error) {
 	return clusters, nil
 }
 
+type indexedVirtualHost struct {
+	serverIndex int
+	host        *route.VirtualHost
+}
+
+func routeVirtualHosts(hosts []indexedVirtualHost) []*route.VirtualHost {
+	virtualHosts := make([]*route.VirtualHost, len(hosts))
+	for i, host := range hosts {
+		virtualHosts[i] = host.host
+	}
+	return virtualHosts
+}
+
 func generateFilterChains(c Config) ([]*listener.FilterChain, error) {
 	apis := c.apisByName()
 	var filterChains []*listener.FilterChain
-	var httpHosts []*route.VirtualHost
+	var httpHosts []indexedVirtualHost
 	for i, server := range c.Servers {
 		host, err := serverVirtualHost(c, i, server, apis)
 		if err != nil {
 			return nil, err
 		}
+		indexedHost := indexedVirtualHost{serverIndex: i, host: host}
 		if server.TLSConfig == nil {
-			httpHosts = append(httpHosts, host)
+			httpHosts = append(httpHosts, indexedHost)
 			continue
 		}
-		chain, err := c.toHTTPFilterChain([]*route.VirtualHost{host})
+		chain, err := c.toHTTPFilterChain([]indexedVirtualHost{indexedHost})
 		if err != nil {
 			return nil, fmt.Errorf("servers[%d]: %w", i, err)
 		}
@@ -328,7 +342,7 @@ func addServerCertificateFiles(c Config, files map[string][]byte) error {
 	return nil
 }
 
-func (c Config) toHTTPFilterChain(hosts []*route.VirtualHost) (*listener.FilterChain, error) {
+func (c Config) toHTTPFilterChain(hosts []indexedVirtualHost) (*listener.FilterChain, error) {
 	manager, err := c.toHTTPManager(hosts)
 	if err != nil {
 		return nil, err
@@ -343,7 +357,7 @@ func (c Config) toHTTPFilterChain(hosts []*route.VirtualHost) (*listener.FilterC
 	}}}, nil
 }
 
-func (c Config) toHTTPManager(hosts []*route.VirtualHost) (*hcm.HttpConnectionManager, error) {
+func (c Config) toHTTPManager(hosts []indexedVirtualHost) (*hcm.HttpConnectionManager, error) {
 	routerConfig, err := packEnvoy(&router.Router{SuppressEnvoyHeaders: true})
 	if err != nil {
 		return nil, err
@@ -352,9 +366,9 @@ func (c Config) toHTTPManager(hosts []*route.VirtualHost) (*hcm.HttpConnectionMa
 	if err != nil {
 		return nil, err
 	}
-	serverIndexes := c.serverIndexes(hosts)
+	virtualHosts := routeVirtualHosts(hosts)
 	protected := hasProtectedHosts(hosts)
-	filters, err := c.toHTTPFilters(hosts, serverIndexes, protected)
+	filters, err := c.toHTTPFilters(hosts, protected)
 	if err != nil {
 		return nil, err
 	}
@@ -388,33 +402,20 @@ func (c Config) toHTTPManager(hosts []*route.VirtualHost) (*hcm.HttpConnectionMa
 		RouteSpecifier: &hcm.HttpConnectionManager_RouteConfig{RouteConfig: &route.RouteConfiguration{
 			Name:                     ingestionListenerName,
 			IgnorePortInHostMatching: true,
-			VirtualHosts:             hosts,
+			VirtualHosts:             virtualHosts,
 		}},
 		AccessLog:   accessLogs,
 		HttpFilters: filters,
 	}, nil
 }
 
-func (c Config) serverIndexes(hosts []*route.VirtualHost) []int {
-	serverIndexes := make([]int, 0, len(hosts))
-	for _, host := range hosts {
-		for index, server := range c.Servers {
-			if server.Hostname == host.Name {
-				serverIndexes = append(serverIndexes, index)
-				break
-			}
-		}
-	}
-	return serverIndexes
-}
-
-func (c Config) toHTTPFilters(hosts []*route.VirtualHost, serverIndexes []int, protected bool) ([]*hcm.HttpFilter, error) {
-	filters, err := c.requestControlFilters(hosts)
+func (c Config) toHTTPFilters(hosts []indexedVirtualHost, protected bool) ([]*hcm.HttpFilter, error) {
+	filters, err := c.requestControlFilters(routeVirtualHosts(hosts))
 	if err != nil {
 		return nil, err
 	}
 	if protected {
-		filters, err = c.protectedHTTPFilters(filters, hosts, serverIndexes)
+		filters, err = c.protectedHTTPFilters(filters, hosts)
 		if err != nil {
 			return nil, err
 		}
@@ -457,11 +458,13 @@ func (c Config) requestControlFilters(hosts []*route.VirtualHost) ([]*hcm.HttpFi
 	return filters, nil
 }
 
-func (c Config) protectedHTTPFilters(filters []*hcm.HttpFilter, hosts []*route.VirtualHost, serverIndexes []int) ([]*hcm.HttpFilter, error) {
+func (c Config) protectedHTTPFilters(filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
 	usesJWT, usesKey := false, false
-	for _, index := range serverIndexes {
-		usesJWT = usesJWT || serverUsesJWT(c, c.Servers[index])
-		usesKey = usesKey || serverUsesAPIKey(c, c.Servers[index])
+	serverIndexes := make([]int, 0, len(hosts))
+	for _, host := range hosts {
+		serverIndexes = append(serverIndexes, host.serverIndex)
+		usesJWT = usesJWT || serverUsesJWT(c, c.Servers[host.serverIndex])
+		usesKey = usesKey || serverUsesAPIKey(c, c.Servers[host.serverIndex])
 	}
 	var err error
 	filters, err = c.authenticationHTTPFilters(filters, serverIndexes, usesJWT, usesKey)
@@ -469,7 +472,7 @@ func (c Config) protectedHTTPFilters(filters []*hcm.HttpFilter, hosts []*route.V
 		return nil, err
 	}
 	if needsWorkingAttributes(c) {
-		filters, err = c.attributeHTTPFilters(filters, hosts, serverIndexes)
+		filters, err = c.attributeHTTPFilters(filters, hosts)
 		if err != nil {
 			return nil, err
 		}
@@ -526,10 +529,10 @@ func appendAuthenticationRBAC(filters []*hcm.HttpFilter) ([]*hcm.HttpFilter, err
 	return append(filters, &hcm.HttpFilter{Name: authenticationFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: authentication}}), nil
 }
 
-func (c Config) attributeHTTPFilters(filters []*hcm.HttpFilter, hosts []*route.VirtualHost, serverIndexes []int) ([]*hcm.HttpFilter, error) {
+func (c Config) attributeHTTPFilters(filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
 	if c.usesAPIKeys() {
 		var err error
-		filters, err = c.apiKeyAttributeFilters(filters, hosts, serverIndexes)
+		filters, err = c.apiKeyAttributeFilters(filters, hosts)
 		if err != nil {
 			return nil, err
 		}
@@ -553,8 +556,9 @@ func (c Config) attributeHTTPFilters(filters []*hcm.HttpFilter, hosts []*route.V
 	return filters, nil
 }
 
-func (c Config) apiKeyAttributeFilters(filters []*hcm.HttpFilter, hosts []*route.VirtualHost, serverIndexes []int) ([]*hcm.HttpFilter, error) {
-	for hostIndex, serverIndex := range serverIndexes {
+func (c Config) apiKeyAttributeFilters(filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
+	for _, indexedHost := range hosts {
+		serverIndex := indexedHost.serverIndex
 		attributes := c.toServerAttributeInitializationConfig(c.Servers[serverIndex])
 		if len(attributes.OnRequestHeaders) == 0 {
 			continue
@@ -573,7 +577,13 @@ func (c Config) apiKeyAttributeFilters(filters []*hcm.HttpFilter, hosts []*route
 		if err != nil {
 			return nil, fmt.Errorf(enableAttributesErrorFormat, serverIndex, err)
 		}
-		hosts[hostIndex].TypedPerFilterConfig[name] = enabled
+		if indexedHost.host == nil {
+			return nil, fmt.Errorf("servers[%d] enable attributes: virtual host is nil", serverIndex)
+		}
+		if indexedHost.host.TypedPerFilterConfig == nil {
+			indexedHost.host.TypedPerFilterConfig = make(map[string]*anypb.Any)
+		}
+		indexedHost.host.TypedPerFilterConfig[name] = enabled
 	}
 	return filters, nil
 }
@@ -615,9 +625,9 @@ func appendRequiredHeaderRBAC(filters []*hcm.HttpFilter) ([]*hcm.HttpFilter, err
 	return append(filters, &hcm.HttpFilter{Name: requiredHeaderFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: headerRBACConfig}}), nil
 }
 
-func hasProtectedHosts(hosts []*route.VirtualHost) bool {
+func hasProtectedHosts(hosts []indexedVirtualHost) bool {
 	for _, host := range hosts {
-		if host.TypedPerFilterConfig[authorizationFilterName] != nil {
+		if host.host != nil && host.host.TypedPerFilterConfig[authorizationFilterName] != nil {
 			return true
 		}
 	}

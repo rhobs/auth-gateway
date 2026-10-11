@@ -351,6 +351,41 @@ func TestAPIKeyDefaultsDoNotMutateInput(t *testing.T) {
 	}
 }
 
+func TestHTTPManagerPreservesServerHostPairing(t *testing.T) {
+	c := loadConfigCase(t, "api-key-auth")
+	publicHost := &route.VirtualHost{Name: "unmatched.public.gateway.test"}
+	keyHost := &route.VirtualHost{
+		Name: "key.gateway.test",
+		TypedPerFilterConfig: map[string]*anypb.Any{
+			authorizationFilterName: &anypb.Any{},
+		},
+	}
+
+	if _, err := c.toHTTPManager([]indexedVirtualHost{
+		{serverIndex: 0, host: publicHost},
+		{serverIndex: 1, host: keyHost},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if publicHost.TypedPerFilterConfig != nil {
+		t.Fatalf("unmatched public host received per-filter config: %#v", publicHost.TypedPerFilterConfig)
+	}
+	if keyHost.TypedPerFilterConfig[attributeInitializationFilterName(1)] == nil {
+		t.Fatal("API-key attribute initialization was not attached to its server host")
+	}
+}
+
+func TestAPIKeyAttributeFilterInitializesMissingHostConfigMap(t *testing.T) {
+	c := loadConfigCase(t, "api-key-auth")
+	host := &route.VirtualHost{Name: "key.gateway.test"}
+	if _, err := c.apiKeyAttributeFilters(nil, []indexedVirtualHost{{serverIndex: 1, host: host}}); err != nil {
+		t.Fatal(err)
+	}
+	if host.TypedPerFilterConfig[attributeInitializationFilterName(1)] == nil {
+		t.Fatal("API-key attribute initialization was not added to the host")
+	}
+}
+
 func TestAPIKeyPipelineUsesFileECDSAndHostScopedFilters(t *testing.T) {
 	c := loadConfigCase(t, "api-key-auth")
 	files, err := Generate(c)

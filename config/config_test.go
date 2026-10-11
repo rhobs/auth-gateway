@@ -68,6 +68,43 @@ apis:
 	}
 }
 
+func TestLoadKeepsTimeoutOverridesUnresolved(t *testing.T) {
+	c := loadConfigCase(t, "production-tuning")
+	if c.Listener.Port == nil || *c.Listener.Port != 8080 {
+		t.Fatalf("listener port default = %v", c.Listener.Port)
+	}
+	if c.APIs[0].Routes[0].Timeouts != nil {
+		t.Fatal("Load filled omitted route timeouts")
+	}
+	timeouts := c.APIs[0].Routes[1].Timeouts
+	if timeouts == nil || timeouts.ResponseTimeout == nil || *timeouts.ResponseTimeout != Duration(20*time.Second) ||
+		timeouts.MaxStreamDuration == nil || *timeouts.MaxStreamDuration != Duration(30*time.Second) || timeouts.IdleTimeout != nil {
+		t.Fatalf("Load changed partial route timeout overrides: %#v", timeouts)
+	}
+}
+
+func TestLoadRejectsIncompatibleEffectiveRouteTimeouts(t *testing.T) {
+	input := `version: 1
+listener:
+  max_stream_duration: 10s
+servers:
+  - hostname: auth.example.test
+    apis: [metrics]
+apis:
+  - name: metrics
+    upstream: {address: httpbin, port: 80}
+    timeouts: {response_timeout: 20s}
+    routes:
+      - methods: [GET]
+        path: {exact: /metrics}
+`
+	if _, err := Load(strings.NewReader(input)); err == nil ||
+		!strings.Contains(err.Error(), "apis[0].routes[0].timeouts.response_timeout (20s)") ||
+		!strings.Contains(err.Error(), "max_stream_duration (10s)") {
+		t.Fatalf("Load error = %v, want effective route timeout conflict", err)
+	}
+}
+
 func TestLoadRejectsInvalidYAML(t *testing.T) {
 	tests := []struct {
 		name  string

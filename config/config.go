@@ -82,6 +82,8 @@ const defaultKubernetesReplicas int32 = 2
 var apiNamePattern = regexp.MustCompile("^[a-z][a-z0-9-]{0,52}$")
 
 // Load decodes one strict YAML document, applies defaults, and validates it.
+// API and route timeout overrides stay as supplied, including omitted values.
+// Validation checks their effective values; generation resolves them on a copy.
 // On failure, Load returns the zero Config and a non-nil error.
 func Load(r io.Reader) (Config, error) {
 	if r == nil {
@@ -116,7 +118,7 @@ func Load(r io.Reader) (Config, error) {
 	}
 
 	c = c.withDefaults()
-	if err := c.Validate(); err != nil {
+	if err := validateDefaultedConfig(c, false); err != nil {
 		return Config{}, err
 	}
 	return c, nil
@@ -125,8 +127,7 @@ func Load(r io.Reader) (Config, error) {
 // Validate checks whether c follows the public configuration contract.
 // Use it when building a Config in Go instead of loading YAML with Load.
 func (c Config) Validate() error {
-	_, err := resolveConfig(c)
-	return err
+	return validateDefaultedConfig(c.withDefaults(), false)
 }
 
 func (c Config) validate() error {
@@ -1058,8 +1059,16 @@ type effectiveConfig struct {
 
 func resolveConfig(input Config) (effectiveConfig, error) {
 	c := input.withDefaults()
-	if err := c.validate(); err != nil {
+	if err := validateDefaultedConfig(c, true); err != nil {
 		return effectiveConfig{}, err
+	}
+	return effectiveConfig{Config: c}, nil
+}
+
+// validateDefaultedConfig expects defaults to have already been applied.
+func validateDefaultedConfig(c Config, resolveTimeouts bool) error {
+	if err := c.validate(); err != nil {
+		return err
 	}
 	for i := range c.APIs {
 		api := &c.APIs[i]
@@ -1067,12 +1076,14 @@ func resolveConfig(input Config) (effectiveConfig, error) {
 			timers := resolveRouteTimeouts(c.Listener, api.Timeouts, api.Routes[j].Timeouts)
 			if *timers.ResponseTimeout > *timers.MaxStreamDuration {
 				field := fmt.Sprintf("apis[%d].routes[%d].timeouts", i, j)
-				return effectiveConfig{}, fmt.Errorf("%s.response_timeout (%s) must not exceed effective %s.max_stream_duration (%s)", field, timers.ResponseTimeout, field, timers.MaxStreamDuration)
+				return fmt.Errorf("%s.response_timeout (%s) must not exceed effective %s.max_stream_duration (%s)", field, timers.ResponseTimeout, field, timers.MaxStreamDuration)
 			}
-			api.Routes[j].Timeouts = timers
+			if resolveTimeouts {
+				api.Routes[j].Timeouts = timers
+			}
 		}
 	}
-	return effectiveConfig{Config: c}, nil
+	return nil
 }
 
 func validateRouteTimeouts(name string, t *RouteTimeouts) error {
