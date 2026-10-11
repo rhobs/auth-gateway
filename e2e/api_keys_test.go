@@ -120,6 +120,7 @@ var _ = Describe("API-key request decisions", Label("gateway", "api-key", "authe
 		expectAPIKeyDenied(ctx, gateway, "valid but unprivileged JWT wins", apiKeyAnyHost, false,
 			gateway.token("denied", "writer-a"), apiKeySharedSecretKey, nil, http.StatusForbidden)
 		expectAPIKeyDenied(ctx, gateway, "no credentials", apiKeyAnyHost, false, "", "", nil, http.StatusUnauthorized)
+		expectAPIKeyDenied(ctx, gateway, "invalid JWT and no key", apiKeyAnyHost, false, "broken.jwt", "", nil, http.StatusUnauthorized)
 		expectAPIKeyDenied(ctx, gateway, "spoofed JWT marker", apiKeyAnyHost, false, "", "", http.Header{
 			"X-Auth-Gateway-JWT-Verified-Issuer-One": []string{"https://issuer-one.jwt.test"},
 		}, http.StatusUnauthorized)
@@ -147,6 +148,7 @@ var _ = Describe("API-key request decisions", Label("gateway", "api-key", "authe
 
 		expectAPIKeyDenied(ctx, gateway, "valid but unselected issuer", apiKeyAnyHost, false,
 			gateway.tokenForIssuer("issuer-two", "client-b", "writer-b"), "", nil, http.StatusUnauthorized)
+		expectAPIKeyDenied(ctx, gateway, "invalid JWT and no key", apiKeyMultiHost, false, "broken.jwt", "", nil, http.StatusUnauthorized)
 		for _, test := range []struct {
 			name   string
 			header string
