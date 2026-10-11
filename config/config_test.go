@@ -11,6 +11,7 @@ import (
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	headermutation "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
+	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	upstreamhttp "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
 	"github.com/google/go-cmp/cmp"
@@ -278,8 +279,11 @@ func TestListenerLimitsOnEveryChainAndFixedControls(t *testing.T) {
 		if m.Http2ProtocolOptions.MaxConcurrentStreams.Value != 17 || m.Http2ProtocolOptions.InitialStreamWindowSize != nil {
 			t.Errorf("HTTP/2 max concurrent streams = %d and initial stream window size = %v, want 17 and nil", m.Http2ProtocolOptions.MaxConcurrentStreams.Value, m.Http2ProtocolOptions.InitialStreamWindowSize)
 		}
-		if m.CommonHttpProtocolOptions.HeadersWithUnderscoresAction != core.HttpProtocolOptions_REJECT_REQUEST || m.NormalizePath.Value {
-			t.Errorf("headers with underscores action = %v and normalize path = %t, want REJECT_REQUEST and false", m.CommonHttpProtocolOptions.HeadersWithUnderscoresAction, m.NormalizePath.Value)
+		if m.CommonHttpProtocolOptions.HeadersWithUnderscoresAction != core.HttpProtocolOptions_REJECT_REQUEST || !m.NormalizePath.Value {
+			t.Errorf("headers with underscores action = %v and normalize path = %t, want REJECT_REQUEST and true", m.CommonHttpProtocolOptions.HeadersWithUnderscoresAction, m.NormalizePath.Value)
+		}
+		if m.PathWithEscapedSlashesAction != hcm.HttpConnectionManager_UNESCAPE_AND_FORWARD {
+			t.Errorf("path with escaped slashes action = %v, want UNESCAPE_AND_FORWARD", m.PathWithEscapedSlashesAction)
 		}
 		if chain.TransportSocket != nil && chain.TransportSocketConnectTimeout.AsDuration() != time.Second {
 			t.Errorf("TLS handshake timeout = %s, want 1s", chain.TransportSocketConnectTimeout.AsDuration())

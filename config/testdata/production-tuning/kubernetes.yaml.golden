@@ -210,8 +210,8 @@ data:
                             initial_stream_window_size: 1048576
                             max_concurrent_streams: 100
                         max_request_headers_kb: 32
-                        normalize_path: false
-                        path_with_escaped_slashes_action: KEEP_UNCHANGED
+                        normalize_path: true
+                        path_with_escaped_slashes_action: UNESCAPE_AND_FORWARD
                         request_headers_timeout: 2s
                         request_timeout: 45s
                         route_config:

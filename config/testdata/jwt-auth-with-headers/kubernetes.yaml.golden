@@ -188,8 +188,8 @@ data:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
                                 suppress_envoy_headers: true
                         max_request_headers_kb: 32
-                        normalize_path: false
-                        path_with_escaped_slashes_action: KEEP_UNCHANGED
+                        normalize_path: true
+                        path_with_escaped_slashes_action: UNESCAPE_AND_FORWARD
                         request_headers_timeout: 5s
                         request_timeout: 30s
                         route_config:

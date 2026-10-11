@@ -394,8 +394,8 @@ func (c Config) toHTTPManager(hosts []indexedVirtualHost) (*hcm.HttpConnectionMa
 			HeadersWithUnderscoresAction: core.HttpProtocolOptions_REJECT_REQUEST,
 		},
 		RequestTimeout:               c.Listener.RequestTimeout.protobuf(),
-		NormalizePath:                wrapperspb.Bool(false),
-		PathWithEscapedSlashesAction: hcm.HttpConnectionManager_KEEP_UNCHANGED,
+		NormalizePath:                wrapperspb.Bool(true),
+		PathWithEscapedSlashesAction: hcm.HttpConnectionManager_UNESCAPE_AND_FORWARD,
 		Tracing:                      tracing,
 		RouteSpecifier: &hcm.HttpConnectionManager_RouteConfig{RouteConfig: &route.RouteConfiguration{
 			Name:                     ingestionListenerName,
