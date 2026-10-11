@@ -3,7 +3,6 @@
 CLUSTER_NAME ?= auth-gateway-e2e
 KIND_NODE_IMAGE ?= kindest/node:v1.34.0@sha256:7416a61b42b1662ca6ca89f02028ac133a309a2a30ba309614e8ec94d976dc5a
 HTTPBIN_IMAGE ?= ghcr.io/mccutchen/go-httpbin:2.25.0
-ROLLOUT_PROBE_IMAGE ?= curlimages/curl:8.12.1
 CERT_MANAGER_VERSION ?= v1.18.2
 CERT_MANAGER_CONTROLLER_IMAGE ?= quay.io/jetstack/cert-manager-controller:$(CERT_MANAGER_VERSION)
 CERT_MANAGER_CAINJECTOR_IMAGE ?= quay.io/jetstack/cert-manager-cainjector:$(CERT_MANAGER_VERSION)
@@ -59,7 +58,6 @@ setup-internal: check-tools kind-tool
 	fi
 	docker pull '$(ENVOY_IMAGE)'
 	docker pull '$(HTTPBIN_IMAGE)'
-	docker pull '$(ROLLOUT_PROBE_IMAGE)'
 	docker pull '$(OTEL_COLLECTOR_IMAGE)'
 	docker pull '$(CERT_MANAGER_CONTROLLER_IMAGE)'
 	docker pull '$(CERT_MANAGER_CAINJECTOR_IMAGE)'
@@ -68,7 +66,7 @@ setup-internal: check-tools kind-tool
 	lock='.state/cluster-$(CLUSTER_NAME).lock'; \
 	until mkdir "$$lock" 2>/dev/null; do sleep 1; done; \
 	trap 'rmdir "$$lock"' EXIT; \
-	$(KIND_TOOL) load docker-image --name '$(CLUSTER_NAME)' '$(ENVOY_IMAGE)' '$(HTTPBIN_IMAGE)' '$(ROLLOUT_PROBE_IMAGE)' '$(OTEL_COLLECTOR_IMAGE)' '$(CERT_MANAGER_CONTROLLER_IMAGE)' '$(CERT_MANAGER_CAINJECTOR_IMAGE)' '$(CERT_MANAGER_WEBHOOK_IMAGE)'
+	$(KIND_TOOL) load docker-image --name '$(CLUSTER_NAME)' '$(ENVOY_IMAGE)' '$(HTTPBIN_IMAGE)' '$(OTEL_COLLECTOR_IMAGE)' '$(CERT_MANAGER_CONTROLLER_IMAGE)' '$(CERT_MANAGER_CAINJECTOR_IMAGE)' '$(CERT_MANAGER_WEBHOOK_IMAGE)'
 
 cmctl:
 	$(PYTHON) "$(TIMING_SCRIPT)" --timings-file "$(TIMINGS_FILE)" --stage cmctl -- sh -c 'go -C tools tool cmctl --help >/dev/null'
@@ -82,7 +80,6 @@ test: cmctl setup
 	$(PYTHON) "$(TIMING_SCRIPT)" --timings-file "$(TIMINGS_FILE)" --stage ginkgo-cli -- env \
 		AUTH_GATEWAY_E2E_CONTEXT='kind-$(CLUSTER_NAME)' \
 		AUTH_GATEWAY_E2E_RUN_ID='$(E2E_RUN_ID)' \
-		AUTH_GATEWAY_E2E_ROLLOUT_PROBE_IMAGE='$(ROLLOUT_PROBE_IMAGE)' \
 		AUTH_GATEWAY_E2E_CMCTL='$(abspath $(CMCTL_BIN))' \
 		AUTH_GATEWAY_E2E_CERT_MANAGER_MANIFEST='$(CERT_MANAGER_MANIFEST_ARG)' \
 		go -C .. tool ginkgo --procs='$(GINKGO_PROCS)' --timeout=30m --no-color \

@@ -591,21 +591,18 @@ promote that to an exported helper. After the invalid-credentials spec, assert a
 JSON line exists with status 401 and a non-empty `response_code_details`, and
 that no line exists for the preceding 200, which proves the filter threshold.
 
-### 3.6 Multiple replicas [x]
+### 3.6 Multiple replicas [deferred by test-scope review]
 
-Risk: medium. Every fixture pins `replicas: 1`, and `framework.PodUID`
-(`e2e/internal/framework/environment.go:343`) hard-fails unless exactly one pod
-matches, so the framework actively prevents testing this. The production default
-is `replicas: 2` (`config/config.go:71`).
+The production default is `replicas: 2` (`config/config.go:71`), and generated
+Deployment output is checked by `TestKubernetesDeploymentOverrides`. The live
+two-replica SDS and ECDS tests were removed after review because their extra
+assertion was Kubernetes resource fan-out; single-gateway e2e and file-runtime
+tests retain the gateway reload behavior.
 
-Untested at more than one replica: ECDS and SDS fan-out to all pods, per-pod
-JWKS cold caches, and continuous service during a rolling update.
-
-Scenario. Add `framework.PodUIDs` returning a sorted set. Run one container at
-two replicas. After a processing ConfigMap update, loop about twenty requests so
-both pods are hit and assert all return the new mapping with the pod UID set
-unchanged. During a restart, assert a concurrent request loop sees no connection
-errors and no 5xx.
+Out of scope for gateway e2e: proving that Kubernetes projects a resource to
+every Pod or that a generic Deployment restart maintains Service availability.
+Reopen this only if the product contract adds a gateway-specific requirement for
+per-replica convergence or availability during rollout.
 
 ### 3.7 The documented rollout invariant [x]
 

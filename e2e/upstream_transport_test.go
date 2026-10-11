@@ -5,6 +5,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"fmt"
 	"net/http"
@@ -128,6 +129,8 @@ var _ = Describe("Upstream TLS and HTTP/2", Label("gateway", "upstream-transport
 
 		rotatedCertificates, err := makeJWTTestCertificates([]string{upstreamTransportSAN})
 		Expect(err).NotTo(HaveOccurred())
+		rotatedRoots := x509.NewCertPool()
+		rotatedRoots.AddCert(rotatedCertificates.root)
 		caBundle := append(append([]byte(nil), backendCertificates.caPEM...), rotatedCertificates.caPEM...)
 		backend, err := upstreamTransportBackendManifestWithCABundle(upstreamTransportNamespace, rotatedCertificates, caBundle)
 		Expect(err).NotTo(HaveOccurred())
@@ -142,6 +145,9 @@ var _ = Describe("Upstream TLS and HTTP/2", Label("gateway", "upstream-transport
 		})
 		timeE2EPhase("upstream certificate Deployment restart", func() {
 			Expect(env.RestartDeployment(ctx, upstreamTransportNamespace, "transport-backend", 4*time.Minute)).To(Succeed())
+			Eventually(func() error {
+				return probeTransportBackendCertificate(ctx, rotatedRoots)
+			}).WithContext(ctx).WithTimeout(30 * time.Second).WithPolling(250 * time.Millisecond).Should(Succeed())
 		})
 
 		timeE2EPhase("upstream CA inactive behavior before gateway rollout", func() {
@@ -196,6 +202,23 @@ func requestUpstreamTransport(ctx context.Context, gatewayAddress, path string, 
 	}
 	body, err := readAndCloseResponseBody(response, 1<<20)
 	return response.StatusCode, body, err
+}
+
+func probeTransportBackendCertificate(ctx context.Context, rootCAs *x509.CertPool) error {
+	address, stop, err := env.Forward(ctx, upstreamTransportNamespace, "service/transport-backend", 8443)
+	if err != nil {
+		return err
+	}
+	defer stop()
+
+	response, err := requestHTTPS(ctx, address, upstreamTransportSAN, upstreamTransportHost, "/anything/rotation-probe", rootCAs)
+	if err != nil {
+		return err
+	}
+	if response.status != http.StatusOK {
+		return fmt.Errorf("rotated backend returned HTTP %d: %s", response.status, response.body)
+	}
+	return nil
 }
 
 func envoyCounter(ctx context.Context, adminAddress, statName string) (uint64, error) {
@@ -343,6 +366,7 @@ static_resources:
 		Spec: appsv1.DeploymentSpec{
 			Replicas: new(int32(1)),
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec:       corev1.PodSpec{Containers: []corev1.Container{container}, Volumes: volumes},

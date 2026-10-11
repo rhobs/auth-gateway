@@ -653,6 +653,7 @@ func TestEnvoyConcurrencyGeneration(t *testing.T) {
 
 func TestKubernetesDeploymentOverrides(t *testing.T) {
 	c := loadConfigCase(t, "server-tls")
+	c.Kubernetes.Replicas = new(int32(2))
 	c.Kubernetes.ServicePort = new(int32(18080))
 	c.Kubernetes.HTTPSServicePort = new(int32(18443))
 	c.Kubernetes.EnvoyConcurrency = new(uint32(3))
@@ -664,6 +665,9 @@ func TestKubernetesDeploymentOverrides(t *testing.T) {
 	resources, err := GenerateKubernetes(c)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if resources.Deployment.Spec.Replicas == nil || *resources.Deployment.Spec.Replicas != 2 {
+		t.Fatalf("Deployment replicas = %v, want 2", resources.Deployment.Spec.Replicas)
 	}
 	ports := make(map[string]int32, len(resources.Service.Spec.Ports))
 	for _, port := range resources.Service.Spec.Ports {
