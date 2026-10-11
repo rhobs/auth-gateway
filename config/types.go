@@ -680,7 +680,7 @@ func (h HTTP2Options) validate(name string) error {
 		}
 	}
 	if err := h.envoy().ValidateAll(); err != nil {
-		return fmt.Errorf(fieldWrapErrorFormat, name, err)
+		return fmt.Errorf("%s: %w", name, err)
 	}
 	return nil
 }

@@ -58,10 +58,6 @@ const (
 	defaultCircuitBreakerMaxPendingRequests = 1024
 	defaultCircuitBreakerMaxRequests        = 1024
 	defaultCircuitBreakerMaxRetries         = 0
-	readGatewayConfigErrorFormat            = "read gateway configuration: %w"
-	fieldWrapErrorFormat                    = "%s: %w"
-	apiBindingErrorFormat                   = "%s.apis: %w"
-	apiNameValidationErrorFormat            = "%s.name must start with a lowercase letter and contain only lowercase letters, numbers, or hyphens"
 	imageWhitespaceCharacters               = " \t\r\n"
 	invalidControlCharacters                = "\r\n\x00"
 	authenticatorFieldPathFormat            = "authenticators[%d]"
@@ -81,6 +77,13 @@ const defaultKubernetesReplicas int32 = 2
 
 var apiNamePattern = regexp.MustCompile("^[a-z][a-z0-9-]{0,52}$")
 
+func validateGatewayName(fieldPath, value string) error {
+	if !apiNamePattern.MatchString(value) {
+		return fmt.Errorf("%s.name must start with a lowercase letter and contain only lowercase letters, numbers, or hyphens", fieldPath)
+	}
+	return nil
+}
+
 // Load decodes one strict YAML document, applies defaults, and validates it.
 // API and route timeout overrides stay as supplied, including omitted values.
 // Validation checks their effective values; generation resolves them on a copy.
@@ -92,7 +95,7 @@ func Load(r io.Reader) (Config, error) {
 
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return Config{}, fmt.Errorf(readGatewayConfigErrorFormat, err)
+		return Config{}, fmt.Errorf("read gateway configuration: %w", err)
 	}
 	var c Config
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
@@ -103,18 +106,18 @@ func Load(r io.Reader) (Config, error) {
 			var document yaml.Node
 			if yaml.Unmarshal(data, &document) == nil {
 				if field := yamlPathAtPosition(&document, durationError.line, durationError.column, ""); field != "" {
-					return Config{}, fmt.Errorf(fieldWrapErrorFormat, field, err)
+					return Config{}, fmt.Errorf("%s: %w", field, err)
 				}
 			}
 		}
-		return Config{}, fmt.Errorf(readGatewayConfigErrorFormat, err)
+		return Config{}, fmt.Errorf("read gateway configuration: %w", err)
 	}
 
 	var extra any
 	if err := decoder.Decode(&extra); err == nil {
 		return Config{}, fmt.Errorf("read gateway configuration: expected exactly one YAML document")
 	} else if err != io.EOF {
-		return Config{}, fmt.Errorf(readGatewayConfigErrorFormat, err)
+		return Config{}, fmt.Errorf("read gateway configuration: %w", err)
 	}
 
 	c = c.withDefaults()
@@ -189,8 +192,8 @@ func (c Config) validateAPIs() (map[string]API, error) {
 	names := make(map[string]API, len(c.APIs))
 	for i, api := range c.APIs {
 		name := fmt.Sprintf("apis[%d]", i)
-		if !apiNamePattern.MatchString(api.Name) {
-			return nil, fmt.Errorf(apiNameValidationErrorFormat, name)
+		if err := validateGatewayName(name, api.Name); err != nil {
+			return nil, err
 		}
 		if _, exists := names[api.Name]; exists {
 			return nil, fmt.Errorf("duplicate API name %q", api.Name)
@@ -517,14 +520,14 @@ func (c Config) validateServers(apis map[string]API) error {
 		}
 		bound, err := server.boundAPIs(apis)
 		if err != nil {
-			return fmt.Errorf(apiBindingErrorFormat, name, err)
+			return fmt.Errorf("%s.apis: %w", name, err)
 		}
 		routes := make(map[string]struct{})
 		for _, api := range bound {
 			for _, route := range api.Routes {
 				for _, method := range route.Methods {
 					if err := addRouteKey(routes, route.Path, method); err != nil {
-						return fmt.Errorf(apiBindingErrorFormat, name, err)
+						return fmt.Errorf("%s.apis: %w", name, err)
 					}
 				}
 			}
@@ -625,8 +628,8 @@ func (c Config) validateAuthenticators() (map[string]Authenticator, string, erro
 	apiKeyHeader := ""
 	for i, authenticator := range c.Authenticators {
 		name := fmt.Sprintf(authenticatorFieldPathFormat, i)
-		if !apiNamePattern.MatchString(authenticator.Name) {
-			return nil, "", fmt.Errorf(apiNameValidationErrorFormat, name)
+		if err := validateGatewayName(name, authenticator.Name); err != nil {
+			return nil, "", err
 		}
 		if _, exists := authenticators[authenticator.Name]; exists {
 			return nil, "", fmt.Errorf("duplicate authenticator name %q", authenticator.Name)
@@ -685,8 +688,8 @@ func (c Config) validateAuthorizationPolicies() (map[string]AuthorizationPolicy,
 	policies := make(map[string]AuthorizationPolicy, len(c.AuthorizationPolicies))
 	for i, policy := range c.AuthorizationPolicies {
 		name := fmt.Sprintf("authorization_policies[%d]", i)
-		if !apiNamePattern.MatchString(policy.Name) {
-			return nil, fmt.Errorf(apiNameValidationErrorFormat, name)
+		if err := validateGatewayName(name, policy.Name); err != nil {
+			return nil, err
 		}
 		if _, exists := policies[policy.Name]; exists {
 			return nil, fmt.Errorf("duplicate authorization policy name %q", policy.Name)
@@ -797,8 +800,8 @@ func (c Config) validateProcessing() error {
 	seen := make(map[string]struct{}, len(c.Processing))
 	for i, processor := range c.Processing {
 		name := fmt.Sprintf("processing[%d]", i)
-		if !apiNamePattern.MatchString(processor.Name) {
-			return fmt.Errorf("%s.name must start with a lowercase letter and contain only lowercase letters, numbers, or hyphens", name)
+		if err := validateGatewayName(name, processor.Name); err != nil {
+			return err
 		}
 		if _, exists := seen[processor.Name]; exists {
 			return fmt.Errorf("duplicate processing name %q", processor.Name)

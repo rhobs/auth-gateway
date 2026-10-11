@@ -24,7 +24,7 @@ linters:
           - goconst
   settings:
     goconst:
-      min-occurrences: 2
+      min-occurrences: 4
       ignore-calls: false
       exclude-types: []
     dupl:

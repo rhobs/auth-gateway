@@ -394,22 +394,25 @@ branch, differing only in how the results are combined. Extract the shared loop.
 
 Done when: the loop body appears once and goldens are unchanged.
 
-### 2.7 Reconsider the goconst-driven error format constants
+### 2.7 Reconsider the goconst-driven error format constants [x]
 
-`.golangci.yml` sets `goconst` to `min-occurrences: 2`. That threshold forced a
-family of format-string constants into existence: `readGatewayConfigErrorFormat`,
-`fieldWrapErrorFormat`, `apiBindingErrorFormat`, `apiNameValidationErrorFormat`,
-`enableAttributesErrorFormat`, `protoValidationErrorFormat`.
+At review time, `.golangci.yml` set `goconst` to `min-occurrences: 2`. That
+threshold had led to a family of format-string constants:
+`readGatewayConfigErrorFormat`, `fieldWrapErrorFormat`, `apiBindingErrorFormat`,
+`apiNameValidationErrorFormat`, `enableAttributesErrorFormat`, and
+`protoValidationErrorFormat`.
 
-The result is that `fmt.Errorf(apiNameValidationErrorFormat, name)` tells a
-reader nothing at the call site. The linter configuration is driving the design,
-and the readability cost exceeds the benefit. Also note that
-`config/config.go:78` writes the nil-reader message as a literal while the
-neighbouring sites use the constant, so the convention is not even uniform.
+Those constants hid the error context at call sites. The nil-reader message was
+already inline while neighboring wrappers used constants, so the convention was
+inconsistent.
 
-Raise `min-occurrences` to 3 or 4 and inline the error strings.
+The `goconst` threshold is now 4. Error-wrapping formats are inline at their
+call sites, so the operation context is visible where errors are returned. The
+four gateway name checks share a named validator to keep their common rule and
+message consistent without a format-string constant.
 
-Done when: error messages read inline at their call sites and `make lint` passes.
+Done when: operation and wrapping errors are inline at their call sites, common
+validation rules have named helpers, and `make lint` passes.
 
 ### 2.8 Deduplicate the collector configuration templates
 
