@@ -71,8 +71,8 @@ func TestJWTProcessingUsesFileBasedECDSConfiguration(t *testing.T) {
 	if format == nil || !format.OmitEmptyValues {
 		t.Fatalf("mapping formatter = %#v", update.GetValue())
 	}
-	textFormat, ok := format.GetFormat().(*core.SubstitutionFormatString_TextFormat)
-	if !ok || !strings.HasPrefix(textFormat.TextFormat, "%CEL(") || !strings.HasSuffix(textFormat.TextFormat, ")%") { //nolint:staticcheck // Assert the existing Envoy wire format without changing it during cleanup.
+	textFormat := format.GetTextFormatSource()
+	if textFormat == nil || !strings.HasPrefix(textFormat.GetInlineString(), "%CEL(") || !strings.HasSuffix(textFormat.GetInlineString(), ")%") {
 		t.Fatalf("mapping formatter = %#v", update.GetValue())
 	}
 }
@@ -166,8 +166,8 @@ func TestAPIKeyInitializersKeepMappingECDSSeparate(t *testing.T) {
 			t.Fatalf("server %d initializes %d attributes, want %d", test.index, len(initialized.OnRequestHeaders), test.want)
 		}
 		for _, value := range initialized.OnRequestHeaders {
-			format, ok := value.GetFormatString().GetFormat().(*core.SubstitutionFormatString_TextFormat)
-			if !value.SkipIfEmpty || !ok || !strings.Contains(format.TextFormat, "metadata.filter_metadata") { //nolint:staticcheck // Assert the existing Envoy wire format.
+			format := value.GetFormatString().GetTextFormatSource()
+			if !value.SkipIfEmpty || format == nil || !strings.Contains(format.GetInlineString(), "metadata.filter_metadata") {
 				t.Fatalf("server %d initializer reads an unsafe source: %#v", test.index, value)
 			}
 		}
@@ -191,7 +191,7 @@ func TestHeaderWorkingAttributesRequireVerifiedAuthenticator(t *testing.T) {
 	var sources []string
 	for _, value := range initialization.OnRequestHeaders {
 		if value.GetObjectKey() == "auth_gateway.attributes.requested_tenant" {
-			sources = append(sources, value.GetFormatString().GetTextFormat()) //nolint:staticcheck // Assert the generated Envoy wire format.
+			sources = append(sources, value.GetFormatString().GetTextFormatSource().GetInlineString())
 		}
 	}
 	if len(sources) != 2 ||
@@ -200,7 +200,7 @@ func TestHeaderWorkingAttributesRequireVerifiedAuthenticator(t *testing.T) {
 		t.Fatalf("mixed any_of header initializers lack credential guards: %v", sources)
 	}
 	processing := decodeProcessingECDSConfig(t, files.ProcessingConfig.Contents)
-	if len(processing.OnRequestHeaders) != 1 || strings.Contains(processing.OnRequestHeaders[0].GetFormatString().GetTextFormat(), "auth_gateway.request_headers") { //nolint:staticcheck // Assert the generated Envoy wire format.
+	if len(processing.OnRequestHeaders) != 1 || strings.Contains(processing.OnRequestHeaders[0].GetFormatString().GetTextFormatSource().GetInlineString(), "auth_gateway.request_headers") {
 		t.Fatalf("mapping ECDS contains header extraction: %#v", processing.OnRequestHeaders)
 	}
 }

@@ -4,7 +4,6 @@ package e2e
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -15,43 +14,26 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-const jwtMetricsNamespace = "auth-gateway-jwt-metrics-e2e"
-
 type requestMetricSample struct {
 	labels string
 	count  uint64
 }
 
-var _ = Describe("Per-API request metrics", Label("gateway", "jwt", "metrics"), Ordered, func() {
-	var gateway *jwtE2E
-	var adminAddress string
-	var collectorAddress string
-
-	BeforeAll(func(ctx SpecContext) {
-		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, jwtMetricsNamespace)).To(Succeed()) }, NodeTimeout(3*time.Minute))
-		var err error
-		gateway, err = setupJWTGateway(ctx, jwtMetricsNamespace, "jwt-gateway.yaml")
-		Expect(err).NotTo(HaveOccurred())
-		adminAddress = env.ForwardWithCleanup(ctx, jwtMetricsNamespace, "deployment/auth-gateway", 9901)
-		collectorAddress = env.ForwardWithCleanup(ctx, jwtMetricsNamespace, "service/auth-gateway", 8889)
-	}, NodeTimeout(12*time.Minute))
-
+func registerJWTRequestMetricSpecs() {
 	It("counts a successful request with mapped labels", func(ctx SpecContext) {
+		gateway := jwtGateway
+		adminAddress := gateway.adminAddr
 		labels := requestMetricLabels("metrics", http.StatusOK, "team-a", "writer-17")
 		before, err := requestMetricCount(ctx, adminAddress, labels)
 		Expect(err).NotTo(HaveOccurred())
 
 		token := gateway.token("issuer-one", jwtTestClaims("customer-a"), nil)
-		status, body, err := gateway.request(ctx, gateway.httpAddr, jwtHTTPHost, false, token, false)
-		Expect(err).NotTo(HaveOccurred())
+		status, body := expectUpstreamRequestDelta(ctx, adminAddress, "api-metrics", "successful request", 1, func() (int, []byte, error) {
+			return gateway.request(ctx, gateway.httpAddr, jwtHTTPHost, false, token, false)
+		})
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		var echo struct {
-			Method  string              `json:"method"`
-			URL     string              `json:"url"`
-			Data    string              `json:"data"`
-			Headers map[string][]string `json:"headers"`
-		}
-		Expect(json.Unmarshal(body, &echo)).To(Succeed())
+		echo, err := decodeHTTPBinEcho(body)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(echo.Method).To(Equal(http.MethodGet))
 		Expect(echo.URL).To(HaveSuffix("/anything"))
 		Expect(echo.Data).To(BeEmpty())
@@ -63,114 +45,111 @@ var _ = Describe("Per-API request metrics", Label("gateway", "jwt", "metrics"), 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(after).To(Equal(before + 1))
 		Eventually(func() error {
-			return checkExportedRequestMetric(ctx, collectorAddress, "gateway_http_requests_total", labels)
+			return checkExportedRequestMetric(ctx, gateway.metricsAddr, "gateway_http_requests_total", labels)
 		}).WithContext(ctx).WithTimeout(15 * time.Second).WithPolling(250 * time.Millisecond).Should(Succeed())
-	}, NodeTimeout(60*time.Second))
+	}, Label("metrics"), NodeTimeout(60*time.Second))
 
 	It("counts an RBAC denial with a mapped tenant and missing writer", func(ctx SpecContext) {
+		gateway := jwtGateway
+		adminAddress := gateway.adminAddr
 		labels := requestMetricLabels("metrics", http.StatusForbidden, "team-a", "__unattributed__")
 		before, err := requestMetricCount(ctx, adminAddress, labels)
-		Expect(err).NotTo(HaveOccurred())
-		upstreamBefore, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
 		Expect(err).NotTo(HaveOccurred())
 
 		claims := jwtTestClaims("customer-a")
 		delete(claims, "sub")
 		token := gateway.token("issuer-two", claims, nil)
-		status, body, err := gateway.request(ctx, gateway.httpAddr, jwtHTTPHost, false, token, false)
-		Expect(err).NotTo(HaveOccurred())
+		status, body := expectDeniedBeforeUpstream(ctx, adminAddress, "api-metrics", "RBAC denial", http.StatusForbidden, func() (int, []byte, error) {
+			return gateway.request(ctx, gateway.httpAddr, jwtHTTPHost, false, token, false)
+		})
 		Expect(status).To(Equal(http.StatusForbidden), string(body))
-		upstreamAfter, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(upstreamAfter).To(Equal(upstreamBefore), "RBAC denial reached the backend")
 
 		after, err := requestMetricCount(ctx, adminAddress, labels)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(after).To(Equal(before + 1))
-	}, NodeTimeout(60*time.Second))
+	}, Label("metrics"), NodeTimeout(60*time.Second))
 
 	It("uses fallback labels for an invalid JWT", func(ctx SpecContext) {
+		gateway := jwtGateway
+		adminAddress := gateway.adminAddr
 		labels := requestMetricLabels("metrics", http.StatusUnauthorized, "__unattributed__", "__unattributed__")
 		before, err := requestMetricCount(ctx, adminAddress, labels)
 		Expect(err).NotTo(HaveOccurred())
-		upstreamBefore, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-		Expect(err).NotTo(HaveOccurred())
 
 		token := gateway.token("issuer-one", jwtTestClaims("customer-a"), gateway.wrongKey)
-		status, body, err := gateway.request(ctx, gateway.httpAddr, jwtHTTPHost, false, token, false)
-		Expect(err).NotTo(HaveOccurred())
+		status, body := expectDeniedBeforeUpstream(ctx, adminAddress, "api-metrics", "invalid JWT", http.StatusUnauthorized, func() (int, []byte, error) {
+			return gateway.request(ctx, gateway.httpAddr, jwtHTTPHost, false, token, false)
+		})
 		Expect(status).To(Equal(http.StatusUnauthorized), string(body))
-		upstreamAfter, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(upstreamAfter).To(Equal(upstreamBefore), "invalid JWT reached the backend")
 
 		after, err := requestMetricCount(ctx, adminAddress, labels)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(after).To(Equal(before + 1))
-	}, NodeTimeout(60*time.Second))
+	}, Label("metrics"), NodeTimeout(60*time.Second))
 
 	It("keeps the upstream response code", func(ctx SpecContext) {
+		gateway := jwtGateway
+		adminAddress := gateway.adminAddr
 		labels := requestMetricLabels("metrics", http.StatusTeapot, "team-a", "writer-17")
 		before, err := requestMetricCount(ctx, adminAddress, labels)
 		Expect(err).NotTo(HaveOccurred())
-		upstreamBefore, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-		Expect(err).NotTo(HaveOccurred())
 
 		token := gateway.token("issuer-one", jwtTestClaims("customer-a"), nil)
-		status, body, err := gateway.requestPath(ctx, gateway.httpAddr, jwtHTTPHost, false, "/upstream-status", token, false)
-		Expect(err).NotTo(HaveOccurred())
+		status, body := expectUpstreamRequestDelta(ctx, adminAddress, "api-metrics", "upstream status", 1, func() (int, []byte, error) {
+			return gateway.requestPath(ctx, gateway.httpAddr, jwtHTTPHost, false, "/upstream-status", token, false)
+		})
 		Expect(status).To(Equal(http.StatusTeapot), string(body))
-		upstreamAfter, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(upstreamAfter).To(Equal(upstreamBefore + 1))
 
 		after, err := requestMetricCount(ctx, adminAddress, labels)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(after).To(Equal(before + 1))
-	}, NodeTimeout(60*time.Second))
+	}, Label("metrics"), NodeTimeout(60*time.Second))
 
 	It("uses each API binding and excludes unmetered and fallback routes", func(ctx SpecContext) {
-		token := gateway.token("issuer-one", jwtTestClaims("customer-a"), nil)
+		gateway := jwtGateway
+		adminAddress := gateway.adminAddr
+		statusOnlyToken := gateway.token("issuer-two", jwtTestClaims("customer-b"), nil)
 		statusOnly := requestMetricLabels("status-only", http.StatusOK, "__unattributed__", "__unattributed__")
 		before, err := requestMetricCount(ctx, adminAddress, statusOnly)
 		Expect(err).NotTo(HaveOccurred())
-		status, body, err := gateway.requestPath(ctx, gateway.httpAddr, jwtHTTPHost, false, "/status-only", token, false)
+		status, body, err := gateway.requestPath(ctx, gateway.httpAddr, jwtHTTPHost, false, "/status-only", statusOnlyToken, false)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		var echo struct {
-			Method string `json:"method"`
-			URL    string `json:"url"`
-		}
-		Expect(json.Unmarshal(body, &echo)).To(Succeed())
+		echo, err := decodeHTTPBinEcho(body)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(echo.Method).To(Equal(http.MethodGet))
 		Expect(echo.URL).To(HaveSuffix("/anything"))
 		after, err := requestMetricCount(ctx, adminAddress, statusOnly)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(after).To(Equal(before + 1))
 
+		metricsToken := gateway.token("issuer-one", jwtTestClaims("customer-a"), nil)
 		totalBefore, err := requestMetricTotal(ctx, adminAddress)
 		Expect(err).NotTo(HaveOccurred())
-		status, body, err = gateway.requestPath(ctx, gateway.httpAddr, jwtHTTPHost, false, "/unmetered", token, false)
+		status, body, err = gateway.requestPath(ctx, gateway.httpAddr, jwtHTTPHost, false, "/unmetered", metricsToken, false)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		Expect(json.Unmarshal(body, &echo)).To(Succeed())
+		echo, err = decodeHTTPBinEcho(body)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(echo.URL).To(HaveSuffix("/anything"))
 		totalAfter, err := requestMetricTotal(ctx, adminAddress)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(totalAfter).To(Equal(totalBefore), "unmetered API emitted a custom counter")
 
-		status, body, err = gateway.requestPath(ctx, gateway.httpAddr, jwtHTTPHost, false, "/unknown", token, false)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(status).To(Equal(http.StatusNotFound), string(body))
-		status, body, err = gateway.requestMethodPath(ctx, gateway.httpAddr, jwtHTTPHost, false, http.MethodPost, "/protected", token, false)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(status).To(Equal(http.StatusMethodNotAllowed), string(body))
+		expectDeniedBeforeUpstream(ctx, adminAddress, "api-metrics", "unknown route", http.StatusNotFound, func() (int, []byte, error) {
+			return gateway.requestPath(ctx, gateway.httpAddr, jwtHTTPHost, false, "/unknown", metricsToken, false)
+		})
+		expectDeniedBeforeUpstream(ctx, adminAddress, "api-metrics", "method fallback", http.StatusMethodNotAllowed, func() (int, []byte, error) {
+			return gateway.requestMethodPath(ctx, gateway.httpAddr, jwtHTTPHost, false, http.MethodPost, "/protected", metricsToken, false)
+		})
 		totalAfter, err = requestMetricTotal(ctx, adminAddress)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(totalAfter).To(Equal(totalBefore), "gateway fallback route emitted a custom counter")
-	}, NodeTimeout(60*time.Second))
+	}, Label("metrics"), NodeTimeout(60*time.Second))
 
 	It("accepts a 128-byte printable label value", func(ctx SpecContext) {
+		gateway := jwtGateway
+		adminAddress := gateway.adminAddr
 		printable := make([]byte, 0, 128)
 		for char := byte(32); char <= 126; char++ {
 			if char != '|' {
@@ -181,42 +160,35 @@ var _ = Describe("Per-API request metrics", Label("gateway", "jwt", "metrics"), 
 		labels := requestMetricLabels("metrics", http.StatusForbidden, tenant, "writer-17")
 		before, err := requestMetricCount(ctx, adminAddress, labels)
 		Expect(err).NotTo(HaveOccurred())
-		upstreamBefore, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-		Expect(err).NotTo(HaveOccurred())
 
 		token := gateway.token("issuer-one", jwtTestClaims(tenant), nil)
-		status, body, err := gateway.request(ctx, gateway.httpAddr, jwtHTTPHost, false, token, false)
-		Expect(err).NotTo(HaveOccurred())
+		status, body := expectDeniedBeforeUpstream(ctx, adminAddress, "api-metrics", "maximum label", http.StatusForbidden, func() (int, []byte, error) {
+			return gateway.request(ctx, gateway.httpAddr, jwtHTTPHost, false, token, false)
+		})
 		Expect(status).To(Equal(http.StatusForbidden), string(body))
-		upstreamAfter, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(upstreamAfter).To(Equal(upstreamBefore), "denied request reached the backend")
-
 		after, err := requestMetricCount(ctx, adminAddress, labels)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(after).To(Equal(before + 1))
-	}, NodeTimeout(60*time.Second))
+	}, Label("metrics"), NodeTimeout(60*time.Second))
 
 	It("replaces unsafe or oversized label values", func(ctx SpecContext) {
+		gateway := jwtGateway
+		adminAddress := gateway.adminAddr
 		labels := requestMetricLabels("metrics", http.StatusForbidden, "__unattributed__", "writer-17")
 		for _, tenant := range []string{"unsafe|tenant", strings.Repeat("x", 129), "non-ASCII-\u00e9"} {
 			before, err := requestMetricCount(ctx, adminAddress, labels)
 			Expect(err).NotTo(HaveOccurred())
-			upstreamBefore, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-			Expect(err).NotTo(HaveOccurred())
 			token := gateway.token("issuer-one", jwtTestClaims(tenant), nil)
-			status, body, err := gateway.request(ctx, gateway.httpAddr, jwtHTTPHost, false, token, false)
-			Expect(err).NotTo(HaveOccurred())
+			status, body := expectDeniedBeforeUpstream(ctx, adminAddress, "api-metrics", "unsafe label", http.StatusForbidden, func() (int, []byte, error) {
+				return gateway.request(ctx, gateway.httpAddr, jwtHTTPHost, false, token, false)
+			})
 			Expect(status).To(Equal(http.StatusForbidden), string(body))
-			upstreamAfter, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(upstreamAfter).To(Equal(upstreamBefore), "denied request reached the backend")
 			after, err := requestMetricCount(ctx, adminAddress, labels)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(after).To(Equal(before+1), tenant)
 		}
-	}, NodeTimeout(60*time.Second))
-})
+	}, Label("metrics"), NodeTimeout(60*time.Second))
+}
 
 func requestMetricLabels(api string, status int, tenant, writer string) map[string]string {
 	return map[string]string{
@@ -260,21 +232,9 @@ func requestMetricTotal(ctx context.Context, adminAddress string) (uint64, error
 }
 
 func envoyRequestMetricSamples(ctx context.Context, adminAddress string) ([]requestMetricSample, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"http://"+adminAddress+"/stats/prometheus?filter=gateway_http_requests_total", nil)
+	body, err := env.EnvoyAdminGet(ctx, adminAddress, "/stats/prometheus?filter=gateway_http_requests_total")
 	if err != nil {
 		return nil, err
-	}
-	response, err := testClient.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	body, err := readAndCloseResponseBody(response, 1<<20)
-	if err != nil {
-		return nil, err
-	}
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Envoy Prometheus stats returned HTTP %d: %s", response.StatusCode, body)
 	}
 	const prefix = "envoy_http_lua_gateway_http_requests_total{"
 	var samples []requestMetricSample

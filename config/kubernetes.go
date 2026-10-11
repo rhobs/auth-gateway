@@ -24,6 +24,8 @@ const (
 	kubernetesConfigMapKind             = "ConfigMap"
 	kubernetesResourcesFieldPath        = "kubernetes.resources"
 	kubernetesMetricsResourcesFieldPath = "kubernetes.metrics.resources"
+	terminationGracePeriodSeconds       = int64(30)
+	preStopDrainDelaySeconds            = 5
 )
 
 const (
@@ -153,6 +155,7 @@ func newGatewayServiceAccount(c Config) corev1.ServiceAccount {
 
 func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, metricsName string, processingConfigMap *corev1.ConfigMap) (appsv1.Deployment, error) {
 	k := c.Kubernetes
+	preStopDrainCommand := fmt.Sprintf("sleep %d", preStopDrainDelaySeconds)
 	gatewayResources, err := kubernetesResourceRequirements(kubernetesResourcesFieldPath, k.Resources)
 	if err != nil {
 		return appsv1.Deployment{}, err
@@ -180,7 +183,7 @@ func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, m
 				Spec: corev1.PodSpec{
 					ServiceAccountName:            k.Name,
 					AutomountServiceAccountToken:  new(false),
-					TerminationGracePeriodSeconds: new(int64(30)),
+					TerminationGracePeriodSeconds: new(terminationGracePeriodSeconds),
 					Containers: []corev1.Container{{
 						Name:            "envoy",
 						Image:           k.Image,
@@ -194,6 +197,11 @@ func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, m
 							ProbeHandler:     corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString(httpPortName)}},
 							PeriodSeconds:    5,
 							FailureThreshold: 12,
+						},
+						Lifecycle: &corev1.Lifecycle{
+							PreStop: &corev1.LifecycleHandler{
+								Exec: &corev1.ExecAction{Command: []string{"/bin/sh", "-c", preStopDrainCommand}},
+							},
 						},
 						Resources: gatewayResources,
 						SecurityContext: &corev1.SecurityContext{

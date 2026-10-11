@@ -488,6 +488,13 @@ spec:
         - info
         image: envoyproxy/envoy:v1.39.1
         imagePullPolicy: IfNotPresent
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - sleep 5
         name: envoy
         ports:
         - containerPort: 8080

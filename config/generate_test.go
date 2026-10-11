@@ -24,6 +24,7 @@ import (
 	setfilterstate "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	"github.com/google/go-cmp/cmp"
 	"go.yaml.in/yaml/v3"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -107,20 +108,22 @@ func TestPlaygroundBootstrap(t *testing.T) {
 
 }
 
-func checkReference(t *testing.T, path string, want []byte) {
+func checkReference(t *testing.T, path string, generated []byte) {
 	t.Helper()
 	if *updateGoldens {
-		if err := os.WriteFile(path, want, 0o644); err != nil {
+		if err := os.WriteFile(path, generated, 0o644); err != nil {
 			t.Fatal(err)
 		}
 		return
 	}
-	got, err := os.ReadFile(path)
+	reference, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got, want) {
-		t.Errorf("%s is out of date; run make update-golden", path)
+	referenceLines := strings.Split(string(reference), "\n")
+	generatedLines := strings.Split(string(generated), "\n")
+	if diff := cmp.Diff(referenceLines, generatedLines); diff != "" {
+		t.Errorf("%s is out of date; run make update-golden (-reference +generated):\n%s", path, diff)
 	}
 }
 

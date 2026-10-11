@@ -63,7 +63,7 @@ Then apply the generated Kubernetes manifest:
 kubectl apply -f auth-gateway.yaml
 ```
 
-The examples use Envoy `v1.39.1`. Use an Envoy image compatible with the generated configuration.
+Empty or omitted `kubernetes.image` and `kubernetes.otel_collector_image` values use the Go defaults `config.DefaultEnvoyImage` and `config.DefaultOTelCollectorImage`, listed in the [configuration reference](docs/configuration-reference.md). Set either field to an approved image or private mirror to override its default.
 
 The library also exposes two output paths:
 
@@ -154,7 +154,7 @@ An explicit zero is treated as a supplied value and is rejected where a positive
 
 Overload protection is disabled unless the top-level `overload` section is present. Set both `max_heap_bytes` and `max_downstream_connections`; the heap budget must be less than Envoy's memory limit. The default heap-shrink and request-reject thresholds are `0.90` and `0.95`.
 
-Kubernetes metrics collection is enabled by default. Set `observability.metrics` to change the scrape interval and timeout, or set `observability.metrics.enabled: false` to omit metrics scraping and the metrics Service port. That flag does not change which per-API counters Envoy generates. Set `observability.tracing.enabled: true` to enable Envoy spans; the collector sidecar exports them to `observability.tracing.endpoint`. The collector remains when either metrics or tracing is enabled. Collector resources remain under `kubernetes.metrics.resources`. The default collector image is `otel/opentelemetry-collector-contrib:0.135.0`. Omit `kubernetes.envoy_concurrency` to let Envoy choose its worker count; a CPU limit does not set it.
+Kubernetes metrics collection is enabled by default. Set `observability.metrics` to change the scrape interval and timeout, or set `observability.metrics.enabled: false` to omit metrics scraping and the metrics Service port. That flag does not change which per-API counters Envoy generates. Set `observability.tracing.enabled: true` to enable Envoy spans; the collector sidecar exports them to `observability.tracing.endpoint`. The collector remains when either metrics or tracing is enabled. Collector resources remain under `kubernetes.metrics.resources`. The default Envoy and collector image versions are documented in [configuration-reference.md](docs/configuration-reference.md). Omit `kubernetes.envoy_concurrency` to let Envoy choose its worker count; a CPU limit does not set it.
 
 ## Applying updates
 

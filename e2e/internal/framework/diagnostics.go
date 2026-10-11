@@ -5,36 +5,22 @@ package framework
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 
 	"github.com/onsi/ginkgo/v2"
 )
 
-func writeEnvoyAdminDiagnostic(ctx context.Context, dir, address, filename, path string) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+path, nil)
+func (e *Environment) writeEnvoyAdminDiagnostic(ctx context.Context, dir, address, filename, path string) {
+	data, err := e.EnvoyAdminGet(ctx, address, path)
 	if err != nil {
 		writeDiagnostic(dir, filename, nil, err)
-		return
-	}
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		writeDiagnostic(dir, filename, nil, err)
-		return
-	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	closeErr := response.Body.Close()
-	if err := errors.Join(err, closeErr); err != nil {
-		writeDiagnostic(dir, filename, nil, fmt.Errorf("read Envoy admin response: %w", err))
 		return
 	}
 	writeDiagnostic(dir, filename, data, nil)
-	writeGinkgo("Envoy auth stats (HTTP %d):\n%s\n", response.StatusCode, data)
+	writeGinkgo("Envoy auth stats:\n%s\n", data)
 }
 
 func writeDiagnostic(dir, name string, value any, err error) {

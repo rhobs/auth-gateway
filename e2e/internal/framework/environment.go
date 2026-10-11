@@ -6,13 +6,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -317,6 +317,7 @@ func (e *Environment) WaitForDeployment(ctx context.Context, namespace, name str
 }
 
 // RestartDeployment changes a pod-template annotation and waits for the replacement Pods to become available.
+// Existing port forwards remain attached to the previous Pod and must be recreated after the restart.
 func (e *Environment) RestartDeployment(ctx context.Context, namespace, name string, timeout time.Duration) error {
 	deployment, err := e.client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
@@ -349,6 +350,80 @@ func (e *Environment) PodUID(ctx context.Context, namespace, labelSelector strin
 		return "", fmt.Errorf("expected one Pod matching %q, got %d", labelSelector, len(pods.Items))
 	}
 	return string(pods.Items[0].UID), nil
+}
+
+// PodIdentity describes the name and UID of a non-terminating Pod.
+type PodIdentity struct {
+	Name string
+	UID  string
+}
+
+// PodIdentities returns non-terminating Pods matching labelSelector in name order.
+func (e *Environment) PodIdentities(ctx context.Context, namespace, labelSelector string) ([]PodIdentity, error) {
+	pods, err := e.client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
+	if err != nil {
+		return nil, fmt.Errorf("list Pods matching %q: %w", labelSelector, err)
+	}
+
+	identities := make([]PodIdentity, 0, len(pods.Items))
+	for _, pod := range pods.Items {
+		if pod.DeletionTimestamp != nil {
+			continue
+		}
+		if pod.UID == "" {
+			return nil, fmt.Errorf("pod %q matching %q has no UID", pod.Name, labelSelector)
+		}
+		identities = append(identities, PodIdentity{Name: pod.Name, UID: string(pod.UID)})
+	}
+	sort.Slice(identities, func(i, j int) bool { return identities[i].Name < identities[j].Name })
+	return identities, nil
+}
+
+// PodUIDs returns the sorted UIDs of non-terminating Pods matching labelSelector.
+func (e *Environment) PodUIDs(ctx context.Context, namespace, labelSelector string) ([]string, error) {
+	identities, err := e.PodIdentities(ctx, namespace, labelSelector)
+	if err != nil {
+		return nil, err
+	}
+
+	uids := make([]string, 0, len(identities))
+	for _, identity := range identities {
+		uids = append(uids, identity.UID)
+	}
+	sort.Strings(uids)
+	return uids, nil
+}
+
+// PodNames returns the sorted names of non-terminating Pods matching labelSelector.
+func (e *Environment) PodNames(ctx context.Context, namespace, labelSelector string) ([]string, error) {
+	identities, err := e.PodIdentities(ctx, namespace, labelSelector)
+	if err != nil {
+		return nil, err
+	}
+
+	names := make([]string, 0, len(identities))
+	for _, identity := range identities {
+		names = append(names, identity.Name)
+	}
+	return names, nil
+}
+
+// PodContainerNames returns the name and container names from the single Pod matching labelSelector.
+func (e *Environment) PodContainerNames(ctx context.Context, namespace, labelSelector string) (string, []string, error) {
+	pods, err := e.client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
+	if err != nil {
+		return "", nil, fmt.Errorf("list Pods matching %q: %w", labelSelector, err)
+	}
+	if len(pods.Items) != 1 {
+		return "", nil, fmt.Errorf("expected one Pod matching %q, got %d", labelSelector, len(pods.Items))
+	}
+	pod := pods.Items[0]
+	containers := pod.Spec.Containers
+	names := make([]string, 0, len(containers))
+	for _, container := range containers {
+		names = append(names, container.Name)
+	}
+	return pod.Name, names, nil
 }
 
 // EnsureCertManager installs the cert-manager manifest and waits for its controllers.
@@ -403,8 +478,7 @@ func (e *Environment) Forward(ctx context.Context, namespace, resource string, r
 	if err != nil {
 		return "", nil, fmt.Errorf("create port-forward transport: %w", err)
 	}
-	dialContext, cancelDial := context.WithTimeout(context.Background(), time.Minute)
-	defer cancelDial()
+	dialContext, cancelDial := context.WithCancel(context.Background())
 	url := e.client.CoreV1().RESTClient().Post().
 		Namespace(namespace).
 		Resource("pods").
@@ -425,6 +499,7 @@ func (e *Environment) Forward(ctx context.Context, namespace, resource string, r
 		&stderr,
 	)
 	if err != nil {
+		cancelDial()
 		return "", nil, fmt.Errorf("configure port-forward to Pod %q: %w", pod.Name, err)
 	}
 
@@ -448,7 +523,6 @@ func (e *Environment) Forward(ctx context.Context, namespace, resource string, r
 	defer timer.Stop()
 	select {
 	case <-readyChannel:
-		cancelDial()
 		ports, err := forwarder.GetPorts()
 		if err != nil {
 			stop()
@@ -553,12 +627,45 @@ func (e *Environment) ForwardWithCleanup(ctx context.Context, namespace, resourc
 	return address
 }
 
+// ForwardEnvoyAdmin opens a port forward to the Envoy admin port in an auth-gateway Deployment.
+func (e *Environment) ForwardEnvoyAdmin(ctx context.Context, namespace string) (string, func(), error) {
+	return e.Forward(ctx, namespace, "deployment/auth-gateway", 9901)
+}
+
+// ForwardEnvoyAdminWithCleanup opens an Envoy admin port forward and registers it for Ginkgo cleanup.
+func (e *Environment) ForwardEnvoyAdminWithCleanup(ctx context.Context, namespace string) string {
+	ginkgo.GinkgoHelper()
+	address, stop, err := e.ForwardEnvoyAdmin(ctx, namespace)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	ginkgo.DeferCleanup(stop)
+	return address
+}
+
+// ContainerLogs reads the available logs from a named container in a Pod. A zero tailLines value reads all available lines.
+func (e *Environment) ContainerLogs(ctx context.Context, namespace, podName, containerName string, tailLines int64) ([]byte, error) {
+	if namespace == "" || podName == "" || containerName == "" {
+		return nil, fmt.Errorf("read container logs requires a namespace, Pod name, and container name")
+	}
+	if tailLines < 0 {
+		return nil, fmt.Errorf("read container logs tail line count must not be negative")
+	}
+	options := &corev1.PodLogOptions{Container: containerName}
+	if tailLines > 0 {
+		options.TailLines = &tailLines
+	}
+	data, err := e.client.CoreV1().Pods(namespace).GetLogs(podName, options).Do(ctx).Raw()
+	if err != nil {
+		return nil, fmt.Errorf("read logs from Pod %q container %q: %w", podName, containerName, err)
+	}
+	return data, nil
+}
+
 // Diagnostics saves Kubernetes objects, recent container logs, and Envoy cluster state under e2e/.state.
 func (e *Environment) Diagnostics(namespace string) {
 	if e == nil || namespace == "" {
 		return
 	}
-	dir := e.StatePath("artifacts", time.Now().UTC().Format("20060102T150405.000000000"))
+	dir := e.StatePath("artifacts", namespace, time.Now().UTC().Format("20060102T150405.000000000"))
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		writeGinkgo("%v\n", err)
 		return
@@ -573,8 +680,7 @@ func (e *Environment) Diagnostics(namespace string) {
 		for _, pod := range pods.Items {
 			for _, container := range pod.Spec.Containers {
 				tailLines := int64(40)
-				logOptions := &corev1.PodLogOptions{Container: container.Name, TailLines: &tailLines}
-				data, err := core.Pods(namespace).GetLogs(pod.Name, logOptions).Do(ctx).Raw()
+				data, err := e.ContainerLogs(ctx, namespace, pod.Name, container.Name, tailLines)
 				writeDiagnostic(dir, pod.Name+"-"+container.Name+".log", data, err)
 			}
 		}
@@ -598,7 +704,7 @@ func (e *Environment) Diagnostics(namespace string) {
 func (e *Environment) envoyClusterDiagnostics(namespace, dir string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	address, stop, err := e.Forward(ctx, namespace, "deployment/auth-gateway", 9901)
+	address, stop, err := e.ForwardEnvoyAdmin(ctx, namespace)
 	if err != nil {
 		diagnosticErr := fmt.Errorf("start Envoy cluster diagnostics port-forward: %w", err)
 		writeDiagnostic(dir, envoyClusterDiagnosticFilename, nil, diagnosticErr)
@@ -606,29 +712,14 @@ func (e *Environment) envoyClusterDiagnostics(namespace, dir string) {
 		return
 	}
 	defer stop()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+"/clusters?format=json", nil)
-	if err != nil {
-		diagnosticErr := fmt.Errorf("create Envoy cluster diagnostics request: %w", err)
-		writeDiagnostic(dir, envoyClusterDiagnosticFilename, nil, diagnosticErr)
-		writeGinkgo(envoyClusterDiagnosticErrorFormat, diagnosticErr)
-		return
-	}
-	response, err := http.DefaultClient.Do(request)
+	data, err := e.EnvoyAdminGet(ctx, address, "/clusters?format=json")
 	if err != nil {
 		diagnosticErr := fmt.Errorf("request Envoy cluster diagnostics: %w", err)
 		writeDiagnostic(dir, envoyClusterDiagnosticFilename, nil, diagnosticErr)
 		writeGinkgo(envoyClusterDiagnosticErrorFormat, diagnosticErr)
 		return
 	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	closeErr := response.Body.Close()
-	if err := errors.Join(err, closeErr); err != nil {
-		diagnosticErr := fmt.Errorf("read Envoy cluster diagnostics: %w", err)
-		writeDiagnostic(dir, envoyClusterDiagnosticFilename, nil, diagnosticErr)
-		writeGinkgo(envoyClusterDiagnosticErrorFormat, diagnosticErr)
-		return
-	}
 	writeDiagnostic(dir, envoyClusterDiagnosticFilename, data, nil)
-	writeGinkgo("Envoy cluster state (HTTP %d):\n%s\n", response.StatusCode, data)
-	writeEnvoyAdminDiagnostic(ctx, dir, address, "envoy-stats.txt", "/stats?filter=http.ingress")
+	writeGinkgo("Envoy cluster state:\n%s\n", data)
+	e.writeEnvoyAdminDiagnostic(ctx, dir, address, "envoy-stats.txt", "/stats?filter=http.ingress")
 }

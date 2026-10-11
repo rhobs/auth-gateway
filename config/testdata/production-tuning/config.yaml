@@ -76,7 +76,6 @@ observability:
 kubernetes:
   name: auth-gateway
   namespace: observability
-  image: envoyproxy/envoy:v1.39.1
   envoy_concurrency: 2
   metrics:
     resources:

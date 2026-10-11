@@ -24,4 +24,3 @@ apis:
 kubernetes:
   name: auth-gateway
   namespace: observability
-  image: envoyproxy/envoy:v1.39.1

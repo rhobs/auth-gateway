@@ -2,9 +2,9 @@
 // files or Kubernetes resources.
 //
 // Start with Load for YAML, or Config.Validate for a Config built in Go.
-// Use Generate for file-based Envoy output or GenerateKubernetes for
-// Kubernetes resources. LoadAPIKeyCredentials and APIKeySecret build the
-// external API-key Secret separately.
+// Use Generate for file-based Envoy output, GenerateOTelCollectorConfig for
+// the collector file, or GenerateKubernetes for Kubernetes resources.
+// LoadAPIKeyCredentials and APIKeySecret build the external API-key Secret separately.
 //
 // Callers should treat error text as diagnostic only, without matching
 // on it or relying on errors.Is or errors.As to classify failures.
@@ -454,13 +454,16 @@ func (o OverloadConfig) withDefaults() OverloadConfig {
 }
 
 func (k Kubernetes) withDefaults(hasHTTPS bool) Kubernetes {
+	if k.Image == "" {
+		k.Image = DefaultEnvoyImage
+	}
 	k.Replicas = defaultValue(k.Replicas, defaultKubernetesReplicas)
 	k.ServicePort = defaultValue(k.ServicePort, int32(defaultServicePort))
 	if hasHTTPS {
 		k.HTTPSServicePort = defaultValue(k.HTTPSServicePort, int32(defaultHTTPSServicePort))
 	}
 	if k.OTelCollectorImage == "" {
-		k.OTelCollectorImage = defaultOTelCollectorImage
+		k.OTelCollectorImage = DefaultOTelCollectorImage
 	}
 	k.Metrics = k.Metrics.withDefaults()
 	k.Resources.Requests = copyResourcesOrDefault(k.Resources.Requests, map[string]string{

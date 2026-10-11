@@ -4,76 +4,25 @@ package e2e
 
 import (
 	"bytes"
-	"context"
-	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
-	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/base64"
-	"encoding/json"
-	"encoding/pem"
 	"fmt"
-	"math/big"
 	"net/http"
-	"sort"
-	"strconv"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/rhobs/auth-gateway/config"
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
-	utilwait "k8s.io/apimachinery/pkg/util/wait"
-	"sigs.k8s.io/yaml"
 )
 
-const (
-	jwtPlainNamespace     = "auth-gateway-jwt-plain-e2e"
-	jwtHeadersNamespace   = "auth-gateway-jwt-headers-e2e"
-	jwtNamespace          = "auth-gateway-jwt-e2e"
-	jwtLifecycleNamespace = "auth-gateway-jwt-lifecycle-e2e"
-	jwtPlainHost          = "plain.jwt.auth-gateway.test"
-	jwtHeadersHost        = "headers.jwt.auth-gateway.test"
-	jwtManagedHeaderHost  = "managed.jwt.auth-gateway.test"
-	jwtHTTPHost           = "writer.jwt.auth-gateway.test"
-	jwtHTTPSHost          = "writer-tls.jwt.auth-gateway.test"
-	jwtIssuerOneHost      = "issuer-one-only.jwt.auth-gateway.test"
-	jwtLifecycleHost      = "lifecycle.jwt.auth-gateway.test"
-)
-
-type jwtE2E struct {
-	keys      map[string]*rsa.PrivateKey
-	wrongKey  *rsa.PrivateKey
-	rootCAs   *x509.CertPool
-	httpAddr  string
-	httpsAddr string
-	certs     *jwtTestCertificates
-	resources *config.KubernetesResources
-}
-
-var (
-	jwtPlainGateway     *jwtE2E
-	jwtHeadersGateway   *jwtE2E
-	jwtGateway          *jwtE2E
-	jwtLifecycleGateway *jwtE2E
-)
-
-var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authentication", "authorization"), Ordered, func() {
+var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authentication", "authorization", "namespace-"+jwtPlainNamespace), Ordered, func() {
 	BeforeAll(func(ctx SpecContext) {
 		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, jwtPlainNamespace)).To(Succeed()) }, NodeTimeout(3*time.Minute))
 		var err error
 		jwtPlainGateway, err = setupJWTGateway(ctx, jwtPlainNamespace, "jwt-auth.yaml")
 		Expect(err).NotTo(HaveOccurred())
+		jwtPlainGateway.adminAddr = env.ForwardEnvoyAdminWithCleanup(ctx, jwtPlainNamespace)
 	}, NodeTimeout(12*time.Minute))
 
 	It("skips audience validation when none is configured", func(ctx SpecContext) {
@@ -96,19 +45,16 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 			Expect(err).NotTo(HaveOccurred(), test.name)
 			Expect(status).To(Equal(http.StatusOK), test.name+": "+string(body))
 
-			var echo struct {
-				Method  string              `json:"method"`
-				URL     string              `json:"url"`
-				Headers map[string][]string `json:"headers"`
-			}
-			Expect(json.Unmarshal(body, &echo)).To(Succeed(), test.name)
+			echo, err := decodeHTTPBinEcho(body)
+			Expect(err).NotTo(HaveOccurred(), test.name)
 			Expect(echo.Method).To(Equal(http.MethodGet), test.name)
 			Expect(echo.URL).To(HaveSuffix("/anything"), test.name)
 			Expect(headerValue(echo.Headers, "Authorization")).To(BeEmpty(), test.name)
 		}
 	}, NodeTimeout(60*time.Second))
 
-	It("authorizes when any list member matches the grant", func(ctx SpecContext) {
+	It("authorizes each listed member and rejects an unlisted member", func(ctx SpecContext) {
+		adminAddress := jwtPlainGateway.adminAddr
 		for _, test := range []struct {
 			name   string
 			values []string
@@ -123,20 +69,28 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 				"exp": time.Now().Add(5 * time.Minute).Unix(),
 			}
 			token := jwtPlainGateway.token("issuer-one", claims, nil)
-			status, body, err := jwtPlainGateway.request(ctx, jwtPlainGateway.httpAddr, jwtPlainHost, false, token, false)
-			Expect(err).NotTo(HaveOccurred(), test.name)
+			status, body := expectUpstreamRequestDelta(ctx, adminAddress, "api-metrics", test.name, 1, func() (int, []byte, error) {
+				return jwtPlainGateway.request(ctx, jwtPlainGateway.httpAddr, jwtPlainHost, false, token, false)
+			})
 			Expect(status).To(Equal(http.StatusOK), test.name+": "+string(body))
-			headers := jwtEchoHeaders(body)
-			Expect(headers).NotTo(BeNil(), test.name)
-			Expect(headerValue(headers, "Authorization")).To(BeEmpty(), test.name)
-			Expect(headerValue(headers, "X-Scope-OrgID")).To(BeEmpty(), test.name)
+			echo, err := decodeHTTPBinEcho(body)
+			Expect(err).NotTo(HaveOccurred(), test.name)
+			Expect(echo.Method).To(Equal(http.MethodGet), test.name)
+			Expect(echo.URL).To(HaveSuffix("/anything"), test.name)
+			Expect(headerValue(echo.Headers, "Authorization")).To(BeEmpty(), test.name)
+			Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(BeEmpty(), test.name)
 		}
-	}, SpecTimeout(12*time.Minute))
+		disallowedClaims := map[string]any{
+			"x": map[string]any{"my_list": []string{"unlisted"}}, "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix(),
+		}
+		disallowedToken := jwtPlainGateway.token("issuer-one", disallowedClaims, nil)
+		expectDeniedBeforeUpstream(ctx, adminAddress, "api-metrics", "unlisted list member", http.StatusForbidden, func() (int, []byte, error) {
+			return jwtPlainGateway.request(ctx, jwtPlainGateway.httpAddr, jwtPlainHost, false, disallowedToken, false)
+		})
+	}, SpecTimeout(90*time.Second))
 
 	It("rejects invalid credentials and denied claims before the upstream", func(ctx SpecContext) {
-		adminAddress, stop, err := env.Forward(ctx, jwtPlainNamespace, "deployment/auth-gateway", 9901)
-		Expect(err).NotTo(HaveOccurred())
-		defer stop()
+		adminAddress := jwtPlainGateway.adminAddr
 
 		allowed := map[string]any{"x": map[string]any{"my_list": []string{"y", "z"}}, "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix()}
 		denied := map[string]any{"x": map[string]any{"my_list": []string{"unlisted"}}, "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix()}
@@ -150,24 +104,47 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 			{name: "denied claim", token: jwtPlainGateway.token("issuer-one", denied, nil), status: http.StatusForbidden},
 		}
 		for _, test := range cases {
-			before, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-			Expect(err).NotTo(HaveOccurred(), test.name)
-			status, body, err := jwtPlainGateway.request(ctx, jwtPlainGateway.httpAddr, jwtPlainHost, false, test.token, false)
-			Expect(err).NotTo(HaveOccurred(), test.name)
-			Expect(status).To(Equal(test.status), test.name+": "+string(body))
-			after, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-			Expect(err).NotTo(HaveOccurred(), test.name)
-			Expect(after).To(Equal(before), test.name+" reached the upstream")
+			expectDeniedBeforeUpstream(ctx, adminAddress, "api-metrics", test.name, test.status, func() (int, []byte, error) {
+				return jwtPlainGateway.request(ctx, jwtPlainGateway.httpAddr, jwtPlainHost, false, test.token, false)
+			})
 		}
+
+		var accessLogs []jwtEnvoyAccessLog
+		var accessLogsErr error
+		Eventually(func() bool {
+			accessLogs, accessLogsErr = jwtEnvoyAccessLogs(ctx, jwtPlainNamespace)
+			if accessLogsErr != nil {
+				return false
+			}
+			for _, accessLog := range accessLogs {
+				if accessLog.Status == http.StatusUnauthorized {
+					return true
+				}
+			}
+			return false
+		}).WithContext(ctx).WithTimeout(15*time.Second).WithPolling(250*time.Millisecond).Should(BeTrue(), func() string {
+			return fmt.Sprintf("expected a JSON 401 access log; got %+v (read error: %v)", accessLogs, accessLogsErr)
+		})
+		Expect(accessLogsErr).NotTo(HaveOccurred())
+		foundUnauthorized := false
+		for _, accessLog := range accessLogs {
+			Expect(accessLog.Status).NotTo(Equal(http.StatusOK), "successful responses must not be logged: %+v", accessLog)
+			if accessLog.Status == http.StatusUnauthorized {
+				foundUnauthorized = true
+				Expect(accessLog.ResponseCodeDetails).NotTo(BeEmpty(), "401 access log must include response_code_details")
+			}
+		}
+		Expect(foundUnauthorized).To(BeTrue(), "expected a JSON 401 access log with response_code_details")
 	}, NodeTimeout(60*time.Second))
 })
 
-var _ = Describe("Direct JWT headers", Label("gateway", "jwt", "authentication", "authorization"), Ordered, func() {
+var _ = Describe("Direct JWT headers", Label("gateway", "jwt", "authentication", "authorization", "namespace-"+jwtHeadersNamespace), Ordered, func() {
 	BeforeAll(func(ctx SpecContext) {
 		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, jwtHeadersNamespace)).To(Succeed()) }, NodeTimeout(3*time.Minute))
 		var err error
 		jwtHeadersGateway, err = setupJWTGateway(ctx, jwtHeadersNamespace, "jwt-auth-with-headers.yaml")
 		Expect(err).NotTo(HaveOccurred())
+		jwtHeadersGateway.adminAddr = env.ForwardEnvoyAdminWithCleanup(ctx, jwtHeadersNamespace)
 	}, NodeTimeout(12*time.Minute))
 
 	It("replaces caller-supplied managed headers with verified values", func(ctx SpecContext) {
@@ -185,7 +162,7 @@ var _ = Describe("Direct JWT headers", Label("gateway", "jwt", "authentication",
 		Expect(headerValue(headers, "X-Scope-OrgID")).To(Equal("customer-a"))
 		Expect(headerValue(headers, "X-Writer-ID")).To(Equal("writer-17"))
 		Expect(headerValue(headers, "Authorization")).To(BeEmpty())
-	}, SpecTimeout(12*time.Minute))
+	}, NodeTimeout(60*time.Second))
 
 	It("authorizes with the original managed header before replacing it", func(ctx SpecContext) {
 		token := jwtHeadersGateway.token("issuer-one", jwtTestClaims("customer-a"), nil)
@@ -193,30 +170,18 @@ var _ = Describe("Direct JWT headers", Label("gateway", "jwt", "authentication",
 			false, http.MethodGet, "/protected", token, http.Header{"X-Scope-OrgID": []string{"requested-a"}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		var echo struct {
-			Method  string              `json:"method"`
-			URL     string              `json:"url"`
-			Headers map[string][]string `json:"headers"`
-		}
-		Expect(json.Unmarshal(body, &echo)).To(Succeed())
+		echo, err := decodeHTTPBinEcho(body)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(echo.Method).To(Equal(http.MethodGet))
 		Expect(echo.URL).To(HaveSuffix("/anything"))
 		Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(Equal("customer-a"))
 		Expect(headerValue(echo.Headers, "X-Writer-ID")).To(Equal("writer-17"))
 		Expect(headerValue(echo.Headers, "Authorization")).To(BeEmpty())
 
-		adminAddress, stop, err := env.Forward(ctx, jwtHeadersNamespace, "deployment/auth-gateway", 9901)
-		Expect(err).NotTo(HaveOccurred())
-		defer stop()
-		before, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-		Expect(err).NotTo(HaveOccurred())
-		status, body, err = jwtHeadersGateway.requestMethodPathHeaders(ctx, jwtHeadersGateway.httpAddr, jwtManagedHeaderHost,
-			false, http.MethodGet, "/protected", token, http.Header{"X-Scope-OrgID": []string{"requested-b"}})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(status).To(Equal(http.StatusForbidden), string(body))
-		after, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(after).To(Equal(before), "the denied managed header reached the upstream")
+		expectDeniedBeforeUpstream(ctx, jwtHeadersGateway.adminAddr, "api-metrics", "denied managed header", http.StatusForbidden, func() (int, []byte, error) {
+			return jwtHeadersGateway.requestMethodPathHeaders(ctx, jwtHeadersGateway.httpAddr, jwtManagedHeaderHost,
+				false, http.MethodGet, "/protected", token, http.Header{"X-Scope-OrgID": []string{"requested-b"}})
+		})
 	}, NodeTimeout(90*time.Second))
 
 	It("removes a managed input header on routes without that output", func(ctx SpecContext) {
@@ -225,12 +190,8 @@ var _ = Describe("Direct JWT headers", Label("gateway", "jwt", "authentication",
 			false, http.MethodGet, "/headerless", token, http.Header{"X-Scope-OrgID": []string{"requested-a"}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		var echo struct {
-			Method  string              `json:"method"`
-			URL     string              `json:"url"`
-			Headers map[string][]string `json:"headers"`
-		}
-		Expect(json.Unmarshal(body, &echo)).To(Succeed())
+		echo, err := decodeHTTPBinEcho(body)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(echo.Method).To(Equal(http.MethodGet))
 		Expect(echo.URL).To(HaveSuffix("/anything"))
 		Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(BeEmpty())
@@ -239,33 +200,26 @@ var _ = Describe("Direct JWT headers", Label("gateway", "jwt", "authentication",
 	}, NodeTimeout(60*time.Second))
 
 	It("rejects a missing required header attribute even when the caller supplies that header", func(ctx SpecContext) {
-		adminAddress, stop, err := env.Forward(ctx, jwtHeadersNamespace, "deployment/auth-gateway", 9901)
-		Expect(err).NotTo(HaveOccurred())
-		defer stop()
-		before, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-		Expect(err).NotTo(HaveOccurred())
-
 		claims := map[string]any{
 			"organization": map[string]any{"id": "customer-a"},
 			"aud":          "gateway-test",
 			"exp":          time.Now().Add(5 * time.Minute).Unix(),
 		}
 		token := jwtHeadersGateway.token("issuer-one", claims, nil)
-		status, body, err := jwtHeadersGateway.request(ctx, jwtHeadersGateway.httpAddr, jwtHeadersHost, false, token, true)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(status).To(Equal(http.StatusForbidden), string(body))
-		after, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(after).To(Equal(before), "the missing verified header attribute reached the upstream")
+		expectDeniedBeforeUpstream(ctx, jwtHeadersGateway.adminAddr, "api-metrics", "missing verified header attribute", http.StatusForbidden, func() (int, []byte, error) {
+			return jwtHeadersGateway.request(ctx, jwtHeadersGateway.httpAddr, jwtHeadersHost, false, token, true)
+		})
 	}, NodeTimeout(60*time.Second))
 })
 
-var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "authentication", "authorization"), Ordered, func() {
+var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "authentication", "authorization", "namespace-"+jwtNamespace), Ordered, func() {
 	BeforeAll(func(ctx SpecContext) {
 		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, jwtNamespace)).To(Succeed()) }, NodeTimeout(3*time.Minute))
 		var err error
 		jwtGateway, err = setupJWTGateway(ctx, jwtNamespace, "jwt-gateway.yaml")
 		Expect(err).NotTo(HaveOccurred())
+		jwtGateway.adminAddr = env.ForwardEnvoyAdminWithCleanup(ctx, jwtNamespace)
+		jwtGateway.metricsAddr = env.ForwardWithCleanup(ctx, jwtNamespace, "service/auth-gateway", 8889)
 	}, NodeTimeout(12*time.Minute))
 
 	It("authorizes original claims and sends processed attributes over HTTP and HTTPS", func(ctx SpecContext) {
@@ -278,21 +232,21 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 				issuer string
 				tenant string
 				team   string
-			}{{"issuer-one", "customer-a", "team-a"}, {"issuer-two", "customer-b", "team-b"}} {
+				path   string
+			}{{"issuer-one", "customer-a", "team-a", "/protected"}, {"issuer-two", "customer-b", "team-b", "/status-only"}} {
 				claims := jwtTestClaims(test.tenant)
 				claims["sub"] = "writer-17"
 				token := jwtGateway.token(test.issuer, claims, nil)
-				status, responseBody, err := jwtGateway.request(ctx, target.address, target.host, target.tls, token, true)
+				status, responseBody, err := jwtGateway.requestPath(ctx, target.address, target.host, target.tls, test.path, token, true)
 				Expect(err).NotTo(HaveOccurred())
 				if status != http.StatusOK {
 					writeTestOutput("valid %s request status=%d body=%s\n", test.issuer, status, responseBody)
-					env.Diagnostics(jwtNamespace)
 				}
 				Expect(status).To(Equal(http.StatusOK), string(responseBody))
-				var echo struct {
-					Headers map[string][]string `json:"headers"`
-				}
-				Expect(json.Unmarshal(responseBody, &echo)).To(Succeed())
+				echo, err := decodeHTTPBinEcho(responseBody)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(echo.Method).To(Equal(http.MethodGet))
+				Expect(echo.URL).To(HaveSuffix("/anything"))
 				Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(Equal(test.team))
 				Expect(headerValue(echo.Headers, "X-Writer-ID")).To(Equal("writer-17"))
 				Expect(headerValue(echo.Headers, "X-Chain")).To(Equal("second"), "one processor must perform one lookup")
@@ -310,14 +264,50 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		status, responseBody, err := jwtGateway.requestPath(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, "/headerless", token, true)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(responseBody))
-		var echo struct {
-			Headers map[string][]string `json:"headers"`
-		}
-		Expect(json.Unmarshal(responseBody, &echo)).To(Succeed())
+		echo, err := decodeHTTPBinEcho(responseBody)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(BeEmpty())
 		Expect(headerValue(echo.Headers, "X-Writer-ID")).To(BeEmpty())
 		Expect(headerValue(echo.Headers, "Authorization")).To(BeEmpty())
-	}, SpecTimeout(12*time.Minute))
+	}, SpecTimeout(2*time.Minute))
+
+	It("scopes grants to individual APIs on the same hostname", func(ctx SpecContext) {
+		adminAddress := jwtGateway.adminAddr
+		for _, test := range []struct {
+			name           string
+			issuer         string
+			tenant         string
+			allowedPath    string
+			allowedCluster string
+			deniedPath     string
+			deniedCluster  string
+		}{
+			{
+				name: "metrics writer", issuer: "issuer-one", tenant: "customer-a",
+				allowedPath: "/protected", allowedCluster: "api-metrics",
+				deniedPath: "/status-only", deniedCluster: "api-status-only",
+			},
+			{
+				name: "status writer", issuer: "issuer-two", tenant: "customer-b",
+				allowedPath: "/status-only", allowedCluster: "api-status-only",
+				deniedPath: "/protected", deniedCluster: "api-metrics",
+			},
+		} {
+			token := jwtGateway.token(test.issuer, jwtTestClaims(test.tenant), nil)
+			status, body := expectUpstreamRequestDelta(ctx, adminAddress, test.allowedCluster, test.name+" allowed API", 1, func() (int, []byte, error) {
+				return jwtGateway.requestPath(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, test.allowedPath, token, false)
+			})
+			Expect(status).To(Equal(http.StatusOK), test.name+": "+string(body))
+			echo, err := decodeHTTPBinEcho(body)
+			Expect(err).NotTo(HaveOccurred(), test.name)
+			Expect(echo.Method).To(Equal(http.MethodGet), test.name)
+			Expect(echo.URL).To(HaveSuffix("/anything"), test.name)
+
+			expectDeniedBeforeUpstream(ctx, adminAddress, test.deniedCluster, test.name+" denied API", http.StatusForbidden, func() (int, []byte, error) {
+				return jwtGateway.requestPath(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, test.deniedPath, token, false)
+			})
+		}
+	}, SpecTimeout(90*time.Second))
 
 	It("passes through authorized values without a mapping", func(ctx SpecContext) {
 		claims := jwtTestClaims("customer-pass")
@@ -329,9 +319,7 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 	}, NodeTimeout(60*time.Second))
 
 	It("rejects invalid credentials, missing required attributes, and denied original claims", func(ctx SpecContext) {
-		adminAddress, stop, err := env.Forward(ctx, jwtNamespace, "deployment/auth-gateway", 9901)
-		Expect(err).NotTo(HaveOccurred())
-		defer stop()
+		adminAddress := jwtGateway.adminAddr
 
 		issuerOne := func(claims map[string]any, key *rsa.PrivateKey) string {
 			return jwtGateway.token("issuer-one", claims, key)
@@ -374,18 +362,13 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 			{name: "required header attribute is unsafe", token: issuerOne(unsafeHeader, nil), status: http.StatusForbidden},
 		}
 		for _, test := range cases {
-			before, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-			Expect(err).NotTo(HaveOccurred(), test.name)
-			status, body, err := jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, test.token, false)
-			Expect(err).NotTo(HaveOccurred(), test.name)
+			status, body := expectDeniedBeforeUpstream(ctx, adminAddress, "api-metrics", test.name, test.status, func() (int, []byte, error) {
+				return jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, test.token, false)
+			})
 			if status != test.status {
 				writeTestOutput("%s response status=%d body=%s\n", test.name, status, body)
-				env.Diagnostics(jwtNamespace)
 			}
 			Expect(status).To(Equal(test.status), test.name+": "+string(body))
-			after, err := jwtUpstreamRequests(ctx, adminAddress, "api-metrics")
-			Expect(err).NotTo(HaveOccurred(), test.name)
-			Expect(after).To(Equal(before), test.name+" reached the upstream")
 		}
 	}, NodeTimeout(60*time.Second))
 
@@ -402,6 +385,8 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		}
 	}, NodeTimeout(60*time.Second))
 
+	registerJWTRequestMetricSpecs()
+
 	It("reloads mapping changes through ECDS without changing authorization or the Pod", func(ctx SpecContext) {
 		claims := jwtTestClaims("customer-a")
 		claims["sub"] = "writer-17"
@@ -409,7 +394,7 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		status, body, err := jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, token, false)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), "original identity mapping should be authorized: "+string(body))
-		adminAddress := env.ForwardWithCleanup(ctx, jwtNamespace, "deployment/auth-gateway", 9901)
+		adminAddress := jwtGateway.adminAddr
 		updatedMetricLabels := requestMetricLabels("metrics", http.StatusOK, "team-b", "writer-17")
 		beforeUpdatedMetric, err := requestMetricCount(ctx, adminAddress, updatedMetricLabels)
 		Expect(err).NotTo(HaveOccurred())
@@ -449,10 +434,10 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		newUID, err := env.PodUID(ctx, jwtNamespace, selector)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(newUID).To(Equal(oldUID), "an ECDS processing update must not replace the gateway Pod")
-	}, SpecTimeout(6*time.Minute))
+	}, SpecTimeout(4*time.Minute))
 })
 
-var _ = Describe("JWT JWKS lifecycle", Label("gateway", "jwt", "jwks"), Ordered, func() {
+var _ = Describe("JWT JWKS lifecycle", Label("gateway", "jwt", "jwks", "namespace-"+jwtLifecycleNamespace), Ordered, func() {
 	BeforeAll(func(ctx SpecContext) {
 		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, jwtLifecycleNamespace)).To(Succeed()) }, NodeTimeout(3*time.Minute))
 		var err error
@@ -534,448 +519,5 @@ var _ = Describe("JWT JWKS lifecycle", Label("gateway", "jwt", "jwks"), Ordered,
 		finalUID, err := env.PodUID(ctx, jwtLifecycleNamespace, selector)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(finalUID).To(Equal(coldGatewayUID), "restoring JWKS should not restart the gateway")
-	}, SpecTimeout(12*time.Minute))
+	}, SpecTimeout(6*time.Minute))
 })
-
-func jwtTrustedCA() *config.TrustedCA {
-	return &config.TrustedCA{ConfigMap: &config.CAConfigMap{Name: "jwt-jwks-ca", Key: "ca.pem"}}
-}
-
-func setupJWTGateway(ctx SpecContext, namespace, fixtureName string) (*jwtE2E, error) {
-	activeNamespace = namespace
-	if err := env.DeleteNamespace(ctx, namespace); err != nil {
-		return nil, err
-	}
-	if err := env.CreateNamespace(ctx, namespace); err != nil {
-		return nil, err
-	}
-
-	keys := map[string]*rsa.PrivateKey{}
-	for _, name := range []string{"issuer-one", "issuer-two"} {
-		key, err := rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			return nil, err
-		}
-		keys[name] = key
-	}
-	wrongKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return nil, err
-	}
-	certificates, err := makeJWTTestCertificates([]string{"jwks." + namespace + ".svc.cluster.local", jwtHTTPSHost})
-	if err != nil {
-		return nil, err
-	}
-	roots := x509.NewCertPool()
-	roots.AddCert(certificates.root)
-
-	issuerManifest, err := jwtIssuerManifest(namespace, certificates, keys)
-	if err != nil {
-		return nil, err
-	}
-	if err := env.Apply(ctx, namespace, issuerManifest); err != nil {
-		return nil, err
-	}
-	if err := env.WaitForDeployment(ctx, namespace, "jwt-jwks", 4*time.Minute); err != nil {
-		return nil, err
-	}
-
-	backend, err := env.Fixture("httpbin.yaml")
-	if err != nil {
-		return nil, err
-	}
-	if err := env.Apply(ctx, namespace, backend); err != nil {
-		return nil, err
-	}
-
-	fixture, err := env.Fixture(fixtureName)
-	if err != nil {
-		return nil, err
-	}
-	gatewayConfig, err := config.Load(bytes.NewReader(fixture))
-	if err != nil {
-		return nil, err
-	}
-	gatewayConfig.Kubernetes.Namespace = namespace
-	for i := range gatewayConfig.Authenticators {
-		gatewayConfig.Authenticators[i].JWT.JWKS.URI = "https://jwks." + namespace + ".svc.cluster.local/" + gatewayConfig.Authenticators[i].Name
-		gatewayConfig.Authenticators[i].JWT.JWKS.TrustedCA = jwtTrustedCA()
-	}
-	resources, err := config.GenerateKubernetes(gatewayConfig)
-	if err != nil {
-		return nil, err
-	}
-	hasHTTPS := false
-	for _, server := range gatewayConfig.Servers {
-		if server.TLSConfig != nil {
-			hasHTTPS = true
-			break
-		}
-	}
-	if hasHTTPS {
-		serverTLS := &corev1.Secret{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"}, ObjectMeta: metav1.ObjectMeta{Name: "jwt-gateway-tls", Namespace: namespace}, Type: corev1.SecretTypeTLS, Data: map[string][]byte{corev1.TLSCertKey: certificates.chainPEM, corev1.TLSPrivateKeyKey: certificates.keyPEM}}
-		serverTLSManifest, err := yaml.Marshal(serverTLS)
-		if err != nil {
-			return nil, err
-		}
-		if err := env.Apply(ctx, namespace, serverTLSManifest); err != nil {
-			return nil, err
-		}
-	}
-	caConfigMap := &corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: "jwt-jwks-ca", Namespace: namespace}, Data: map[string]string{"ca.pem": string(certificates.caPEM)}}
-	manifest, err := resources.YAML()
-	if err != nil {
-		return nil, err
-	}
-	caYAML, err := yaml.Marshal(caConfigMap)
-	if err != nil {
-		return nil, err
-	}
-	if err := env.Apply(ctx, namespace, caYAML); err != nil {
-		return nil, err
-	}
-	if err := env.Apply(ctx, namespace, manifest); err != nil {
-		return nil, err
-	}
-	if err := env.WaitForDeployment(ctx, namespace, "httpbin", 4*time.Minute); err != nil {
-		return nil, err
-	}
-	if err := env.WaitForDeployment(ctx, namespace, "auth-gateway", 4*time.Minute); err != nil {
-		return nil, err
-	}
-	httpAddress := env.ForwardWithCleanup(ctx, namespace, "service/auth-gateway", 80)
-	var httpsAddress string
-	if hasHTTPS {
-		httpsAddress = env.ForwardWithCleanup(ctx, namespace, "service/auth-gateway", 443)
-	}
-	warmupClaims := jwtTestClaims("customer-a")
-	if fixtureName == "jwt-auth.yaml" {
-		warmupClaims["x"] = map[string]any{"my_list": []string{"y", "z"}}
-	}
-	warmupClaims["sub"] = "warmup"
-	warmupToken := (&jwtE2E{keys: keys}).token("issuer-one", warmupClaims, nil)
-	warmupHost := gatewayConfig.Servers[0].Hostname
-	var warmupErr error
-	if err := utilwait.PollUntilContextTimeout(ctx, 250*time.Millisecond, 30*time.Second, true, func(ctx context.Context) (bool, error) {
-		status, body, requestErr := (&jwtE2E{keys: keys, rootCAs: roots, httpAddr: httpAddress}).request(ctx, httpAddress, warmupHost, false, warmupToken, false)
-		if requestErr != nil {
-			warmupErr = requestErr
-			return false, nil
-		}
-		if status != http.StatusOK {
-			warmupErr = fmt.Errorf("warmup returned HTTP %d: %s", status, body)
-			return false, nil
-		}
-		return true, nil
-	}); err != nil {
-		env.Diagnostics(namespace)
-		return nil, fmt.Errorf("warm up JWT gateway: %w (last attempt: %v)", err, warmupErr)
-	}
-	rootCAs = roots
-	return &jwtE2E{
-		keys: keys, wrongKey: wrongKey, rootCAs: roots, httpAddr: httpAddress, httpsAddr: httpsAddress,
-		certs: certificates, resources: resources,
-	}, nil
-}
-
-type jwtTestCertificates struct {
-	root                    *x509.Certificate
-	caPEM, chainPEM, keyPEM []byte
-}
-
-func makeJWTTestCertificates(dnsNames []string) (*jwtTestCertificates, error) {
-	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-	now := time.Now()
-	caTemplate := &x509.Certificate{SerialNumber: big.NewInt(now.UnixNano()), Subject: pkix.Name{CommonName: "auth-gateway JWT e2e CA"}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(24 * time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign}
-	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
-	if err != nil {
-		return nil, err
-	}
-	root, err := x509.ParseCertificate(caDER)
-	if err != nil {
-		return nil, err
-	}
-	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-	serverTemplate := &x509.Certificate{SerialNumber: big.NewInt(now.UnixNano() + 1), Subject: pkix.Name{CommonName: dnsNames[0]}, DNSNames: dnsNames, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(12 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
-	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, root, &serverKey.PublicKey, caKey)
-	if err != nil {
-		return nil, err
-	}
-	keyDER, err := x509.MarshalPKCS8PrivateKey(serverKey)
-	if err != nil {
-		return nil, err
-	}
-	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
-	chainPEM := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER}), caPEM...)
-	return &jwtTestCertificates{root: root, caPEM: caPEM, chainPEM: chainPEM, keyPEM: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})}, nil
-}
-
-func jwtIssuerManifest(namespace string, certificates *jwtTestCertificates, keys map[string]*rsa.PrivateKey) ([]byte, error) {
-	return jwtIssuerManifestWithState(namespace, certificates, keys, nil, "")
-}
-
-func jwtIssuerManifestWithState(namespace string, certificates *jwtTestCertificates, keys map[string]*rsa.PrivateKey, statuses map[string]int, revision string) ([]byte, error) {
-	issuerOneJWKS, err := jwtSetBytes(keys, "issuer-one")
-	if err != nil {
-		return nil, err
-	}
-	issuerTwoJWKS, err := jwtSetBytes(keys, "issuer-two")
-	if err != nil {
-		return nil, err
-	}
-	statusFor := func(issuer string) int {
-		if status, exists := statuses[issuer]; exists {
-			return status
-		}
-		return http.StatusOK
-	}
-	envoyConfig := fmt.Sprintf(`node: {id: jwt-jwks, cluster: jwt-jwks}
-static_resources:
-  listeners:
-    - name: jwks
-      address:
-        socket_address: {address: 0.0.0.0, port_value: 8443}
-      filter_chains:
-        - transport_socket:
-            name: envoy.transport_sockets.tls
-            typed_config:
-              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
-              common_tls_context:
-                tls_certificates:
-                  - certificate_chain: {filename: /etc/jwks-tls/tls.crt}
-                    private_key: {filename: /etc/jwks-tls/tls.key}
-          filters:
-            - name: envoy.filters.network.http_connection_manager
-              typed_config:
-                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
-                stat_prefix: jwks
-                route_config:
-                  name: jwks
-                  virtual_hosts:
-                    - name: jwks
-                      domains: ["*"]
-                      routes:
-                        - match: {prefix: /issuer-one}
-                          direct_response:
-                            status: %d
-                            body: {filename: /etc/jwks/issuer-one.json}
-                        - match: {prefix: /issuer-two}
-                          direct_response:
-                            status: %d
-                            body: {filename: /etc/jwks/issuer-two.json}
-                        - match: {prefix: /}
-                          direct_response: {status: 404}
-                http_filters:
-                  - name: envoy.filters.http.router
-                    typed_config:
-                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
-
-`, statusFor("issuer-one"), statusFor("issuer-two"))
-	labels := map[string]string{"app": "jwt-jwks"}
-	configMap := &corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: "jwt-jwks-config", Namespace: namespace}, Data: map[string]string{"envoy.yaml": envoyConfig, "issuer-one.json": string(issuerOneJWKS), "issuer-two.json": string(issuerTwoJWKS)}}
-	secret := &corev1.Secret{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"}, ObjectMeta: metav1.ObjectMeta{Name: "jwt-jwks-tls", Namespace: namespace}, Type: corev1.SecretTypeTLS, Data: map[string][]byte{corev1.TLSCertKey: certificates.chainPEM, corev1.TLSPrivateKeyKey: certificates.keyPEM}}
-	container := corev1.Container{
-		Name: "envoy", Image: "envoyproxy/envoy:v1.39.1",
-		Args:  []string{"-c", "/etc/jwks/envoy.yaml", "--log-level", "error"},
-		Ports: []corev1.ContainerPort{{Name: "https", ContainerPort: 8443}},
-		VolumeMounts: []corev1.VolumeMount{
-			{Name: "config", MountPath: "/etc/jwks", ReadOnly: true},
-			{Name: "tls", MountPath: "/etc/jwks-tls", ReadOnly: true},
-		},
-	}
-	volumes := []corev1.Volume{
-		{Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: configMap.Name}}}},
-		{Name: "tls", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: secret.Name, Items: []corev1.KeyToPath{{Key: corev1.TLSCertKey, Path: "tls.crt"}, {Key: corev1.TLSPrivateKeyKey, Path: "tls.key"}}}}},
-	}
-	deployment := &appsv1.Deployment{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
-		ObjectMeta: metav1.ObjectMeta{Name: "jwt-jwks", Namespace: namespace},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: new(int32(1)), Selector: &metav1.LabelSelector{MatchLabels: labels},
-			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: map[string]string{}}, Spec: corev1.PodSpec{Containers: []corev1.Container{container}, Volumes: volumes}},
-		},
-	}
-	if revision != "" {
-		deployment.Spec.Template.Annotations["auth-gateway.test/jwks-revision"] = revision
-	}
-	service := &corev1.Service{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"}, ObjectMeta: metav1.ObjectMeta{Name: "jwks", Namespace: namespace}, Spec: corev1.ServiceSpec{Selector: labels, Ports: []corev1.ServicePort{{Name: "https", Port: 443, TargetPort: intstr.FromInt(8443)}}}}
-	return yamlDocuments(configMap, secret, deployment, service)
-}
-
-func jwtSetBytes(keys map[string]*rsa.PrivateKey, issuer string) ([]byte, error) {
-	keyIDs := make([]string, 0, len(keys))
-	for keyID := range keys {
-		if strings.HasPrefix(keyID, issuer) {
-			keyIDs = append(keyIDs, keyID)
-		}
-	}
-	sort.Strings(keyIDs)
-	publicKeys := make([]map[string]string, 0, len(keyIDs))
-	for _, keyID := range keyIDs {
-		key := keys[keyID]
-		eBytes := big.NewInt(int64(key.PublicKey.E)).Bytes()
-		publicKeys = append(publicKeys, map[string]string{"kty": "RSA", "kid": keyID, "use": "sig", "alg": "RS256", "n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()), "e": base64.RawURLEncoding.EncodeToString(eBytes)})
-	}
-	return json.Marshal(map[string]any{"keys": publicKeys})
-}
-
-func updateJWTJWKSServer(ctx context.Context, namespace string, certificates *jwtTestCertificates, keys map[string]*rsa.PrivateKey, statuses map[string]int, revision string) error {
-	manifest, err := jwtIssuerManifestWithState(namespace, certificates, keys, statuses, revision)
-	if err != nil {
-		return err
-	}
-	if err := env.Apply(ctx, namespace, manifest); err != nil {
-		return err
-	}
-	return env.WaitForDeployment(ctx, namespace, "jwt-jwks", 4*time.Minute)
-}
-
-func yamlDocuments(objects ...any) ([]byte, error) {
-	var output strings.Builder
-	for i, object := range objects {
-		data, err := yaml.Marshal(object)
-		if err != nil {
-			return nil, err
-		}
-		if i > 0 {
-			output.WriteString("---\n")
-		}
-		output.Write(data)
-	}
-	return []byte(output.String()), nil
-}
-
-func jwtTestClaims(tenant string) map[string]any {
-	return map[string]any{
-		"organization":  map[string]any{"id": tenant},
-		"sub":           "writer-17",
-		"chain":         "first",
-		"order":         "first",
-		"literal.claim": `source "quoted" \ value`,
-		"aud":           "gateway-test",
-		"exp":           time.Now().Add(5 * time.Minute).Unix(),
-	}
-}
-
-func jwtEchoHeaders(body []byte) map[string][]string {
-	var echo struct {
-		Headers map[string][]string `json:"headers"`
-	}
-	if err := json.Unmarshal(body, &echo); err != nil {
-		return nil
-	}
-	return echo.Headers
-}
-
-func jwtUpstreamRequests(ctx context.Context, adminAddress, clusterName string) (uint64, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"http://"+adminAddress+"/stats?filter=cluster."+clusterName+".upstream_rq_total", nil)
-	if err != nil {
-		return 0, err
-	}
-	response, err := testClient.Do(request)
-	if err != nil {
-		return 0, err
-	}
-	body, err := readAndCloseResponseBody(response, 1<<20)
-	if err != nil {
-		return 0, err
-	}
-	if response.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("Envoy stats returned HTTP %d: %s", response.StatusCode, body)
-	}
-	wanted := "cluster." + clusterName + ".upstream_rq_total"
-	for _, line := range strings.Split(string(body), "\n") {
-		name, value, found := strings.Cut(line, ":")
-		if !found || strings.TrimSpace(name) != wanted {
-			continue
-		}
-		count, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("parse Envoy stat %q: %w", wanted, err)
-		}
-		return count, nil
-	}
-	return 0, fmt.Errorf("Envoy stats do not include %q: %s", wanted, body)
-}
-
-func (e *jwtE2E) token(issuer string, claims map[string]any, signingKey *rsa.PrivateKey) string {
-	return e.tokenWithKeyID(issuer, issuer, claims, signingKey)
-}
-
-func (e *jwtE2E) tokenWithKeyID(issuer, keyID string, claims map[string]any, signingKey *rsa.PrivateKey) string {
-	if signingKey == nil {
-		signingKey = e.keys[issuer]
-	}
-	issuerURLs := map[string]string{"issuer-one": "https://issuer-one.jwt.test", "issuer-two": "https://issuer-two.jwt.test"}
-	if _, exists := claims["iss"]; !exists {
-		claims["iss"] = issuerURLs[issuer]
-	}
-	header, _ := json.Marshal(map[string]string{"alg": "RS256", "typ": "JWT", "kid": keyID})
-	payload, _ := json.Marshal(claims)
-	unsigned := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload)
-	digest := sha256.Sum256([]byte(unsigned))
-	signature, _ := rsa.SignPKCS1v15(rand.Reader, signingKey, crypto.SHA256, digest[:])
-	return unsigned + "." + base64.RawURLEncoding.EncodeToString(signature)
-}
-
-func (e *jwtE2E) request(ctx context.Context, address, host string, useTLS bool, token string, spoof bool) (int, []byte, error) {
-	return e.requestPath(ctx, address, host, useTLS, "/protected", token, spoof)
-}
-
-func (e *jwtE2E) requestPath(ctx context.Context, address, host string, useTLS bool, path, token string, spoof bool) (int, []byte, error) {
-	return e.requestMethodPath(ctx, address, host, useTLS, http.MethodGet, path, token, spoof)
-}
-
-func (e *jwtE2E) requestMethodPath(ctx context.Context, address, host string, useTLS bool, method, path, token string, spoof bool) (int, []byte, error) {
-	headers := make(http.Header)
-	if spoof {
-		headers.Add("X-Scope-OrgID", "spoofed")
-		headers.Add("X-Scope-OrgID", "duplicate")
-		headers.Set("X-Writer-ID", "spoofed")
-	}
-	return e.requestMethodPathHeaders(ctx, address, host, useTLS, method, path, token, headers)
-}
-
-func (e *jwtE2E) requestMethodPathHeaders(ctx context.Context, address, host string, useTLS bool, method, path, token string, headers http.Header) (int, []byte, error) {
-	scheme, client := "http", testClient
-	if useTLS {
-		scheme = "https"
-		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: e.rootCAs, ServerName: host, MinVersion: tls.VersionTLS12}}
-		defer transport.CloseIdleConnections()
-		client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
-	}
-	request, err := http.NewRequestWithContext(ctx, method, scheme+"://"+address+path, nil)
-	if err != nil {
-		return 0, nil, err
-	}
-	request.Host = host
-	request.Header = headers.Clone()
-	if request.Header == nil {
-		request.Header = make(http.Header)
-	}
-	if token != "" {
-		request.Header.Set("Authorization", "Bearer "+token)
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return 0, nil, err
-	}
-	body, err := readAndCloseResponseBody(response, 1<<20)
-	return response.StatusCode, body, err
-}
-
-func headerValue(headers map[string][]string, name string) string {
-	for key, value := range headers {
-		if strings.EqualFold(key, name) {
-			return strings.Join(value, ",")
-		}
-	}
-	return ""
-}

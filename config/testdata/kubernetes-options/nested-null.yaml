@@ -19,7 +19,6 @@ observability:
 kubernetes:
   name: auth-gateway
   namespace: observability
-  image: envoyproxy/envoy:v1.39.1
   metrics:
     resources: {requests: null, limits: null}
 overload: null

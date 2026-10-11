@@ -1,6 +1,6 @@
 # Production readiness review
 
-Review date: 2026-10-09. Reviewed commit: `6d6be5e`, branch `main`.
+Review date: 2026-10-09. Completion date: 2026-10-11. Reviewed commit: `6d6be5e`, branch `main`.
 
 This is a worklist, not a narrative. Each item is written so an agent can pick it
 up on its own: what to change, where, why, and how to know it is done. Items are
@@ -428,27 +428,17 @@ Build a typed structure and marshal it.
 Done when: one source of truth for the scrape configuration, and goldens plus
 `make test-runtime` both pass.
 
-### 2.9 Decide the position on the Lua request counter
+### 2.9 Document the Lua request-counter exception [x]
 
-`AGENTS.md` says to keep handling in native Envoy filters and not to reintroduce
-Lua. Per-API request counters are implemented as an inline Lua script
-(`config/observability.go:445-495`) and the filter is literally named
-`envoy.filters.http.lua` (`config/observability.go:44`).
+`AGENTS.md` now limits Lua to per-API response counters. Envoy's built-in HTTP
+stats cannot currently combine route metadata, the final downstream status
+(including authentication and RBAC local replies), and processed filter-state
+values in one counter. The code, `docs/envoy.md`, and the README explain this
+exception and the collector's removal of Envoy's `envoy_http_lua_` stat prefix.
 
-This has three knock-on effects:
+Done when: `AGENTS.md`, the implementation, and user-facing documentation agree.
 
-1. The collector configuration carries a `replace_pattern(name, "^envoy_http_lua_", "")`
-   transform purely to undo the Lua stat prefix.
-2. `requestMetricsFilterName` doubles as the route metadata namespace key, so a
-   second Lua filter would collide with it.
-3. The documentation has to explain the Lua prefix to users.
-
-Either document the exception in `AGENTS.md` with the reason, or plan the
-replacement. Do not leave the rule and the code disagreeing.
-
-Done when: `AGENTS.md` and the code agree.
-
-### 2.10 Retire the deprecated Envoy field
+### 2.10 Retire the deprecated Envoy field [x]
 
 `config/cel.go:101` suppresses `staticcheck` with the note "Keep the Envoy wire
 form stable during this cleanup", and four test sites carry the same suppression.
@@ -459,7 +449,7 @@ it must stay.
 Done when: either the suppressions are gone, or the comment explains a current
 reason rather than a finished cleanup.
 
-### 2.11 Improve golden failure output
+### 2.11 Improve golden failure output [x]
 
 `checkReference` (`config/generate_test.go:95`) reports only
 "<path> is out of date; run make update-golden". A developer gets no indication
@@ -468,7 +458,7 @@ dependency.
 
 Done when: a failing golden prints the differing content.
 
-### 2.12 Split the compound test assertions
+### 2.12 Split the compound test assertions [x]
 
 Assertions such as `config/config_test.go:197` combine eight field comparisons in
 one boolean expression and then dump the whole protobuf on failure. The pattern
@@ -481,7 +471,7 @@ assertions or a single structural comparison with a diff.
 Done when: a deliberately introduced single-field regression names the field in
 the failure output.
 
-### 2.13 Remove the playground golden-update side effect
+### 2.13 Remove the playground golden-update side effect [x]
 
 `playground/Makefile` target `generate` runs
 `go test ../config -run '^TestPlaygroundBootstrap$' -count=1 -update`, and
@@ -497,19 +487,16 @@ the runnable library example that item 1.1 needs.
 
 Done when: running the playground does not modify checked-in goldens.
 
-### 2.14 Reduce image pin duplication
+### 2.14 Reduce image pin duplication [x]
 
-`envoyproxy/envoy:v1.39.1` appears in about 25 places and
-`otel/opentelemetry-collector-contrib:0.135.0` in about 10, spread across the
-README, both Makefiles, the compose file, the example configs, every golden
-testdata config, every e2e fixture, `config/observability.go:30`,
-`config/runtime_test.go:82`, and `e2e/jwt_test.go:784`.
+The Envoy and collector defaults now live in exported Go constants. Kubernetes
+generation, runtime validation, e2e helpers, and the playground and e2e
+Makefiles consume those defaults; the YAML fields remain available for users to
+select private mirrors. Checked-in golden and fixture files retain explicit
+values where they are test inputs.
 
-Some of that is inherent to checked-in testdata. The avoidable part is the
-non-testdata copies, which drift independently.
-
-Done when: the non-testdata pins come from one place, and a bump is a one-line
-change plus a golden refresh.
+Done when: non-testdata defaults come from one place, and a user can override
+either Kubernetes image in YAML.
 
 ---
 
@@ -528,7 +515,7 @@ Note that `AGENTS.md` rules out end-to-end tests for Envoy semantics such as
 timeouts, retries, overload, and flow control. Items below stay on the gateway's
 own behavior. Item 3.8 is the one borderline case and is marked optional.
 
-### 3.1 Prefix and regex path matching and rewriting
+### 3.1 Prefix and regex path matching and rewriting [x]
 
 Risk: high. Zero live coverage. All seven fixtures use `path.exact` with
 `rewrite.path`. Prefix and regex matching are headline features in
@@ -552,7 +539,7 @@ Requests and assertions:
 | `GET /metrics/api/v1/queryXrange` | 404, upstream request counter unchanged |
 | `GET /logs/otlp` | 404, upstream request counter unchanged |
 
-### 3.2 API-scoped authorization grants
+### 3.2 API-scoped authorization grants [x]
 
 Risk: high. `AuthorizationGrant.APIs` is the only thing stopping a tenant
 authorised for one API from reaching another on the same hostname. Every fixture
@@ -564,7 +551,7 @@ tenant is granted `[metrics]` only and another `[status-only]` only, both still
 bound to the same hostname. Then assert each tenant gets 200 on its own API and
 403 on the other, with the other API's upstream counter unchanged.
 
-### 3.3 Upstream TLS and HTTP/2 upstreams
+### 3.3 Upstream TLS and HTTP/2 upstreams [x]
 
 Risk: high. `config.production.example.yaml:52-57` ships upstream TLS with a
 `trusted_ca.config_map` as the production pattern. The generated cluster carries
@@ -579,7 +566,7 @@ Configure one API with `upstream.tls_config` naming the SAN plus a
 full echo on success, and a connection failure with the matching Envoy
 `ssl.fail_verify_san` counter when `server_name` does not match the SAN.
 
-### 3.4 Tracing
+### 3.4 Tracing [x]
 
 Risk: medium-high. Tracing changes both the bootstrap and the collector
 ConfigMap, and is user-facing in `config.example.yaml:27-33`. Generation is
@@ -592,7 +579,7 @@ an in-cluster OTLP sink. Make one authorised request, then assert the sink
 observed a span whose service name matches `service_name`. Also assert the
 gateway pod still has two containers and metrics are unaffected.
 
-### 3.5 Error access logs
+### 3.5 Error access logs [x]
 
 Risk: medium. `config/access_log.go` emits structured JSON to stdout for every
 response at 400 or above, including `response_flags` and `response_code_details`.
@@ -604,7 +591,7 @@ promote that to an exported helper. After the invalid-credentials spec, assert a
 JSON line exists with status 401 and a non-empty `response_code_details`, and
 that no line exists for the preceding 200, which proves the filter threshold.
 
-### 3.6 Multiple replicas
+### 3.6 Multiple replicas [x]
 
 Risk: medium. Every fixture pins `replicas: 1`, and `framework.PodUID`
 (`e2e/internal/framework/environment.go:343`) hard-fails unless exactly one pod
@@ -620,7 +607,7 @@ both pods are hit and assert all return the new mapping with the pod UID set
 unchanged. During a restart, assert a concurrent request loop sees no connection
 errors and no 5xx.
 
-### 3.7 The documented rollout invariant
+### 3.7 The documented rollout invariant [x]
 
 Risk: medium. `AGENTS.md` states that static bootstrap changes require an
 explicit Deployment rollout and that there is no checksum annotation. The three
@@ -634,20 +621,14 @@ confirms touches only the main ConfigMap. Apply only that ConfigMap, assert the
 behavior is unchanged after a bounded wait with a stable pod UID, then restart
 and assert the new behavior appears.
 
-### 3.8 Route timeout placement (optional)
+### 3.8 Route timeout placement (resolved with config tests) [x]
 
-`AGENTS.md` says not to test Envoy timeout semantics end to end, and that is the
-right line. The residual risk is placement rather than semantics: a per-route
-`response_timeout` attached to the wrong route would not be caught by a golden
-diff if the golden were regenerated.
+`AGENTS.md` excludes end-to-end tests of Envoy timeout behavior. The config
+tests now cover inherited and route-specific effective timeout values and their
+generated route placement in `TestResolvedRouteTimeoutsAndReuse`. No live test
+is needed to check this configuration contract.
 
-If you want one spec, make it minimal. One route with a one-second response
-timeout pointed at a three-second delay, asserting 504 and the upstream timeout
-counter, plus a sibling route on the same API inheriting the default and
-returning 200 from a two-second delay. Two requests, catches misplacement,
-does not test Envoy's timer.
-
-### 3.9 Smaller untested surfaces
+### 3.9 Smaller untested surfaces [x]
 
 Each is low risk on its own. Batch them.
 
@@ -667,10 +648,11 @@ Each is low risk on its own. Batch them.
 
 ## Phase 4: end-to-end suite quality
 
-The suite passes reliably today. These items reduce runtime, remove flakiness
-risk, and make specs independently runnable.
+The expanded suite passed all 63 specs in 13m29s with two Ginkgo workers on
+2026-10-11. These changes reduce runtime, remove flakiness risk, and make specs
+independently runnable.
 
-### 4.1 Remove the per-request HTTPS port-forward
+### 4.1 Remove the per-request HTTPS port-forward [x]
 
 `e2e/api_keys_test.go:460-474`: when TLS is requested, `request()` opens a new
 SPDY port-forward with a one-minute dial timeout and tears it down, per request.
@@ -681,7 +663,7 @@ This is the largest single source of flakiness risk and runtime cost in the
 suite. Forward 443 once in `setupAPIKeyGatewayWithShape` and store it alongside
 `httpAddr`.
 
-### 4.2 Break the hidden ordering dependencies in the API-key container
+### 4.2 Break the hidden ordering dependencies in the API-key container [x]
 
 Specs in `e2e/api_keys_test.go` mutate durable cluster state that later specs
 depend on:
@@ -695,7 +677,7 @@ No spec in this container is independently runnable under `--focus`, and a
 failure mid-container cascades into the rest. Make each spec set up, assert, and
 restore.
 
-### 4.3 Right-size the spec timeouts
+### 4.3 Right-size the spec timeouts [x]
 
 `--timeout=30m` across two processes. The TLS container budgets
 `NodeTimeout(18m)` for setup (`e2e/tls_test.go:19`) plus `SpecTimeout(9m)` for
@@ -707,10 +689,11 @@ Separately, `e2e/jwt_test.go:134`, `:188`, and `:320` each carry
 `SpecTimeout(12m)` for specs that make between one and six requests against an
 already-warm gateway. A hang there burns twelve minutes before reporting.
 
-The observed full run was 5m29s with warm images, so these budgets are roughly
-two orders of magnitude above the real cost.
+The original 46-spec suite took 5m29s with warm images. The expanded 63-spec
+suite passed in 13m29s with two workers on 2026-10-11. The timeout changes keep
+individual stalled setup and request checks bounded within that suite budget.
 
-### 4.4 Consolidate the duplicated test helpers
+### 4.4 Consolidate the duplicated test helpers [x]
 
 - Three near-identical gateway setup helpers in three different styles:
   `setupGateway` (`e2e/support_test.go:46`), `setupJWTGateway`
@@ -725,7 +708,7 @@ two orders of magnitude above the real cost.
 - `e2e/jwt_test.go:674` writes the shared `rootCAs` global as a pure side effect.
   No JWT spec reads it. Delete it.
 
-### 4.5 Fix the helper placement inversion
+### 4.5 Fix the helper placement inversion [x]
 
 `AGENTS.md` assigns reusable Kubernetes lifecycle, port-forwarding, readiness,
 and diagnostics to the framework, and fixture shaping, protocol clients, and
@@ -746,7 +729,7 @@ scenario assertions to the test package. Current placement drifts:
 - `e2e/internal/framework/forward_test.go` uses the deprecated
   `fake.NewSimpleClientset`.
 
-### 4.6 Strengthen the weak assertions
+### 4.6 Strengthen the weak assertions [x]
 
 - `e2e/tls_test.go` never reads a response body. `requestHTTPSWithMethod`
   discards it (`e2e/support_test.go:175`), so `e2e/tls_test.go:63` asserts a 200
@@ -767,7 +750,7 @@ scenario assertions to the test package. Current placement drifts:
   distinguishing which member drove the decision, so all three are
   indistinguishable from "any valid token passes".
 
-### 4.7 Reduce stack duplication
+### 4.7 Reduce stack duplication [x]
 
 `e2e/request_metrics_test.go` stands up a second complete copy of the
 `jwt-gateway.yaml` stack, including JWKS Envoy, httpbin, gateway, and collector,
@@ -775,7 +758,7 @@ while `e2e/jwt_test.go:263` already runs the same fixture. That is one of ten
 stacks spent on counter isolation that the specs' own before-and-after deltas
 already provide.
 
-### 4.8 Re-establish port forwards after pod replacement
+### 4.8 Re-establish port forwards after pod replacement [x]
 
 Only `e2e/jwt_test.go:517` re-forwards after a deployment restart. Any future
 spec that restarts a deployment and reuses a stored address will silently talk to
@@ -786,7 +769,7 @@ Also: `e2e/support_test.go:91` allows fifteen seconds for the first successful
 upstream request after readiness. On a cold Kind node that is tight next to the
 three-minute warm-up budgets the JWT and API-key setups use.
 
-### 4.9 Scope the failure reporter correctly
+### 4.9 Scope the failure reporter correctly [x]
 
 `ReportAfterEach` in `e2e/suite_test.go:25` reads the package-level
 `activeNamespace`, which three different setup functions write
@@ -801,13 +784,13 @@ which duplicate what the reporter already does.
 
 ## Phase 5: housekeeping
 
-### 5.1 Prune stale branches
+### 5.1 Prune stale branches [x]
 
-Seventeen local branches exist and only one has a remote counterpart. `main`
-itself has never been pushed. Decide which branches are live before the first
-push.
+Merged stale branches have been deleted. The active completion branch, `main`,
+the unmerged `docs/cel-recommendation`, and `rhobs-1783-bootstrap` (tracking
+`origin/rhobs-1783-bootstrap`) remain.
 
-### 5.2 Fix the two defects in AGENTS.md
+### 5.2 Fix the two defects in AGENTS.md [x]
 
 - `AGENTS.md:10` is an empty bullet.
 - `AGENTS.md:9` hardcodes a machine-local absolute path,
@@ -816,17 +799,13 @@ push.
 
 ---
 
-## Suggested ordering
+## Completion
 
-Phase 0 is half a day and unblocks the rest. Phase 1 is the work that converts
-this from "a package that generates Envoy config" into "a library someone can
-adopt", and item 1.2 should be settled before any version is tagged because it is
-a breaking API change that is free today and expensive later.
+All 51 review items are complete as of 2026-10-11. Final verification passed:
 
-Phase 2 and Phase 3 are independent of each other and can run in parallel.
-Within Phase 3, items 3.1 through 3.3 carry the real feature risk; 3.4 through
-3.7 are operational confidence.
-
-Phase 4 is maintenance payback rather than risk reduction, with the exception of
-4.1 and 4.3, which both affect suite reliability and should be pulled forward if
-end-to-end tests start appearing in CI.
+- `make test`
+- `make lint`
+- `go test -tags=e2e,envoyruntime -run '^$' ./...`
+- `go test -tags=e2e ./e2e/internal/framework -count=1`
+- `make test-runtime`
+- Live e2e suite: 63 of 63 specs passed in 13m29s with two Ginkgo workers.

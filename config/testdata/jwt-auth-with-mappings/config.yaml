@@ -134,8 +134,6 @@ servers:
 kubernetes:
   name: auth-gateway
   namespace: observability
-  image: envoyproxy/envoy:v1.39.1
-  otel_collector_image: otel/opentelemetry-collector-contrib:0.135.0
   replicas: 2
   service_port: 80
   https_service_port: 443

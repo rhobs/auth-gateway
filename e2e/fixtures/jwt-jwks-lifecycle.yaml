@@ -59,8 +59,6 @@ servers:
 kubernetes:
   name: auth-gateway
   namespace: default
-  image: envoyproxy/envoy:v1.39.1
-  otel_collector_image: otel/opentelemetry-collector-contrib:0.135.0
   replicas: 1
   service_port: 80
   resources:

@@ -8,6 +8,7 @@ resources:
             - factory_key: envoy.string
               format_string:
                 omit_empty_values: true
-                text_format: '%CEL(("auth_gateway.attributes.requested_tenant" in filter_state && type(filter_state["auth_gateway.attributes.requested_tenant"]) == bytes && filter_state["auth_gateway.attributes.requested_tenant"] != b"") ? (filter_state["auth_gateway.attributes.requested_tenant"] == b"client-a" ? "team-a" : "") : "")%'
+                text_format_source:
+                    inline_string: '%CEL(("auth_gateway.attributes.requested_tenant" in filter_state && type(filter_state["auth_gateway.attributes.requested_tenant"]) == bytes && filter_state["auth_gateway.attributes.requested_tenant"] != b"") ? (filter_state["auth_gateway.attributes.requested_tenant"] == b"client-a" ? "team-a" : "") : "")%'
               object_key: auth_gateway.attributes.requested_tenant
               skip_if_empty: true

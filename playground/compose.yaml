@@ -27,7 +27,7 @@ services:
       - ./generated/mock-oauth2.p12:/app/mock-oauth2.p12:ro
 
   envoy:
-    image: ${ENVOY_IMAGE:-envoyproxy/envoy:v1.39.1}
+    image: ${ENVOY_IMAGE:?Set ENVOY_IMAGE before running Compose, or use make start}
     depends_on:
       - mock-oauth2-server
     ports:
@@ -41,7 +41,7 @@ services:
     command: ["-c", "/etc/auth-gateway/envoy.yaml", "--log-level", "info"]
 
   otel-collector:
-    image: ${OTEL_COLLECTOR_IMAGE:-otel/opentelemetry-collector-contrib:0.135.0}
+    image: ${OTEL_COLLECTOR_IMAGE:?Set OTEL_COLLECTOR_IMAGE before running Compose, or use make start}
     depends_on:
       - envoy
       - jaeger

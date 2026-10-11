@@ -11,7 +11,9 @@ cd playground
 make start
 ```
 
-The Envoy bootstrap comes from [config.yaml](config.yaml), without Kubernetes resources. The collector config is generated from `observability.metrics` and `observability.tracing` in the same file. Envoy sends OTLP/gRPC spans to the collector, which forwards them to Jaeger. After editing the config, run `make generate` and restart the stack with `make start`. Generation refreshes the checked-in [envoy.yaml.golden](envoy.yaml.golden) and [otel-collector.yaml.golden](otel-collector.yaml.golden), then copies them to `generated/` for Compose.
+Use `make start` to run Compose with the repository's pinned Envoy and collector images. If you run Compose directly, set `ENVOY_IMAGE` and `OTEL_COLLECTOR_IMAGE` in the environment first.
+
+The Envoy bootstrap comes from [config.yaml](config.yaml), without Kubernetes resources. The collector config is generated from `observability.metrics` and `observability.tracing` in the same file. Envoy sends OTLP/gRPC spans to the collector, which forwards them to Jaeger. After editing the config, run `make generate` and restart the stack with `make start`. Generation writes the runtime configs under `generated/` and leaves the checked-in [envoy.yaml.golden](envoy.yaml.golden) and [otel-collector.yaml.golden](otel-collector.yaml.golden) unchanged. Run `make test` from the repository root to compare generated output with those references; after reviewing an intentional output change, run root `make update-golden` to refresh them.
 
 [credentials.yaml](credentials.yaml) is a complete Envoy API-key ECDS resource with demo keys. Compose mounts this file directly where Envoy reads its API keys. Edit it to test different local demo keys and attribute values, then run `make start` to restart Envoy.
 

@@ -74,4 +74,3 @@ servers:
 kubernetes:
   name: auth-gateway
   namespace: gateway-test
-  image: envoyproxy/envoy:v1.39.1

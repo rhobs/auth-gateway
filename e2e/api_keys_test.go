@@ -7,14 +7,14 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -27,8 +27,6 @@ import (
 )
 
 const (
-	apiKeyNamespace       = "auth-gateway-api-key-e2e"
-	apiKeyIsolatedNS      = "auth-gateway-api-key-isolated-e2e"
 	apiKeyPublicHost      = "public.api-key.auth-gateway.test"
 	apiKeyOnlyHost        = "key.api-key.auth-gateway.test"
 	apiKeyAnyHost         = "any.api-key.auth-gateway.test"
@@ -37,16 +35,24 @@ const (
 	apiKeySharedSecretKey = "key-a"
 )
 
+var (
+	apiKeyNamespace  = e2eNamespace("auth-gateway-api-key-e2e")
+	apiKeyIsolatedNS = e2eNamespace("auth-gateway-api-key-isolated-e2e")
+)
+
 type apiKeyE2E struct {
 	config    config.Config
 	keys      map[string]*rsa.PrivateKey
 	rootCAs   *x509.CertPool
 	httpAddr  string
+	httpsAddr string
+	httpsStop func()
 	adminAddr string
+	keyHeader string
 	resources *config.KubernetesResources
 }
 
-var _ = Describe("API-key authentication", Label("gateway", "api-key", "authentication", "authorization"), Ordered, func() {
+var _ = Describe("API-key authentication", Label("gateway", "api-key", "authentication", "authorization", "namespace-"+apiKeyNamespace), Ordered, ContinueOnFailure, func() {
 	var gateway *apiKeyE2E
 
 	BeforeAll(func(ctx SpecContext) {
@@ -59,6 +65,14 @@ var _ = Describe("API-key authentication", Label("gateway", "api-key", "authenti
 		Expect(err).NotTo(HaveOccurred())
 	}, NodeTimeout(12*time.Minute))
 
+	BeforeEach(func(ctx SpecContext) {
+		restoreAPIKeyGatewayState(ctx, gateway)
+	}, NodeTimeout(3*time.Minute))
+
+	AfterEach(func(ctx SpecContext) {
+		restoreAPIKeyGatewayState(ctx, gateway)
+	}, NodeTimeout(3*time.Minute))
+
 	It("uses one Secret across protected servers and forwards verified attributes", func(ctx SpecContext) {
 		for _, host := range []string{apiKeyOnlyHost, apiKeyAnyHost} {
 			status, body, err := gateway.request(ctx, host, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", apiKeySharedSecretKey, nil)
@@ -69,12 +83,8 @@ var _ = Describe("API-key authentication", Label("gateway", "api-key", "authenti
 		status, body, err := gateway.request(ctx, apiKeyPublicHost, false, http.MethodGet, "/health", "", "", apiKeySharedSecretKey, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		var echo struct {
-			Method  string              `json:"method"`
-			URL     string              `json:"url"`
-			Headers map[string][]string `json:"headers"`
-		}
-		Expect(json.Unmarshal(body, &echo)).To(Succeed())
+		echo, err := decodeHTTPBinEcho(body)
+		Expect(err).NotTo(HaveOccurred())
 		Expect(echo.Method).To(Equal(http.MethodGet))
 		Expect(echo.URL).To(HaveSuffix("/anything"))
 		Expect(headerValue(echo.Headers, "X-Partner-Key")).To(BeEmpty())
@@ -247,13 +257,10 @@ var _ = Describe("API-key authentication", Label("gateway", "api-key", "authenti
 		Eventually(func() (uint64, error) {
 			return envoyUpdateFailures(ctx, gateway.adminAddr)
 		}).WithContext(ctx).WithTimeout(4 * time.Minute).WithPolling(time.Second).Should(BeNumerically(">", before))
-		status, body, err := gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", "key-b", nil)
+		status, body, err := gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", apiKeySharedSecretKey, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectAPIKeyEcho(body, "team-b", "writer-b")
-		Expect(gateway.applySecret(ctx, []config.APIKeyCredential{
-			{Key: "key-b", Attributes: map[string]string{"tenant_id": "client-b", "writer_id": "writer-b"}},
-		})).To(Succeed())
+		expectAPIKeyEcho(body, "team-a", "writer-a")
 	}, SpecTimeout(6*time.Minute))
 
 	It("revokes every key with an explicit empty Secret resource", func(ctx SpecContext) {
@@ -263,37 +270,39 @@ var _ = Describe("API-key authentication", Label("gateway", "api-key", "authenti
 		var status int
 		var body []byte
 		Eventually(func() bool {
-			status, body, err = gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", "key-b", nil)
+			status, body, err = gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", apiKeySharedSecretKey, nil)
 			return err == nil && status == http.StatusUnauthorized
 		}).WithContext(ctx).WithTimeout(4*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
-			return fmt.Sprintf("empty Secret resource did not revoke key-b: HTTP %d: %s (error: %v)", status, body, err)
+			return fmt.Sprintf("empty Secret resource did not revoke key-a: HTTP %d: %s (error: %v)", status, body, err)
 		})
 		expectAPIKeyDenied(ctx, gateway, "revoked key on all_of", apiKeyAllHost, true,
-			gateway.token("client-b", "writer-b"), "key-b", nil, http.StatusUnauthorized)
+			gateway.token("client-a", "writer-a"), apiKeySharedSecretKey, nil, http.StatusUnauthorized)
 		status, body, err = gateway.request(ctx, apiKeyAnyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody,
-			gateway.token("client-b", "writer-b"), "", nil)
+			gateway.token("client-a", "writer-a"), "", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectAPIKeyEcho(body, "team-b", "writer-b")
+		expectAPIKeyEcho(body, "team-a", "writer-a")
 		newUID, err := gatewayPodUID(ctx, apiKeyNamespace)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(newUID).To(Equal(oldUID))
 	}, SpecTimeout(6*time.Minute))
 })
 
-var _ = Describe("API-key namespace isolation", Label("gateway", "api-key", "authentication"), Ordered, func() {
+var _ = Describe("API-key namespace isolation", Label("gateway", "api-key", "authentication", "namespace-"+apiKeyIsolatedNS), Ordered, func() {
 	var gateway *apiKeyE2E
 
 	BeforeAll(func(ctx SpecContext) {
 		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, apiKeyIsolatedNS)).To(Succeed()) }, NodeTimeout(3*time.Minute))
 		var err error
-		gateway, err = setupAPIKeyGateway(ctx, apiKeyIsolatedNS, true, []config.APIKeyCredential{
+		gateway, err = setupAPIKeyGatewayWithShape(ctx, apiKeyIsolatedNS, true, []config.APIKeyCredential{
 			{Key: "isolated-key", Attributes: map[string]string{"tenant_id": "client-b", "writer_id": "writer-b"}},
-		}, "isolated-key")
+		}, "isolated-key", func(c *config.Config) {
+			c.Authenticators[0].APIKey.Header = ""
+		})
 		Expect(err).NotTo(HaveOccurred())
 	}, NodeTimeout(8*time.Minute))
 
-	It("uses the same Secret name with independent namespace contents", func(ctx SpecContext) {
+	It("defaults to X-API-Key with independent namespace contents", func(ctx SpecContext) {
 		status, body, err := gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", "isolated-key", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
@@ -309,11 +318,7 @@ func setupAPIKeyGateway(ctx SpecContext, namespace string, keyOnly bool, credent
 }
 
 func setupAPIKeyGatewayWithShape(ctx SpecContext, namespace string, keyOnly bool, credentials []config.APIKeyCredential, warmupKey string, shape func(*config.Config)) (*apiKeyE2E, error) {
-	activeNamespace = namespace
-	if err := env.DeleteNamespace(ctx, namespace); err != nil {
-		return nil, err
-	}
-	if err := env.CreateNamespace(ctx, namespace); err != nil {
+	if err := resetE2ENamespace(ctx, namespace); err != nil {
 		return nil, err
 	}
 	c, err := apiKeyConfig(namespace, keyOnly)
@@ -323,7 +328,11 @@ func setupAPIKeyGatewayWithShape(ctx SpecContext, namespace string, keyOnly bool
 	if shape != nil {
 		shape(&c)
 	}
-	gateway := &apiKeyE2E{config: c}
+	keyHeader := c.Authenticators[len(c.Authenticators)-1].APIKey.Header
+	if keyHeader == "" {
+		keyHeader = "X-API-Key"
+	}
+	gateway := &apiKeyE2E{config: c, keyHeader: keyHeader}
 	if !keyOnly {
 		key, err := rsa.GenerateKey(rand.Reader, 2048)
 		if err != nil {
@@ -393,23 +402,67 @@ func setupAPIKeyGatewayWithShape(ctx SpecContext, namespace string, keyOnly bool
 		}
 	}
 	gateway.httpAddr = env.ForwardWithCleanup(ctx, namespace, "service/auth-gateway", 80)
-	gateway.adminAddr = env.ForwardWithCleanup(ctx, namespace, "deployment/auth-gateway", 9901)
-	var warmupErr error
-	Eventually(func() bool {
+	for _, server := range c.Servers {
+		if server.TLSConfig != nil {
+			address, stop, err := env.Forward(ctx, namespace, "service/auth-gateway", 443)
+			if err != nil {
+				return nil, err
+			}
+			gateway.httpsAddr = address
+			gateway.httpsStop = stop
+			DeferCleanup(stop)
+			break
+		}
+	}
+	gateway.adminAddr = env.ForwardEnvoyAdminWithCleanup(ctx, namespace)
+	if err := waitForSuccessfulRequest(ctx, "API-key ECDS warmup", 3*time.Minute, time.Second, func(ctx context.Context) error {
 		status, body, err := gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", warmupKey, nil)
 		if err != nil {
-			warmupErr = err
-			return false
+			return err
 		}
 		if status != http.StatusOK {
-			warmupErr = fmt.Errorf("HTTP %d: %s", status, body)
+			return fmt.Errorf("HTTP %d: %s", status, body)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return gateway, nil
+}
+
+func restoreAPIKeyGatewayState(ctx SpecContext, gateway *apiKeyE2E) {
+	baselineConfig, err := apiKeyConfig(gateway.config.Kubernetes.Namespace, false)
+	Expect(err).NotTo(HaveOccurred())
+	baselineResources, err := config.GenerateKubernetes(baselineConfig)
+	Expect(err).NotTo(HaveOccurred())
+	manifest, err := yamlDocuments(baselineResources.ProcessingConfigMap)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(env.Apply(ctx, gateway.config.Kubernetes.Namespace, manifest)).To(Succeed())
+	Expect(gateway.applySecret(ctx, baselineAPIKeyCredentials())).To(Succeed())
+
+	var acceptedStatus, staleStatus int
+	var acceptedBody, staleBody []byte
+	var requestErr error
+	Eventually(func() bool {
+		acceptedStatus, acceptedBody, requestErr = gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost,
+			"/ingest", apiKeyRequestBody, "", apiKeySharedSecretKey, nil)
+		if requestErr != nil || acceptedStatus != http.StatusOK || headerValue(jwtEchoHeaders(acceptedBody), "X-Scope-OrgID") != "team-a" {
 			return false
 		}
-		return true
+		staleStatus, staleBody, requestErr = gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost,
+			"/ingest", apiKeyRequestBody, "", "key-b", nil)
+		return requestErr == nil && staleStatus == http.StatusUnauthorized
 	}).WithContext(ctx).WithTimeout(3*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
-		return fmt.Sprintf("API-key ECDS warmup failed: %v", warmupErr)
+		return fmt.Sprintf("API-key baseline was not restored: accepted HTTP %d: %s, key-b HTTP %d: %s (error: %v)",
+			acceptedStatus, acceptedBody, staleStatus, staleBody, requestErr)
 	})
-	return gateway, nil
+}
+
+func baselineAPIKeyCredentials() []config.APIKeyCredential {
+	return []config.APIKeyCredential{
+		{Key: apiKeySharedSecretKey, Attributes: map[string]string{"tenant_id": "client-a", "writer_id": "writer-a"}},
+		{Key: "key-denied", Attributes: map[string]string{"tenant_id": "denied", "writer_id": "writer-a"}},
+	}
 }
 
 func apiKeyConfig(namespace string, keyOnly bool) (config.Config, error) {
@@ -459,38 +512,53 @@ func (g *apiKeyE2E) token(tenant, writer string) string {
 
 func (g *apiKeyE2E) request(ctx context.Context, host string, useTLS bool, method, requestPath, body, token, key string, headers http.Header) (int, []byte, error) {
 	scheme, address, client := "http", g.httpAddr, testClient
-	var err error
+	var tlsClient *http.Client
 	if useTLS {
 		scheme = "https"
-		var stop func()
-		address, stop, err = env.Forward(ctx, g.config.Kubernetes.Namespace, "service/auth-gateway", 443)
-		if err != nil {
-			return 0, nil, err
+		if g.httpsAddr == "" {
+			return 0, nil, fmt.Errorf("HTTPS port-forward was not opened during gateway setup")
 		}
-		defer stop()
-		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: g.rootCAs, ServerName: host, MinVersion: tls.VersionTLS12}}
-		defer transport.CloseIdleConnections()
-		client = &http.Client{Transport: transport, Timeout: 10 * time.Second}
+		address = g.httpsAddr
+		tlsClient = newTestTLSClient(g.rootCAs, host)
+		defer tlsClient.CloseIdleConnections()
+		client = tlsClient
 	}
-	request, err := http.NewRequestWithContext(ctx, method, scheme+"://"+address+requestPath, strings.NewReader(body))
+	newRequest := func(address string) (*http.Request, error) {
+		request, err := http.NewRequestWithContext(ctx, method, scheme+"://"+address+requestPath, strings.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		request.Host = host
+		request.Header = headers.Clone()
+		if request.Header == nil {
+			request.Header = make(http.Header)
+		}
+		if token != "" {
+			request.Header.Set("Authorization", "Bearer "+token)
+		}
+		if key != "" {
+			request.Header.Set(g.keyHeader, key)
+		}
+		if body != "" {
+			request.Header.Set("Content-Type", "application/octet-stream")
+		}
+		return request, nil
+	}
+	request, err := newRequest(address)
 	if err != nil {
 		return 0, nil, err
 	}
-	request.Host = host
-	request.Header = headers.Clone()
-	if request.Header == nil {
-		request.Header = make(http.Header)
-	}
-	if token != "" {
-		request.Header.Set("Authorization", "Bearer "+token)
-	}
-	if key != "" {
-		request.Header.Set("X-Partner-Key", key)
-	}
-	if body != "" {
-		request.Header.Set("Content-Type", "application/octet-stream")
-	}
 	response, err := client.Do(request)
+	if useTLS && errors.Is(err, syscall.ECONNREFUSED) {
+		if err := g.refreshHTTPSForward(ctx); err != nil {
+			return 0, nil, fmt.Errorf("reopen HTTPS port-forward after connection refusal: %w", err)
+		}
+		request, err = newRequest(g.httpsAddr)
+		if err != nil {
+			return 0, nil, err
+		}
+		response, err = client.Do(request)
+	}
 	if err != nil {
 		return 0, nil, err
 	}
@@ -498,32 +566,30 @@ func (g *apiKeyE2E) request(ctx context.Context, host string, useTLS bool, metho
 	return response.StatusCode, responseBody, err
 }
 
+func (g *apiKeyE2E) refreshHTTPSForward(ctx context.Context) error {
+	if g.httpsStop != nil {
+		g.httpsStop()
+	}
+	address, stop, err := env.Forward(ctx, g.config.Kubernetes.Namespace, "service/auth-gateway", 443)
+	if err != nil {
+		return err
+	}
+	g.httpsAddr = address
+	g.httpsStop = stop
+	DeferCleanup(stop)
+	return nil
+}
+
 func expectAPIKeyDenied(ctx SpecContext, gateway *apiKeyE2E, name, host string, useTLS bool, token, key string, headers http.Header, wantStatus int) {
-	before, err := jwtUpstreamRequests(ctx, gateway.adminAddr, "api-ingest")
-	Expect(err).NotTo(HaveOccurred(), name)
-	status, body, err := gateway.request(ctx, host, useTLS, http.MethodPost, "/ingest", apiKeyRequestBody, token, key, headers)
-	Expect(err).NotTo(HaveOccurred(), name)
-	Expect(status).To(Equal(wantStatus), name+": "+string(body))
-	after, err := jwtUpstreamRequests(ctx, gateway.adminAddr, "api-ingest")
-	Expect(err).NotTo(HaveOccurred(), name)
-	Expect(after).To(Equal(before), name+" reached the backend")
+	expectDeniedBeforeUpstream(ctx, gateway.adminAddr, "api-ingest", name, wantStatus, func() (int, []byte, error) {
+		return gateway.request(ctx, host, useTLS, http.MethodPost, "/ingest", apiKeyRequestBody, token, key, headers)
+	})
 }
 
 func envoyUpdateFailures(ctx context.Context, adminAddress string) (uint64, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+adminAddress+"/stats?filter=update_", nil)
+	body, err := env.EnvoyAdminGet(ctx, adminAddress, "/stats?filter=update_")
 	if err != nil {
 		return 0, err
-	}
-	response, err := testClient.Do(request)
-	if err != nil {
-		return 0, err
-	}
-	body, err := readAndCloseResponseBody(response, 1<<20)
-	if err != nil {
-		return 0, err
-	}
-	if response.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("Envoy stats returned HTTP %d: %s", response.StatusCode, body)
 	}
 	var total uint64
 	for _, line := range strings.Split(string(body), "\n") {
@@ -541,19 +607,14 @@ func envoyUpdateFailures(ctx context.Context, adminAddress string) (uint64, erro
 }
 
 func expectAPIKeyEcho(body []byte, tenant, writer string) {
-	var echo struct {
-		Method  string              `json:"method"`
-		URL     string              `json:"url"`
-		Data    string              `json:"data"`
-		Headers map[string][]string `json:"headers"`
-	}
-	Expect(json.Unmarshal(body, &echo)).To(Succeed())
+	echo, err := decodeHTTPBinEcho(body)
+	Expect(err).NotTo(HaveOccurred())
 	Expect(echo.Method).To(Equal(http.MethodPost))
 	Expect(echo.URL).To(HaveSuffix("/anything"))
 	Expect(echo.Data).To(Equal("data:application/octet-stream;base64," + base64.StdEncoding.EncodeToString([]byte(apiKeyRequestBody))))
 	Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(Equal(tenant))
 	Expect(headerValue(echo.Headers, "X-Writer-ID")).To(Equal(writer))
-	for _, name := range []string{"Authorization", "X-Partner-Key", "X-Auth-Gateway-API-Key-Client", "X-Auth-Gateway-JWT-Verified-Issuer-One"} {
+	for _, name := range []string{"Authorization", "X-API-Key", "X-Partner-Key", "X-Auth-Gateway-API-Key-Client", "X-Auth-Gateway-JWT-Verified-Issuer-One"} {
 		Expect(headerValue(echo.Headers, name)).To(BeEmpty(), name+" leaked to the upstream")
 	}
 }

@@ -247,9 +247,7 @@ servers:
 kubernetes:
   name: auth-gateway
   namespace: observability
-  image: envoyproxy/envoy:v1.39.1
   # Optional Kubernetes settings, defaults shown.
-  # otel_collector_image: otel/opentelemetry-collector-contrib:0.135.0
   # replicas: 2
   # envoy_concurrency: 2 # Optional example; omitted lets Envoy choose workers.
   # service_port: 80

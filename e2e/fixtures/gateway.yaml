@@ -8,6 +8,7 @@ servers:
     apis: [metrics, upstream-health]
   - hostname: query.auth-gateway.test
     apis: [upstream-health]
+  - hostname: empty.auth-gateway.test
   - hostname: tls.auth-gateway.test
     tls_config:
       secret: auth-gateway-tls
@@ -28,6 +29,33 @@ apis:
           exact: /metrics/api/v1/receive
         rewrite:
           path: /anything/api/v1/receive
+      - methods: [GET]
+        path:
+          regex: '^/metrics/api/v1/(query|query_range)$'
+        rewrite:
+          regex:
+            pattern: '^/metrics/(.*)$'
+            substitution: '/anything/\1'
+      - methods: [GET]
+        path:
+          prefix: /logs/otlp/
+        rewrite:
+          prefix: /anything/otlp/
+      - methods: [GET, POST]
+        path:
+          prefix: /multi-method/
+        rewrite:
+          prefix: /anything/multi-method/
+      - methods: [GET]
+        path:
+          prefix: /routes/order/
+        rewrite:
+          prefix: /anything/first/
+      - methods: [GET]
+        path:
+          exact: /routes/order/specific
+        rewrite:
+          path: /anything/second
 
   - name: upstream-health
     upstream:
@@ -38,10 +66,9 @@ apis:
         path:
           exact: /upstream-health
         rewrite:
-          path: /status/200
+          path: /anything
 
 kubernetes:
   name: auth-gateway
   namespace: auth-gateway-e2e
-  image: envoyproxy/envoy:v1.39.1
   replicas: 1

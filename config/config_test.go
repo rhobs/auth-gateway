@@ -13,6 +13,7 @@ import (
 	headermutation "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
 	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	upstreamhttp "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
+	"github.com/google/go-cmp/cmp"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -49,6 +50,13 @@ func loadAuthExample(t testing.TB) Config {
 	return loadTestConfig(t, readTestFile(t, filepath.Join("..", "config.auth.example.yaml")), "auth example")
 }
 
+func assertConfigDiff(t testing.TB, name string, want, got any) {
+	t.Helper()
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("%s mismatch (-want +got):\n%s", name, diff)
+	}
+}
+
 func TestLoadRejectsMissingRouteMethods(t *testing.T) {
 	input := `version: 1
 servers:
@@ -77,10 +85,8 @@ func TestLoadKeepsTimeoutOverridesUnresolved(t *testing.T) {
 		t.Fatal("Load filled omitted route timeouts")
 	}
 	timeouts := c.APIs[0].Routes[1].Timeouts
-	if timeouts == nil || timeouts.ResponseTimeout == nil || *timeouts.ResponseTimeout != Duration(20*time.Second) ||
-		timeouts.MaxStreamDuration == nil || *timeouts.MaxStreamDuration != Duration(30*time.Second) || timeouts.IdleTimeout != nil {
-		t.Fatalf("Load changed partial route timeout overrides: %#v", timeouts)
-	}
+	wantTimeouts := &RouteTimeouts{ResponseTimeout: duration(20 * time.Second), MaxStreamDuration: duration(30 * time.Second)}
+	assertConfigDiff(t, "partial route timeout overrides", wantTimeouts, timeouts)
 }
 
 func TestLoadRejectsIncompatibleEffectiveRouteTimeouts(t *testing.T) {
@@ -230,22 +236,56 @@ func TestListenerLimitsOnEveryChainAndFixedControls(t *testing.T) {
 	}
 	b := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	l := b.StaticResources.Listeners[0]
-	if l.Address.GetSocketAddress().GetPortValue() != 8088 || l.PerConnectionBufferLimitBytes.Value != 65536 {
-		t.Fatalf("listener = %v", l)
+	if got := l.Address.GetSocketAddress().GetPortValue(); got != 8088 {
+		t.Errorf("listener port = %d, want 8088", got)
+	}
+	if got := l.PerConnectionBufferLimitBytes.Value; got != 65536 {
+		t.Errorf("listener per-connection buffer limit = %d, want 65536", got)
 	}
 	for _, chain := range l.FilterChains {
 		m := decodeHTTPManager(t, chain)
-		if m.MaxRequestHeadersKb.Value != 16 || m.CommonHttpProtocolOptions.MaxHeadersCount.Value != 20 || m.RequestHeadersTimeout.AsDuration() != 250*time.Millisecond || m.RequestTimeout.AsDuration() != 2*time.Second || m.StreamIdleTimeout.AsDuration() != 9*time.Second || m.CommonHttpProtocolOptions.IdleTimeout.AsDuration() != 12*time.Second || m.CommonHttpProtocolOptions.MaxStreamDuration.AsDuration() != 45*time.Second || m.StreamFlushTimeout.AsDuration() != 3*time.Second {
-			t.Fatalf("HCM settings = %v", m)
+		type hcmSettings struct {
+			MaxRequestHeadersKB    uint32
+			MaxRequestHeadersCount uint32
+			RequestHeadersTimeout  time.Duration
+			RequestTimeout         time.Duration
+			StreamIdleTimeout      time.Duration
+			ConnectionIdleTimeout  time.Duration
+			MaxStreamDuration      time.Duration
+			StreamFlushTimeout     time.Duration
 		}
+		gotSettings := hcmSettings{
+			MaxRequestHeadersKB:    m.MaxRequestHeadersKb.Value,
+			MaxRequestHeadersCount: m.CommonHttpProtocolOptions.MaxHeadersCount.Value,
+			RequestHeadersTimeout:  m.RequestHeadersTimeout.AsDuration(),
+			RequestTimeout:         m.RequestTimeout.AsDuration(),
+			StreamIdleTimeout:      m.StreamIdleTimeout.AsDuration(),
+			ConnectionIdleTimeout:  m.CommonHttpProtocolOptions.IdleTimeout.AsDuration(),
+			MaxStreamDuration:      m.CommonHttpProtocolOptions.MaxStreamDuration.AsDuration(),
+			StreamFlushTimeout:     m.StreamFlushTimeout.AsDuration(),
+		}
+		wantSettings := hcmSettings{
+			MaxRequestHeadersKB:    16,
+			MaxRequestHeadersCount: 20,
+			RequestHeadersTimeout:  250 * time.Millisecond,
+			RequestTimeout:         2 * time.Second,
+			StreamIdleTimeout:      9 * time.Second,
+			ConnectionIdleTimeout:  12 * time.Second,
+			MaxStreamDuration:      45 * time.Second,
+			StreamFlushTimeout:     3 * time.Second,
+		}
+		assertConfigDiff(t, "HCM settings", wantSettings, gotSettings)
 		if m.Http2ProtocolOptions.MaxConcurrentStreams.Value != 17 || m.Http2ProtocolOptions.InitialStreamWindowSize != nil {
-			t.Fatalf("partial HTTP/2 options = %v", m.Http2ProtocolOptions)
+			t.Errorf("HTTP/2 max concurrent streams = %d and initial stream window size = %v, want 17 and nil", m.Http2ProtocolOptions.MaxConcurrentStreams.Value, m.Http2ProtocolOptions.InitialStreamWindowSize)
 		}
 		if m.CommonHttpProtocolOptions.HeadersWithUnderscoresAction != core.HttpProtocolOptions_REJECT_REQUEST || m.NormalizePath.Value {
-			t.Fatal("fixed HTTP semantics changed")
+			t.Errorf("headers with underscores action = %v and normalize path = %t, want REJECT_REQUEST and false", m.CommonHttpProtocolOptions.HeadersWithUnderscoresAction, m.NormalizePath.Value)
 		}
-		if (chain.TransportSocket != nil && chain.TransportSocketConnectTimeout.AsDuration() != time.Second) || (chain.TransportSocket == nil && chain.TransportSocketConnectTimeout != nil) {
-			t.Fatalf("TLS handshake timeout = %v", chain)
+		if chain.TransportSocket != nil && chain.TransportSocketConnectTimeout.AsDuration() != time.Second {
+			t.Errorf("TLS handshake timeout = %s, want 1s", chain.TransportSocketConnectTimeout.AsDuration())
+		}
+		if chain.TransportSocket == nil && chain.TransportSocketConnectTimeout != nil {
+			t.Errorf("TLS handshake timeout without a TLS socket = %v, want nil", chain.TransportSocketConnectTimeout)
 		}
 		if m.HttpFilters[0].Name != requestControlsFilterName {
 			t.Fatalf("public chain has no fixed prelude: %v", httpFilterNames(m))
@@ -305,19 +345,42 @@ func TestResolvedRouteTimeoutsAndReuse(t *testing.T) {
 				want = []time.Duration{80 * time.Second, 95 * time.Second, 120 * time.Second}
 			}
 			a := route.GetRoute()
-			got := []time.Duration{a.Timeout.AsDuration(), a.IdleTimeout.AsDuration(), a.MaxStreamDuration.MaxStreamDuration.AsDuration()}
-			if !reflect.DeepEqual(got, want) || route.StatPrefix != route.Name || a.RetryPolicy != nil {
-				t.Fatalf("route %s: %v", route.Name, a)
+			type routeSettings struct {
+				ResponseTimeout   time.Duration
+				IdleTimeout       time.Duration
+				MaxStreamDuration time.Duration
+				StatPrefix        string
+				HasRetryPolicy    bool
 			}
+			got := routeSettings{
+				ResponseTimeout:   a.Timeout.AsDuration(),
+				IdleTimeout:       a.IdleTimeout.AsDuration(),
+				MaxStreamDuration: a.MaxStreamDuration.MaxStreamDuration.AsDuration(),
+				StatPrefix:        route.StatPrefix,
+				HasRetryPolicy:    a.RetryPolicy != nil,
+			}
+			wantSettings := routeSettings{
+				ResponseTimeout:   want[0],
+				IdleTimeout:       want[1],
+				MaxStreamDuration: want[2],
+				StatPrefix:        route.Name,
+			}
+			assertConfigDiff(t, "route settings for "+route.Name, wantSettings, got)
 		}
 	}
 	resources, err := GenerateKubernetes(c)
-	if err != nil || resources.ConfigMap.Data["envoy.yaml"] != string(files.EnvoyBootstrap.Contents) {
-		t.Fatalf("generators resolved differently: %v", err)
+	if err != nil {
+		t.Fatalf("generate Kubernetes resources: %v", err)
+	}
+	if got, want := resources.ConfigMap.Data["envoy.yaml"], string(files.EnvoyBootstrap.Contents); got != want {
+		t.Fatal("Envoy and Kubernetes generators produced different bootstraps")
 	}
 	after, _ := yaml.Marshal(c)
-	if string(before) != string(after) || c.APIs[0].Routes[0].Timeouts != nil {
-		t.Fatal("resolution mutated the public overrides")
+	if string(before) != string(after) {
+		t.Fatal("resolution changed the serialized configuration")
+	}
+	if c.APIs[0].Routes[0].Timeouts != nil {
+		t.Fatal("resolution added a timeout override to the public configuration")
 	}
 	*effective.APIs[0].Routes[0].Timeouts.ResponseTimeout = Duration(time.Second)
 	if *c.APIs[0].Timeouts.ResponseTimeout != Duration(60*time.Second) {
@@ -434,9 +497,7 @@ func TestAuthExampleAppliesAllDefaults(t *testing.T) {
 		MaxStreamDuration: duration(30 * time.Second), StreamFlushTimeout: duration(5 * time.Second),
 		TLSHandshakeTimeout: duration(5 * time.Second),
 	}
-	if !reflect.DeepEqual(c.Listener, wantListener) {
-		t.Fatalf("listener defaults = %#v, want %#v", c.Listener, wantListener)
-	}
+	assertConfigDiff(t, "listener defaults", wantListener, c.Listener)
 	if c.Overload != nil {
 		t.Fatal("overload must be opt-in")
 	}
@@ -446,18 +507,12 @@ func TestAuthExampleAppliesAllDefaults(t *testing.T) {
 			continue
 		}
 		want := JWKSConfig{URI: a.JWT.JWKS.URI, CacheDuration: duration(5 * time.Minute), FetchTimeout: duration(5 * time.Second), ConnectTimeout: duration(5 * time.Second), CircuitBreakers: wantBreakers}
-		if !reflect.DeepEqual(a.JWT.JWKS, want) {
-			t.Fatalf("%s JWKS defaults = %#v, want %#v", a.Name, a.JWT.JWKS, want)
-		}
+		assertConfigDiff(t, a.Name+" JWKS defaults", want, a.JWT.JWKS)
 	}
 	for _, api := range c.APIs {
 		want := Upstream{Address: api.Upstream.Address, Port: api.Upstream.Port, ConnectTimeout: duration(5 * time.Second), PerConnectionBufferLimitBytes: new(uint32(1048576)), HTTPProtocol: "http1"}
-		if !reflect.DeepEqual(api.Upstream, want) {
-			t.Fatalf("%s upstream defaults = %#v, want %#v", api.Name, api.Upstream, want)
-		}
-		if !reflect.DeepEqual(api.CircuitBreakers, wantBreakers) {
-			t.Fatalf("%s circuit breaker defaults = %#v", api.Name, api.CircuitBreakers)
-		}
+		assertConfigDiff(t, api.Name+" upstream defaults", want, api.Upstream)
+		assertConfigDiff(t, api.Name+" circuit breaker defaults", wantBreakers, api.CircuitBreakers)
 		if api.Timeouts != nil {
 			t.Fatalf("example %s must inherit default API timeouts", api.Name)
 		}
@@ -471,17 +526,32 @@ func TestAuthExampleAppliesAllDefaults(t *testing.T) {
 		Requests: map[string]string{"cpu": "50m", "memory": "64Mi"},
 		Limits:   map[string]string{"cpu": "1", "memory": "256Mi"},
 	}
-	if c.Kubernetes.Name != "auth-gateway" || c.Kubernetes.Namespace != "observability" ||
-		c.Kubernetes.Replicas == nil || *c.Kubernetes.Replicas != 2 ||
-		c.Kubernetes.ServicePort == nil || *c.Kubernetes.ServicePort != 80 ||
-		c.Kubernetes.HTTPSServicePort == nil || *c.Kubernetes.HTTPSServicePort != 443 ||
-		c.Kubernetes.EnvoyConcurrency != nil || !reflect.DeepEqual(c.Kubernetes.Resources, wantKubernetesResources) {
-		t.Fatalf("Kubernetes defaults = %#v", c.Kubernetes)
+	type kubernetesDefaults struct {
+		Name             string
+		Namespace        string
+		Replicas         *int32
+		ServicePort      *int32
+		HTTPSServicePort *int32
+		EnvoyConcurrency *uint32
+		Resources        KubernetesResourceRequirements
 	}
+	gotKubernetes := kubernetesDefaults{
+		Name:             c.Kubernetes.Name,
+		Namespace:        c.Kubernetes.Namespace,
+		Replicas:         c.Kubernetes.Replicas,
+		ServicePort:      c.Kubernetes.ServicePort,
+		HTTPSServicePort: c.Kubernetes.HTTPSServicePort,
+		EnvoyConcurrency: c.Kubernetes.EnvoyConcurrency,
+		Resources:        c.Kubernetes.Resources,
+	}
+	wantKubernetes := kubernetesDefaults{
+		Name: "auth-gateway", Namespace: "observability",
+		Replicas: new(int32(2)), ServicePort: new(int32(80)), HTTPSServicePort: new(int32(443)),
+		Resources: wantKubernetesResources,
+	}
+	assertConfigDiff(t, "Kubernetes defaults", wantKubernetes, gotKubernetes)
 	wantTLS := &ServerTLS{Secret: "write-gateway-tls", Certificate: "/etc/write-gateway-tls/tls.crt", PrivateKey: "/etc/write-gateway-tls/tls.key"}
-	if !reflect.DeepEqual(c.Servers[1].TLSConfig, wantTLS) {
-		t.Fatalf("server TLS defaults = %#v", c.Servers[1].TLSConfig)
-	}
+	assertConfigDiff(t, "server TLS defaults", wantTLS, c.Servers[1].TLSConfig)
 	resolved, err := resolveConfig(c)
 	if err != nil {
 		t.Fatal(err)
@@ -489,9 +559,7 @@ func TestAuthExampleAppliesAllDefaults(t *testing.T) {
 	wantTimers := &RouteTimeouts{ResponseTimeout: duration(30 * time.Second), IdleTimeout: duration(60 * time.Second), MaxStreamDuration: duration(30 * time.Second)}
 	for _, api := range resolved.APIs {
 		for _, r := range api.Routes {
-			if !reflect.DeepEqual(r.Timeouts, wantTimers) {
-				t.Fatalf("%s effective timeouts = %#v", api.Name, r.Timeouts)
-			}
+			assertConfigDiff(t, api.Name+" effective timeouts", wantTimers, r.Timeouts)
 		}
 	}
 	if _, err := GenerateKubernetes(c); err != nil {
@@ -535,8 +603,12 @@ func TestOptInOverloadDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := &OverloadConfig{MaxHeapBytes: 201326592, MaxDownstreamConnections: 2048, HeapShrinkThreshold: new(0.90), RequestRejectThreshold: new(0.95)}
-	if !reflect.DeepEqual(resolved.Overload, want) || c.Overload.HeapShrinkThreshold != nil || c.Overload.RequestRejectThreshold != nil {
-		t.Fatalf("overload defaults = %#v, input = %#v", resolved.Overload, c.Overload)
+	assertConfigDiff(t, "overload defaults", want, resolved.Overload)
+	if c.Overload.HeapShrinkThreshold != nil {
+		t.Error("default resolution added heap_shrink_threshold to the caller's configuration")
+	}
+	if c.Overload.RequestRejectThreshold != nil {
+		t.Error("default resolution added request_reject_threshold to the caller's configuration")
 	}
 }
 

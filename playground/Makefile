@@ -2,10 +2,8 @@
 .PHONY: help generate start run stop token logs clean
 
 COMPOSE ?= docker compose
-ENVOY_IMAGE ?= envoyproxy/envoy:v1.39.1
 MOCK_OAUTH2_IMAGE ?= ghcr.io/navikt/mock-oauth2-server:6.0.4
 PROMETHEUS_IMAGE ?= prom/prometheus:v3.5.0
-OTEL_COLLECTOR_IMAGE ?= otel/opentelemetry-collector-contrib:0.135.0
 JAEGER_IMAGE ?= jaegertracing/all-in-one:1.73.0
 HOST_PORT ?= 8080
 ENVOY_PORT ?= 8080
@@ -13,6 +11,11 @@ OAUTH_HOST_PORT ?= 8443
 PROMETHEUS_HOST_PORT ?= 9090
 OTEL_METRICS_HOST_PORT ?= 8889
 JAEGER_HOST_PORT ?= 16686
+
+REPOSITORY_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))..)
+IMAGE_DEFAULTS := $(shell go -C "$(REPOSITORY_ROOT)" run ./cmd/playground-generate -print-image-defaults)
+ENVOY_IMAGE ?= $(word 1,$(IMAGE_DEFAULTS))
+OTEL_COLLECTOR_IMAGE ?= $(word 2,$(IMAGE_DEFAULTS))
 
 export ENVOY_IMAGE MOCK_OAUTH2_IMAGE PROMETHEUS_IMAGE OTEL_COLLECTOR_IMAGE JAEGER_IMAGE HOST_PORT ENVOY_PORT OAUTH_HOST_PORT PROMETHEUS_HOST_PORT OTEL_METRICS_HOST_PORT JAEGER_HOST_PORT
 
@@ -54,10 +57,8 @@ generate:
 	  chmod 644 generated/mock-oauth2.crt; \
 	  chmod 755 generated; \
 	  umask 022; \
-	  go test ../config -run '^TestPlaygroundBootstrap$$' -count=1 -update; \
-	  rm -f generated/envoy.yaml generated/otel-collector.yaml generated/processing/processing.yaml generated/api-keys/api-keys.yaml generated/metrics.jwt generated/logs.jwt generated/metrics-token-response.json generated/logs-token-response.json; \
-	  cp envoy.yaml.golden generated/envoy.yaml; \
-	  cp otel-collector.yaml.golden generated/otel-collector.yaml; \
+	  rm -f generated/envoy.yaml generated/otel-collector.yaml generated/processing/processing.yaml generated/api-keys/api-keys.yaml generated/server-certificate-*.yaml generated/metrics.jwt generated/logs.jwt generated/metrics-token-response.json generated/logs-token-response.json; \
+	  go run ../cmd/playground-generate -config config.yaml -output generated; \
 	  chmod 644 generated/envoy.yaml generated/otel-collector.yaml; \
 	  printf '%s\n' 'Generated Envoy and collector configs and local OAuth certificate'
 

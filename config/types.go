@@ -108,9 +108,9 @@ type Upstream struct {
 type Kubernetes struct {
 	Name      string `yaml:"name"`
 	Namespace string `yaml:"namespace"`
-	Image     string `yaml:"image"`
-	// OTelCollectorImage sets the OpenTelemetry Collector sidecar image. When empty,
-	// it defaults to otel/opentelemetry-collector-contrib:0.135.0.
+	// Image overrides the default Envoy image for generated Deployments.
+	Image string `yaml:"image"`
+	// OTelCollectorImage overrides the default OpenTelemetry Collector sidecar image.
 	OTelCollectorImage string                         `yaml:"otel_collector_image,omitempty"`
 	Replicas           *int32                         `yaml:"replicas,omitempty"`
 	ServicePort        *int32                         `yaml:"service_port,omitempty"`

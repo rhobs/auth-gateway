@@ -119,9 +119,8 @@ servers:
 kubernetes:
   name: auth-gateway
   namespace: observability
-  image: envoyproxy/envoy:v1.39.1
-  # Optional. Defaults to the OpenTelemetry Collector image used by the PoC.
-  otel_collector_image: otel/opentelemetry-collector-contrib:0.135.0
+  image: "" # Empty uses the Go default; set an approved image or private mirror here.
+  otel_collector_image: "" # Empty uses the Go default; set a private mirror here.
   replicas: 2
   # Optional Service port. Defaults to 80.
   # service_port: 80

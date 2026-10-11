@@ -40,14 +40,14 @@ authenticators:
       escaped_id:
         claim_path: [literal.claim]
 authorization_policies:
-  - name: metrics-writers
+  - name: api-writers
     grants:
       - authenticator: issuer-one
-        apis: [metrics, status-only, unmetered]
+        apis: [metrics, unmetered]
         attributes:
           tenant_id: [customer-a, customer-pass]
       - authenticator: issuer-two
-        apis: [metrics, status-only, unmetered]
+        apis: [status-only]
         attributes:
           tenant_id: [customer-b]
 observability:
@@ -104,6 +104,18 @@ apis:
           exact: /status-only
         rewrite:
           path: /anything
+        processing:
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: tenant_id
+            - name: X-Writer-ID
+              from_attribute: writer_id
+            - name: X-Chain
+              from_attribute: chain_id
+            - name: X-Order
+              from_attribute: order_id
+            - name: X-Literal
+              from_attribute: escaped_id
   - name: unmetered
     upstream:
       address: httpbin
@@ -143,7 +155,7 @@ servers:
     authentication:
       any_of: [issuer-one, issuer-two]
     authorization:
-      any_of: [metrics-writers]
+      any_of: [api-writers]
     apis: [metrics, status-only, unmetered]
   - hostname: writer-tls.jwt.auth-gateway.test
     tls_config:
@@ -153,19 +165,17 @@ servers:
     authentication:
       any_of: [issuer-one, issuer-two]
     authorization:
-      any_of: [metrics-writers]
+      any_of: [api-writers]
     apis: [metrics, status-only, unmetered]
   - hostname: issuer-one-only.jwt.auth-gateway.test
     authentication:
       any_of: [issuer-one]
     authorization:
-      any_of: [metrics-writers]
+      any_of: [api-writers]
     apis: [metrics, status-only, unmetered]
 kubernetes:
   name: auth-gateway
   namespace: default
-  image: envoyproxy/envoy:v1.39.1
-  otel_collector_image: otel/opentelemetry-collector-contrib:0.135.0
   replicas: 1
   service_port: 80
   https_service_port: 443

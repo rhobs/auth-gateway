@@ -278,13 +278,15 @@ data:
                                     - factory_key: envoy.string
                                       format_string:
                                         omit_empty_values: true
-                                        text_format: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.tenant_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] : "")%'
+                                        text_format_source:
+                                            inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.tenant_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] : "")%'
                                       object_key: auth_gateway.attributes.tenant_id
                                       skip_if_empty: true
                                     - factory_key: envoy.string
                                       format_string:
                                         omit_empty_values: true
-                                        text_format: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.writer_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"] : "")%'
+                                        text_format_source:
+                                            inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.writer_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"] : "")%'
                                       object_key: auth_gateway.attributes.writer_id
                                       skip_if_empty: true
                             - disabled: true
@@ -295,25 +297,29 @@ data:
                                     - factory_key: envoy.string
                                       format_string:
                                         omit_empty_values: true
-                                        text_format: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.tenant_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] : "")%'
+                                        text_format_source:
+                                            inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.tenant_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] : "")%'
                                       object_key: auth_gateway.attributes.tenant_id
                                       skip_if_empty: true
                                     - factory_key: envoy.string
                                       format_string:
                                         omit_empty_values: true
-                                        text_format: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.writer_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"] : "")%'
+                                        text_format_source:
+                                            inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.writer_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"] : "")%'
                                       object_key: auth_gateway.attributes.writer_id
                                       skip_if_empty: true
                                     - factory_key: envoy.string
                                       format_string:
                                         omit_empty_values: true
-                                        text_format: '%CEL((("issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "organization" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && "id" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] : "")%'
+                                        text_format_source:
+                                            inline_string: '%CEL((("issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "organization" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && "id" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] : "")%'
                                       object_key: auth_gateway.attributes.tenant_id
                                       skip_if_empty: true
                                     - factory_key: envoy.string
                                       format_string:
                                         omit_empty_values: true
-                                        text_format: '%CEL((("issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"] : "")%'
+                                        text_format_source:
+                                            inline_string: '%CEL((("issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"] : "")%'
                                       object_key: auth_gateway.attributes.writer_id
                                       skip_if_empty: true
                             - config_discovery:
@@ -965,25 +971,29 @@ data:
                                     - factory_key: envoy.string
                                       format_string:
                                         omit_empty_values: true
-                                        text_format: '%CEL((("issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "organization" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && "id" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] : "")%'
+                                        text_format_source:
+                                            inline_string: '%CEL((("issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "organization" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && "id" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] : "")%'
                                       object_key: auth_gateway.attributes.tenant_id
                                       skip_if_empty: true
                                     - factory_key: envoy.string
                                       format_string:
                                         omit_empty_values: true
-                                        text_format: '%CEL((("issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"] : "")%'
+                                        text_format_source:
+                                            inline_string: '%CEL((("issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"] : "")%'
                                       object_key: auth_gateway.attributes.writer_id
                                       skip_if_empty: true
                                     - factory_key: envoy.string
                                       format_string:
                                         omit_empty_values: true
-                                        text_format: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.tenant_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] : "")%'
+                                        text_format_source:
+                                            inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.tenant_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] : "")%'
                                       object_key: auth_gateway.attributes.tenant_id
                                       skip_if_empty: true
                                     - factory_key: envoy.string
                                       format_string:
                                         omit_empty_values: true
-                                        text_format: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.writer_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"] : "")%'
+                                        text_format_source:
+                                            inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.writer_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"] : "")%'
                                       object_key: auth_gateway.attributes.writer_id
                                       skip_if_empty: true
                             - config_discovery:
@@ -1447,7 +1457,8 @@ data:
                 - factory_key: envoy.string
                   format_string:
                     omit_empty_values: true
-                    text_format: '%CEL(("auth_gateway.attributes.tenant_id" in filter_state && type(filter_state["auth_gateway.attributes.tenant_id"]) == bytes && filter_state["auth_gateway.attributes.tenant_id"] != b"") ? (filter_state["auth_gateway.attributes.tenant_id"] == b"client-a" ? "team-a" : "") : "")%'
+                    text_format_source:
+                        inline_string: '%CEL(("auth_gateway.attributes.tenant_id" in filter_state && type(filter_state["auth_gateway.attributes.tenant_id"]) == bytes && filter_state["auth_gateway.attributes.tenant_id"] != b"") ? (filter_state["auth_gateway.attributes.tenant_id"] == b"client-a" ? "team-a" : "") : "")%'
                   object_key: auth_gateway.attributes.tenant_id
                   skip_if_empty: true
 kind: ConfigMap
@@ -1532,6 +1543,13 @@ spec:
         - info
         image: envoyproxy/envoy:v1.39.1
         imagePullPolicy: IfNotPresent
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - sleep 5
         name: envoy
         ports:
         - containerPort: 8080

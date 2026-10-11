@@ -3,209 +3,151 @@
 package e2e
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-
-	"github.com/rhobs/auth-gateway/config"
 	"github.com/rhobs/auth-gateway/e2e/internal/framework"
-)
-
-const (
-	routingNamespace = "auth-gateway-routing-e2e"
-	tlsNamespace     = "auth-gateway-tls-e2e"
-	httpHost         = "auth.auth-gateway.test"
-	httpsHost        = "tls.auth-gateway.test"
-	queryHTTPHost    = "query.auth-gateway.test"
-	queryHTTPSHost   = "query-tls.auth-gateway.test"
-	unknownHost      = "unknown.auth-gateway.test"
+	utilwait "k8s.io/apimachinery/pkg/util/wait"
+	"sigs.k8s.io/yaml"
 )
 
 var (
-	env             *framework.Environment
-	testClient      = &http.Client{Timeout: 10 * time.Second}
-	activeNamespace string
-	httpAddress     string
-	httpsAddress    string
-	metricsAddress  string
-	rootCAs         *x509.CertPool
+	env        *framework.Environment
+	testClient = &http.Client{Timeout: 10 * time.Second}
 )
 
-func setupGateway(ctx SpecContext, namespace string, useTLS bool) {
-	activeNamespace = namespace
-	httpAddress = ""
-	httpsAddress = ""
-	metricsAddress = ""
-	rootCAs = nil
+const gatewayPodSelector = "app.kubernetes.io/name=auth-gateway"
 
-	Expect(env.DeleteNamespace(ctx, namespace)).To(Succeed())
-	Expect(env.CreateNamespace(ctx, namespace)).To(Succeed())
-	DeferCleanup(func(ctx SpecContext) {
-		Expect(env.DeleteNamespace(ctx, namespace)).To(Succeed())
-	}, NodeTimeout(3*time.Minute))
-
-	if useTLS {
-		Expect(env.EnsureCertManager(ctx, os.Getenv("AUTH_GATEWAY_E2E_CERT_MANAGER_MANIFEST"))).To(Succeed())
-		certificates, err := env.Fixture("certificates.yaml")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(env.Apply(ctx, namespace, certificates)).To(Succeed())
-		for _, resource := range []struct {
-			gvr  schema.GroupVersionResource
-			name string
-		}{
-			{gvr: schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "issuers"}, name: "auth-gateway-ca"},
-			{gvr: schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "certificates"}, name: "auth-gateway-server"},
-			{gvr: schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "certificates"}, name: "auth-gateway-query-server"},
-		} {
-			Expect(env.WaitForResourceCondition(ctx, namespace, resource.gvr, resource.name, "Ready", 4*time.Minute)).To(Succeed())
-		}
-	}
-
-	backend, err := env.Fixture("httpbin.yaml")
-	Expect(err).NotTo(HaveOccurred())
-	Expect(env.Apply(ctx, namespace, backend)).To(Succeed())
-
-	manifest := generatedGatewayManifest(namespace, useTLS)
-	Expect(env.Apply(ctx, namespace, manifest)).To(Succeed())
-	for _, deployment := range []string{"httpbin", "auth-gateway"} {
-		Expect(env.WaitForDeployment(ctx, namespace, deployment, 4*time.Minute)).To(Succeed())
-	}
-
-	httpAddress = env.ForwardWithCleanup(ctx, namespace, "service/auth-gateway", 80)
-	metricsAddress = env.ForwardWithCleanup(ctx, namespace, "service/auth-gateway", 8889)
-	if useTLS {
-		httpsAddress = env.ForwardWithCleanup(ctx, namespace, "service/auth-gateway", 443)
-	}
-	Eventually(func() error {
-		return checkUpstream(ctx, httpAddress, httpHost)
-	}).WithContext(ctx).WithTimeout(15 * time.Second).WithPolling(250 * time.Millisecond).Should(Succeed())
-
-	if useTLS {
-		caSecret, err := env.Secret(ctx, namespace, "auth-gateway-e2e-ca")
-		Expect(err).NotTo(HaveOccurred())
-		caPEM, ok := caSecret.Data["tls.crt"]
-		Expect(ok).To(BeTrue(), "test CA Secret should contain tls.crt")
-		rootCAs = x509.NewCertPool()
-		Expect(rootCAs.AppendCertsFromPEM(caPEM)).To(BeTrue(), "load the cert-manager test CA")
-	}
+type httpbinEcho struct {
+	Method  string              `json:"method"`
+	URL     string              `json:"url"`
+	Data    string              `json:"data"`
+	Headers map[string][]string `json:"headers"`
 }
 
-func generatedGatewayManifest(namespace string, useTLS bool) []byte {
-	gatewayFixture, err := env.Fixture("gateway.yaml")
-	Expect(err).NotTo(HaveOccurred())
-	gatewayConfig, err := config.Load(bytes.NewReader(gatewayFixture))
-	Expect(err).NotTo(HaveOccurred())
-	gatewayConfig.Kubernetes.Namespace = namespace
-	if !useTLS {
-		var servers []config.Server
-		for _, server := range gatewayConfig.Servers {
-			if server.TLSConfig == nil {
-				servers = append(servers, server)
-			}
-		}
-		gatewayConfig.Servers = servers
-		gatewayConfig.Kubernetes.HTTPSServicePort = nil
+func decodeHTTPBinEcho(body []byte) (httpbinEcho, error) {
+	var echo httpbinEcho
+	if err := json.Unmarshal(body, &echo); err != nil {
+		return httpbinEcho{}, fmt.Errorf("decode httpbin response: %w", err)
 	}
-	resources, err := config.GenerateKubernetes(gatewayConfig)
-	Expect(err).NotTo(HaveOccurred())
-	manifest, err := resources.YAML()
-	Expect(err).NotTo(HaveOccurred())
-	return manifest
+	return echo, nil
 }
 
-func checkUpstream(ctx context.Context, address, host string) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+"/upstream-health", nil)
-	if err != nil {
+func gatewayPodUID(ctx context.Context, namespace string) (string, error) {
+	return env.PodUID(ctx, namespace, gatewayPodSelector)
+}
+
+func resetE2ENamespace(ctx context.Context, namespace string) error {
+	if err := env.DeleteNamespace(ctx, namespace); err != nil {
 		return err
 	}
-	request.Host = host
-	response, err := (&http.Client{Timeout: 2 * time.Second}).Do(request)
+	return env.CreateNamespace(ctx, namespace)
+}
+
+func waitForSuccessfulRequest(ctx context.Context, name string, timeout, interval time.Duration, send func(context.Context) error) error {
+	var lastErr error
+	err := utilwait.PollUntilContextTimeout(ctx, interval, timeout, true, func(ctx context.Context) (bool, error) {
+		lastErr = send(ctx)
+		return lastErr == nil, nil
+	})
 	if err != nil {
-		return err
-	}
-	body, err := readAndCloseResponseBody(response, 1<<20)
-	if err != nil {
-		return err
-	}
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("upstream readiness returned HTTP %d: %s", response.StatusCode, body)
+		if lastErr != nil {
+			return fmt.Errorf("wait for %s: %w (last attempt: %v)", name, err, lastErr)
+		}
+		return fmt.Errorf("wait for %s: %w", name, err)
 	}
 	return nil
 }
 
-type httpsResult struct {
-	status      int
-	allow       string
-	certificate *x509.Certificate
+func headerValue(headers map[string][]string, name string) string {
+	for key, value := range headers {
+		if strings.EqualFold(key, name) {
+			return strings.Join(value, ",")
+		}
+	}
+	return ""
 }
 
-func requestHTTPS(ctx context.Context, address, serverName, requestHost, requestPath string, rootCAs *x509.CertPool) (*httpsResult, error) {
-	return requestHTTPSWithMethod(ctx, address, serverName, requestHost, http.MethodGet, requestPath, rootCAs)
+func jwtEchoHeaders(body []byte) map[string][]string {
+	echo, err := decodeHTTPBinEcho(body)
+	if err != nil {
+		return nil
+	}
+	return echo.Headers
 }
 
-func requestHTTPSWithMethod(ctx context.Context, address, serverName, requestHost, method, requestPath string, rootCAs *x509.CertPool) (*httpsResult, error) {
+func upstreamRequestCount(ctx context.Context, adminAddress, clusterName string) (uint64, error) {
+	path := "/stats?filter=cluster." + clusterName + ".upstream_rq_total"
+	body, err := env.EnvoyAdminGet(ctx, adminAddress, path)
+	if err != nil {
+		return 0, err
+	}
+	wanted := "cluster." + clusterName + ".upstream_rq_total"
+	for _, line := range strings.Split(string(body), "\n") {
+		name, value, found := strings.Cut(line, ":")
+		if !found || strings.TrimSpace(name) != wanted {
+			continue
+		}
+		count, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("parse Envoy stat %q: %w", wanted, err)
+		}
+		return count, nil
+	}
+	return 0, fmt.Errorf("Envoy stats do not include %q: %s", wanted, body)
+}
+
+func expectUpstreamRequestDelta(ctx context.Context, adminAddress, clusterName, name string, wantDelta uint64, send func() (int, []byte, error)) (int, []byte) {
+	before, err := upstreamRequestCount(ctx, adminAddress, clusterName)
+	Expect(err).NotTo(HaveOccurred(), name)
+	status, body, err := send()
+	Expect(err).NotTo(HaveOccurred(), name)
+	after, err := upstreamRequestCount(ctx, adminAddress, clusterName)
+	Expect(err).NotTo(HaveOccurred(), name)
+	Expect(after).To(Equal(before+wantDelta), name+" upstream request count changed unexpectedly")
+	return status, body
+}
+
+func expectDeniedBeforeUpstream(ctx context.Context, adminAddress, clusterName, name string, wantStatus int, send func() (int, []byte, error)) (int, []byte) {
+	status, body := expectUpstreamRequestDelta(ctx, adminAddress, clusterName, name, 0, send)
+	Expect(status).To(Equal(wantStatus), name+": "+string(body))
+	return status, body
+}
+
+func newTestTLSClient(rootCAs *x509.CertPool, serverName string) *http.Client {
 	transport := &http.Transport{TLSClientConfig: &tls.Config{
 		RootCAs:    rootCAs,
 		ServerName: serverName,
 		MinVersion: tls.VersionTLS12,
 	}}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
-	request, err := http.NewRequestWithContext(ctx, method, "https://"+address+requestPath, nil)
-	if err != nil {
-		return nil, err
-	}
-	request.Host = requestHost
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := readAndCloseResponseBody(response, 1<<20); err != nil {
-		return nil, err
-	}
-	if response.TLS == nil || len(response.TLS.PeerCertificates) == 0 {
-		return nil, fmt.Errorf("HTTPS response did not include the peer certificate")
-	}
-	return &httpsResult{
-		status:      response.StatusCode,
-		allow:       response.Header.Get("Allow"),
-		certificate: response.TLS.PeerCertificates[0],
-	}, nil
+	return &http.Client{Transport: transport, Timeout: 10 * time.Second}
 }
 
-func gatewayPodUID(ctx context.Context, namespace string) (string, error) {
-	return env.PodUID(ctx, namespace, "app.kubernetes.io/instance=auth-gateway")
-}
-
-func checkPrometheusMetrics(ctx context.Context, address string) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+"/metrics", nil)
-	if err != nil {
-		return err
+func yamlDocuments(objects ...any) ([]byte, error) {
+	var output strings.Builder
+	for i, object := range objects {
+		data, err := yaml.Marshal(object)
+		if err != nil {
+			return nil, err
+		}
+		if i > 0 {
+			output.WriteString("---\n")
+		}
+		output.Write(data)
 	}
-	response, err := (&http.Client{Timeout: 2 * time.Second}).Do(request)
-	if err != nil {
-		return err
-	}
-	body, err := readAndCloseResponseBody(response, 1<<20)
-	if err != nil {
-		return err
-	}
-	if response.StatusCode != http.StatusOK || !bytes.Contains(body, []byte("envoy_server_live")) {
-		return fmt.Errorf("HTTP %d did not include Envoy metrics", response.StatusCode)
-	}
-	return nil
+	return []byte(output.String()), nil
 }
 
 func readAndCloseResponseBody(response *http.Response, limit int64) ([]byte, error) {

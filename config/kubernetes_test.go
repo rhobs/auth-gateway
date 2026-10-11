@@ -1,7 +1,9 @@
 package config
 
 import (
+	"fmt"
 	"math"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -12,10 +14,120 @@ import (
 	connections "github.com/envoyproxy/go-control-plane/envoy/extensions/resource_monitors/downstream_connections/v3"
 	heap "github.com/envoyproxy/go-control-plane/envoy/extensions/resource_monitors/fixed_heap/v3"
 	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	"go.yaml.in/yaml/v3"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+func TestKubernetesImageDefaultsToSharedImages(t *testing.T) {
+	c := loadAuthExample(t)
+	c.Kubernetes.Image = ""
+	c.Kubernetes.OTelCollectorImage = ""
+	defaulted := c.withDefaults()
+	got := []string{defaulted.Kubernetes.Image, defaulted.Kubernetes.OTelCollectorImage}
+	want := []string{DefaultEnvoyImage, DefaultOTelCollectorImage}
+	assertConfigDiff(t, "defaulted Kubernetes images", want, got)
+}
+
+func TestGenerateKubernetesPreservesYAMLImageOverrides(t *testing.T) {
+	const input = `version: 1
+servers:
+  - hostname: auth.example.com
+    apis: [status]
+apis:
+  - name: status
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [GET]
+        path:
+          exact: /status
+kubernetes:
+  name: auth-gateway
+  namespace: image-overrides
+  image: mirror.example.com/envoy:approved
+  otel_collector_image: mirror.example.com/otel-collector:approved
+`
+	c, err := Load(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"mirror.example.com/envoy:approved",
+		"mirror.example.com/otel-collector:approved",
+	}
+
+	resources, err := GenerateKubernetes(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	containers := resources.Deployment.Spec.Template.Spec.Containers
+	if len(containers) != 2 {
+		t.Fatalf("generated containers = %d, want Envoy and collector", len(containers))
+	}
+	got := []string{containers[0].Image, containers[1].Image}
+	assertConfigDiff(t, "generated Kubernetes image overrides", want, got)
+}
+
+func TestExamplesUseSharedImageDefaults(t *testing.T) {
+	files := []string{
+		"config.auth.example.yaml",
+		"config.example.yaml",
+		"config.mtls.example.yaml",
+		"config.production.example.yaml",
+	}
+	for _, name := range files {
+		t.Run(name, func(t *testing.T) {
+			type imageOverrides struct {
+				Image              *string `yaml:"image"`
+				OTelCollectorImage *string `yaml:"otel_collector_image"`
+			}
+			var example struct {
+				Kubernetes *imageOverrides `yaml:"kubernetes"`
+			}
+			data := readTestFile(t, filepath.Join("..", name))
+			if err := yaml.Unmarshal([]byte(data), &example); err != nil {
+				t.Fatal(err)
+			}
+			if example.Kubernetes == nil {
+				t.Fatal("example has no Kubernetes section")
+			}
+			for _, override := range []struct {
+				field string
+				value *string
+			}{
+				{field: "image", value: example.Kubernetes.Image},
+				{field: "otel_collector_image", value: example.Kubernetes.OTelCollectorImage},
+			} {
+				if override.value != nil && *override.value != "" {
+					t.Errorf("%s embeds image %q; use the shared Go default or a dedicated override example", override.field, *override.value)
+				}
+			}
+			if name == "config.example.yaml" {
+				if example.Kubernetes.Image == nil || example.Kubernetes.OTelCollectorImage == nil {
+					t.Fatal("main example must keep both empty image override fields visible")
+				}
+			}
+
+			if name != "config.mtls.example.yaml" {
+				loaded := loadTestConfig(t, data, name)
+				got := []string{loaded.Kubernetes.Image, loaded.Kubernetes.OTelCollectorImage}
+				want := []string{DefaultEnvoyImage, DefaultOTelCollectorImage}
+				assertConfigDiff(t, "resolved example image defaults", want, got)
+			}
+		})
+	}
+
+	reference := readTestFile(t, filepath.Join("..", "docs", "configuration-reference.md"))
+	for _, constant := range []string{"config.DefaultEnvoyImage", "config.DefaultOTelCollectorImage"} {
+		if !strings.Contains(reference, "`"+constant+"`") {
+			t.Errorf("configuration reference does not name image default %q", constant)
+		}
+	}
+}
 
 func TestKubernetesResourceRequirementsRejectsInvalidQuantity(t *testing.T) {
 	_, err := kubernetesResourceRequirements("kubernetes.resources", KubernetesResourceRequirements{
@@ -536,6 +648,73 @@ func TestEnvoyConcurrencyGeneration(t *testing.T) {
 	}
 	if slices.Contains(r.Deployment.Spec.Template.Spec.Containers[0].Args, "--concurrency") {
 		t.Fatal("worker count inferred from CPU limit")
+	}
+}
+
+func TestKubernetesDeploymentOverrides(t *testing.T) {
+	c := loadConfigCase(t, "server-tls")
+	c.Kubernetes.ServicePort = new(int32(18080))
+	c.Kubernetes.HTTPSServicePort = new(int32(18443))
+	c.Kubernetes.EnvoyConcurrency = new(uint32(3))
+	c.Kubernetes.Resources = KubernetesResourceRequirements{
+		Requests: map[string]string{"cpu": "250m", "memory": "128Mi"},
+		Limits:   map[string]string{"cpu": "1", "memory": "512Mi"},
+	}
+
+	resources, err := GenerateKubernetes(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ports := make(map[string]int32, len(resources.Service.Spec.Ports))
+	for _, port := range resources.Service.Spec.Ports {
+		ports[port.Name] = port.Port
+	}
+	wantPorts := map[string]int32{"http": 18080, "https": 18443, "metrics": defaultOTelMetricsPort}
+	if !reflect.DeepEqual(ports, wantPorts) {
+		t.Fatalf("Service ports = %v, want %v", ports, wantPorts)
+	}
+
+	envoy := resources.Deployment.Spec.Template.Spec.Containers[0]
+	concurrencyIndex := slices.Index(envoy.Args, "--concurrency")
+	if concurrencyIndex < 0 || concurrencyIndex+1 >= len(envoy.Args) {
+		t.Fatalf("Envoy args = %v, want --concurrency followed by 3", envoy.Args)
+	}
+	if got, want := envoy.Args[concurrencyIndex+1], "3"; got != want {
+		t.Fatalf("Envoy concurrency = %q, want %q", got, want)
+	}
+	wantResources := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("250m"),
+			corev1.ResourceMemory: resource.MustParse("128Mi"),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("1"),
+			corev1.ResourceMemory: resource.MustParse("512Mi"),
+		},
+	}
+	if !reflect.DeepEqual(envoy.Resources, wantResources) {
+		t.Fatalf("Envoy resources = %#v, want %#v", envoy.Resources, wantResources)
+	}
+}
+
+func TestKubernetesDeploymentDrainsBeforeTerminating(t *testing.T) {
+	c := loadConfigCase(t, "server-tls")
+	resources, err := GenerateKubernetes(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	podSpec := resources.Deployment.Spec.Template.Spec
+	if podSpec.TerminationGracePeriodSeconds == nil || *podSpec.TerminationGracePeriodSeconds != terminationGracePeriodSeconds {
+		t.Fatalf("termination grace period = %v, want %d seconds", podSpec.TerminationGracePeriodSeconds, terminationGracePeriodSeconds)
+	}
+
+	envoy := podSpec.Containers[0]
+	if envoy.Lifecycle == nil || envoy.Lifecycle.PreStop == nil || envoy.Lifecycle.PreStop.Exec == nil {
+		t.Fatalf("Envoy lifecycle = %#v, want a pre-stop drain delay", envoy.Lifecycle)
+	}
+	wantCommand := []string{"/bin/sh", "-c", fmt.Sprintf("sleep %d", preStopDrainDelaySeconds)}
+	if !slices.Equal(envoy.Lifecycle.PreStop.Exec.Command, wantCommand) {
+		t.Fatalf("Envoy pre-stop command = %v, want %v", envoy.Lifecycle.PreStop.Exec.Command, wantCommand)
 	}
 }
 

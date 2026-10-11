@@ -4,6 +4,7 @@ package framework
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -14,7 +15,7 @@ import (
 
 func TestResolveServicePortForwardTargetUsesReadyPodAndNamedTargetPort(t *testing.T) {
 	ctx := context.Background()
-	client := fake.NewSimpleClientset(
+	client := fake.NewClientset(
 		&corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{Name: "auth-gateway", Namespace: "test"},
 			Spec: corev1.ServiceSpec{
@@ -58,5 +59,24 @@ func TestChooseRunningPodExcludesTerminatingPods(t *testing.T) {
 	}}, "test Deployment")
 	if err == nil {
 		t.Fatal("expected an error when all matching Pods are terminating")
+	}
+}
+
+func TestPodContainerNamesReturnsContainersFromOneMatchingPod(t *testing.T) {
+	client := fake.NewClientset(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "auth-gateway", Namespace: "test", Labels: map[string]string{"app": "gateway"}},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "envoy"}, {Name: "otel-collector"}}},
+	})
+	env := &Environment{client: client}
+
+	podName, names, err := env.PodContainerNames(context.Background(), "test", "app=gateway")
+	if err != nil {
+		t.Fatalf("read Pod container names: %v", err)
+	}
+	if podName != "auth-gateway" {
+		t.Fatalf("Pod name = %q, want %q", podName, "auth-gateway")
+	}
+	if want := []string{"envoy", "otel-collector"}; !slices.Equal(names, want) {
+		t.Fatalf("Pod containers = %v, want %v", names, want)
 	}
 }

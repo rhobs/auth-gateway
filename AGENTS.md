@@ -6,13 +6,12 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for local checks, code layout, and gol
 
 - Treat the checked-in configuration schema as the supported contract. Do not add aliases, migration code, or dedicated tests for obsolete formats unless a task explicitly requires them.
 - Keep configuration changes, examples, documentation, generated Envoy and Kubernetes resources, and tests aligned.
-- Take some inspiration from the PoC that started this project /Users/pgough/Desktop/projects/regional-observability-service but dont rely on it for code quality etc.
-- 
+- Use the original prototype as context when useful; follow this repository's current code and quality standards.
 - mTLS remains future work. Do not implement it until the task scope changes. Keep `config.mtls.example.yaml` as an example.
 
 ## Architecture
 
-- Keep JWT handling in native Envoy filters. Do not reintroduce Lua if possible.
+- Keep JWT verification, API-key authentication, authorization, and attribute mapping in native Envoy filters. Keep Lua limited to per-API response counters. Envoy's built-in HTTP stats cannot currently combine route metadata, final downstream status (including authentication and RBAC local replies), and processed filter-state values in one counter. Do not use Lua to implement those behaviors.
 - Put mapped-claim processing in `processing.yaml`, loaded through ECDS from a separate `<name>-processing` ConfigMap. Mapping updates should change only that ConfigMap and leave the bootstrap, Deployment template, and Pod identity unchanged.
 - Static bootstrap changes require an explicit Deployment rollout. There is no checksum annotation; document this behavior when relevant.
 - Keep reusable Kubernetes lifecycle, port-forwarding, readiness, and diagnostics in `e2e/internal/framework`. Keep fixture shaping, protocol-specific clients, and scenario assertions in the e2e test package.

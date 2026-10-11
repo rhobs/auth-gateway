@@ -26,16 +26,15 @@ func TestObservabilityDefaults(t *testing.T) {
 	}, Tracing: ObservabilityTracing{
 		Enabled: new(false), ServiceName: "auth-gateway", SamplingPercentage: new(100.0), Insecure: new(false),
 	}}
-	if !reflect.DeepEqual(c.Observability, wantObservability) {
-		t.Fatalf("observability defaults = %#v, want %#v", c.Observability, wantObservability)
-	}
+	assertConfigDiff(t, "observability defaults", wantObservability, c.Observability)
 	wantCollectorResources := KubernetesResourceRequirements{
 		Requests: map[string]string{"cpu": "20m", "memory": "64Mi"},
 		Limits:   map[string]string{"memory": "256Mi"},
 	}
-	if c.Kubernetes.OTelCollectorImage != "otel/opentelemetry-collector-contrib:0.135.0" || !reflect.DeepEqual(c.Kubernetes.Metrics.Resources, wantCollectorResources) {
-		t.Fatalf("collector defaults = image %q, resources %#v", c.Kubernetes.OTelCollectorImage, c.Kubernetes.Metrics.Resources)
+	if got, want := c.Kubernetes.OTelCollectorImage, DefaultOTelCollectorImage; got != want {
+		t.Errorf("collector image = %q, want %q", got, want)
 	}
+	assertConfigDiff(t, "collector resources defaults", wantCollectorResources, c.Kubernetes.Metrics.Resources)
 }
 
 func TestObservabilityDefaultsDoNotMutateInput(t *testing.T) {
@@ -45,12 +44,29 @@ func TestObservabilityDefaultsDoNotMutateInput(t *testing.T) {
 	*defaulted.Observability.Metrics.CustomMetricName = "changed_requests_total"
 	*defaulted.Observability.Metrics.ScrapeInterval = Duration(time.Second)
 	defaulted.Kubernetes.Metrics.Resources.Requests["cpu"] = "10m"
-	if c.APIs[0].Metrics.Labels["tenant"] != "tenant_id" ||
-		*c.Observability.Metrics.CustomMetricName != "gateway_http_requests_total" ||
-		*c.Observability.Metrics.ScrapeInterval != Duration(30*time.Second) ||
-		c.Kubernetes.Metrics.Resources.Requests["cpu"] != "20m" {
-		t.Fatal("observability defaults alias the input configuration")
+	got := struct {
+		TenantLabel      string
+		CustomMetricName string
+		ScrapeInterval   Duration
+		CPURequest       string
+	}{
+		TenantLabel:      c.APIs[0].Metrics.Labels["tenant"],
+		CustomMetricName: *c.Observability.Metrics.CustomMetricName,
+		ScrapeInterval:   *c.Observability.Metrics.ScrapeInterval,
+		CPURequest:       c.Kubernetes.Metrics.Resources.Requests["cpu"],
 	}
+	want := struct {
+		TenantLabel      string
+		CustomMetricName string
+		ScrapeInterval   Duration
+		CPURequest       string
+	}{
+		TenantLabel:      "tenant_id",
+		CustomMetricName: "gateway_http_requests_total",
+		ScrapeInterval:   Duration(30 * time.Second),
+		CPURequest:       "20m",
+	}
+	assertConfigDiff(t, "input after defaulting", want, got)
 }
 
 func TestKubernetesObservabilityDefaults(t *testing.T) {
@@ -72,11 +88,25 @@ func TestKubernetesObservabilityDefaults(t *testing.T) {
 				Requests: map[string]string{"cpu": "20m", "memory": "64Mi"},
 				Limits:   map[string]string{"memory": "256Mi"},
 			}
-			if metrics.Enabled == nil || !*metrics.Enabled || *metrics.ScrapeInterval != Duration(30*time.Second) ||
-				*metrics.ScrapeTimeout != Duration(10*time.Second) ||
-				!reflect.DeepEqual(collectorResources, wantResources) ||
-				c.Kubernetes.OTelCollectorImage != "otel/opentelemetry-collector-contrib:0.135.0" {
-				t.Fatalf("defaulted observability settings = %#v, Kubernetes = %#v", c.Observability, c.Kubernetes)
+			type metricDefaults struct {
+				Enabled        *bool
+				ScrapeInterval *Duration
+				ScrapeTimeout  *Duration
+			}
+			gotMetrics := metricDefaults{
+				Enabled:        metrics.Enabled,
+				ScrapeInterval: metrics.ScrapeInterval,
+				ScrapeTimeout:  metrics.ScrapeTimeout,
+			}
+			wantMetrics := metricDefaults{
+				Enabled:        new(true),
+				ScrapeInterval: duration(30 * time.Second),
+				ScrapeTimeout:  duration(10 * time.Second),
+			}
+			assertConfigDiff(t, "defaulted metrics", wantMetrics, gotMetrics)
+			assertConfigDiff(t, "defaulted collector resources", wantResources, collectorResources)
+			if got, want := c.Kubernetes.OTelCollectorImage, DefaultOTelCollectorImage; got != want {
+				t.Errorf("collector image = %q, want %q", got, want)
 			}
 		})
 	}
@@ -85,17 +115,34 @@ func TestKubernetesObservabilityDefaults(t *testing.T) {
 func TestKubernetesObservabilityDefaultsPreserveExplicitResourceMaps(t *testing.T) {
 	c := loadTestConfig(t, readFixture(t, "kubernetes-options/empty-resource-maps.yaml"), "empty resource maps")
 	resources := c.Kubernetes.Metrics.Resources
-	if resources.Limits == nil || len(resources.Limits) != 0 || !reflect.DeepEqual(resources.Requests, map[string]string{"cpu": "5m"}) {
-		t.Fatalf("collector resource defaults changed supplied maps: %#v", resources)
+	if resources.Limits == nil {
+		t.Error("collector resource defaults replaced the explicitly empty limits map with nil")
 	}
+	if len(resources.Limits) != 0 {
+		t.Errorf("collector limits = %v, want an empty map", resources.Limits)
+	}
+	assertConfigDiff(t, "collector requests", map[string]string{"cpu": "5m"}, resources.Requests)
 }
 
 func TestAPIMetricsConfigurationAndValidation(t *testing.T) {
 	c := loadAuthExample(t)
-	if c.APIs[0].Metrics == nil || c.APIs[0].Metrics.Labels["tenant"] != "tenant_id" ||
-		c.APIs[1].Metrics == nil || len(c.APIs[1].Metrics.Labels) != 0 {
-		t.Fatalf("auth example API metrics = %#v, %#v", c.APIs[0].Metrics, c.APIs[1].Metrics)
+	type apiMetricsDefaults struct {
+		Configured bool
+		Tenant     string
+		LabelCount int
 	}
+	gotMetrics := make([]apiMetricsDefaults, 0, 2)
+	for _, api := range c.APIs[:2] {
+		settings := apiMetricsDefaults{}
+		if api.Metrics != nil {
+			settings.Configured = true
+			settings.Tenant = api.Metrics.Labels["tenant"]
+			settings.LabelCount = len(api.Metrics.Labels)
+		}
+		gotMetrics = append(gotMetrics, settings)
+	}
+	wantMetrics := []apiMetricsDefaults{{Configured: true, Tenant: "tenant_id", LabelCount: 1}, {Configured: true}}
+	assertConfigDiff(t, "auth example API metrics", wantMetrics, gotMetrics)
 
 	tests := []struct {
 		name string
@@ -680,7 +727,7 @@ func TestOTelCollectorScrapeSettingsAndResourceOverrides(t *testing.T) {
 func TestPlaygroundOTelCollectorConfiguration(t *testing.T) {
 	inputPath := filepath.Join("..", "playground", "config.yaml")
 	c := loadTestConfig(t, readTestFile(t, inputPath), inputPath)
-	collectorConfig, err := generateOTelCollectorConfig(c.Observability.Metrics, c.Observability.Tracing)
+	collectorConfig, err := GenerateOTelCollectorConfig(c)
 	if err != nil {
 		t.Fatal(err)
 	}

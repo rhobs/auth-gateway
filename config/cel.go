@@ -98,7 +98,9 @@ func filterStateValue(key, expression string) *setfilterstatecommon.FilterStateV
 		Key:        &setfilterstatecommon.FilterStateValue_ObjectKey{ObjectKey: key},
 		FactoryKey: "envoy.string",
 		Value: &setfilterstatecommon.FilterStateValue_FormatString{FormatString: &core.SubstitutionFormatString{
-			Format:          &core.SubstitutionFormatString_TextFormat{TextFormat: "%CEL(" + expression + ")%"}, //nolint:staticcheck // Keep the Envoy wire form stable during this cleanup.
+			Format: &core.SubstitutionFormatString_TextFormatSource{TextFormatSource: &core.DataSource{
+				Specifier: &core.DataSource_InlineString{InlineString: "%CEL(" + expression + ")%"},
+			}},
 			OmitEmptyValues: true,
 		}},
 		SkipIfEmpty: true,

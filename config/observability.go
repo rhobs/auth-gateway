@@ -30,7 +30,10 @@ import (
 )
 
 const (
-	defaultOTelCollectorImage       = "otel/opentelemetry-collector-contrib:0.135.0"
+	// DefaultEnvoyImage is the default image used for generated Kubernetes Envoy containers.
+	DefaultEnvoyImage = "envoyproxy/envoy:v1.39.1"
+	// DefaultOTelCollectorImage is the default image used for the telemetry sidecar.
+	DefaultOTelCollectorImage       = "otel/opentelemetry-collector-contrib:0.135.0"
 	defaultOTelMetricsPort          = 8889
 	defaultOTelTracePort            = 4317
 	defaultTraceSamplingPercentage  = 100
@@ -187,6 +190,17 @@ func validateOTelTraceEndpoint(endpoint string) error {
 		return fmt.Errorf("observability.tracing.endpoint must not contain control characters")
 	}
 	return nil
+}
+
+// GenerateOTelCollectorConfig builds the OpenTelemetry Collector configuration
+// for the gateway's metrics and tracing settings. It returns nil when both are
+// disabled.
+func GenerateOTelCollectorConfig(c Config) ([]byte, error) {
+	effective, err := resolveConfig(c)
+	if err != nil {
+		return nil, err
+	}
+	return generateOTelCollectorConfig(effective.Observability.Metrics, effective.Observability.Tracing)
 }
 
 func generateOTelCollectorConfig(metrics ObservabilityMetrics, tracing ObservabilityTracing) ([]byte, error) {

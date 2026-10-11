@@ -5,7 +5,6 @@ package e2e
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -18,15 +17,16 @@ import (
 )
 
 const (
-	headerAttributesNamespace = "auth-gateway-header-attributes-e2e"
-	headerJWTOnlyHost         = "jwt.header-attributes.auth-gateway.test"
-	headerKeyOnlyHost         = "key.header-attributes.auth-gateway.test"
-	headerAnyHost             = "any.header-attributes.auth-gateway.test"
-	headerAllHost             = "all.header-attributes.auth-gateway.test"
-	headerAttributeBody       = "header-attribute-payload"
+	headerJWTOnlyHost   = "jwt.header-attributes.auth-gateway.test"
+	headerKeyOnlyHost   = "key.header-attributes.auth-gateway.test"
+	headerAnyHost       = "any.header-attributes.auth-gateway.test"
+	headerAllHost       = "all.header-attributes.auth-gateway.test"
+	headerAttributeBody = "header-attribute-payload"
 )
 
-var _ = Describe("Header-sourced attributes", Label("gateway", "authentication", "authorization", "header-attributes"), Ordered, func() {
+var headerAttributesNamespace = e2eNamespace("auth-gateway-header-attributes-e2e")
+
+var _ = Describe("Header-sourced attributes", Label("gateway", "authentication", "authorization", "header-attributes", "namespace-"+headerAttributesNamespace), Ordered, func() {
 	var gateway *apiKeyE2E
 
 	BeforeAll(func(ctx SpecContext) {
@@ -162,7 +162,7 @@ var _ = Describe("Header-sourced attributes", Label("gateway", "authentication",
 		newUID, err := gatewayPodUID(ctx, headerAttributesNamespace)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(newUID).To(Equal(oldUID))
-	}, SpecTimeout(5*time.Minute))
+	}, SpecTimeout(4*time.Minute))
 })
 
 func shapeHeaderAttributeGateway(c *config.Config) {
@@ -202,13 +202,8 @@ func headerAttributeSource(header string) config.AttributeSource {
 }
 
 func expectHeaderAttributeEcho(body []byte, mapped string, sourceHeaders map[string]string) {
-	var echo struct {
-		Method  string              `json:"method"`
-		URL     string              `json:"url"`
-		Data    string              `json:"data"`
-		Headers map[string][]string `json:"headers"`
-	}
-	Expect(json.Unmarshal(body, &echo)).To(Succeed())
+	echo, err := decodeHTTPBinEcho(body)
+	Expect(err).NotTo(HaveOccurred())
 	Expect(echo.Method).To(Equal(http.MethodPost))
 	Expect(echo.URL).To(HaveSuffix("/anything"))
 	Expect(echo.Data).To(Equal("data:application/octet-stream;base64," + base64.StdEncoding.EncodeToString([]byte(headerAttributeBody))))
@@ -222,12 +217,7 @@ func expectHeaderAttributeEcho(body []byte, mapped string, sourceHeaders map[str
 }
 
 func expectHeaderAttributeDenied(ctx context.Context, gateway *apiKeyE2E, name, host, token, key string, headers http.Header, wantStatus int) {
-	before, err := jwtUpstreamRequests(ctx, gateway.adminAddr, "api-header-ingest")
-	Expect(err).NotTo(HaveOccurred(), name)
-	status, body, err := gateway.request(ctx, host, false, http.MethodPost, "/header-ingest", headerAttributeBody, token, key, headers)
-	Expect(err).NotTo(HaveOccurred(), name)
-	Expect(status).To(Equal(wantStatus), name+": "+string(body))
-	after, err := jwtUpstreamRequests(ctx, gateway.adminAddr, "api-header-ingest")
-	Expect(err).NotTo(HaveOccurred(), name)
-	Expect(after).To(Equal(before), name+" reached the backend")
+	expectDeniedBeforeUpstream(ctx, gateway.adminAddr, "api-header-ingest", name, wantStatus, func() (int, []byte, error) {
+		return gateway.request(ctx, host, false, http.MethodPost, "/header-ingest", headerAttributeBody, token, key, headers)
+	})
 }

@@ -42,7 +42,8 @@ apis:
 kubernetes:
   name: auth-gateway
   namespace: observability
-  image: envoyproxy/envoy:v1.39.1
+  image: registry.example.com/envoyproxy/envoy:approved
+  otel_collector_image: registry.example.com/opentelemetry/collector:approved
 `
 
 func exampleOutputDirectory() (string, func(), error) {

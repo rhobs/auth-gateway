@@ -83,7 +83,7 @@ func TestPinnedImagesValidateGeneratedFiles(t *testing.T) {
 			}
 			image := os.Getenv("AUTH_GATEWAY_RUNTIME_IMAGE")
 			if image == "" {
-				image = "envoyproxy/envoy:v1.39.1"
+				image = DefaultEnvoyImage
 			}
 			runtimeDocker(t, append(args, image, "--mode", "validate", "-c", configDirectory+"/envoy.yaml", "--log-level", "error")...)
 			if name == "production-tuning" || name == "tracing" {
@@ -93,7 +93,7 @@ func TestPinnedImagesValidateGeneratedFiles(t *testing.T) {
 				}
 				dir := runtimeDirectory(t)
 				runtimeWrite(t, filepath.Join(dir, "config.yaml"), []byte(r.OTelCollectorConfigMap.Data["config.yaml"]))
-				runtimeDocker(t, "run", "--rm", "-v", dir+":/etc/collector:ro", defaultOTelCollectorImage, "validate", "--config=/etc/collector/config.yaml")
+				runtimeDocker(t, "run", "--rm", "-v", dir+":/etc/collector:ro", DefaultOTelCollectorImage, "validate", "--config=/etc/collector/config.yaml")
 			}
 		})
 	}
