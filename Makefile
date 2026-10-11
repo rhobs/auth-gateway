@@ -1,4 +1,4 @@
-.PHONY: test lint e2e update-golden test-runtime
+.PHONY: test lint e2e update-golden test-runtime tools
 .DEFAULT_GOAL := test
 
 test:
@@ -10,8 +10,13 @@ lint:
 	sh scripts/check-markdown-links.sh
 	go tool golangci-lint run
 
+tools:
+	go tool ginkgo version
+	go tool golangci-lint version
+	$(MAKE) -C e2e cmctl kind-tool
+
 test-runtime:
-	go test -tags=envoyruntime ./config -run TestPinnedImagesValidateGeneratedFiles -count=1
+	go test -tags=envoyruntime ./config -run 'TestPinnedImagesValidateGeneratedFiles|TestEnvoyReloadsFileBasedResources' -count=1
 
 update-golden:
 	go test ./config -update
