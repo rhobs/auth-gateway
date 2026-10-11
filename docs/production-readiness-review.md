@@ -373,19 +373,15 @@ panic rather than an error return.
 
 Done when: neither site can panic regardless of input.
 
-### 2.5 Resolve the defaulting and validation duplication
+### 2.5 Resolve the defaulting and validation duplication [x]
 
-`Load` applies defaults at `config/config.go:108`, then calls `Validate`, which
-calls `resolveConfig`, which applies defaults again at `config/config.go:963`.
-`Generate` and `GenerateKubernetes` each call `resolveConfig` and apply them a
-further time. A consumer doing `Load` then `Generate` then `GenerateKubernetes`
-runs full defaulting and validation four times.
+`Load` used to apply defaults before calling `Validate`, which applied them
+again through `resolveConfig`. It now defaults and validates once. `Validate`,
+`Generate`, and `GenerateKubernetes` each default and validate once per call.
 
-Defaults are idempotent so there is no wrong output, only waste and confusion.
-There is also a real asymmetry worth deciding on deliberately: the `Config` that
-`Load` returns has defaults applied but route timeouts unresolved, because
-`resolveConfig` resolves them on a copy that is discarded. `docs/envoy.md:15`
-documents this, so it may be intended, but nothing in the godoc says it.
+`Load` still returns defaulted fields with API and route timeout overrides as
+supplied. Its doc comment now states this contract. Validation checks effective
+timeouts, and generation resolves them on a private copy.
 
 Done when: defaulting runs once per public entry point, and the `Load` return
 contract is stated in its doc comment.

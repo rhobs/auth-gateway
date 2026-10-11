@@ -12,7 +12,11 @@ one strict YAML document
      or config.GenerateKubernetes: Kubernetes resources
 ```
 
-`Load` rejects unknown fields and extra YAML documents. It returns a defaulted configuration without materializing inherited API and route timeout overrides. Validation and generation resolve effective timeouts on a copy, so caller-owned maps, slices, and pointers remain unchanged.
+`Load` rejects unknown fields and extra YAML documents. It returns a defaulted
+configuration without materializing inherited API and route timeout overrides.
+Validation checks effective timeouts without changing the input. Generation
+resolves them on a private copy, so caller-owned maps, slices, and pointers
+remain unchanged.
 
 `Generate` returns a `config.GeneratedFiles` value with named Envoy bootstrap, optional processing configuration, and one file-based Secret Discovery Service (SDS) resource for each HTTPS server. Each generated file includes its required absolute path and contents. It does not require Kubernetes settings.
 
