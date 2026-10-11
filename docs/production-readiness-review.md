@@ -320,7 +320,7 @@ the credential cleanup filter is appended from two different branches
 Done when: no function in `config/` exceeds roughly 80 lines, golden files are
 unchanged, and `make test` passes without regenerating goldens.
 
-### 2.2 Remove the duplicated attribute-filter branch
+### 2.2 Remove the duplicated attribute-filter branch [x]
 
 `config/generate.go:360-371` has two consecutive blocks guarded by the identical
 condition:

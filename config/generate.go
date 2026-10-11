@@ -534,15 +534,13 @@ func (c Config) attributeHTTPFilters(filters []*hcm.HttpFilter, hosts []*route.V
 			return nil, err
 		}
 	} else {
-		attributeFilter := &hcm.HttpFilter{Name: attributeFilterName}
 		if !c.hasAttributeMappings() {
+			attributeFilter := &hcm.HttpFilter{Name: attributeFilterName}
 			attributeConfig, err := packEnvoy(c.toAttributeInitializationConfig())
 			if err != nil {
 				return nil, fmt.Errorf("encode attribute initialization filter: %w", err)
 			}
 			attributeFilter.ConfigType = &hcm.HttpFilter_TypedConfig{TypedConfig: attributeConfig}
-		}
-		if !c.hasAttributeMappings() {
 			filters = append(filters, attributeFilter)
 		}
 	}
