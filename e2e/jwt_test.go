@@ -516,6 +516,7 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 
 		timeE2EPhase("JWT mapping apply-to-observed reload", func() {
 			Eventually(func() bool {
+				_ = nudgeGatewayPod(ctx, jwtNamespace)
 				status, body, err = jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, token, false)
 				return err == nil && status == http.StatusOK && headerValue(jwtEchoHeaders(body), "X-Scope-OrgID") == "team-b"
 			}).WithContext(ctx).WithTimeout(3*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {

@@ -49,6 +49,15 @@ func gatewayPodUID(ctx context.Context, namespace string) (string, error) {
 	return env.PodUID(ctx, namespace, gatewayPodSelector)
 }
 
+// nudgeGatewayPod is a best-effort call to speed up ECDS/SDS reload polling: it
+// forces the kubelet to immediately recompute the gateway Pod's mounted
+// Secret/ConfigMap volumes instead of waiting for its periodic resync. Errors are
+// for the caller to decide whether to ignore, since the normal poll still
+// succeeds without it, just slower.
+func nudgeGatewayPod(ctx context.Context, namespace string) error {
+	return env.NudgePods(ctx, namespace, gatewayPodSelector)
+}
+
 func resetE2ENamespace(ctx context.Context, namespace string) error {
 	if err := env.DeleteNamespace(ctx, namespace); err != nil {
 		return err

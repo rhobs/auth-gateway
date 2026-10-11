@@ -110,6 +110,7 @@ var _ = Describe("Server TLS", Label("gateway", "tls", "namespace-"+tlsNamespace
 		initialSerial := initialTLS.certificate.SerialNumber.String()
 		timeE2EPhase("cert-manager apply-to-observed SDS reload", func() {
 			Eventually(func() error {
+				_ = nudgeGatewayPod(ctx, tlsNamespace)
 				result, err := requestHTTPS(ctx, httpsAddress, httpsHost, httpsHost, "/upstream-health", routingRootCAs)
 				if err != nil {
 					return err

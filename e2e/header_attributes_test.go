@@ -152,6 +152,7 @@ var _ = Describe("Header-sourced attributes", Label("gateway", "authentication",
 		var body []byte
 		timeE2EPhase("header mapping apply-to-observed reload", func() {
 			Eventually(func() bool {
+				_ = nudgeGatewayPod(ctx, headerAttributesNamespace)
 				status, body, err = gateway.request(ctx, headerJWTOnlyHost, false, http.MethodPost, "/header-ingest", headerAttributeBody,
 					gateway.token("client-a", "writer-a"), "", headers)
 				return err == nil && status == http.StatusOK && headerValue(jwtEchoHeaders(body), "X-Processed-Tenant") == "team-c"

@@ -398,6 +398,33 @@ func (e *Environment) PodUIDs(ctx context.Context, namespace, labelSelector stri
 	return uids, nil
 }
 
+// NudgePods patches a timestamp annotation on every non-terminating Pod matching
+// labelSelector. The update puts each Pod back through the kubelet's sync loop,
+// which recomputes mounted Secret/ConfigMap volume content immediately instead of
+// waiting for the kubelet's periodic resync (which can take roughly a minute).
+func (e *Environment) NudgePods(ctx context.Context, namespace, labelSelector string) error {
+	identities, err := e.PodIdentities(ctx, namespace, labelSelector)
+	if err != nil {
+		return err
+	}
+	patch, err := json.Marshal(map[string]any{
+		"metadata": map[string]any{
+			"annotations": map[string]string{
+				"auth-gateway-e2e/nudged-at": time.Now().UTC().Format(time.RFC3339Nano),
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("encode Pod nudge patch: %w", err)
+	}
+	for _, identity := range identities {
+		if _, err := e.client.CoreV1().Pods(namespace).Patch(ctx, identity.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+			return fmt.Errorf("nudge Pod %q: %w", identity.Name, err)
+		}
+	}
+	return nil
+}
+
 // PodNames returns the sorted names of non-terminating Pods matching labelSelector.
 func (e *Environment) PodNames(ctx context.Context, namespace, labelSelector string) ([]string, error) {
 	identities, err := e.PodIdentities(ctx, namespace, labelSelector)

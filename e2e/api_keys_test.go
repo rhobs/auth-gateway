@@ -226,6 +226,7 @@ var _ = Describe("API-key Secret projection", Label("gateway", "api-key", "authe
 		var body []byte
 		timeE2EPhase("API-key Secret rotation observed", func() {
 			Eventually(func() bool {
+				_ = nudgeGatewayPod(ctx, apiKeyProjectionNS)
 				status, body, err = gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", "key-b", nil)
 				if err != nil || status != http.StatusOK || headerValue(jwtEchoHeaders(body), "X-Scope-OrgID") != "team-b" {
 					return false
