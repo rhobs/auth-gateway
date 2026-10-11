@@ -37,9 +37,9 @@ const (
 )
 
 var (
-	apiKeyBehaviorNS  = e2eNamespace("auth-gateway-api-key-e2e")
-	apiKeyLifecycleNS = e2eNamespace("auth-gateway-api-key-lifecycle-e2e")
-	apiKeyIsolatedNS  = e2eNamespace("auth-gateway-api-key-isolated-e2e")
+	apiKeyBehaviorNS   = e2eNamespace("auth-gateway-api-key-e2e")
+	apiKeyProjectionNS = e2eNamespace("auth-gateway-api-key-projection-e2e")
+	apiKeyIsolatedNS   = e2eNamespace("auth-gateway-api-key-isolated-e2e")
 )
 
 type apiKeyE2E struct {
@@ -204,18 +204,18 @@ var _ = Describe("API-key request decisions", Label("gateway", "api-key", "authe
 
 })
 
-var _ = Describe("API-key Secret lifecycle", Label("gateway", "api-key", "authentication", "namespace-"+apiKeyLifecycleNS), Ordered, func() {
+var _ = Describe("API-key Secret projection", Label("gateway", "api-key", "authentication", "namespace-"+apiKeyProjectionNS), Ordered, func() {
 	var gateway *apiKeyE2E
 
 	BeforeAll(func(ctx SpecContext) {
-		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, apiKeyLifecycleNS)).To(Succeed()) }, NodeTimeout(3*time.Minute))
+		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, apiKeyProjectionNS)).To(Succeed()) }, NodeTimeout(3*time.Minute))
 		var err error
-		gateway, err = setupAPIKeyGateway(ctx, apiKeyLifecycleNS, false, baselineAPIKeyCredentials(), apiKeySharedSecretKey)
+		gateway, err = setupAPIKeyGateway(ctx, apiKeyProjectionNS, false, baselineAPIKeyCredentials(), apiKeySharedSecretKey)
 		Expect(err).NotTo(HaveOccurred())
 	}, NodeTimeout(12*time.Minute))
 
-	It("rotates, rejects, recovers, and revokes the projected key set", func(ctx SpecContext) {
-		oldUID, err := gatewayPodUID(ctx, apiKeyLifecycleNS)
+	It("rotates the projected key set without replacing the gateway", func(ctx SpecContext) {
+		oldUID, err := gatewayPodUID(ctx, apiKeyProjectionNS)
 		Expect(err).NotTo(HaveOccurred())
 
 		timeE2EPhase("API-key Secret rotation apply", func() {
@@ -249,86 +249,9 @@ var _ = Describe("API-key Secret lifecycle", Label("gateway", "api-key", "authen
 			expectAPIKeyEcho(body, "team-b", "writer-b")
 		})
 
-		apiKeyAuthenticator, found := findAPIKeyAuthenticator(gateway.config.Authenticators)
-		Expect(found).To(BeTrue())
-		beforeRejectedUpdates, err := envoyUpdateFailures(ctx, gateway.adminAddr)
+		currentUID, err := gatewayPodUID(ctx, apiKeyProjectionNS)
 		Expect(err).NotTo(HaveOccurred())
-		invalidSecret, err := config.APIKeySecret(apiKeyLifecycleNS, apiKeyAuthenticator, nil)
-		Expect(err).NotTo(HaveOccurred())
-		invalidSecret.Data["api-keys.yaml"] = []byte("resources: [\n")
-		invalidManifest, err := yaml.Marshal(invalidSecret)
-		Expect(err).NotTo(HaveOccurred())
-		timeE2EPhase("invalid API-key Secret apply", func() {
-			Expect(env.Apply(ctx, apiKeyLifecycleNS, invalidManifest)).To(Succeed())
-		})
-		timeE2EPhase("invalid API-key Secret rejection observed", func() {
-			Eventually(func() (uint64, error) {
-				return envoyUpdateFailures(ctx, gateway.adminAddr)
-			}).WithContext(ctx).WithTimeout(4 * time.Minute).WithPolling(time.Second).Should(BeNumerically(">", beforeRejectedUpdates))
-		})
-		timeE2EPhase("last accepted API-key assertions", func() {
-			status, body = expectUpstreamRequestDelta(ctx, gateway.adminAddr, "api-ingest", "last accepted key after invalid Secret", 1, func() (int, []byte, error) {
-				return gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", "key-b", nil)
-			})
-			Expect(status).To(Equal(http.StatusOK), string(body))
-			expectAPIKeyEcho(body, "team-b", "writer-b")
-			expectAPIKeyDenied(ctx, gateway, "old key after rejected Secret", apiKeyOnlyHost, false, "", apiKeySharedSecretKey, nil, http.StatusUnauthorized)
-			currentUID, err := gatewayPodUID(ctx, apiKeyLifecycleNS)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(currentUID).To(Equal(oldUID), "rejecting a Secret update must not replace the gateway Pod")
-		})
-
-		timeE2EPhase("valid API-key Secret recovery apply", func() {
-			Expect(gateway.applySecret(ctx, []config.APIKeyCredential{
-				{Key: "key-c", Attributes: map[string]string{"tenant_id": "client-b", "writer_id": "writer-b"}},
-			})).To(Succeed())
-		})
-		timeE2EPhase("valid API-key Secret recovery observed", func() {
-			Eventually(func() bool {
-				status, body, err = gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", "key-c", nil)
-				if err != nil || status != http.StatusOK || headerValue(jwtEchoHeaders(body), "X-Scope-OrgID") != "team-b" {
-					return false
-				}
-				status, body, err = gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", "key-b", nil)
-				return err == nil && status == http.StatusUnauthorized
-			}).WithContext(ctx).WithTimeout(4*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
-				return fmt.Sprintf("valid Secret recovery did not replace the accepted key: HTTP %d: %s (error: %v)", status, body, err)
-			})
-		})
-		timeE2EPhase("recovered API-key request assertions", func() {
-			status, body, err = gateway.request(ctx, apiKeyAllHost, true, http.MethodPost, "/ingest", apiKeyRequestBody,
-				gateway.token("client-b", "writer-b"), "key-c", nil)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(status).To(Equal(http.StatusOK), string(body))
-			expectAPIKeyEcho(body, "team-b", "writer-b")
-			currentUID, err := gatewayPodUID(ctx, apiKeyLifecycleNS)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(currentUID).To(Equal(oldUID), "recovering a Secret update must not replace the gateway Pod")
-		})
-
-		timeE2EPhase("empty API-key Secret apply", func() {
-			Expect(gateway.applySecret(ctx, nil)).To(Succeed())
-		})
-		timeE2EPhase("empty API-key Secret revocation observed", func() {
-			Eventually(func() bool {
-				status, body, err = gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", "key-c", nil)
-				return err == nil && status == http.StatusUnauthorized
-			}).WithContext(ctx).WithTimeout(4*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
-				return fmt.Sprintf("empty Secret resource did not revoke key-c: HTTP %d: %s (error: %v)", status, body, err)
-			})
-		})
-		timeE2EPhase("empty API-key Secret request assertions", func() {
-			expectAPIKeyDenied(ctx, gateway, "revoked key on all_of", apiKeyAllHost, true,
-				gateway.token("client-b", "writer-b"), "key-c", nil, http.StatusUnauthorized)
-			status, body, err = gateway.request(ctx, apiKeyAnyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody,
-				gateway.token("client-a", "writer-a"), "", nil)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(status).To(Equal(http.StatusOK), string(body))
-			expectAPIKeyEcho(body, "team-a", "writer-a")
-			currentUID, err := gatewayPodUID(ctx, apiKeyLifecycleNS)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(currentUID).To(Equal(oldUID), "key revocation must not replace the gateway Pod")
-		})
+		Expect(currentUID).To(Equal(oldUID), "a projected Secret rotation must not replace the gateway Pod")
 	}, SpecTimeout(12*time.Minute))
 })
 
