@@ -386,7 +386,7 @@ timeouts, and generation resolves them on a private copy.
 Done when: defaulting runs once per public entry point, and the `Load` return
 contract is stated in its doc comment.
 
-### 2.6 Collapse the duplicated grant collection
+### 2.6 Collapse the duplicated grant collection [x]
 
 `toServerRBACRules` (`config/generate.go:528-576`) contains the same
 grant-collection loop twice, once in the `any_of` branch and once in the `all_of`

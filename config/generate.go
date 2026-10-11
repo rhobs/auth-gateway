@@ -715,11 +715,7 @@ func (c Config) toServerRBACRules(server Server) *rbac.RBAC {
 			if len(server.Authorization.AnyOf) > 0 {
 				var grants []*rbac.Principal
 				for _, policyName := range server.Authorization.AnyOf {
-					for _, grant := range authorizationPolicy(c, policyName).Grants {
-						if slices.Contains(grant.APIs, apiName) && (!c.usesAPIKeys() || serverSelectsAuthenticator(server, grant.Authenticator)) {
-							grants = append(grants, c.toGrantPrincipalForServer(server, grant))
-						}
-					}
+					grants = append(grants, c.grantPrincipalsForAPI(server, apiName, policyName)...)
 				}
 				if len(grants) > 0 {
 					principal = &rbac.Principal{Identifier: &rbac.Principal_OrIds{OrIds: &rbac.Principal_Set{Ids: grants}}}
@@ -728,12 +724,7 @@ func (c Config) toServerRBACRules(server Server) *rbac.RBAC {
 				var policyPrincipals []*rbac.Principal
 				allowed := true
 				for _, policyName := range server.Authorization.AllOf {
-					var grants []*rbac.Principal
-					for _, grant := range authorizationPolicy(c, policyName).Grants {
-						if slices.Contains(grant.APIs, apiName) && (!c.usesAPIKeys() || serverSelectsAuthenticator(server, grant.Authenticator)) {
-							grants = append(grants, c.toGrantPrincipalForServer(server, grant))
-						}
-					}
+					grants := c.grantPrincipalsForAPI(server, apiName, policyName)
 					if len(grants) == 0 {
 						allowed = false
 						break
@@ -750,6 +741,16 @@ func (c Config) toServerRBACRules(server Server) *rbac.RBAC {
 		}
 	}
 	return &rbac.RBAC{Action: rbac.RBAC_ALLOW, Policies: policies}
+}
+
+func (c Config) grantPrincipalsForAPI(server Server, apiName, policyName string) []*rbac.Principal {
+	var grants []*rbac.Principal
+	for _, grant := range authorizationPolicy(c, policyName).Grants {
+		if slices.Contains(grant.APIs, apiName) && (!c.usesAPIKeys() || serverSelectsAuthenticator(server, grant.Authenticator)) {
+			grants = append(grants, c.toGrantPrincipalForServer(server, grant))
+		}
+	}
+	return grants
 }
 
 func authorizationPolicy(c Config, name string) AuthorizationPolicy {
