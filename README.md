@@ -161,7 +161,7 @@ Kubernetes metrics collection is enabled by default. Set `observability.metrics`
 | Change | Required action and effect |
 | --- | --- |
 | Values in existing attribute mapping tables | Regenerate and apply the processing ConfigMap. Envoy's Extension Config Discovery Service (ECDS) reloads the mappings and request metric label values without a Pod restart. |
-| API-key values or their attribute values | Regenerate and apply the same namespace Secret. ECDS reloads the complete key set without a Pod restart. An invalid update leaves the last accepted set active; set `credentials: []` in the Secret's `ApiKeyAuth` resource for revocation. |
+| API-key values or their attribute values | Regenerate and apply the same namespace Secret. ECDS reloads the complete key set without a Pod restart. Envoy keeps its last accepted set if an update is invalid and exports an update-failure counter; see [Envoy operations](docs/envoy.md#kubernetes-files-and-reloads). Set `credentials: []` in the Secret's `ApiKeyAuth` resource for revocation. |
 | Downstream certificate or key in a mounted TLS Secret | Update the Secret. Envoy's Secret Discovery Service (SDS) reloads it for new TLS connections. |
 | `observability.metrics.scrape_interval` or `observability.metrics.scrape_timeout` | Regenerate and apply resources, then restart the gateway so the collector loads its updated ConfigMap. |
 | `observability.tracing.endpoint` or `observability.tracing.insecure` | Regenerate and apply resources, then restart the gateway so the collector loads its updated ConfigMap. |

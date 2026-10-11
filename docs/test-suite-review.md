@@ -69,11 +69,12 @@ median 3.54s, while deleting its namespace took 27.01s. Request-only specs were
 under one second each; Secret and mapping restore hooks added most of the long
 per-spec time. The current layout combines read-only credential and selector
 cases on one fresh gateway, keeps projected Secret rotation in its own
-namespace, and keeps namespace isolation separate. The runtime suite owns
-malformed ECDS retention, recovery, and empty-key revocation. The first reduced
-run measured the projected Secret spec at 31.4s, down from 4m44.3s for the
-former API-key lifecycle. See Phase 3.1 for full-suite timings; repeat the run
-before treating this reduction as stable.
+namespace, and keeps namespace isolation separate. The runtime suite checks
+valid file-based key reload and empty-key revocation. Malformed update
+rejection and retention are Envoy behavior, so the gateway suite does not
+assert them. The projected Secret spec took about 32.5s in each of the three
+passing post-change runs, down from 4m44.3s for the former API-key lifecycle.
+See Phase 3.2 for the full-run results.
 
 The API-key container's elapsed time was 70%, 74%, and 77% of the three
 report runtimes.
@@ -89,11 +90,11 @@ timings before claiming savings.
 | --- | --- | --- |
 | Public, JWT-only, key-only, two-JWT `any_of`, mixed JWT/key `any_of` and `all_of`, and two-JWT-plus-key `any_of` | Routing, JWT, API-key, and header-source containers | No remaining decision-shape gap. Keep the ledger current when authenticators change. |
 | Missing, invalid, expired, wrong-issuer, wrong-audience, and future-`nbf` JWT; audience omitted; list claim grants | [JWT scenarios](../e2e/jwt_test.go) | No remaining request gap. |
-| Missing, unknown, denied, rotated, malformed-update retention, recovery, and empty API-key resource; default and custom headers | [API-key scenarios](../e2e/api_keys_test.go) and [file-based runtime test](../config/runtime_live_test.go) | Kind checks one projected Secret rotation. The runtime test checks malformed-update rejection and retention, recovery, and empty-key revocation. |
+| Missing, unknown, denied, and rotated API keys; empty-key revocation; default and custom headers | [API-key scenarios](../e2e/api_keys_test.go) and [file-based runtime test](../config/runtime_live_test.go) | Kind checks one projected Secret rotation. The runtime test checks valid file-based key reload and empty-key revocation. |
 | Policy `any_of` and `all_of`, grant attributes, API scoping, issuer isolation, raw values unaffected by mapping | JWT and API-key scenarios | No remaining request gap. The no-policy and policy-veto cases use valid authentication. |
-| Claim, credential, and source-header attributes; one and two ordered mappers; unmatched pass-through; managed output headers; missing and unsafe required output | JWT, API-key, and header-source scenarios | Null, empty, number, and list values are checked on a required output route. Processing ECDS rejection and recovery are covered. |
+| Claim, credential, and source-header attributes; one and two ordered mappers; unmatched pass-through; managed output headers; missing and unsafe required output | JWT, API-key, and header-source scenarios | Null, empty, number, and list values are checked on a required output route. Valid processing ECDS reload is covered in Kind and the file-based runtime test. |
 | Exact, prefix, and regex paths and rewrites; method fallback; API binding order; HTTP and SNI-selected HTTPS | [routing](../e2e/http_test.go) and [TLS](../e2e/tls_test.go) scenarios | The no-rewrite route checks the original path, query, headers, and body. Method-name validation remains a unit concern. |
-| SDS server-certificate updates, ECDS API-key and mapping updates, two-replica fan-out, bootstrap rollout | TLS, API-key, JWT, and replica scenarios; [file-based runtime test](../config/runtime_live_test.go) | The full suite passed 64/64 with no skips, and `make test-runtime` passed on 2026-10-11. Repeat full runs after changes to establish stable timing. |
+| SDS server-certificate updates, ECDS API-key and mapping updates, two-replica fan-out, bootstrap rollout | TLS, API-key, JWT, and replica scenarios; [file-based runtime test](../config/runtime_live_test.go) | Three full two-worker runs passed 64/64 with no failures or skips. `make test-runtime` also passed on 2026-10-11. |
 | JWKS cache duration and remote provider generation | [Default tests](../config/config_test.go), [generated-output tests](../config/kubernetes_test.go), and golden files | Cache duration is unit-only; no gateway e2e cache lifecycle remains. |
 | Upstream TLS identity and CA, HTTP/2 selection, metrics, logs, tracing | Upstream, metrics, JWT log, and tracing scenarios | CA updates are checked across the rollout boundary. Keep numeric tuning and collector scrape settings in generated-output tests. |
 | Kubernetes image/resource/port/concurrency options | [Schema ledger](schema-test-ledger.md), generated-resource tests, live custom ports, and two replicas | No field-ledger gap remains. Most resource values need generated-output assertions, not extra Pods. |
@@ -141,12 +142,12 @@ Times below are medians and ranges across the three passing runs.
 
 | Candidate | Evidence | Recommendation |
 | --- | --- | --- |
-| Two direct Secret rotations on two replicas | The removed standalone SDS spec measured 32.3s (31.8-42.3s); the first [rollout](../e2e/replicas_rollout_test.go) spec measured 70.5s (69.5-71.7s) including setup. Both asserted changed certificate serials and stable Pod UIDs. | One rollout spec now owns the protected request, custom Service ports, certificate rotation, malformed Secret retention, recovery, and stable Pod UIDs on both replicas. Keep the cert-manager renewal test because it checks a distinct producer and SNI chain isolation. |
+| Two direct Secret rotations on two replicas | The removed standalone SDS spec measured 32.3s (31.8-42.3s); the first [rollout](../e2e/replicas_rollout_test.go) spec measured 70.5s (69.5-71.7s) including setup. Both asserted changed certificate serials and stable Pod UIDs. | One rollout spec owns the protected request, custom Service ports, certificate rotation, and stable Pod UIDs on both replicas. Keep the cert-manager renewal test because it checks a distinct producer and SNI chain isolation. |
 | Repeated ECDS reloads | The pre-change run measured four projected processing ConfigMap reloads: JWT 101.6s, API key 156.5s, header 29.1s, and two replicas 87.8s. | API-key credentials use one projected Secret lifecycle. The runtime test covers file-based processing and API-key ECDS updates; JWT and header requests retain their source-specific mapping checks, and the replica suite checks fan-out. Do not restore the duplicate API-key mapping reload. |
 | JWKS cache lifecycle | The removed [JWT lifecycle scenario](../e2e/jwt_test.go) measured 55.3s (53.3-57.7s) and checked a warm cache during outage, cold-cache failure after restart, and fetch recovery. These are Envoy cache semantics. | Keep the default and override duration assertions in unit tests. Ordinary JWT request e2e coverage checks gateway-to-JWKS wiring. |
-| API-key reset around every spec | The pre-change [API-key suite](../e2e/api_keys_test.go) reapplied the processing ConfigMap and key Secret before and after nine specs. Historical reset hooks added 65-90s to mutable specs. | Read-only decisions share one fresh gateway. Kind retains one projected Secret rotation; the runtime test covers malformed ECDS retention, recovery, and empty-key revocation. Keep namespace isolation in a separate group. |
+| API-key reset around every spec | The pre-change [API-key suite](../e2e/api_keys_test.go) reapplied the processing ConfigMap and key Secret before and after nine specs. Historical reset hooks added 65-90s to mutable specs. | Read-only decisions share one fresh gateway. Kind retains one projected Secret rotation; the runtime test covers valid file-based ECDS reload and empty-key revocation. Keep namespace isolation in a separate group. |
 | Similar JWT denials and HTTP/HTTPS route checks | Most individual request specs take less than 0.1s. They exercise different filter chains, Host/SNI selection, or upstream isolation. | Keep them unless their assertions are identical. Removing them will not materially shorten the suite. |
-| Fixed wait in bootstrap rollout | [rollout test](../e2e/replicas_rollout_test.go) sends requests for 60 seconds after a bootstrap ConfigMap edit; the interval now has a timing marker. | Keep the observation until a full run confirms the projection evidence and shows whether a shorter bounded check preserves the rollout contract. |
+| Fixed wait in bootstrap rollout | In `rrelvalid3b`, the bootstrap spec took 115.2s inclusive: 72.0s for its body and 43.2s for namespace cleanup. The 60-second observation took 63.6s and sends requests to both Pods, but does not inspect the projected file. | Keep the no-live-reload and explicit-rollout checks. Before shortening the observation, directly verify ConfigMap projection or replace the time window with a condition that proves the intended boundary. |
 
 ## Phased worklist
 
@@ -251,29 +252,29 @@ file-based configuration at its declared paths, start the pinned Envoy image, an
 send real requests. Update processing ECDS, API-key ECDS, and server TLS SDS
 files by atomic replacement. Phase 2.2 separately checks Kubernetes projected
 volumes. For each update, assert the new observable result without replacing
-Envoy; send a malformed
-update and assert the last accepted behavior or a documented fail-closed
-result, then recover with a valid update. Keep these as runtime integration
-tests that do not start Kind.
+Envoy. Do not inject malformed resources to test Envoy rejection and retention;
+these are native Envoy behaviors. Keep the runtime integration test focused on
+generated valid resources and file reloads without starting Kind.
 
-Done when: each file watcher and rejection/recovery path has a real Envoy
-request assertion, with elapsed update-to-observed time recorded.
+Done when: each supported file watcher has a real Envoy request assertion, with
+elapsed update-to-observed time recorded.
 
 Validation passed on 2026-10-11 with `make test-runtime`, including the pinned
 image checks. The live test observed valid ECDS and SDS updates within 3-4ms
-after atomic replacement. Malformed processing, API-key, and TLS resources
-increased Envoy update-failure counters, and the last accepted behavior held
-through the two-second retention checks before valid recovery.
+after atomic replacement. A separate investigation confirmed that malformed
+updates increment Envoy's native `update_failure` metrics; the generated
+Collector scrapes these metrics. See [Envoy operations](envoy.md#kubernetes-files-and-reloads)
+and the [production readiness to-do](production-readiness-to-do.md) for alerting.
 
 #### 2.2 Keep Kubernetes projection checks per resource (implemented)
 
 Retain one projected Secret rotation check for API keys and one for server
 certificates, one processing ConfigMap reload that preserves the Pod, and the
 two-replica fan-out check. The Kind mapping case proves a projected ConfigMap
-update reaches Envoy without replacing the Pod. The runtime test owns malformed
-processing, API-key, and TLS file rejection and retention, valid recovery, and
-empty-key revocation. Keep JWKS cache configuration assertions in unit tests
-as described in Phase 0.
+update reaches Envoy without replacing the Pod. The runtime test covers valid
+file-based processing, API-key, and TLS reloads plus empty-key revocation. Do
+not duplicate Envoy's malformed-update handling in these tests. Keep JWKS cache
+configuration assertions in unit tests as described in Phase 0.
 
 Done when: projected files, Envoy watchers, and two-replica distribution are
 all covered without repeating each source-type mapping update in Kind.
@@ -297,9 +298,8 @@ Deployment or collector rollout.
 In [api_keys_test.go](../e2e/api_keys_test.go), read-only credential and
 selector cases share one fresh gateway. A separate namespace verifies one
 projected Secret rotation and stable Pod identity. The file-based runtime test
-owns malformed-update retention, recovery, and empty-key revocation, avoiding
-repeated projected Secret updates in Kind. Namespace cleanup isolates focused
-runs and failures.
+covers valid key reload and empty-key revocation, avoiding repeated projected
+Secret updates in Kind. Namespace cleanup isolates focused runs and failures.
 
 The tagged package compiles and an API-key Ginkgo dry run selects all eight API
 key specs. The first post-change full attempt used two workers and selected 64
@@ -313,8 +313,9 @@ null, numeric, and list values used by a required JWT output, so the test now
 expects the observed authentication result. Deployment readiness now waits for
 the exact desired replica count, and Pod helpers ignore terminating Pods. The
 replica TLS test had waited on xDS failure counters that do not increment for
-filesystem SDS updates; malformed TLS retention and recovery stay in the
-runtime test, while Kind checks certificate rotation across both replicas.
+filesystem SDS updates. Kind checks certificate rotation across both replicas;
+malformed-update retention and recovery are Envoy behavior and are no longer
+asserted by the gateway suite.
 The 27 skips were Ginkgo's ordered-group cascade after those failures, not
 intentional skips.
 
@@ -326,9 +327,9 @@ tests, 4.5s for e2e compilation, and 10m51.9s for the Ginkgo command. This is
 the first valid post-change sample, not yet a stability or speed benchmark.
 The API-key lifecycle spec took 4m44.3s, JWT processing 4m00.8s, and replica
 rollouts 4m56.4s. In the API-key spec, invalid-update rejection took 73.4s,
-recovery 88.7s, and empty-Secret revocation 88.6s. These projected resource
-waits motivate keeping the Kind check to one valid rotation while the runtime
-suite proves ECDS rejection, retention, recovery, and revocation.
+recovery 88.7s, and empty-Secret revocation 88.6s. These waits motivate
+keeping only one projected rotation in Kind. The runtime suite checks valid
+file-based key reload and empty-key revocation.
 
 The next full run on the speed branch, `rrelsp3`, also selected and passed all
 64 specs with zero failures and skips. Its report records 8m17.6s of Ginkgo
@@ -342,7 +343,7 @@ stable. The report and timing sidecar are
 `e2e/.state/reports/rrelsp3/auth-gateway.json` and
 `e2e/.state/reports/rrelsp3/timings.json` (local, ignored by Git).
 
-#### 3.2 Consolidate repeated SDS and ECDS waits (implemented)
+#### 3.2 Consolidate repeated SDS and ECDS waits (implemented; three full runs passed)
 
 The duplicate two-replica SDS spec is removed; its custom-port and protected
 request assertions are in the rollout suite. The fast file harness covers
@@ -350,13 +351,22 @@ processing ECDS, API-key ECDS, and TLS SDS. Kubernetes tests retain key Secret,
 certificate Secret, processing ConfigMap, and two-replica projection coverage.
 The cert-manager renewal and static bootstrap rollout checks remain.
 
-The JWT mapping spec remains a measured follow-up. In `rrelsp3` it took
-4m21.4s, including 1m13.5s for a valid projected mapping update, 1m23.4s to
-observe a malformed update rejection, and 1m17.4s for valid recovery. The file
-runtime test already covers malformed processing ECDS rejection, retention,
-and recovery. After the repeat runs, consider keeping one valid projected
-ConfigMap reload in Kind and removing only the duplicate rejection and recovery
-waits. Keep that as a separate iteration.
+The JWT mapping spec took 4m21.4s in `rrelsp3`: 1m13.5s for the valid projected
+mapping update, 1m23.4s to observe malformed-update rejection, and 1m17.4s for
+recovery. Keep the valid projected ConfigMap reload because it verifies
+Kubernetes projection and stable Pod identity. The malformed-update and
+recovery phases were removed because they assert Envoy behavior, not the
+library's config contract. The file runtime test continues to cover valid
+file-based reloads.
+
+Three complete two-worker runs after this reduction passed all 64 specs with
+zero failures and zero skips. Ginkgo suite times were 7m48.7s for `rrelvalid1`,
+7m13.5s for `rrelvalid2`, and 8m31.6s for `rrelvalid3b`: a 7m48.7s median and
+a 7m13.5s-8m31.6s range. The reports and timing sidecars are in
+`e2e/.state/reports/rrelvalid1/`, `rrelvalid2/`, and `rrelvalid3b/` (local,
+ignored by Git). An earlier `rrelvalid3` attempt stopped before Ginkgo because
+cmctl could not write to the shared Go module cache; the retry used a temporary
+cache and completed successfully.
 
 Done when: the overlap table above names a single owning live spec for each
 resource reload contract, and the full suite still proves every listed
@@ -366,27 +376,32 @@ observable outcome.
 
 `e2e/Makefile` pulls seven images and calls `kind load` on every run. Measure
 these stages before adding a warm-cache fast path. Cache the pinned
-cert-manager manifest if download time is material. Investigate the 60-second
-bootstrap hold using evidence that the projected file changed inside the Pod.
+cert-manager manifest if download time is material. In `rrelvalid3b`, the
+bootstrap rollout spec took 115.2s inclusive: 72.0s for the test body and 43.2s
+for namespace deletion. Its 60-iteration observation took 63.6s and made
+requests to both replicas; it checks gateway behavior, not whether the
+ConfigMap projection reached the mounted file. The explicit restart took 3.4s.
+Decide whether mounted-file projection is part of this contract before
+shortening or replacing the observation.
 
 Timing instrumentation is in place. No setup fast path or wait reduction has
 been made; compare new warm and cold stage timings before choosing either.
 
 ### Phase 4: schedule the remaining work
 
-#### 4.1 Benchmark worker counts (full suite passes; stability and comparison pending)
+#### 4.1 Benchmark worker counts (three full two-worker runs pass; comparison pending)
 
-The green two-worker reports so far are `rrelfull1` at 10m50.6s and `rrelsp3`
-at 8m17.6s; the latter includes the API-key lifecycle reduction. Run at least
-two more warm full suites at `GINKGO_PROCS=2` to establish repeatability before
-changing worker count or making another speed change. Then compare full runs
-with `GINKGO_PROCS=3` and `4`. Compare `make e2e` wall time, per-container
-times, failures, and Kind resource pressure. The current suite has 12
-independent top-level `Ordered` groups with separate run-scoped namespaces and
-no `Serial` groups. Ginkgo can run groups on different workers, while each
-ordered group remains on one worker. The current default is two workers. Use
-the fastest stable setting as the default; retain a lower setting for
-resource-limited local machines if needed.
+The three full two-worker reports after the latest reduction are `rrelvalid1`
+at 7m48.7s, `rrelvalid2` at 7m13.5s, and `rrelvalid3b` at 8m31.6s. All passed
+64/64 with no skips, establishing reliability across these runs; the 78-second
+range still calls for timing review. Compare full runs with
+`GINKGO_PROCS=3` and `4`, including `make e2e` wall time, per-container times,
+failures, and Kind resource pressure. The current suite has 12 independent
+top-level `Ordered` groups with separate run-scoped namespaces and no `Serial`
+groups. Ginkgo can run groups on different workers, while each ordered group
+remains on one worker. Keep two workers as the default until the comparisons
+show a faster stable setting; retain a lower setting for resource-limited
+local machines if needed.
 
 Done when: the chosen worker count improves the median without raising the
 failure rate or causing timeouts.
@@ -422,13 +437,12 @@ parallel workers, and the measured full-suite wall time falls.
 
 Publish per-spec timing reports in CI and compare warm-run medians before and
 after each phase. Target a passing full suite under 6m at a stable worker
-count, about half the previous 12m10s median, with the coverage ledger
-complete and distinct live scenarios retained. The three earlier runs span
-12m3s to 13m25s. The 9m32s post-change attempt failed and skipped specs; the
-10m50.6s run is the reliability checkpoint before the API-key wait reduction.
-`rrelsp3` is the first full run after that reduction at 8m17.6s. Run two more
-warm suites at the same worker count before treating the speed result as
-stable.
+count, about half the previous 12m9.7s median, with the coverage ledger
+complete and distinct live scenarios retained. The three latest full two-worker
+runs have a 7m48.7s median and a 7m13.5s-8m31.6s range, all with 64 passing
+specs and no skips. This is a substantial improvement, but it remains above
+the target; compare worker counts and measured setup costs before further
+changes.
 
 Done when: a reviewer can see coverage added or preserved, the time saved,
 and any new resource cost in the same change.

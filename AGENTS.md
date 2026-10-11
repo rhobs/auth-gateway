@@ -26,10 +26,16 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for local checks, code layout, and gol
 - Use explicit YAML snippets or checked-in fixtures for loader tests. Do not build YAML through string replacement. For semantic validation tests, load a valid baseline and mutate one typed field so each case exercises `Validate()` without repeating YAML.
 - Unit tests cover schema, defaults, validation, and generated output. Gateway e2e tests cover observable gateway behavior. Do not add gateway e2e tests for Envoy semantics such as HTTP/2 flow control, timeouts, retries, overload, or connection draining.
 - Keep JWKS caching checks in unit tests: assert that configuration produces the intended Envoy cache duration. Do not test JWKS caching behavior in gateway e2e, including warm or cold caches, expiry, and outage masking. Keep JWT e2e tests focused on authentication and authorization outcomes.
-- Keep API-key request decision cases read-only on a fresh shared gateway. Use Kind to verify one projected Secret rotation. Cover malformed ECDS retention, recovery, and empty-key revocation in the Envoy runtime suite instead of repeating those file updates in Kind.
+- Keep API-key request decision cases read-only on a fresh shared gateway. Use
+  Kind to verify one projected Secret rotation and the Envoy runtime suite for
+  valid file-based ECDS/SDS reloads and empty-key revocation. Do not test
+  malformed-update rejection or retention; these are native Envoy behaviors.
 - Organize e2e scenarios by use case with isolated namespaces and cleanup. Verify forwarding through httpbin, including method, path, headers, and body. Denied requests must not reach the backend.
 - Run checks relevant to the change and the full e2e suite before handoff. Runtime-image checks are optional when they are not required by the change.
-- Run user-authorized Docker-backed e2e and runtime tests with escalated sandbox permissions from the initial tool call so the local Docker socket is accessible. If a sandbox denial still occurs, retry with escalation without asking the user to repeat authorization.
+- Run user-authorized Docker-backed e2e and runtime tests with escalated sandbox
+  permissions from the initial tool call so the local Docker socket is
+  accessible. If a sandbox denial still occurs, retry with escalation without
+  asking the user to repeat authorization.
 
 ## Workflow
 

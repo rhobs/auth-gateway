@@ -24,12 +24,9 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
-
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 const (
@@ -38,7 +35,6 @@ const (
 	runtimeLiveKeyHeader    = "X-Partner-Key"
 	runtimeLiveKeyHost      = "key.runtime.test"
 	runtimeLiveTLSHost      = "tls.runtime.test"
-	runtimeLiveBadResource  = "resources: [\n"
 )
 
 func TestEnvoyReloadsFileBasedResources(t *testing.T) {
@@ -56,9 +52,6 @@ func TestEnvoyReloadsFileBasedResources(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, file := range initialFiles.All() {
-		if file.Path == EnvoyBootstrapPath {
-			file.Contents = runtimeLiveBootstrapWithOpenAdmin(t, file.Contents)
-		}
 		runtimeLiveWriteGeneratedFile(t, configDir, file)
 	}
 
@@ -101,29 +94,6 @@ func TestEnvoyReloadsFileBasedResources(t *testing.T) {
 		return runtimeLiveEchoMatches(mapped, http.StatusOK, "team-b", http.MethodPost, "/anything", runtimeLiveBody), mapped.describe()
 	})
 
-	processingFailures, err := harness.updateFailures()
-	if err != nil {
-		t.Fatal(err)
-	}
-	badProcessingAt := runtimeLiveAtomicReplace(t, harness, ProcessingConfigPath, []byte(runtimeLiveBadResource))
-	runtimeLiveAssertRetained(t, harness, "malformed processing ECDS update", badProcessingAt, processingFailures, func() (bool, string) {
-		response := harness.request(false, runtimeLiveKeyHost, "runtime-key-a", http.MethodPost, "/ingest", runtimeLiveBody)
-		return runtimeLiveEchoMatches(response, http.StatusOK, "team-b", http.MethodPost, "/anything", runtimeLiveBody), response.describe()
-	})
-
-	recoveredProcessing := gatewayConfig.clone()
-	recoveredProcessing.Processing[0].Attributes["tenant_id"].Mappings["client-a"] = "team-c"
-	recoveredFiles, err := Generate(recoveredProcessing)
-	if err != nil {
-		t.Fatal(err)
-	}
-	recoveryAt := runtimeLiveAtomicReplace(t, harness, ProcessingConfigPath, recoveredFiles.ProcessingConfig.Contents)
-	var recovered runtimeLiveResponse
-	runtimeLiveAwait(t, harness, "processing ECDS recovery to team-c", recoveryAt, func() (bool, string) {
-		recovered = harness.request(false, runtimeLiveKeyHost, "runtime-key-a", http.MethodPost, "/ingest", runtimeLiveBody)
-		return runtimeLiveEchoMatches(recovered, http.StatusOK, "team-c", http.MethodPost, "/anything", runtimeLiveBody), recovered.describe()
-	})
-
 	rotatedKeys := []APIKeyCredential{{Key: "runtime-key-b", Attributes: map[string]string{"tenant_id": "client-a"}}}
 	rotatedKeyFile, err := GenerateAPIKeyECDS(findAuthenticator(gatewayConfig, "partner-key"), rotatedKeys)
 	if err != nil {
@@ -133,36 +103,9 @@ func TestEnvoyReloadsFileBasedResources(t *testing.T) {
 	runtimeLiveAwait(t, harness, "API-key ECDS rotation to runtime-key-b", keyRotationAt, func() (bool, string) {
 		accepted := harness.request(false, runtimeLiveKeyHost, "runtime-key-b", http.MethodPost, "/ingest", runtimeLiveBody)
 		stale := harness.request(false, runtimeLiveKeyHost, "runtime-key-a", http.MethodPost, "/ingest", runtimeLiveBody)
-		acceptedOK := runtimeLiveEchoMatches(accepted, http.StatusOK, "team-c", http.MethodPost, "/anything", runtimeLiveBody)
+		acceptedOK := runtimeLiveEchoMatches(accepted, http.StatusOK, "team-b", http.MethodPost, "/anything", runtimeLiveBody)
 		staleDenied := stale.status == http.StatusUnauthorized && stale.err == nil
 		return acceptedOK && staleDenied, fmt.Sprintf("new key: %s; old key: %s", accepted.describe(), stale.describe())
-	})
-
-	apiKeyFailures, err := harness.updateFailures()
-	if err != nil {
-		t.Fatal(err)
-	}
-	badKeyAt := runtimeLiveAtomicReplace(t, harness, APIKeyECDSPath, []byte(runtimeLiveBadResource))
-	runtimeLiveAssertRetained(t, harness, "malformed API-key ECDS update", badKeyAt, apiKeyFailures, func() (bool, string) {
-		accepted := harness.request(false, runtimeLiveKeyHost, "runtime-key-b", http.MethodPost, "/ingest", runtimeLiveBody)
-		unaccepted := harness.request(false, runtimeLiveKeyHost, "runtime-key-c", http.MethodPost, "/ingest", runtimeLiveBody)
-		acceptedOK := runtimeLiveEchoMatches(accepted, http.StatusOK, "team-c", http.MethodPost, "/anything", runtimeLiveBody)
-		unacceptedDenied := unaccepted.status == http.StatusUnauthorized && unaccepted.err == nil
-		return acceptedOK && unacceptedDenied, fmt.Sprintf("last accepted key: %s; unaccepted key: %s", accepted.describe(), unaccepted.describe())
-	})
-
-	recoveredKeys := []APIKeyCredential{{Key: "runtime-key-c", Attributes: map[string]string{"tenant_id": "client-a"}}}
-	recoveredKeyFile, err := GenerateAPIKeyECDS(findAuthenticator(gatewayConfig, "partner-key"), recoveredKeys)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keyRecoveryAt := runtimeLiveAtomicReplace(t, harness, APIKeyECDSPath, recoveredKeyFile)
-	runtimeLiveAwait(t, harness, "API-key ECDS recovery to runtime-key-c", keyRecoveryAt, func() (bool, string) {
-		accepted := harness.request(false, runtimeLiveKeyHost, "runtime-key-c", http.MethodPost, "/ingest", runtimeLiveBody)
-		stale := harness.request(false, runtimeLiveKeyHost, "runtime-key-b", http.MethodPost, "/ingest", runtimeLiveBody)
-		acceptedOK := runtimeLiveEchoMatches(accepted, http.StatusOK, "team-c", http.MethodPost, "/anything", runtimeLiveBody)
-		staleDenied := stale.status == http.StatusUnauthorized && stale.err == nil
-		return acceptedOK && staleDenied, fmt.Sprintf("recovered key: %s; previous key: %s", accepted.describe(), stale.describe())
 	})
 
 	emptyKeyFile, err := GenerateAPIKeyECDS(findAuthenticator(gatewayConfig, "partner-key"), nil)
@@ -171,7 +114,7 @@ func TestEnvoyReloadsFileBasedResources(t *testing.T) {
 	}
 	keyRevocationAt := runtimeLiveAtomicReplace(t, harness, APIKeyECDSPath, emptyKeyFile)
 	runtimeLiveAwait(t, harness, "empty API-key ECDS revocation", keyRevocationAt, func() (bool, string) {
-		revoked := harness.request(false, runtimeLiveKeyHost, "runtime-key-c", http.MethodPost, "/ingest", runtimeLiveBody)
+		revoked := harness.request(false, runtimeLiveKeyHost, "runtime-key-b", http.MethodPost, "/ingest", runtimeLiveBody)
 		return revoked.status == http.StatusUnauthorized && revoked.err == nil, revoked.describe()
 	})
 
@@ -188,25 +131,6 @@ func TestEnvoyReloadsFileBasedResources(t *testing.T) {
 		return runtimeLiveTLSMatches(response, certificates[1].certificate.SerialNumber.Int64()), response.describe()
 	})
 
-	tlsFailures, err := harness.updateFailures()
-	if err != nil {
-		t.Fatal(err)
-	}
-	badTLSAt := runtimeLiveAtomicReplace(t, harness, rotatedTLSFile.Path, []byte(runtimeLiveBadResource))
-	runtimeLiveAssertRetained(t, harness, "malformed server TLS SDS update", badTLSAt, tlsFailures, func() (bool, string) {
-		response := harness.request(true, runtimeLiveTLSHost, "", http.MethodGet, "/tls", "")
-		return runtimeLiveTLSMatches(response, certificates[1].certificate.SerialNumber.Int64()), response.describe()
-	})
-
-	recoveredTLSFile, _, err := runtimeLiveTLSResource(gatewayConfig, 3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tlsRecoveryAt := runtimeLiveAtomicReplace(t, harness, recoveredTLSFile.Path, recoveredTLSFile.Contents)
-	runtimeLiveAwait(t, harness, "server TLS SDS recovery to certificate 3", tlsRecoveryAt, func() (bool, string) {
-		response := harness.request(true, runtimeLiveTLSHost, "", http.MethodGet, "/tls", "")
-		return runtimeLiveTLSMatches(response, certificates[2].certificate.SerialNumber.Int64()), response.describe()
-	})
 }
 
 func runtimeLiveConfig(t *testing.T) Config {
@@ -285,7 +209,7 @@ func runtimeLiveStart(t *testing.T, configDir string, roots *x509.CertPool) *run
 		image = DefaultEnvoyImage
 	}
 	runtimeLiveDocker(t, "run", "--detach", "--user", "101:101", "--name", envoyName,
-		"--network", networkName, "--publish", "127.0.0.1::8080/tcp", "--publish", "127.0.0.1::9901/tcp",
+		"--network", networkName, "--publish", "127.0.0.1::8080/tcp",
 		"--volume", configDir+":"+EnvoyConfigDirectory, image,
 		"--log-level", "info", "-c", EnvoyBootstrapPath)
 	t.Cleanup(func() { runtimeLiveDockerCleanup(t, "rm", "--force", envoyName) })
@@ -296,18 +220,12 @@ func runtimeLiveStart(t *testing.T, configDir string, roots *x509.CertPool) *run
 		t.Fatalf("parse Envoy published port %q: %v", portOutput, err)
 	}
 	address := net.JoinHostPort("127.0.0.1", port)
-	adminPortOutput := runtimeLiveOutput(t, "port", envoyName, "9901/tcp")
-	_, adminPort, err := net.SplitHostPort(strings.TrimSpace(string(adminPortOutput)))
-	if err != nil {
-		t.Fatalf("parse Envoy published admin port %q: %v", adminPortOutput, err)
-	}
 	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true}
 	tlsTransport := &http.Transport{Proxy: nil, DisableKeepAlives: true, TLSClientConfig: &tls.Config{
 		RootCAs: roots, ServerName: runtimeLiveTLSHost, MinVersion: tls.VersionTLS12,
 	}}
 	return &runtimeLiveHarness{
 		address:    address,
-		admin:      "http://" + net.JoinHostPort("127.0.0.1", adminPort),
 		envoyName:  envoyName,
 		httpClient: &http.Client{Transport: transport, Timeout: 4 * time.Second},
 		tlsClient:  &http.Client{Transport: tlsTransport, Timeout: 4 * time.Second},
@@ -433,7 +351,7 @@ func runtimeLiveCertificatePaths(number int) (string, string) {
 
 func runtimeLiveCertificates(t *testing.T) []runtimeLiveCertificate {
 	t.Helper()
-	certificates := make([]runtimeLiveCertificate, 3)
+	certificates := make([]runtimeLiveCertificate, 2)
 	for index := range certificates {
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
@@ -479,54 +397,9 @@ type runtimeLiveCertificate struct {
 
 type runtimeLiveHarness struct {
 	address    string
-	admin      string
 	envoyName  string
 	httpClient *http.Client
 	tlsClient  *http.Client
-}
-
-func runtimeLiveBootstrapWithOpenAdmin(t *testing.T, contents []byte) []byte {
-	t.Helper()
-	bootstrap := decodeBootstrap(t, contents)
-	if bootstrap.Admin == nil || bootstrap.Admin.Address == nil || bootstrap.Admin.Address.GetSocketAddress() == nil {
-		t.Fatal("generated Envoy bootstrap has no admin socket address")
-	}
-	bootstrap.Admin.Address.GetSocketAddress().Address = "0.0.0.0"
-	updated, err := protojson.Marshal(bootstrap)
-	if err != nil {
-		t.Fatalf("marshal test Envoy bootstrap: %v", err)
-	}
-	return updated
-}
-
-func (h *runtimeLiveHarness) updateFailures() (uint64, error) {
-	response, err := h.httpClient.Get(h.admin + "/stats?filter=update_")
-	if err != nil {
-		return 0, fmt.Errorf("request Envoy update-failure stats: %w", err)
-	}
-	body, err := io.ReadAll(response.Body)
-	if err != nil {
-		return 0, fmt.Errorf("read Envoy update-failure stats: %w", err)
-	}
-	if err := response.Body.Close(); err != nil {
-		return 0, fmt.Errorf("close Envoy update-failure stats: %w", err)
-	}
-	if response.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("Envoy update-failure stats returned HTTP %d", response.StatusCode)
-	}
-	var total uint64
-	for _, line := range strings.Split(string(body), "\n") {
-		name, value, found := strings.Cut(line, ":")
-		if !found || (!strings.HasSuffix(name, ".update_rejected") && !strings.HasSuffix(name, ".update_failure")) {
-			continue
-		}
-		count, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("parse Envoy update stat %q: %w", name, err)
-		}
-		total += count
-	}
-	return total, nil
 }
 
 type runtimeLiveResponse struct {
@@ -652,45 +525,6 @@ func runtimeLiveAwait(t *testing.T, harness *runtimeLiveHarness, label string, u
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-}
-
-func runtimeLiveAssertRetained(t *testing.T, harness *runtimeLiveHarness, label string, updatedAt time.Time, beforeFailures uint64, check func() (bool, string)) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		failures, err := harness.updateFailures()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if failures > beforeFailures {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	failures, err := harness.updateFailures()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if failures <= beforeFailures {
-		t.Fatalf("%s did not increase Envoy update-failure counters after atomic replacement; before=%d after=%d\nEnvoy logs:\n%s", label, beforeFailures, failures, runtimeLiveLogs(harness.envoyName))
-	}
-	deadline = time.Now().Add(2 * time.Second)
-	var last string
-	consecutiveSuccesses := 0
-	for time.Now().Before(deadline) {
-		observed, detail := check()
-		last = detail
-		if observed {
-			consecutiveSuccesses++
-		} else {
-			consecutiveSuccesses = 0
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	if consecutiveSuccesses < 3 {
-		t.Fatalf("%s did not retain the last accepted behavior: %s\nEnvoy logs:\n%s", label, last, runtimeLiveLogs(harness.envoyName))
-	}
-	t.Logf("%s rejected the malformed update and retained the last accepted behavior through %s after atomic replacement", label, time.Since(updatedAt).Round(time.Millisecond))
 }
 
 func runtimeLiveLogs(container string) string {

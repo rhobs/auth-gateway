@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -561,26 +560,6 @@ func expectAPIKeyDenied(ctx SpecContext, gateway *apiKeyE2E, name, host string, 
 	expectDeniedBeforeUpstream(ctx, gateway.adminAddr, "api-ingest", name, wantStatus, func() (int, []byte, error) {
 		return gateway.request(ctx, host, useTLS, http.MethodPost, "/ingest", apiKeyRequestBody, token, key, headers)
 	})
-}
-
-func envoyUpdateFailures(ctx context.Context, adminAddress string) (uint64, error) {
-	body, err := env.EnvoyAdminGet(ctx, adminAddress, "/stats?filter=update_")
-	if err != nil {
-		return 0, err
-	}
-	var total uint64
-	for _, line := range strings.Split(string(body), "\n") {
-		name, value, found := strings.Cut(line, ":")
-		if !found || (!strings.HasSuffix(name, ".update_rejected") && !strings.HasSuffix(name, ".update_failure")) {
-			continue
-		}
-		count, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("parse Envoy update stat %q: %w", name, err)
-		}
-		total += count
-	}
-	return total, nil
 }
 
 func expectAPIKeyEcho(body []byte, tenant, writer string) {

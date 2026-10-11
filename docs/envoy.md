@@ -118,6 +118,26 @@ a Secret in its own namespace. The same Secret name may have independent
 contents in another namespace. See the [API-key guide](auth/api-key.md#api-key-secret-format)
 for the credential document and Secret layout.
 
+When Envoy cannot load a projected ECDS or SDS update, it records a native
+`update_failure` counter and keeps the last accepted resource. With the pinned
+Envoy image, the Prometheus names are
+`envoy_extension_config_discovery_http_filter_envoy_filters_http_set_filter_state_update_failure`,
+`envoy_extension_config_discovery_http_filter_envoy_filters_http_api_key_auth_update_failure`,
+and `envoy_sds_update_failure`. The SDS counter includes the resource name as a
+label; the ECDS counters are not resource-labeled. The generated Collector
+scrapes Envoy's `/stats/prometheus` endpoint and does not filter these counters,
+so they are available from the Collector's `/metrics` endpoint. A production
+alert for increases in these counters is tracked in the
+[production readiness to-do](production-readiness-to-do.md).
+
+Envoy's `--mode validate -c /etc/auth-gateway/envoy.yaml` validates the
+bootstrap, but does not validate the file-backed API-key ECDS resource in
+`api-keys.yaml`. With the pinned image, validation mode still reports the
+bootstrap as OK when that file contains malformed YAML. Generate the Secret
+from validated credentials before applying it; Kubernetes only validates the
+Secret object, not the Envoy resource stored inside it. See the
+[API-key guide](auth/api-key.md#api-key-secret-format) for the Secret format.
+
 ### Mapping and rollout behavior
 
 The static bootstrap embeds the shared request metric name, Lua's label names, and each API's label-to-attribute bindings in route metadata. Attribute mapping tables stay in the ECDS-loaded `set_filter_state` filter. Lua reads its processed values. For example, `tenant: requested_tenant` with a `client-123: team-a` mapping emits `tenant="team-a"` for `X-Tenant: client-123`, while RBAC checks the original `client-123`. Changing the metric name or a binding requires a rollout; changing a mapping value updates only the processing ConfigMap and changes subsequent metric labels without a Pod restart.

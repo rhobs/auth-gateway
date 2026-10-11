@@ -87,6 +87,15 @@ The example `key_sources.header` matches `api_key.header: X-Partner-Key`.
 Credential values cannot contain semicolons. Replace the example key with a
 unique value for each client.
 
+Kubernetes stores `api-keys.yaml` as opaque Secret data and does not validate
+the Envoy resource inside it. Hand-editing that data or changing it through
+GitOps can bypass the gateway's credential validation. Generate the Secret
+from validated API-key credentials rather than editing the Envoy resource by
+hand. Envoy's `--mode validate` checks the bootstrap but does not validate
+this file-backed ECDS resource. See
+[Envoy file updates](../envoy.md#kubernetes-files-and-reloads) for its runtime
+failure counters and monitoring.
+
 A client sends both the key and the tenant it requests:
 
 ```http
