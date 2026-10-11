@@ -4,7 +4,6 @@ package e2e
 
 import (
 	"bytes"
-	"crypto/rand"
 	"crypto/rsa"
 	"fmt"
 	"net/http"
@@ -94,6 +93,7 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 
 		allowed := map[string]any{"x": map[string]any{"my_list": []string{"y", "z"}}, "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix()}
 		denied := map[string]any{"x": map[string]any{"my_list": []string{"unlisted"}}, "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix()}
+		futureNotBefore := map[string]any{"x": map[string]any{"my_list": []string{"y"}}, "aud": "gateway-test", "exp": time.Now().Add(10 * time.Minute).Unix(), "nbf": time.Now().Add(5 * time.Minute).Unix()}
 		cases := []struct {
 			name   string
 			token  string
@@ -101,6 +101,7 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 		}{
 			{name: "missing token", status: http.StatusUnauthorized},
 			{name: "invalid signature", token: jwtPlainGateway.token("issuer-one", allowed, jwtPlainGateway.wrongKey), status: http.StatusUnauthorized},
+			{name: "future not-before", token: jwtPlainGateway.token("issuer-one", futureNotBefore, nil), status: http.StatusUnauthorized},
 			{name: "denied claim", token: jwtPlainGateway.token("issuer-one", denied, nil), status: http.StatusForbidden},
 		}
 		for _, test := range cases {
@@ -136,6 +137,51 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 		}
 		Expect(foundUnauthorized).To(BeTrue(), "expected a JSON 401 access log with response_code_details")
 	}, NodeTimeout(60*time.Second))
+
+	It("denies a valid JWT on a protected server with no selected policy", func(ctx SpecContext) {
+		claims := map[string]any{
+			"x":   map[string]any{"my_list": []string{"y"}},
+			"aud": "gateway-test",
+			"exp": time.Now().Add(5 * time.Minute).Unix(),
+		}
+		token := jwtPlainGateway.token("issuer-one", claims, nil)
+		expectDeniedBeforeUpstream(ctx, jwtPlainGateway.adminAddr, "api-metrics", "valid JWT without an authorization policy", http.StatusForbidden, func() (int, []byte, error) {
+			return jwtPlainGateway.request(ctx, jwtPlainGateway.httpAddr, jwtPlainNoPolicyHost, false, token, false)
+		})
+	}, NodeTimeout(60*time.Second))
+
+	It("applies any_of and all_of policy decisions to the same authenticated request", func(ctx SpecContext) {
+		for _, test := range []struct {
+			name     string
+			host     string
+			values   []string
+			status   int
+			upstream uint64
+		}{
+			{name: "any_of accepts one policy grant", host: jwtPlainAnyPolicyHost, values: []string{"y"}, status: http.StatusOK, upstream: 1},
+			{name: "all_of rejects a policy veto", host: jwtPlainAllPolicyHost, values: []string{"y"}, status: http.StatusForbidden},
+			{name: "all_of accepts both policy grants", host: jwtPlainAllPolicyHost, values: []string{"y", "z"}, status: http.StatusOK, upstream: 1},
+		} {
+			claims := map[string]any{
+				"x":   map[string]any{"my_list": test.values},
+				"aud": "gateway-test",
+				"exp": time.Now().Add(5 * time.Minute).Unix(),
+			}
+			token := jwtPlainGateway.token("issuer-one", claims, nil)
+			status, body := expectUpstreamRequestDelta(ctx, jwtPlainGateway.adminAddr, "api-metrics", test.name, test.upstream, func() (int, []byte, error) {
+				return jwtPlainGateway.request(ctx, jwtPlainGateway.httpAddr, test.host, false, token, false)
+			})
+			Expect(status).To(Equal(test.status), test.name+": "+string(body))
+			if test.status != http.StatusOK {
+				continue
+			}
+			echo, err := decodeHTTPBinEcho(body)
+			Expect(err).NotTo(HaveOccurred(), test.name)
+			Expect(echo.Method).To(Equal(http.MethodGet), test.name)
+			Expect(echo.URL).To(HaveSuffix("/anything"), test.name)
+			Expect(headerValue(echo.Headers, "Authorization")).To(BeEmpty(), test.name)
+		}
+	}, SpecTimeout(90*time.Second))
 })
 
 var _ = Describe("Direct JWT headers", Label("gateway", "jwt", "authentication", "authorization", "namespace-"+jwtHeadersNamespace), Ordered, func() {
@@ -372,6 +418,49 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		}
 	}, NodeTimeout(60*time.Second))
 
+	It("requires a scalar nonempty value for a required output while optional attributes are unset", func(ctx SpecContext) {
+		adminAddress := jwtGateway.adminAddr
+		claimsForSubject := func(subject any) map[string]any {
+			return map[string]any{
+				"organization": map[string]any{"id": "customer-a"},
+				"sub":          subject,
+				"aud":          "gateway-test",
+				"exp":          time.Now().Add(5 * time.Minute).Unix(),
+			}
+		}
+
+		validToken := jwtGateway.token("issuer-one", claimsForSubject("writer-17"), nil)
+		status, body := expectUpstreamRequestDelta(ctx, adminAddress, "api-metrics", "optional attributes omitted", 1, func() (int, []byte, error) {
+			return jwtGateway.requestPath(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, "/required-writer", validToken, false)
+		})
+		Expect(status).To(Equal(http.StatusOK), string(body))
+		echo, err := decodeHTTPBinEcho(body)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(echo.Method).To(Equal(http.MethodGet))
+		Expect(echo.URL).To(HaveSuffix("/anything"))
+		Expect(headerValue(echo.Headers, "X-Writer-ID")).To(Equal("writer-17"))
+		Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(BeEmpty())
+		Expect(headerValue(echo.Headers, "X-Chain")).To(BeEmpty())
+		Expect(headerValue(echo.Headers, "X-Order")).To(BeEmpty())
+		Expect(headerValue(echo.Headers, "X-Literal")).To(BeEmpty())
+
+		for _, test := range []struct {
+			name    string
+			subject any
+			status  int
+		}{
+			{name: "null", subject: nil, status: http.StatusUnauthorized},
+			{name: "empty", subject: "", status: http.StatusForbidden},
+			{name: "number", subject: 17, status: http.StatusUnauthorized},
+			{name: "list", subject: []string{"writer-17"}, status: http.StatusUnauthorized},
+		} {
+			token := jwtGateway.token("issuer-one", claimsForSubject(test.subject), nil)
+			expectDeniedBeforeUpstream(ctx, adminAddress, "api-metrics", "required output "+test.name, test.status, func() (int, []byte, error) {
+				return jwtGateway.requestPath(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, "/required-writer", token, false)
+			})
+		}
+	}, SpecTimeout(90*time.Second))
+
 	It("isolates JWT issuers by server", func(ctx SpecContext) {
 		for _, test := range []struct {
 			issuer, tenant, host string
@@ -390,6 +479,7 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 	It("reloads mapping changes through ECDS without changing authorization or the Pod", func(ctx SpecContext) {
 		claims := jwtTestClaims("customer-a")
 		claims["sub"] = "writer-17"
+		claims["exp"] = time.Now().Add(30 * time.Minute).Unix()
 		token := jwtGateway.token("issuer-one", claims, nil)
 		status, body, err := jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, token, false)
 		Expect(err).NotTo(HaveOccurred())
@@ -420,104 +510,85 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		Expect(updatedResources.ProcessingConfigMap.Data["processing.yaml"]).NotTo(Equal(jwtGateway.resources.ProcessingConfigMap.Data["processing.yaml"]))
 		manifest, err := yamlDocuments(updatedResources.ProcessingConfigMap)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(env.Apply(ctx, jwtNamespace, manifest)).To(Succeed())
-
-		Eventually(func() bool {
-			status, body, err = jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, token, false)
-			return err == nil && status == http.StatusOK && headerValue(jwtEchoHeaders(body), "X-Scope-OrgID") == "team-b"
-		}).WithContext(ctx).WithTimeout(3*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
-			return fmt.Sprintf("ECDS mapping update did not change the output while preserving authorization: status=%d body=%s error=%v", status, body, err)
-		})
-		afterUpdatedMetric, err := requestMetricCount(ctx, adminAddress, updatedMetricLabels)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(afterUpdatedMetric).To(BeNumerically(">", beforeUpdatedMetric), "ECDS mapping update did not change the metric label")
-		newUID, err := env.PodUID(ctx, jwtNamespace, selector)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(newUID).To(Equal(oldUID), "an ECDS processing update must not replace the gateway Pod")
-	}, SpecTimeout(4*time.Minute))
-})
-
-var _ = Describe("JWT JWKS lifecycle", Label("gateway", "jwt", "jwks", "namespace-"+jwtLifecycleNamespace), Ordered, func() {
-	BeforeAll(func(ctx SpecContext) {
-		DeferCleanup(func(ctx SpecContext) { Expect(env.DeleteNamespace(ctx, jwtLifecycleNamespace)).To(Succeed()) }, NodeTimeout(3*time.Minute))
-		var err error
-		jwtLifecycleGateway, err = setupJWTGateway(ctx, jwtLifecycleNamespace, "jwt-jwks-lifecycle.yaml")
-		Expect(err).NotTo(HaveOccurred())
-	}, NodeTimeout(12*time.Minute))
-
-	It("rotates keys without restarting the gateway and isolates a failing issuer", func(ctx SpecContext) {
-		claims := func(tenant string) map[string]any {
-			return jwtTestClaims(tenant)
-		}
-		issuerOneToken := jwtLifecycleGateway.token("issuer-one", claims("customer-a"), nil)
-		issuerTwoToken := jwtLifecycleGateway.token("issuer-two", claims("customer-b"), nil)
-		for _, test := range []struct{ issuer, token string }{{"issuer-one", issuerOneToken}, {"issuer-two", issuerTwoToken}} {
-			status, body, err := jwtLifecycleGateway.request(ctx, jwtLifecycleGateway.httpAddr, jwtLifecycleHost, false, test.token, false)
-			Expect(err).NotTo(HaveOccurred(), test.issuer)
-			Expect(status).To(Equal(http.StatusOK), test.issuer+": "+string(body))
-		}
-
-		selector := "app.kubernetes.io/name=auth-gateway"
-		gatewayUID, err := env.PodUID(ctx, jwtLifecycleNamespace, selector)
-		Expect(err).NotTo(HaveOccurred())
-		nextKey, err := rsa.GenerateKey(rand.Reader, 2048)
-		Expect(err).NotTo(HaveOccurred())
-		rotatedKeys := make(map[string]*rsa.PrivateKey, len(jwtLifecycleGateway.keys)+1)
-		for name, key := range jwtLifecycleGateway.keys {
-			rotatedKeys[name] = key
-		}
-		rotatedKeys["issuer-one-next"] = nextKey
-		Expect(updateJWTJWKSServer(ctx, jwtLifecycleNamespace, jwtLifecycleGateway.certs, rotatedKeys, map[string]int{"issuer-two": http.StatusServiceUnavailable}, "rotation-1")).To(Succeed())
-
-		currentUID, err := env.PodUID(ctx, jwtLifecycleNamespace, selector)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(currentUID).To(Equal(gatewayUID), "JWKS rotation must not restart the gateway")
-
-		// The warm issuer-two cache remains usable while that JWKS path is unavailable.
-		status, body, err := jwtLifecycleGateway.request(ctx, jwtLifecycleGateway.httpAddr, jwtLifecycleHost, false, issuerTwoToken, false)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(status).To(Equal(http.StatusOK), string(body))
-
-		rotatedToken := jwtLifecycleGateway.tokenWithKeyID("issuer-one", "issuer-one-next", claims("customer-a"), nextKey)
-		var rotatedStatus int
-		var rotatedBody []byte
-		Eventually(func() bool {
-			rotatedStatus, rotatedBody, err = jwtLifecycleGateway.request(ctx, jwtLifecycleGateway.httpAddr, jwtLifecycleHost, false, rotatedToken, false)
-			return err == nil && rotatedStatus == http.StatusOK
-		}).WithContext(ctx).WithTimeout(30*time.Second).WithPolling(250*time.Millisecond).Should(BeTrue(), func() string {
-			return fmt.Sprintf("rotated token returned HTTP %d: %s (error: %v)", rotatedStatus, rotatedBody, err)
+		timeE2EPhase("JWT mapping resource apply", func() {
+			Expect(env.Apply(ctx, jwtNamespace, manifest)).To(Succeed())
 		})
 
-		// A new gateway pod has a cold JWKS cache. The unhealthy issuer fails,
-		// while the healthy issuer fetches the rotated key and remains available.
-		Expect(env.RestartDeployment(ctx, jwtLifecycleNamespace, "auth-gateway", 4*time.Minute)).To(Succeed())
-		var coldGatewayUID string
-		Eventually(func() bool {
-			coldGatewayUID, err = env.PodUID(ctx, jwtLifecycleNamespace, selector)
-			return err == nil && coldGatewayUID != ""
-		}).WithContext(ctx).WithTimeout(time.Minute).WithPolling(250*time.Millisecond).Should(BeTrue(), func() string {
-			return fmt.Sprintf("wait for replacement gateway pod: %v", err)
+		timeE2EPhase("JWT mapping apply-to-observed reload", func() {
+			Eventually(func() bool {
+				status, body, err = jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, token, false)
+				return err == nil && status == http.StatusOK && headerValue(jwtEchoHeaders(body), "X-Scope-OrgID") == "team-b"
+			}).WithContext(ctx).WithTimeout(3*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
+				return fmt.Sprintf("ECDS mapping update did not change the output while preserving authorization: status=%d body=%s error=%v", status, body, err)
+			})
 		})
-		Expect(coldGatewayUID).NotTo(Equal(gatewayUID))
-		jwtLifecycleGateway.httpAddr = env.ForwardWithCleanup(ctx, jwtLifecycleNamespace, "service/auth-gateway", 80)
-		status, body, err = jwtLifecycleGateway.request(ctx, jwtLifecycleGateway.httpAddr, jwtLifecycleHost, false, rotatedToken, false)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(status).To(Equal(http.StatusOK), "healthy issuer: "+string(body))
-		status, body, err = jwtLifecycleGateway.request(ctx, jwtLifecycleGateway.httpAddr, jwtLifecycleHost, false, issuerTwoToken, false)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(status).To(BeNumerically(">=", http.StatusBadRequest), "unavailable issuer returned: "+string(body))
+		timeE2EPhase("JWT mapping post-reload assertions", func() {
+			afterUpdatedMetric, err := requestMetricCount(ctx, adminAddress, updatedMetricLabels)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(afterUpdatedMetric).To(BeNumerically(">", beforeUpdatedMetric), "ECDS mapping update did not change the metric label")
+			newUID, err := env.PodUID(ctx, jwtNamespace, selector)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(newUID).To(Equal(oldUID), "an ECDS processing update must not replace the gateway Pod")
+		})
 
-		Expect(updateJWTJWKSServer(ctx, jwtLifecycleNamespace, jwtLifecycleGateway.certs, rotatedKeys, nil, "rotation-2")).To(Succeed())
-		var recoveredStatus int
-		var recoveredBody []byte
-		Eventually(func() bool {
-			recoveredStatus, recoveredBody, err = jwtLifecycleGateway.request(ctx, jwtLifecycleGateway.httpAddr, jwtLifecycleHost, false, issuerTwoToken, false)
-			return err == nil && recoveredStatus == http.StatusOK
-		}).WithContext(ctx).WithTimeout(30*time.Second).WithPolling(250*time.Millisecond).Should(BeTrue(), func() string {
-			return fmt.Sprintf("recovered issuer returned HTTP %d: %s (error: %v)", recoveredStatus, recoveredBody, err)
-		})
-		finalUID, err := env.PodUID(ctx, jwtLifecycleNamespace, selector)
+		beforeRejectedUpdates, err := envoyUpdateFailures(ctx, adminAddress)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(finalUID).To(Equal(coldGatewayUID), "restoring JWKS should not restart the gateway")
-	}, SpecTimeout(6*time.Minute))
+		invalidProcessing := updatedResources.ProcessingConfigMap.DeepCopy()
+		invalidProcessing.Data["processing.yaml"] = "resources: [\n"
+		invalidManifest, err := yamlDocuments(invalidProcessing)
+		Expect(err).NotTo(HaveOccurred())
+		timeE2EPhase("invalid JWT processing ConfigMap apply", func() {
+			Expect(env.Apply(ctx, jwtNamespace, invalidManifest)).To(Succeed())
+		})
+		timeE2EPhase("invalid JWT processing update rejection", func() {
+			Eventually(func() (uint64, error) {
+				return envoyUpdateFailures(ctx, adminAddress)
+			}).WithContext(ctx).WithTimeout(3 * time.Minute).WithPolling(time.Second).Should(BeNumerically(">", beforeRejectedUpdates))
+		})
+		timeE2EPhase("retained JWT processing assertions", func() {
+			var retainedStatus int
+			var retainedBody []byte
+			retainedStatus, retainedBody = expectUpstreamRequestDelta(ctx, adminAddress, "api-metrics", "retained mapping after invalid ConfigMap", 1, func() (int, []byte, error) {
+				return jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, token, false)
+			})
+			Expect(retainedStatus).To(Equal(http.StatusOK), string(retainedBody))
+			retainedEcho, err := decodeHTTPBinEcho(retainedBody)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(retainedEcho.Method).To(Equal(http.MethodGet))
+			Expect(retainedEcho.URL).To(HaveSuffix("/anything"))
+			Expect(headerValue(retainedEcho.Headers, "X-Scope-OrgID")).To(Equal("team-b"))
+			retainedUID, err := env.PodUID(ctx, jwtNamespace, selector)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(retainedUID).To(Equal(oldUID), "a rejected ECDS update must preserve the gateway Pod")
+		})
+
+		updatedConfig.Processing[0].Attributes["tenant_id"].Mappings["customer-a"] = "team-c"
+		recoveredResources, err := config.GenerateKubernetes(updatedConfig)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(recoveredResources.ConfigMap.Data).To(Equal(updatedResources.ConfigMap.Data))
+		Expect(recoveredResources.Deployment.Spec.Template).To(Equal(updatedResources.Deployment.Spec.Template))
+		recoveryManifest, err := yamlDocuments(recoveredResources.ProcessingConfigMap)
+		Expect(err).NotTo(HaveOccurred())
+		timeE2EPhase("valid JWT processing recovery apply", func() {
+			Expect(env.Apply(ctx, jwtNamespace, recoveryManifest)).To(Succeed())
+		})
+		timeE2EPhase("valid JWT processing recovery observed", func() {
+			Eventually(func() bool {
+				status, body, err = jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, token, false)
+				return err == nil && status == http.StatusOK && headerValue(jwtEchoHeaders(body), "X-Scope-OrgID") == "team-c"
+			}).WithContext(ctx).WithTimeout(3*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
+				return fmt.Sprintf("recovered ECDS mapping did not change the output: status=%d body=%s error=%v", status, body, err)
+			})
+		})
+		timeE2EPhase("valid JWT processing recovery assertions", func() {
+			echo, err := decodeHTTPBinEcho(body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(echo.Method).To(Equal(http.MethodGet))
+			Expect(echo.URL).To(HaveSuffix("/anything"))
+			Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(Equal("team-c"))
+			finalUID, err := env.PodUID(ctx, jwtNamespace, selector)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(finalUID).To(Equal(oldUID), "recovering the ECDS update must not replace the gateway Pod")
+		})
+	}, SpecTimeout(8*time.Minute))
 })

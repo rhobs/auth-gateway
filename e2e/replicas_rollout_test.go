@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"net/http"
 	"os"
@@ -28,6 +29,8 @@ const (
 	rolloutHost              = "writer.jwt.auth-gateway.test"
 	rolloutPodSelector       = gatewayPodSelector
 	rolloutProbeSelector     = "app.kubernetes.io/name=auth-gateway-rollout-probe"
+	rolloutServiceHTTPPort   = 18080
+	rolloutServiceHTTPSPort  = 18443
 	defaultRolloutProbeImage = "curlimages/curl:8.12.1"
 )
 
@@ -44,6 +47,8 @@ var _ = Describe("Replicas and bootstrap rollouts", Label("gateway", "replicas",
 	var gatewayConfig config.Config
 	var gatewayResources *config.KubernetesResources
 	var endpoints []rolloutPodEndpoint
+	var serviceHTTPAddress string
+	var serviceHTTPSAddress string
 
 	BeforeAll(func(ctx SpecContext) {
 		DeferCleanup(func(ctx SpecContext) {
@@ -57,22 +62,34 @@ var _ = Describe("Replicas and bootstrap rollouts", Label("gateway", "replicas",
 		gatewayConfig, err = loadRolloutJWTConfig(rolloutNamespace)
 		Expect(err).NotTo(HaveOccurred())
 		gatewayConfig.Kubernetes.Replicas = new(int32(2))
+		gatewayConfig.Kubernetes.ServicePort = new(int32(rolloutServiceHTTPPort))
+		gatewayConfig.Kubernetes.HTTPSServicePort = new(int32(rolloutServiceHTTPSPort))
 		gatewayResources, err = config.GenerateKubernetes(gatewayConfig)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(gatewayResources.ConfigMap.Data).To(Equal(gateway.resources.ConfigMap.Data))
 		Expect(gatewayResources.ProcessingConfigMap.Data).To(Equal(gateway.resources.ProcessingConfigMap.Data))
 
-		deploymentManifest, err := yamlDocuments(gatewayResources.Deployment)
+		deploymentManifest, err := yamlDocuments(gatewayResources.Deployment, gatewayResources.Service)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(env.Apply(ctx, rolloutNamespace, deploymentManifest)).To(Succeed())
 		Expect(env.WaitForDeployment(ctx, rolloutNamespace, "auth-gateway", 4*time.Minute)).To(Succeed())
 		gateway.resources = gatewayResources
 		endpoints = openRolloutPodEndpoints(ctx, rolloutNamespace, *gatewayConfig.Listener.Port)
+		serviceHTTPAddress = env.ForwardWithCleanup(ctx, rolloutNamespace, "service/auth-gateway", rolloutServiceHTTPPort)
+		serviceHTTPSAddress = env.ForwardWithCleanup(ctx, rolloutNamespace, "service/auth-gateway", rolloutServiceHTTPSPort)
 	}, NodeTimeout(17*time.Minute))
 
-	It("updates the server certificate on both replicas without replacing Pods", func(ctx SpecContext) {
+	It("serves custom Service ports and reloads a TLS Secret on both protected replicas", func(ctx SpecContext) {
 		token := rolloutJWTToken(gateway)
 		headers := http.Header{"Authorization": []string{"Bearer " + token}}
+		status, body, err := gateway.request(ctx, serviceHTTPAddress, rolloutHost, false, token, false)
+		Expect(err).NotTo(HaveOccurred())
+		expectRolloutEcho(status, body, "team-a")
+		serviceTLS, err := requestHTTPSWithMethodAndBody(ctx, serviceHTTPSAddress, jwtHTTPSHost, jwtHTTPSHost,
+			http.MethodGet, "/protected", nil, headers, gateway.rootCAs)
+		Expect(err).NotTo(HaveOccurred())
+		expectRolloutEcho(serviceTLS.status, serviceTLS.body, "team-a")
+
 		initialSerials := make(map[string]string, len(endpoints))
 		for _, endpoint := range endpoints {
 			response, err := requestRolloutHTTPS(ctx, endpoint, jwtHTTPSHost, jwtHTTPSHost,
@@ -86,6 +103,11 @@ var _ = Describe("Replicas and bootstrap rollouts", Label("gateway", "replicas",
 
 		rotated, err := makeJWTTestCertificates([]string{jwtHTTPSHost})
 		Expect(err).NotTo(HaveOccurred())
+		rotatedSerial, err := rolloutLeafCertificateSerial(rotated)
+		Expect(err).NotTo(HaveOccurred())
+		for _, endpoint := range endpoints {
+			Expect(rotatedSerial).NotTo(Equal(initialSerials[endpoint.identity.UID]), endpoint.identity.Name+" rotation certificate must differ from the original")
+		}
 		gateway.rootCAs.AddCert(rotated.root)
 		secret := &corev1.Secret{
 			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
@@ -95,41 +117,47 @@ var _ = Describe("Replicas and bootstrap rollouts", Label("gateway", "replicas",
 		}
 		manifest, err := yamlDocuments(secret)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(env.Apply(ctx, rolloutNamespace, manifest)).To(Succeed())
+		timeE2EPhase("rollout TLS Secret apply", func() {
+			Expect(env.Apply(ctx, rolloutNamespace, manifest)).To(Succeed())
+		})
 
 		responses := make(map[string]*httpsResult, len(endpoints))
 		var lastError error
-		Eventually(func() bool {
-			responses = make(map[string]*httpsResult, len(endpoints))
-			for _, endpoint := range endpoints {
-				response, err := requestRolloutHTTPS(ctx, endpoint, jwtHTTPSHost, jwtHTTPSHost,
-					http.MethodGet, "/protected", nil, headers, gateway.rootCAs)
-				if err != nil {
-					lastError = fmt.Errorf("request replica %s: %w", endpoint.identity.Name, err)
-					return false
+		timeE2EPhase("rollout Secret apply-to-observed SDS reload", func() {
+			Eventually(func() bool {
+				responses = make(map[string]*httpsResult, len(endpoints))
+				for _, endpoint := range endpoints {
+					response, err := requestRolloutHTTPS(ctx, endpoint, jwtHTTPSHost, jwtHTTPSHost,
+						http.MethodGet, "/protected", nil, headers, gateway.rootCAs)
+					if err != nil {
+						lastError = fmt.Errorf("request replica %s: %w", endpoint.identity.Name, err)
+						return false
+					}
+					if response.status != http.StatusOK {
+						lastError = fmt.Errorf("replica %s returned HTTP %d: %s", endpoint.identity.Name, response.status, response.body)
+						return false
+					}
+					serial := response.certificate.SerialNumber.String()
+					if serial != rotatedSerial {
+						lastError = fmt.Errorf("replica %s serves certificate %s, want rotated certificate %s", endpoint.identity.Name, serial, rotatedSerial)
+						return false
+					}
+					responses[endpoint.identity.UID] = response
 				}
-				if response.status != http.StatusOK {
-					lastError = fmt.Errorf("replica %s returned HTTP %d: %s", endpoint.identity.Name, response.status, response.body)
-					return false
-				}
-				serial := response.certificate.SerialNumber.String()
-				if serial == initialSerials[endpoint.identity.UID] {
-					lastError = fmt.Errorf("replica %s still serves its original certificate %s", endpoint.identity.Name, serial)
-					return false
-				}
-				responses[endpoint.identity.UID] = response
-			}
-			lastError = nil
-			return true
-		}).WithContext(ctx).WithTimeout(3*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
-			return fmt.Sprintf("not every replica loaded the renewed server certificate: %v", lastError)
+				lastError = nil
+				return true
+			}).WithContext(ctx).WithTimeout(3*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
+				return fmt.Sprintf("not every replica loaded the renewed server certificate: %v", lastError)
+			})
 		})
 
-		for _, endpoint := range endpoints {
-			expectRolloutEcho(responses[endpoint.identity.UID].status, responses[endpoint.identity.UID].body, "team-a")
-		}
-		Expect(rolloutPodUIDs(ctx, rolloutNamespace)).To(Equal(initialUIDs), "SDS certificate updates must not replace either replica")
-	}, SpecTimeout(4*time.Minute))
+		timeE2EPhase("rollout SDS post-reload assertions", func() {
+			for _, endpoint := range endpoints {
+				expectRolloutEcho(responses[endpoint.identity.UID].status, responses[endpoint.identity.UID].body, "team-a")
+			}
+			Expect(rolloutPodUIDs(ctx, rolloutNamespace)).To(Equal(initialUIDs), "SDS certificate updates must not replace either replica")
+		})
+	}, SpecTimeout(12*time.Minute))
 
 	It("reloads processing configuration on both replicas without replacing either Pod", func(ctx SpecContext) {
 		initialUIDs := rolloutPodUIDs(ctx, rolloutNamespace)
@@ -149,32 +177,38 @@ var _ = Describe("Replicas and bootstrap rollouts", Label("gateway", "replicas",
 		Expect(updated.Deployment.Spec.Template).To(Equal(gatewayResources.Deployment.Spec.Template))
 		processingManifest, err := yamlDocuments(*updated.ProcessingConfigMap)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(env.Apply(ctx, rolloutNamespace, processingManifest)).To(Succeed())
+		timeE2EPhase("replica processing ConfigMap apply", func() {
+			Expect(env.Apply(ctx, rolloutNamespace, processingManifest)).To(Succeed())
+		})
 		gatewayResources = updated
 		gateway.resources = updated
 
-		for _, endpoint := range endpoints {
-			var status int
-			var body []byte
-			var requestErr error
-			Eventually(func() bool {
-				status, body, requestErr = requestRolloutHTTP(ctx, gateway, endpoint, rolloutHost, token)
-				return requestErr == nil && status == http.StatusOK && headerValue(jwtEchoHeaders(body), "X-Scope-OrgID") == "team-c"
-			}).WithContext(ctx).WithTimeout(3*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
-				return fmt.Sprintf("replica %s did not reload ECDS: HTTP %d: %s (error: %v)", endpoint.identity.Name, status, body, requestErr)
-			})
-		}
+		timeE2EPhase("replica processing apply-to-observed ECDS reload", func() {
+			for _, endpoint := range endpoints {
+				var status int
+				var body []byte
+				var requestErr error
+				Eventually(func() bool {
+					status, body, requestErr = requestRolloutHTTP(ctx, gateway, endpoint, rolloutHost, token)
+					return requestErr == nil && status == http.StatusOK && headerValue(jwtEchoHeaders(body), "X-Scope-OrgID") == "team-c"
+				}).WithContext(ctx).WithTimeout(3*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
+					return fmt.Sprintf("replica %s did not reload ECDS: HTTP %d: %s (error: %v)", endpoint.identity.Name, status, body, requestErr)
+				})
+			}
+		})
 
-		for request := range 20 {
-			endpoint := endpoints[request%len(endpoints)]
-			status, body, err := requestRolloutHTTP(ctx, gateway, endpoint, rolloutHost, token)
-			Expect(err).NotTo(HaveOccurred(), endpoint.identity.Name)
-			expectRolloutEcho(status, body, "team-c")
-		}
+		timeE2EPhase("replica processing post-reload assertions", func() {
+			for request := range 20 {
+				endpoint := endpoints[request%len(endpoints)]
+				status, body, err := requestRolloutHTTP(ctx, gateway, endpoint, rolloutHost, token)
+				Expect(err).NotTo(HaveOccurred(), endpoint.identity.Name)
+				expectRolloutEcho(status, body, "team-c")
+			}
 
-		finalUIDs := rolloutPodUIDs(ctx, rolloutNamespace)
-		Expect(finalUIDs).To(Equal(initialUIDs), "an ECDS processing update must preserve every replica UID")
-		Expect(rolloutPodIdentities(ctx, rolloutNamespace)).To(Equal(rolloutPodIdentitiesFromEndpoints(endpoints)))
+			finalUIDs := rolloutPodUIDs(ctx, rolloutNamespace)
+			Expect(finalUIDs).To(Equal(initialUIDs), "an ECDS processing update must preserve every replica UID")
+			Expect(rolloutPodIdentities(ctx, rolloutNamespace)).To(Equal(rolloutPodIdentitiesFromEndpoints(endpoints)))
+		})
 	}, SpecTimeout(6*time.Minute))
 
 	It("keeps bootstrap-only changes inactive until an explicit rolling restart", func(ctx SpecContext) {
@@ -204,59 +238,73 @@ var _ = Describe("Replicas and bootstrap rollouts", Label("gateway", "replicas",
 		Expect(updated.Deployment.Spec.Template).To(Equal(gatewayResources.Deployment.Spec.Template), "a bootstrap-only change must not change the Pod template")
 		bootstrapManifest, err := yamlDocuments(updated.ConfigMap)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(env.Apply(ctx, rolloutNamespace, bootstrapManifest)).To(Succeed())
+		timeE2EPhase("bootstrap ConfigMap apply", func() {
+			Expect(env.Apply(ctx, rolloutNamespace, bootstrapManifest)).To(Succeed())
+		})
 
-		for range 60 {
-			for _, endpoint := range endpoints {
-				status, body, err := requestRolloutHTTP(ctx, gateway, endpoint, rolloutHost, token)
-				Expect(err).NotTo(HaveOccurred(), endpoint.identity.Name)
-				expectRolloutEcho(status, body, "team-c")
+		timeE2EPhase("bootstrap inactive-behavior observation", func() {
+			for range 60 {
+				for _, endpoint := range endpoints {
+					status, body, err := requestRolloutHTTP(ctx, gateway, endpoint, rolloutHost, token)
+					Expect(err).NotTo(HaveOccurred(), endpoint.identity.Name)
+					expectRolloutEcho(status, body, "team-c")
+				}
+				time.Sleep(time.Second)
 			}
-			time.Sleep(time.Second)
-		}
+		})
 
-		for _, endpoint := range endpoints {
-			oldCount, err := rolloutMetricCount(ctx, endpoint, oldMetricLabels)
-			Expect(err).NotTo(HaveOccurred(), endpoint.identity.Name)
-			Expect(oldCount).To(BeNumerically(">", oldCounts[endpoint.identity.UID]), endpoint.identity.Name)
-			newCount, err := rolloutMetricCount(ctx, endpoint, newMetricLabels)
-			Expect(err).NotTo(HaveOccurred(), endpoint.identity.Name)
-			Expect(newCount).To(BeZero(), endpoint.identity.Name+" applied the bootstrap change without a restart")
-		}
-		Expect(rolloutPodUIDs(ctx, rolloutNamespace)).To(Equal(stableUIDs), "updating only the bootstrap ConfigMap must not replace Pods")
+		timeE2EPhase("bootstrap inactive-state assertions", func() {
+			for _, endpoint := range endpoints {
+				oldCount, err := rolloutMetricCount(ctx, endpoint, oldMetricLabels)
+				Expect(err).NotTo(HaveOccurred(), endpoint.identity.Name)
+				Expect(oldCount).To(BeNumerically(">", oldCounts[endpoint.identity.UID]), endpoint.identity.Name)
+				newCount, err := rolloutMetricCount(ctx, endpoint, newMetricLabels)
+				Expect(err).NotTo(HaveOccurred(), endpoint.identity.Name)
+				Expect(newCount).To(BeZero(), endpoint.identity.Name+" applied the bootstrap change without a restart")
+			}
+			Expect(rolloutPodUIDs(ctx, rolloutNamespace)).To(Equal(stableUIDs), "updating only the bootstrap ConfigMap must not replace Pods")
+		})
 
 		probeManifest, err := rolloutAvailabilityProbeManifest(rolloutNamespace, token)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(env.Apply(ctx, rolloutNamespace, probeManifest)).To(Succeed())
-		Expect(env.WaitForDeployment(ctx, rolloutNamespace, "auth-gateway-rollout-probe", 3*time.Minute)).To(Succeed())
+		timeE2EPhase("rollout availability probe apply", func() {
+			Expect(env.Apply(ctx, rolloutNamespace, probeManifest)).To(Succeed())
+			Expect(env.WaitForDeployment(ctx, rolloutNamespace, "auth-gateway-rollout-probe", 3*time.Minute)).To(Succeed())
+		})
 		probeNames, err := env.PodNames(ctx, rolloutNamespace, rolloutProbeSelector)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(probeNames).To(HaveLen(1))
 		probePodName := probeNames[0]
-		Eventually(func() int {
-			logs, logErr := env.ContainerLogs(ctx, rolloutNamespace, probePodName, "curl-probe", 0)
-			if logErr != nil {
-				return 0
-			}
-			statuses := rolloutProbeStatuses(logs)
-			return len(statuses)
-		}).WithContext(ctx).WithTimeout(30 * time.Second).WithPolling(250 * time.Millisecond).Should(BeNumerically(">=", 5))
-		expectSuccessfulRolloutProbe(ctx, rolloutNamespace, probePodName)
+		timeE2EPhase("rollout availability probe observed", func() {
+			Eventually(func() int {
+				logs, logErr := env.ContainerLogs(ctx, rolloutNamespace, probePodName, "curl-probe", 0)
+				if logErr != nil {
+					return 0
+				}
+				statuses := rolloutProbeStatuses(logs)
+				return len(statuses)
+			}).WithContext(ctx).WithTimeout(30 * time.Second).WithPolling(250 * time.Millisecond).Should(BeNumerically(">=", 5))
+			expectSuccessfulRolloutProbe(ctx, rolloutNamespace, probePodName)
+		})
 
-		restartGatewayWithAvailabilityProbe(ctx, rolloutNamespace, probePodName, stableUIDs)
-		newUIDs := rolloutPodUIDs(ctx, rolloutNamespace)
-		Expect(newUIDs).To(HaveLen(2))
-		Expect(newUIDs).NotTo(Equal(stableUIDs), "a Deployment restart must replace the gateway Pods")
-		endpoints = openRolloutPodEndpoints(ctx, rolloutNamespace, *gatewayConfig.Listener.Port)
-		for _, endpoint := range endpoints {
-			status, body, err := requestRolloutHTTP(ctx, gateway, endpoint, rolloutHost, token)
-			Expect(err).NotTo(HaveOccurred(), endpoint.identity.Name)
-			expectRolloutEcho(status, body, "team-c")
-			newCount, err := rolloutMetricCount(ctx, endpoint, newMetricLabels)
-			Expect(err).NotTo(HaveOccurred(), endpoint.identity.Name)
-			Expect(newCount).To(BeNumerically(">", 0), endpoint.identity.Name+" did not use the new bootstrap metric label binding")
-		}
-		expectSuccessfulRolloutProbe(ctx, rolloutNamespace, probePodName)
+		timeE2EPhase("bootstrap Deployment restart", func() {
+			restartGatewayWithAvailabilityProbe(ctx, rolloutNamespace, probePodName, stableUIDs)
+		})
+		timeE2EPhase("bootstrap post-restart assertions", func() {
+			newUIDs := rolloutPodUIDs(ctx, rolloutNamespace)
+			Expect(newUIDs).To(HaveLen(2))
+			Expect(newUIDs).NotTo(Equal(stableUIDs), "a Deployment restart must replace the gateway Pods")
+			endpoints = openRolloutPodEndpoints(ctx, rolloutNamespace, *gatewayConfig.Listener.Port)
+			for _, endpoint := range endpoints {
+				status, body, err := requestRolloutHTTP(ctx, gateway, endpoint, rolloutHost, token)
+				Expect(err).NotTo(HaveOccurred(), endpoint.identity.Name)
+				expectRolloutEcho(status, body, "team-c")
+				newCount, err := rolloutMetricCount(ctx, endpoint, newMetricLabels)
+				Expect(err).NotTo(HaveOccurred(), endpoint.identity.Name)
+				Expect(newCount).To(BeNumerically(">", 0), endpoint.identity.Name+" did not use the new bootstrap metric label binding")
+			}
+			expectSuccessfulRolloutProbe(ctx, rolloutNamespace, probePodName)
+		})
 	}, SpecTimeout(9*time.Minute))
 })
 
@@ -289,6 +337,18 @@ func openRolloutPodEndpoints(ctx SpecContext, namespace string, listenerPort uin
 		})
 	}
 	return endpoints
+}
+
+func rolloutLeafCertificateSerial(certificates *jwtTestCertificates) (string, error) {
+	block, _ := pem.Decode(certificates.chainPEM)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return "", fmt.Errorf("server certificate PEM is missing")
+	}
+	certificate, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return "", fmt.Errorf("parse server certificate: %w", err)
+	}
+	return certificate.SerialNumber.String(), nil
 }
 
 func requestRolloutHTTP(ctx context.Context, gateway *jwtE2E, endpoint rolloutPodEndpoint, host, token string) (int, []byte, error) {
@@ -377,7 +437,7 @@ done`
 					Command:         []string{"/bin/sh", "-c", probeScript},
 					Env: []corev1.EnvVar{
 						{Name: "REQUEST_HOST", Value: rolloutHost},
-						{Name: "TARGET_URL", Value: "http://auth-gateway." + namespace + ".svc.cluster.local:80/protected"},
+						{Name: "TARGET_URL", Value: fmt.Sprintf("http://auth-gateway.%s.svc.cluster.local:%d/protected", namespace, rolloutServiceHTTPPort)},
 						{Name: "TOKEN", Value: token},
 					},
 				}}},
@@ -415,7 +475,8 @@ func TestRolloutAvailabilityProbeTargetsGatewayService(t *testing.T) {
 	for _, value := range container.Env {
 		environment[value.Name] = value.Value
 	}
-	if environment["TARGET_URL"] != "http://auth-gateway."+namespace+".svc.cluster.local:80/protected" {
+	wantURL := fmt.Sprintf("http://auth-gateway.%s.svc.cluster.local:%d/protected", namespace, rolloutServiceHTTPPort)
+	if environment["TARGET_URL"] != wantURL {
 		t.Fatalf("probe TARGET_URL = %q, want gateway Service URL", environment["TARGET_URL"])
 	}
 	if environment["REQUEST_HOST"] != rolloutHost || environment["TOKEN"] != "signed-test-token" {

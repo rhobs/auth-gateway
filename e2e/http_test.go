@@ -89,6 +89,17 @@ var _ = Describe("HTTP routing and metrics", Label("gateway", "routing", "metric
 		}
 	},
 		Entry("forwards metrics", httpCase{method: http.MethodPost, path: "/metrics/api/v1/receive", host: httpHost, wantStatus: http.StatusOK, wantUpstreamPath: "/anything/api/v1/receive"}),
+		Entry("preserves the original request on a public no-rewrite route", httpCase{
+			method:           http.MethodPost,
+			path:             "/anything/no-rewrite?source=client&check=unchanged",
+			host:             httpHost,
+			wantStatus:       http.StatusOK,
+			wantUpstreamPath: "/anything/no-rewrite?source=client&check=unchanged",
+			forwardedHeaders: map[string]string{
+				"X-Routing-Case":    "no-rewrite",
+				"X-Preserved-Value": "original value",
+			},
+		}),
 		Entry("rewrites a regex path and preserves the query", httpCase{
 			method:           http.MethodGet,
 			path:             "/metrics/api/v1/query_range?x=1",

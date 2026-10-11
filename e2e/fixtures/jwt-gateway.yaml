@@ -90,6 +90,15 @@ apis:
           path: /anything
       - methods: [GET]
         path:
+          exact: /required-writer
+        rewrite:
+          path: /anything
+        processing:
+          request_headers:
+            - name: X-Writer-ID
+              from_attribute: writer_id
+      - methods: [GET]
+        path:
           exact: /upstream-status
         rewrite:
           path: /status/418

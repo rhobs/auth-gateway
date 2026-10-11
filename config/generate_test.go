@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	bootstrap "github.com/envoyproxy/go-control-plane/envoy/config/bootstrap/v3"
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
@@ -738,6 +739,12 @@ func TestJWTProviderClustersAndTrust(t *testing.T) {
 		remote := provider.GetRemoteJwks()
 		if remote == nil || remote.HttpUri == nil || remote.HttpUri.GetCluster() != jwksClusterName(name) {
 			t.Fatalf("JWT provider %q has no dedicated JWKS cluster", name)
+		}
+		if remote.CacheDuration == nil {
+			t.Fatalf("JWT provider %q has no JWKS cache duration", name)
+		}
+		if got, want := remote.CacheDuration.AsDuration(), 5*time.Minute; got != want {
+			t.Fatalf("JWT provider %q cache duration = %s, want default %s", name, got, want)
 		}
 	}
 	if jwtConfig.RequirementMap[serverJWTRequirementName(1)].GetProviderName() != "issuer-one" {

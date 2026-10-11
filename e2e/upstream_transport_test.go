@@ -33,6 +33,7 @@ var (
 var _ = Describe("Upstream TLS and HTTP/2", Label("gateway", "upstream-transport", "namespace-"+upstreamTransportNamespace), Ordered, func() {
 	var gatewayAddress string
 	var adminAddress string
+	var backendCertificates *jwtTestCertificates
 
 	BeforeAll(func(ctx SpecContext) {
 		DeferCleanup(func(ctx SpecContext) {
@@ -47,6 +48,7 @@ var _ = Describe("Upstream TLS and HTTP/2", Label("gateway", "upstream-transport
 
 		certificates, err := makeJWTTestCertificates([]string{upstreamTransportSAN})
 		Expect(err).NotTo(HaveOccurred())
+		backendCertificates = certificates
 		backend, err := upstreamTransportBackendManifest(upstreamTransportNamespace, certificates)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(env.Apply(ctx, upstreamTransportNamespace, backend)).To(Succeed())
@@ -119,6 +121,64 @@ var _ = Describe("Upstream TLS and HTTP/2", Label("gateway", "upstream-transport
 			return envoyCounter(ctx, adminAddress, statName)
 		}).WithContext(ctx).WithTimeout(10 * time.Second).WithPolling(250 * time.Millisecond).Should(Equal(before + 1))
 	}, SpecTimeout(30*time.Second))
+
+	It("keeps upstream CA trust static until an explicit gateway rollout", func(ctx SpecContext) {
+		initialGatewayUID, err := gatewayPodUID(ctx, upstreamTransportNamespace)
+		Expect(err).NotTo(HaveOccurred())
+
+		rotatedCertificates, err := makeJWTTestCertificates([]string{upstreamTransportSAN})
+		Expect(err).NotTo(HaveOccurred())
+		caBundle := append(append([]byte(nil), backendCertificates.caPEM...), rotatedCertificates.caPEM...)
+		backend, err := upstreamTransportBackendManifestWithCABundle(upstreamTransportNamespace, rotatedCertificates, caBundle)
+		Expect(err).NotTo(HaveOccurred())
+
+		payload := []byte("upstream CA rotation")
+		status, body, err := requestUpstreamTransport(ctx, gatewayAddress, "/tls-echo?source=ca-rotation", payload)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(http.StatusOK), string(body))
+
+		timeE2EPhase("upstream certificate and CA ConfigMap apply", func() {
+			Expect(env.Apply(ctx, upstreamTransportNamespace, backend)).To(Succeed())
+		})
+		timeE2EPhase("upstream certificate Deployment restart", func() {
+			Expect(env.RestartDeployment(ctx, upstreamTransportNamespace, "transport-backend", 4*time.Minute)).To(Succeed())
+		})
+
+		timeE2EPhase("upstream CA inactive behavior before gateway rollout", func() {
+			status, body, err = requestUpstreamTransport(ctx, gatewayAddress, "/tls-echo?source=ca-rotation", payload)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(status).To(Equal(http.StatusServiceUnavailable), string(body))
+			currentUID, uidErr := gatewayPodUID(ctx, upstreamTransportNamespace)
+			Expect(uidErr).NotTo(HaveOccurred())
+			Expect(currentUID).To(Equal(initialGatewayUID), "updating an upstream CA ConfigMap must not replace gateway Pods")
+		})
+
+		timeE2EPhase("gateway Deployment rollout for upstream CA", func() {
+			Expect(env.RestartDeployment(ctx, upstreamTransportNamespace, "auth-gateway", 4*time.Minute)).To(Succeed())
+		})
+		timeE2EPhase("gateway port-forward rebind", func() {
+			gatewayAddress = env.ForwardWithCleanup(ctx, upstreamTransportNamespace, "service/auth-gateway", 80)
+			adminAddress = env.ForwardEnvoyAdminWithCleanup(ctx, upstreamTransportNamespace)
+		})
+		timeE2EPhase("upstream CA post-rollout request assertions", func() {
+			newGatewayUID, uidErr := gatewayPodUID(ctx, upstreamTransportNamespace)
+			Expect(uidErr).NotTo(HaveOccurred())
+			Expect(newGatewayUID).NotTo(Equal(initialGatewayUID), "a gateway rollout must replace the Pod")
+
+			status, body = expectUpstreamRequestDelta(ctx, adminAddress, "api-tls-echo", "upstream CA after rollout", 1, func() (int, []byte, error) {
+				return requestUpstreamTransport(ctx, gatewayAddress, "/tls-echo?source=ca-rotation", payload)
+			})
+			Expect(status).To(Equal(http.StatusOK), string(body))
+
+			echo, decodeErr := decodeHTTPBinEcho(body)
+			Expect(decodeErr).NotTo(HaveOccurred())
+			Expect(echo.Method).To(Equal(http.MethodPost))
+			Expect(echo.URL).To(HaveSuffix("/anything/tls-echo?source=ca-rotation"))
+			Expect(echo.Data).To(Equal("data:application/octet-stream;base64," + base64.StdEncoding.EncodeToString(payload)))
+			Expect(headerValue(echo.Headers, "Content-Type")).To(Equal("application/octet-stream"))
+			Expect(headerValue(echo.Headers, "X-E2E-Upstream-Transport")).To(Equal("forwarded"))
+		})
+	}, SpecTimeout(10*time.Minute))
 })
 
 func requestUpstreamTransport(ctx context.Context, gatewayAddress, path string, payload []byte) (int, []byte, error) {
@@ -158,6 +218,10 @@ func envoyCounter(ctx context.Context, adminAddress, statName string) (uint64, e
 }
 
 func upstreamTransportBackendManifest(namespace string, certificates *jwtTestCertificates) ([]byte, error) {
+	return upstreamTransportBackendManifestWithCABundle(namespace, certificates, certificates.caPEM)
+}
+
+func upstreamTransportBackendManifestWithCABundle(namespace string, certificates *jwtTestCertificates, caBundle []byte) ([]byte, error) {
 	envoyConfig := fmt.Sprintf(`node: {id: transport-backend, cluster: transport-backend}
 admin:
   access_log_path: /dev/null
@@ -246,7 +310,7 @@ static_resources:
 	caConfigMap := &corev1.ConfigMap{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
 		ObjectMeta: metav1.ObjectMeta{Name: "transport-backend-ca", Namespace: namespace},
-		Data:       map[string]string{"ca.pem": string(certificates.caPEM)},
+		Data:       map[string]string{"ca.pem": string(caBundle)},
 	}
 	container := corev1.Container{
 		Name: "envoy", Image: config.DefaultEnvoyImage, ImagePullPolicy: corev1.PullIfNotPresent,

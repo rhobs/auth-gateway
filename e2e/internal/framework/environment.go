@@ -300,20 +300,24 @@ func (e *Environment) WaitForDeployment(ctx context.Context, namespace, name str
 		if deploymentFailed(deployment) {
 			return false, fmt.Errorf("deployment %q exceeded its progress deadline", name)
 		}
-		desired := int32(1)
-		if deployment.Spec.Replicas != nil {
-			desired = *deployment.Spec.Replicas
-		}
-		complete := deployment.Status.ObservedGeneration >= deployment.Generation &&
-			deployment.Status.UpdatedReplicas >= desired &&
-			deployment.Status.AvailableReplicas >= desired &&
-			deployment.Status.UnavailableReplicas == 0
-		return complete, nil
+		return deploymentRolloutComplete(deployment), nil
 	})
 	if err != nil {
 		return fmt.Errorf("wait for Deployment %q rollout: %w", name, err)
 	}
 	return nil
+}
+
+func deploymentRolloutComplete(deployment *appsv1.Deployment) bool {
+	desired := int32(1)
+	if deployment.Spec.Replicas != nil {
+		desired = *deployment.Spec.Replicas
+	}
+	return deployment.Status.ObservedGeneration >= deployment.Generation &&
+		deployment.Status.Replicas == desired &&
+		deployment.Status.UpdatedReplicas == desired &&
+		deployment.Status.AvailableReplicas == desired &&
+		deployment.Status.UnavailableReplicas == 0
 }
 
 // RestartDeployment changes a pod-template annotation and waits for the replacement Pods to become available.
@@ -342,14 +346,14 @@ func (e *Environment) Secret(ctx context.Context, namespace, name string) (*core
 }
 
 func (e *Environment) PodUID(ctx context.Context, namespace, labelSelector string) (string, error) {
-	pods, err := e.client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
+	identities, err := e.PodIdentities(ctx, namespace, labelSelector)
 	if err != nil {
-		return "", fmt.Errorf("list Pods matching %q: %w", labelSelector, err)
+		return "", err
 	}
-	if len(pods.Items) != 1 || pods.Items[0].UID == "" {
-		return "", fmt.Errorf("expected one Pod matching %q, got %d", labelSelector, len(pods.Items))
+	if len(identities) != 1 {
+		return "", fmt.Errorf("expected one non-terminating Pod matching %q, got %d", labelSelector, len(identities))
 	}
-	return string(pods.Items[0].UID), nil
+	return identities[0].UID, nil
 }
 
 // PodIdentity describes the name and UID of a non-terminating Pod.
@@ -408,16 +412,22 @@ func (e *Environment) PodNames(ctx context.Context, namespace, labelSelector str
 	return names, nil
 }
 
-// PodContainerNames returns the name and container names from the single Pod matching labelSelector.
+// PodContainerNames returns the name and container names from the single non-terminating Pod matching labelSelector.
 func (e *Environment) PodContainerNames(ctx context.Context, namespace, labelSelector string) (string, []string, error) {
 	pods, err := e.client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
 	if err != nil {
 		return "", nil, fmt.Errorf("list Pods matching %q: %w", labelSelector, err)
 	}
-	if len(pods.Items) != 1 {
-		return "", nil, fmt.Errorf("expected one Pod matching %q, got %d", labelSelector, len(pods.Items))
+	activePods := make([]corev1.Pod, 0, len(pods.Items))
+	for _, pod := range pods.Items {
+		if pod.DeletionTimestamp == nil {
+			activePods = append(activePods, pod)
+		}
 	}
-	pod := pods.Items[0]
+	if len(activePods) != 1 {
+		return "", nil, fmt.Errorf("expected one non-terminating Pod matching %q, got %d", labelSelector, len(activePods))
+	}
+	pod := activePods[0]
 	containers := pod.Spec.Containers
 	names := make([]string, 0, len(containers))
 	for _, container := range containers {

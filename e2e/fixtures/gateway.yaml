@@ -56,6 +56,9 @@ apis:
           exact: /routes/order/specific
         rewrite:
           path: /anything/second
+      - methods: [POST]
+        path:
+          exact: /anything/no-rewrite
 
   - name: upstream-health
     upstream:

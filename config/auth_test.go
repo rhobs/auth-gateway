@@ -169,12 +169,19 @@ func TestValidateRejectsInvalidAuthenticationAndAuthorization(t *testing.T) {
 		{name: "duplicate policy", want: "duplicate authorization policy name", edit: func(c *Config) { c.AuthorizationPolicies[1].Name = c.AuthorizationPolicies[0].Name }},
 		{name: "unknown authentication method", want: "servers[0].authentication.any_of", edit: func(c *Config) { c.Servers[0].Authentication.AnyOf = []string{"missing"} }},
 		{name: "duplicate authentication method", want: "servers[0].authentication.any_of", edit: func(c *Config) { c.Servers[0].Authentication.AnyOf = []string{"internal-jwt", "internal-jwt"} }},
+		{name: "no authentication combination", want: "servers[0].authentication must set exactly one", edit: func(c *Config) { c.Servers[0].Authentication = &Authentication{} }},
 		{name: "both authentication combinations", want: "servers[0].authentication must set exactly one", edit: func(c *Config) { c.Servers[0].Authentication.AllOf = []string{"internal-jwt"} }},
 		{name: "empty authentication combination", want: "servers[0].authentication.any_of", edit: func(c *Config) { c.Servers[0].Authentication.AnyOf = []string{} }},
 		{name: "multiple JWT methods in all_of", want: "servers[0].authentication.all_of", edit: func(c *Config) {
 			c.Servers[0].Authentication = &Authentication{AllOf: []string{"internal-jwt", "external-jwt"}}
 		}},
 		{name: "unknown authorization policy", want: "servers[0].authorization.any_of", edit: func(c *Config) { c.Servers[0].Authorization.AnyOf = []string{"missing"} }},
+		{name: "no authorization combination", want: "servers[0].authorization must set exactly one", edit: func(c *Config) { c.Servers[0].Authorization = &Authorization{} }},
+		{name: "both authorization combinations", want: "servers[0].authorization must set exactly one", edit: func(c *Config) { c.Servers[0].Authorization.AllOf = []string{"metrics-writers"} }},
+		{name: "duplicate any_of authorization policy", want: "servers[0].authorization.any_of", edit: func(c *Config) { c.Servers[0].Authorization.AnyOf = []string{"metrics-writers", "metrics-writers"} }},
+		{name: "duplicate all_of authorization policy", want: "servers[0].authorization.all_of", edit: func(c *Config) {
+			c.Servers[0].Authorization = &Authorization{AllOf: []string{"metrics-writers", "metrics-writers"}}
+		}},
 		{name: "authorization without authentication", want: "servers[0].authorization requires authentication", edit: func(c *Config) { c.Servers[0].Authentication = nil }},
 		{name: "unknown grant authenticator", want: "authorization_policies[0].grants[0].authenticator", edit: func(c *Config) { c.AuthorizationPolicies[0].Grants[0].Authenticator = "missing" }},
 		{name: "empty grant APIs", want: "authorization_policies[0].grants[0].apis", edit: func(c *Config) { c.AuthorizationPolicies[0].Grants[0].APIs = nil }},

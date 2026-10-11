@@ -63,10 +63,17 @@ func TestChooseRunningPodExcludesTerminatingPods(t *testing.T) {
 }
 
 func TestPodContainerNamesReturnsContainersFromOneMatchingPod(t *testing.T) {
-	client := fake.NewClientset(&corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "auth-gateway", Namespace: "test", Labels: map[string]string{"app": "gateway"}},
-		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "envoy"}, {Name: "otel-collector"}}},
-	})
+	now := metav1.Now()
+	client := fake.NewClientset(
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "auth-gateway", Namespace: "test", Labels: map[string]string{"app": "gateway"}},
+			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "envoy"}, {Name: "otel-collector"}}},
+		},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "auth-gateway-old", Namespace: "test", Labels: map[string]string{"app": "gateway"}, DeletionTimestamp: &now},
+			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "old-envoy"}}},
+		},
+	)
 	env := &Environment{client: client}
 
 	podName, names, err := env.PodContainerNames(context.Background(), "test", "app=gateway")

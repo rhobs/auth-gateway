@@ -5,6 +5,7 @@ package framework
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -50,5 +51,30 @@ func TestPodIdentityAccessorsReturnSortedNonTerminatingPods(t *testing.T) {
 	}
 	if want := []string{"gateway-a", "gateway-z"}; !slices.Equal(names, want) {
 		t.Fatalf("Pod names = %v, want %v", names, want)
+	}
+
+	if _, err := env.PodUID(context.Background(), "test", "app=gateway"); err == nil || !strings.Contains(err.Error(), "got 2") {
+		t.Fatalf("single Pod UID error = %v, want an error for two active Pods", err)
+	}
+}
+
+func TestPodUIDIgnoresTerminatingPods(t *testing.T) {
+	now := metav1.Now()
+	client := fake.NewClientset(
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Name: "gateway", Namespace: "test", UID: "uid-new", Labels: map[string]string{"app": "gateway"},
+		}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Name: "gateway-old", Namespace: "test", UID: "uid-old", Labels: map[string]string{"app": "gateway"}, DeletionTimestamp: &now,
+		}},
+	)
+	env := &Environment{client: client}
+
+	uid, err := env.PodUID(context.Background(), "test", "app=gateway")
+	if err != nil {
+		t.Fatalf("read active Pod UID: %v", err)
+	}
+	if uid != "uid-new" {
+		t.Fatalf("Pod UID = %q, want %q", uid, "uid-new")
 	}
 }

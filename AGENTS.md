@@ -25,6 +25,8 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for local checks, code layout, and gol
 - Keep each test focused on a distinct behavior. Use valid baselines and assert the intended error field or cause for invalid configuration.
 - Use explicit YAML snippets or checked-in fixtures for loader tests. Do not build YAML through string replacement. For semantic validation tests, load a valid baseline and mutate one typed field so each case exercises `Validate()` without repeating YAML.
 - Unit tests cover schema, defaults, validation, and generated output. Gateway e2e tests cover observable gateway behavior. Do not add gateway e2e tests for Envoy semantics such as HTTP/2 flow control, timeouts, retries, overload, or connection draining.
+- Keep JWKS caching checks in unit tests: assert that configuration produces the intended Envoy cache duration. Do not test JWKS caching behavior in gateway e2e, including warm or cold caches, expiry, and outage masking. Keep JWT e2e tests focused on authentication and authorization outcomes.
+- Keep API-key request decision cases read-only on a fresh shared gateway. Test Secret rotation, malformed-update retention, recovery, and revocation as one lifecycle progression instead of resetting state between transitions.
 - Organize e2e scenarios by use case with isolated namespaces and cleanup. Verify forwarding through httpbin, including method, path, headers, and body. Denied requests must not reach the backend.
 - Run checks relevant to the change and the full e2e suite before handoff. Runtime-image checks are optional when they are not required by the change.
 
@@ -33,6 +35,7 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) for local checks, code layout, and gol
 - Work on a feature branch and never push directly to `main`.
 - Keep work local for now. Do not push branches or open PRs/MRs until asked.
 - Keep documentation brief and use simple technical English.
+- Maintain [docs/schema-test-ledger.md](docs/schema-test-ledger.md) as the long-term coverage reference for supported configuration fields. Update it when the schema, behavior, or test evidence changes. Treat [docs/test-suite-review.md](docs/test-suite-review.md) as a dated worklist and benchmark; retire or replace it when its phases are resolved.
 - Keep user-facing doc guides focused on gateway configuration, client
   requests, observable behavior, and resources users must provide.
 - Docs in docs/guides should provide user facing documentation and doesn't need to focus on envoy internals

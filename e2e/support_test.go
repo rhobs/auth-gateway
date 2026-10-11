@@ -168,3 +168,9 @@ func writeTestOutput(format string, args ...any) {
 		log.Printf("write Ginkgo output: %v", err)
 	}
 }
+
+func timeE2EPhase(name string, action func()) {
+	By("timing:start:" + name)
+	action()
+	By("timing:end:" + name)
+}

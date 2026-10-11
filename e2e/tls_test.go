@@ -102,33 +102,39 @@ var _ = Describe("Server TLS", Label("gateway", "tls", "namespace-"+tlsNamespace
 		Expect(err).NotTo(HaveOccurred())
 
 		By("asking cert-manager to renew the server certificate")
-		Expect(env.RenewCertificate(ctx, tlsNamespace, "auth-gateway-server")).To(Succeed())
+		timeE2EPhase("cert-manager renewal trigger", func() {
+			Expect(env.RenewCertificate(ctx, tlsNamespace, "auth-gateway-server")).To(Succeed())
+		})
 
 		var rotatedTLS *httpsResult
 		initialSerial := initialTLS.certificate.SerialNumber.String()
-		Eventually(func() error {
-			result, err := requestHTTPS(ctx, httpsAddress, httpsHost, httpsHost, "/upstream-health", routingRootCAs)
-			if err != nil {
-				return err
-			}
-			if result.certificate.SerialNumber.String() == initialSerial {
-				return fmt.Errorf("certificate serial %s has not rotated", initialSerial)
-			}
-			rotatedTLS = result
-			return nil
-		}).WithContext(ctx).WithTimeout(4 * time.Minute).WithPolling(500 * time.Millisecond).Should(Succeed())
+		timeE2EPhase("cert-manager apply-to-observed SDS reload", func() {
+			Eventually(func() error {
+				result, err := requestHTTPS(ctx, httpsAddress, httpsHost, httpsHost, "/upstream-health", routingRootCAs)
+				if err != nil {
+					return err
+				}
+				if result.certificate.SerialNumber.String() == initialSerial {
+					return fmt.Errorf("certificate serial %s has not rotated", initialSerial)
+				}
+				rotatedTLS = result
+				return nil
+			}).WithContext(ctx).WithTimeout(4 * time.Minute).WithPolling(500 * time.Millisecond).Should(Succeed())
+		})
 
-		Expect(rotatedTLS.status).To(Equal(http.StatusOK))
-		Expect(rotatedTLS.certificate.DNSNames).To(ContainElement(httpsHost))
-		Expect(rotatedTLS.certificate.NotAfter).To(BeTemporally(">", initialTLS.certificate.NotAfter))
-		Expect(rotatedTLS.certificate.RawSubjectPublicKeyInfo).NotTo(Equal(initialTLS.certificate.RawSubjectPublicKeyInfo), "cert-manager should rotate the private key")
+		timeE2EPhase("cert-manager post-renewal assertions", func() {
+			Expect(rotatedTLS.status).To(Equal(http.StatusOK))
+			Expect(rotatedTLS.certificate.DNSNames).To(ContainElement(httpsHost))
+			Expect(rotatedTLS.certificate.NotAfter).To(BeTemporally(">", initialTLS.certificate.NotAfter))
+			Expect(rotatedTLS.certificate.RawSubjectPublicKeyInfo).NotTo(Equal(initialTLS.certificate.RawSubjectPublicKeyInfo), "cert-manager should rotate the private key")
 
-		rotatedPodUID, err := gatewayPodUID(ctx, tlsNamespace)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(rotatedPodUID).To(Equal(initialPodUID), "the gateway Pod should not restart during certificate rotation")
-		queryTLS, err := requestHTTPS(ctx, httpsAddress, queryHTTPSHost, queryHTTPSHost, "/upstream-health", routingRootCAs)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(queryTLS.status).To(Equal(http.StatusOK))
-		Expect(queryTLS.certificate.Raw).To(Equal(initialQueryTLS.certificate.Raw), "renewing one server certificate should leave the other unchanged")
+			rotatedPodUID, err := gatewayPodUID(ctx, tlsNamespace)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rotatedPodUID).To(Equal(initialPodUID), "the gateway Pod should not restart during certificate rotation")
+			queryTLS, err := requestHTTPS(ctx, httpsAddress, queryHTTPSHost, queryHTTPSHost, "/upstream-health", routingRootCAs)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(queryTLS.status).To(Equal(http.StatusOK))
+			Expect(queryTLS.certificate.Raw).To(Equal(initialQueryTLS.certificate.Raw), "renewing one server certificate should leave the other unchanged")
+		})
 	}, SpecTimeout(5*time.Minute))
 })

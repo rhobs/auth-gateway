@@ -77,6 +77,45 @@ func TestJWTProcessingUsesFileBasedECDSConfiguration(t *testing.T) {
 	}
 }
 
+func TestOrderedAttributeMappersGenerateSequentialECDSUpdates(t *testing.T) {
+	c := loadConfigCase(t, "jwt-auth-with-mappings")
+	first := c.Processing[0]
+	first.Attributes["order_id"] = AttributeMappings{Mappings: map[string]string{"first": "second"}}
+	c.Processing[0] = first
+	c.Processing = append(c.Processing, Processor{
+		Name: "later-mappings",
+		Type: "attribute-mapper",
+		Attributes: map[string]AttributeMappings{
+			"order_id": {Mappings: map[string]string{"second": "final"}},
+		},
+	})
+
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	processing := decodeProcessingECDSConfig(t, files.ProcessingConfig.Contents)
+	var expressions []string
+	for _, update := range processing.OnRequestHeaders {
+		if update.GetObjectKey() != filterStateKey("order_id") {
+			continue
+		}
+		format := update.GetFormatString().GetTextFormatSource()
+		if format == nil {
+			t.Fatal("ordered mapper update has no CEL expression")
+		}
+		expressions = append(expressions, format.GetInlineString())
+	}
+	if len(expressions) != 2 {
+		t.Fatalf("order_id mapping updates = %d, want two: %v", len(expressions), expressions)
+	}
+	for index, want := range []string{"== b\"first\" ? \"second\"", "== b\"second\" ? \"final\""} {
+		if !strings.Contains(expressions[index], want) {
+			t.Errorf("mapper %d expression = %q, want it to contain %q", index, expressions[index], want)
+		}
+	}
+}
+
 func TestJWTExpressionsUseEnvoyCELVariablesAndGuardMissingAttributes(t *testing.T) {
 	claim := jwtClaimExpression([]string{"issuer-one", "organization", "id"})
 	claimMetadata := `metadata.filter_metadata["envoy.filters.http.jwt_authn"]`

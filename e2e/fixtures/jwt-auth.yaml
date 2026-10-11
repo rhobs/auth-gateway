@@ -21,6 +21,12 @@ authorization_policies:
         apis: [metrics]
         attributes:
           my_list: [y, z]
+  - name: metrics-z-writers
+    grants:
+      - authenticator: issuer-one
+        apis: [metrics]
+        attributes:
+          my_list: [z]
 apis:
   - name: metrics
     upstream:
@@ -38,6 +44,22 @@ servers:
       any_of: [issuer-one]
     authorization:
       any_of: [metrics-writers]
+    apis: [metrics]
+  - hostname: no-policy.jwt.auth-gateway.test
+    authentication:
+      any_of: [issuer-one]
+    apis: [metrics]
+  - hostname: any-policy.jwt.auth-gateway.test
+    authentication:
+      any_of: [issuer-one]
+    authorization:
+      any_of: [metrics-writers, metrics-z-writers]
+    apis: [metrics]
+  - hostname: all-policy.jwt.auth-gateway.test
+    authentication:
+      any_of: [issuer-one]
+    authorization:
+      all_of: [metrics-writers, metrics-z-writers]
     apis: [metrics]
 kubernetes:
   name: auth-gateway

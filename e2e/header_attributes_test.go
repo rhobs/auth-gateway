@@ -140,7 +140,9 @@ var _ = Describe("Header-sourced attributes", Label("gateway", "authentication",
 		Expect(updated.ProcessingConfigMap.Data).NotTo(Equal(gateway.resources.ProcessingConfigMap.Data))
 		manifest, err := yamlDocuments(updated.ProcessingConfigMap)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(env.Apply(ctx, headerAttributesNamespace, manifest)).To(Succeed())
+		timeE2EPhase("header mapping resource apply", func() {
+			Expect(env.Apply(ctx, headerAttributesNamespace, manifest)).To(Succeed())
+		})
 
 		labels := map[string]string{"api": "header-ingest", "http_status_code": strconv.Itoa(http.StatusOK), "tenant": "team-c"}
 		before, err := requestMetricCount(ctx, gateway.adminAddr, labels)
@@ -148,20 +150,24 @@ var _ = Describe("Header-sourced attributes", Label("gateway", "authentication",
 		headers := http.Header{"X-JWT-Tenant": []string{"client-a"}}
 		var status int
 		var body []byte
-		Eventually(func() bool {
-			status, body, err = gateway.request(ctx, headerJWTOnlyHost, false, http.MethodPost, "/header-ingest", headerAttributeBody,
-				gateway.token("client-a", "writer-a"), "", headers)
-			return err == nil && status == http.StatusOK && headerValue(jwtEchoHeaders(body), "X-Processed-Tenant") == "team-c"
-		}).WithContext(ctx).WithTimeout(3*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
-			return fmt.Sprintf("header mapping did not reload: HTTP %d: %s (error: %v)", status, body, err)
+		timeE2EPhase("header mapping apply-to-observed reload", func() {
+			Eventually(func() bool {
+				status, body, err = gateway.request(ctx, headerJWTOnlyHost, false, http.MethodPost, "/header-ingest", headerAttributeBody,
+					gateway.token("client-a", "writer-a"), "", headers)
+				return err == nil && status == http.StatusOK && headerValue(jwtEchoHeaders(body), "X-Processed-Tenant") == "team-c"
+			}).WithContext(ctx).WithTimeout(3*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
+				return fmt.Sprintf("header mapping did not reload: HTTP %d: %s (error: %v)", status, body, err)
+			})
 		})
-		expectHeaderAttributeEcho(body, "team-c", map[string]string{"X-JWT-Tenant": "client-a"})
-		after, err := requestMetricCount(ctx, gateway.adminAddr, labels)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(after).To(BeNumerically(">", before))
-		newUID, err := gatewayPodUID(ctx, headerAttributesNamespace)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(newUID).To(Equal(oldUID))
+		timeE2EPhase("header mapping post-reload assertions", func() {
+			expectHeaderAttributeEcho(body, "team-c", map[string]string{"X-JWT-Tenant": "client-a"})
+			after, err := requestMetricCount(ctx, gateway.adminAddr, labels)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(after).To(BeNumerically(">", before))
+			newUID, err := gatewayPodUID(ctx, headerAttributesNamespace)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(newUID).To(Equal(oldUID))
+		})
 	}, SpecTimeout(4*time.Minute))
 })
 

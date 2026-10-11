@@ -33,20 +33,21 @@ import (
 )
 
 const (
-	jwtPlainHost         = "plain.jwt.auth-gateway.test"
-	jwtHeadersHost       = "headers.jwt.auth-gateway.test"
-	jwtManagedHeaderHost = "managed.jwt.auth-gateway.test"
-	jwtHTTPHost          = "writer.jwt.auth-gateway.test"
-	jwtHTTPSHost         = "writer-tls.jwt.auth-gateway.test"
-	jwtIssuerOneHost     = "issuer-one-only.jwt.auth-gateway.test"
-	jwtLifecycleHost     = "lifecycle.jwt.auth-gateway.test"
+	jwtPlainHost          = "plain.jwt.auth-gateway.test"
+	jwtPlainNoPolicyHost  = "no-policy.jwt.auth-gateway.test"
+	jwtPlainAnyPolicyHost = "any-policy.jwt.auth-gateway.test"
+	jwtPlainAllPolicyHost = "all-policy.jwt.auth-gateway.test"
+	jwtHeadersHost        = "headers.jwt.auth-gateway.test"
+	jwtManagedHeaderHost  = "managed.jwt.auth-gateway.test"
+	jwtHTTPHost           = "writer.jwt.auth-gateway.test"
+	jwtHTTPSHost          = "writer-tls.jwt.auth-gateway.test"
+	jwtIssuerOneHost      = "issuer-one-only.jwt.auth-gateway.test"
 )
 
 var (
-	jwtPlainNamespace     = e2eNamespace("auth-gateway-jwt-plain-e2e")
-	jwtHeadersNamespace   = e2eNamespace("auth-gateway-jwt-headers-e2e")
-	jwtNamespace          = e2eNamespace("auth-gateway-jwt-e2e")
-	jwtLifecycleNamespace = e2eNamespace("auth-gateway-jwt-lifecycle-e2e")
+	jwtPlainNamespace   = e2eNamespace("auth-gateway-jwt-plain-e2e")
+	jwtHeadersNamespace = e2eNamespace("auth-gateway-jwt-headers-e2e")
+	jwtNamespace        = e2eNamespace("auth-gateway-jwt-e2e")
 )
 
 type jwtE2E struct {
@@ -62,10 +63,9 @@ type jwtE2E struct {
 }
 
 var (
-	jwtPlainGateway     *jwtE2E
-	jwtHeadersGateway   *jwtE2E
-	jwtGateway          *jwtE2E
-	jwtLifecycleGateway *jwtE2E
+	jwtPlainGateway   *jwtE2E
+	jwtHeadersGateway *jwtE2E
+	jwtGateway        *jwtE2E
 )
 
 func jwtTrustedCA() *config.TrustedCA {
@@ -282,10 +282,6 @@ func makeJWTTestCertificates(dnsNames []string) (*jwtTestCertificates, error) {
 }
 
 func jwtIssuerManifest(namespace string, certificates *jwtTestCertificates, keys map[string]*rsa.PrivateKey) ([]byte, error) {
-	return jwtIssuerManifestWithState(namespace, certificates, keys, nil, "")
-}
-
-func jwtIssuerManifestWithState(namespace string, certificates *jwtTestCertificates, keys map[string]*rsa.PrivateKey, statuses map[string]int, revision string) ([]byte, error) {
 	issuerOneJWKS, err := jwtSetBytes(keys, "issuer-one")
 	if err != nil {
 		return nil, err
@@ -294,13 +290,7 @@ func jwtIssuerManifestWithState(namespace string, certificates *jwtTestCertifica
 	if err != nil {
 		return nil, err
 	}
-	statusFor := func(issuer string) int {
-		if status, exists := statuses[issuer]; exists {
-			return status
-		}
-		return http.StatusOK
-	}
-	envoyConfig := fmt.Sprintf(`node: {id: jwt-jwks, cluster: jwt-jwks}
+	envoyConfig := `node: {id: jwt-jwks, cluster: jwt-jwks}
 static_resources:
   listeners:
     - name: jwks
@@ -328,11 +318,11 @@ static_resources:
                       routes:
                         - match: {prefix: /issuer-one}
                           direct_response:
-                            status: %d
+                            status: 200
                             body: {filename: /etc/jwks/issuer-one.json}
                         - match: {prefix: /issuer-two}
                           direct_response:
-                            status: %d
+                            status: 200
                             body: {filename: /etc/jwks/issuer-two.json}
                         - match: {prefix: /}
                           direct_response: {status: 404}
@@ -340,8 +330,7 @@ static_resources:
                   - name: envoy.filters.http.router
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
-
-`, statusFor("issuer-one"), statusFor("issuer-two"))
+`
 	labels := map[string]string{"app": "jwt-jwks"}
 	configMap := &corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: "jwt-jwks-config", Namespace: namespace}, Data: map[string]string{"envoy.yaml": envoyConfig, "issuer-one.json": string(issuerOneJWKS), "issuer-two.json": string(issuerTwoJWKS)}}
 	secret := &corev1.Secret{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"}, ObjectMeta: metav1.ObjectMeta{Name: "jwt-jwks-tls", Namespace: namespace}, Type: corev1.SecretTypeTLS, Data: map[string][]byte{corev1.TLSCertKey: certificates.chainPEM, corev1.TLSPrivateKeyKey: certificates.keyPEM}}
@@ -363,11 +352,8 @@ static_resources:
 		ObjectMeta: metav1.ObjectMeta{Name: "jwt-jwks", Namespace: namespace},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: new(int32(1)), Selector: &metav1.LabelSelector{MatchLabels: labels},
-			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: map[string]string{}}, Spec: corev1.PodSpec{Containers: []corev1.Container{container}, Volumes: volumes}},
+			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{Containers: []corev1.Container{container}, Volumes: volumes}},
 		},
-	}
-	if revision != "" {
-		deployment.Spec.Template.Annotations["auth-gateway.test/jwks-revision"] = revision
 	}
 	service := &corev1.Service{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"}, ObjectMeta: metav1.ObjectMeta{Name: "jwks", Namespace: namespace}, Spec: corev1.ServiceSpec{Selector: labels, Ports: []corev1.ServicePort{{Name: "https", Port: 443, TargetPort: intstr.FromInt(8443)}}}}
 	return yamlDocuments(configMap, secret, deployment, service)
@@ -388,17 +374,6 @@ func jwtSetBytes(keys map[string]*rsa.PrivateKey, issuer string) ([]byte, error)
 		publicKeys = append(publicKeys, map[string]string{"kty": "RSA", "kid": keyID, "use": "sig", "alg": "RS256", "n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()), "e": base64.RawURLEncoding.EncodeToString(eBytes)})
 	}
 	return json.Marshal(map[string]any{"keys": publicKeys})
-}
-
-func updateJWTJWKSServer(ctx context.Context, namespace string, certificates *jwtTestCertificates, keys map[string]*rsa.PrivateKey, statuses map[string]int, revision string) error {
-	manifest, err := jwtIssuerManifestWithState(namespace, certificates, keys, statuses, revision)
-	if err != nil {
-		return err
-	}
-	if err := env.Apply(ctx, namespace, manifest); err != nil {
-		return err
-	}
-	return env.WaitForDeployment(ctx, namespace, "jwt-jwks", 4*time.Minute)
 }
 
 func jwtTestClaims(tenant string) map[string]any {
