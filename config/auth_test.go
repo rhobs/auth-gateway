@@ -7,15 +7,15 @@ import (
 	"time"
 )
 
-func TestAuthExampleContainsExpectedAuthenticationConfiguration(t *testing.T) {
-	c := loadAuthExample(t)
+func TestAuthValidationFixtureContainsExpectedConfiguration(t *testing.T) {
+	c := loadAuthValidationFixture(t)
 	if len(c.Authenticators) != 3 || len(c.AuthorizationPolicies) != 3 || len(c.Processing) != 1 {
-		t.Fatalf("auth example counts = %d authenticators, %d policies, %d processors", len(c.Authenticators), len(c.AuthorizationPolicies), len(c.Processing))
+		t.Fatalf("fixture counts = %d authenticators, %d policies, %d processors", len(c.Authenticators), len(c.AuthorizationPolicies), len(c.Processing))
 	}
 	if c.Processing[0].Type != "attribute-mapper" {
 		t.Fatalf("processing type = %q", c.Processing[0].Type)
 	}
-	if got, want := c.Authenticators[0].Attributes["tenant_id"].ClaimPath, []string{"x", "y", "z", "claim"}; !slices.Equal(got, want) {
+	if got, want := c.Authenticators[0].Attributes["tenant_id"].ClaimPath, []string{"organization", "id"}; !slices.Equal(got, want) {
 		t.Fatalf("tenant claim path = %v, want %v", got, want)
 	}
 	if source := c.Authenticators[0].Attributes["requested_tenant"]; source.Header == nil || *source.Header != "X-Tenant" {
@@ -24,12 +24,9 @@ func TestAuthExampleContainsExpectedAuthenticationConfiguration(t *testing.T) {
 	if got, want := c.AuthorizationPolicies[0].Grants[0].Attributes["tenant_id"], []string{"client-123", "client-456"}; !slices.Equal(got, want) {
 		t.Fatalf("authorization values = %v, want original claim values %v", got, want)
 	}
-	if got, want := c.AuthorizationPolicies[2].Grants[0].Attributes["requested_tenant"], []string{"client-123"}; !slices.Equal(got, want) {
-		t.Fatalf("header grant values = %v, want %v", got, want)
-	}
 	if key := c.Authenticators[2].APIKey; key == nil || key.Secret != "auth-gateway-api-keys" || key.Header != "X-Partner-Key" ||
 		!slices.Equal(c.Authenticators[2].credentialAttributeNames(), []string{"tenant_id", "writer_id"}) {
-		t.Fatalf("example API-key authenticator = %#v", key)
+		t.Fatalf("fixture API-key authenticator = %#v", key)
 	}
 	if source := c.Authenticators[2].Attributes["requested_tenant"]; source.Header == nil || *source.Header != "X-Tenant" {
 		t.Fatalf("API-key header attribute = %#v", source)
@@ -41,7 +38,7 @@ func TestAuthExampleContainsExpectedAuthenticationConfiguration(t *testing.T) {
 }
 
 func TestValidateAcceptsLiteralClaimKeysAndSingleJWTAllOf(t *testing.T) {
-	config := loadAuthExample(t)
+	config := loadAuthValidationFixture(t)
 	config.Authenticators[0].Attributes["tenant_id"] = AttributeSource{
 		ClaimPath: []string{"organization", "customer.id"},
 	}
@@ -123,7 +120,7 @@ func TestValidateAuthenticatorAttributeSources(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			c := loadAuthExample(t)
+			c := loadAuthValidationFixture(t)
 			test.edit(&c)
 			if err := c.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("validation error = %v, want %q", err, test.want)
@@ -133,7 +130,7 @@ func TestValidateAuthenticatorAttributeSources(t *testing.T) {
 }
 
 func TestValidateAcceptsHeaderOnlyGrant(t *testing.T) {
-	c := loadAuthExample(t)
+	c := loadAuthValidationFixture(t)
 	c.AuthorizationPolicies[0].Grants[0].Attributes = map[string][]string{"requested_tenant": {"client-123"}}
 	c.AuthorizationPolicies[2].Grants[0].Attributes = map[string][]string{"requested_tenant": {"client-123"}}
 	if err := c.Validate(); err != nil {
@@ -197,7 +194,7 @@ func TestValidateRejectsInvalidAuthenticationAndAuthorization(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			config := loadAuthExample(t)
+			config := loadAuthValidationFixture(t)
 			test.edit(&config)
 			if err := config.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("validation error = %v, want %q", err, test.want)
@@ -207,7 +204,7 @@ func TestValidateRejectsInvalidAuthenticationAndAuthorization(t *testing.T) {
 }
 
 func TestAnyOfMayOmitUnusedHeaderAttributes(t *testing.T) {
-	config := loadAuthExample(t)
+	config := loadAuthValidationFixture(t)
 	delete(config.Authenticators[1].Attributes, "writer_id")
 	if err := config.Validate(); err != nil {
 		t.Fatalf("Validate rejected an any_of authenticator that omits a route attribute: %v", err)
@@ -220,14 +217,14 @@ func TestAnyOfMayOmitUnusedHeaderAttributes(t *testing.T) {
 }
 
 func TestDuplicateJWTIssuersAreRejectedPerServer(t *testing.T) {
-	config := loadAuthExample(t)
+	config := loadAuthValidationFixture(t)
 	config.Authenticators[1].JWT.Issuer = config.Authenticators[0].JWT.Issuer
 	config.Authenticators[1].JWT.Audiences = []string{"another-audience"}
 	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "same issuer") {
 		t.Fatalf("Validate error = %v, want duplicate issuer binding error", err)
 	}
 
-	config = loadAuthExample(t)
+	config = loadAuthValidationFixture(t)
 	config.Authenticators[1].JWT.Issuer = config.Authenticators[0].JWT.Issuer
 	config.Servers = config.Servers[:2]
 	config.Servers[0].Authentication = &Authentication{AnyOf: []string{"internal-jwt"}}

@@ -1,0 +1,146 @@
+version: 1
+
+authenticators:
+  - name: internal-jwt
+    jwt:
+      issuer: https://internal.jwt.test
+      jwks:
+        uri: https://internal.jwt.test/jwks
+      audiences: [gateway-test]
+    attributes:
+      tenant_id:
+        claim_path: [organization, id]
+      writer_id:
+        claim_path: [sub]
+      requested_tenant:
+        header: X-Tenant
+
+  - name: external-jwt
+    jwt:
+      issuer: https://external.jwt.test
+      jwks:
+        uri: https://external.jwt.test/jwks
+      audiences: [gateway-test]
+    attributes:
+      tenant_id:
+        claim_path: [organization, id]
+      writer_id:
+        claim_path: [sub]
+
+  - name: partner-key
+    api_key:
+      secret: auth-gateway-api-keys
+      header: X-Partner-Key
+    attributes:
+      tenant_id: {credential: true}
+      writer_id: {credential: true}
+      requested_tenant:
+        header: X-Tenant
+
+authorization_policies:
+  - name: metrics-writers
+    grants:
+      - authenticator: internal-jwt
+        apis: [metrics-write]
+        attributes:
+          tenant_id: [client-123, client-456]
+      - authenticator: external-jwt
+        apis: [metrics-write]
+        attributes:
+          tenant_id: [customer-456]
+
+  - name: logs-writers
+    grants:
+      - authenticator: internal-jwt
+        apis: [logs]
+        attributes:
+          tenant_id: [client-123]
+      - authenticator: external-jwt
+        apis: [logs]
+        attributes:
+          tenant_id: [customer-456]
+
+  - name: query-readers
+    grants:
+      - authenticator: internal-jwt
+        apis: [metrics-query]
+        attributes:
+          tenant_id: [client-123, client-456]
+      - authenticator: external-jwt
+        apis: [metrics-query]
+        attributes:
+          tenant_id: [customer-456]
+
+processing:
+  - name: upstream-tenants
+    type: attribute-mapper
+    attributes:
+      tenant_id:
+        mappings:
+          client-123: team-a
+          client-456: team-b
+          customer-456: team-a
+
+apis:
+  - name: metrics-write
+    metrics:
+      labels:
+        tenant: tenant_id
+        writer: writer_id
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [POST]
+        path:
+          exact: /metrics/api/v1/receive
+        rewrite:
+          path: /api/v1/receive
+        processing:
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: tenant_id
+            - name: X-Writer-ID
+              from_attribute: writer_id
+
+  - name: metrics-query
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [GET]
+        path:
+          exact: /metrics/api/v1/query
+        rewrite:
+          path: /api/v1/query
+
+  - name: logs
+    metrics: {}
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [POST]
+        path:
+          prefix: /logs/otlp/
+        rewrite:
+          prefix: /otlp/
+
+servers:
+  - hostname: internal.auth.test
+    authentication:
+      any_of: [internal-jwt, external-jwt]
+    authorization:
+      any_of: [metrics-writers, logs-writers, query-readers]
+    apis: [metrics-write, metrics-query, logs]
+
+  - hostname: external.auth.test
+    authentication:
+      any_of: [internal-jwt, external-jwt]
+    authorization:
+      any_of: [metrics-writers]
+    apis: [metrics-write]
+
+kubernetes:
+  name: auth-gateway
+  namespace: gateway-test

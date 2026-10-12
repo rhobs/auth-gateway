@@ -1030,7 +1030,7 @@ func TestJWTRequiredHeadersAreRouteScopedAndManaged(t *testing.T) {
 }
 
 func TestJWTAuthorizationPolicyCombinationsAreAPIScoped(t *testing.T) {
-	c := loadAuthExample(t)
+	c := loadConfigCase(t, "jwt-auth-with-mappings")
 	rules := c.toServerRBACRules(c.Servers[0])
 	if rules.Policies["api-metrics-write"] == nil || rules.Policies["api-logs"] == nil {
 		t.Fatalf("any_of policies did not generate both granted API rules: %#v", rules.Policies)

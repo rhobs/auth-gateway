@@ -20,9 +20,9 @@ import (
 )
 
 func TestObservabilityDefaults(t *testing.T) {
-	c := loadAuthExample(t)
+	c := loadTestConfig(t, readFixture(t, "defaults.yaml"), "defaults fixture")
 	wantObservability := ObservabilityConfig{Metrics: ObservabilityMetrics{
-		Enabled: new(true), ScrapeInterval: duration(30 * time.Second), ScrapeTimeout: duration(10 * time.Second), CustomMetricName: new("gateway_http_requests_total"),
+		Enabled: new(true), ScrapeInterval: duration(30 * time.Second), ScrapeTimeout: duration(10 * time.Second),
 	}, Tracing: ObservabilityTracing{
 		Enabled: new(false), ServiceName: "auth-gateway", SamplingPercentage: new(100.0), Insecure: new(false),
 	}}
@@ -38,7 +38,8 @@ func TestObservabilityDefaults(t *testing.T) {
 }
 
 func TestObservabilityDefaultsDoNotMutateInput(t *testing.T) {
-	c := loadAuthExample(t)
+	c := loadConfigCase(t, "jwt-auth-with-mappings")
+	c.Observability.Metrics.CustomMetricName = new("gateway_http_requests_total")
 	defaulted := c.withDefaults()
 	defaulted.APIs[0].Metrics.Labels["tenant"] = "writer_id"
 	*defaulted.Observability.Metrics.CustomMetricName = "changed_requests_total"
@@ -125,14 +126,14 @@ func TestKubernetesObservabilityDefaultsPreserveExplicitResourceMaps(t *testing.
 }
 
 func TestAPIMetricsConfigurationAndValidation(t *testing.T) {
-	c := loadAuthExample(t)
+	c := loadConfigCase(t, "jwt-auth-with-mappings")
 	type apiMetricsDefaults struct {
 		Configured bool
 		Tenant     string
 		LabelCount int
 	}
-	gotMetrics := make([]apiMetricsDefaults, 0, 2)
-	for _, api := range c.APIs[:2] {
+	gotMetrics := make([]apiMetricsDefaults, 0, len(c.APIs))
+	for _, api := range c.APIs {
 		settings := apiMetricsDefaults{}
 		if api.Metrics != nil {
 			settings.Configured = true
@@ -141,8 +142,11 @@ func TestAPIMetricsConfigurationAndValidation(t *testing.T) {
 		}
 		gotMetrics = append(gotMetrics, settings)
 	}
-	wantMetrics := []apiMetricsDefaults{{Configured: true, Tenant: "tenant_id", LabelCount: 1}, {Configured: true}}
-	assertConfigDiff(t, "auth example API metrics", wantMetrics, gotMetrics)
+	wantMetrics := []apiMetricsDefaults{
+		{Configured: true, Tenant: "tenant_id", LabelCount: 1},
+		{Configured: true},
+	}
+	assertConfigDiff(t, "fixture API metrics", wantMetrics, gotMetrics)
 
 	tests := []struct {
 		name string
@@ -159,7 +163,7 @@ func TestAPIMetricsConfigurationAndValidation(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			config := loadAuthExample(t)
+			config := loadConfigCase(t, "jwt-auth-with-mappings")
 			test.edit(&config)
 			if err := config.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Validate error = %v, want %q", err, test.want)
@@ -169,9 +173,10 @@ func TestAPIMetricsConfigurationAndValidation(t *testing.T) {
 }
 
 func TestRequestMetricNameConfigurationAndValidation(t *testing.T) {
-	c := loadAuthExample(t)
-	if c.Observability.Metrics.CustomMetricName == nil || *c.Observability.Metrics.CustomMetricName != "gateway_http_requests_total" {
-		t.Fatalf("custom metric name = %#v", c.Observability.Metrics.CustomMetricName)
+	c := loadConfigCase(t, "jwt-auth-with-mappings")
+	c.Observability.Metrics.CustomMetricName = new("gateway_http_requests_total")
+	if err := c.Validate(); err != nil {
+		t.Fatalf("valid custom metric name was rejected: %v", err)
 	}
 	for _, test := range []struct{ name, value string }{
 		{name: "empty"},
@@ -182,8 +187,8 @@ func TestRequestMetricNameConfigurationAndValidation(t *testing.T) {
 		{name: "reserved prefix", value: "__reserved"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			config := loadAuthExample(t)
-			*config.Observability.Metrics.CustomMetricName = test.value
+			config := loadConfigCase(t, "jwt-auth-with-mappings")
+			config.Observability.Metrics.CustomMetricName = new(test.value)
 			if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "observability.metrics.custom_metric_name") {
 				t.Fatalf("Validate error = %v, want observability.metrics.custom_metric_name", err)
 			}

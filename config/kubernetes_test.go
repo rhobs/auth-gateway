@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"math"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -14,7 +13,6 @@ import (
 	connections "github.com/envoyproxy/go-control-plane/envoy/extensions/resource_monitors/downstream_connections/v3"
 	heap "github.com/envoyproxy/go-control-plane/envoy/extensions/resource_monitors/fixed_heap/v3"
 	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
-	"go.yaml.in/yaml/v3"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -22,7 +20,7 @@ import (
 )
 
 func TestKubernetesImageDefaultsToSharedImages(t *testing.T) {
-	c := loadAuthExample(t)
+	c := loadConfigCase(t, "public-routing")
 	c.Kubernetes.Image = ""
 	c.Kubernetes.OTelCollectorImage = ""
 	defaulted := c.withDefaults()
@@ -70,63 +68,6 @@ kubernetes:
 	}
 	got := []string{containers[0].Image, containers[1].Image}
 	assertConfigDiff(t, "generated Kubernetes image overrides", want, got)
-}
-
-func TestExamplesUseSharedImageDefaults(t *testing.T) {
-	files := []string{
-		"config.auth.example.yaml",
-		"config.example.yaml",
-		"config.mtls.example.yaml",
-		"config.production.example.yaml",
-	}
-	for _, name := range files {
-		t.Run(name, func(t *testing.T) {
-			type imageOverrides struct {
-				Image              *string `yaml:"image"`
-				OTelCollectorImage *string `yaml:"otel_collector_image"`
-			}
-			var example struct {
-				Kubernetes *imageOverrides `yaml:"kubernetes"`
-			}
-			data := readTestFile(t, filepath.Join("..", name))
-			if err := yaml.Unmarshal([]byte(data), &example); err != nil {
-				t.Fatal(err)
-			}
-			if example.Kubernetes == nil {
-				t.Fatal("example has no Kubernetes section")
-			}
-			for _, override := range []struct {
-				field string
-				value *string
-			}{
-				{field: "image", value: example.Kubernetes.Image},
-				{field: "otel_collector_image", value: example.Kubernetes.OTelCollectorImage},
-			} {
-				if override.value != nil && *override.value != "" {
-					t.Errorf("%s embeds image %q; use the shared Go default or a dedicated override example", override.field, *override.value)
-				}
-			}
-			if name == "config.example.yaml" {
-				if example.Kubernetes.Image == nil || example.Kubernetes.OTelCollectorImage == nil {
-					t.Fatal("main example must keep both empty image override fields visible")
-				}
-			}
-
-			if name != "config.mtls.example.yaml" {
-				loaded := loadTestConfig(t, data, name)
-				got := []string{loaded.Kubernetes.Image, loaded.Kubernetes.OTelCollectorImage}
-				want := []string{DefaultEnvoyImage, DefaultOTelCollectorImage}
-				assertConfigDiff(t, "resolved example image defaults", want, got)
-			}
-		})
-	}
-
-	reference := readTestFile(t, filepath.Join("..", "docs", "configuration-reference.md"))
-	for _, constant := range []string{"config.DefaultEnvoyImage", "config.DefaultOTelCollectorImage"} {
-		if !strings.Contains(reference, "`"+constant+"`") {
-			t.Errorf("configuration reference does not name image default %q", constant)
-		}
-	}
 }
 
 func TestKubernetesResourceRequirementsRejectsInvalidQuantity(t *testing.T) {

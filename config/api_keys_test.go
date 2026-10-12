@@ -507,8 +507,8 @@ func TestPublicOnlyChainRemovesConfiguredCredentials(t *testing.T) {
 }
 
 func TestHeaderMetadataCapturePreservesRequestHeader(t *testing.T) {
-	c := loadAuthExample(t)
-	c.Authenticators[2].Attributes["requested_tenant"] = AttributeSource{Header: new("x-TENANT")}
+	c := loadConfigCase(t, "api-key-auth")
+	c.Authenticators[1].Attributes["requested_tenant"] = AttributeSource{Header: new("x-TENANT")}
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)

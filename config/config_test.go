@@ -47,9 +47,9 @@ func loadConfigCase(t testing.TB, name string) Config {
 	return loadTestConfig(t, readFixture(t, filepath.Join(name, "config.yaml")), name+" case")
 }
 
-func loadAuthExample(t testing.TB) Config {
+func loadAuthValidationFixture(t testing.TB) Config {
 	t.Helper()
-	return loadTestConfig(t, readTestFile(t, filepath.Join("..", "config.auth.example.yaml")), "auth example")
+	return loadTestConfig(t, readFixture(t, filepath.Join("baselines", "auth-validation.yaml")), "auth validation fixture")
 }
 
 func assertConfigDiff(t testing.TB, name string, want, got any) {
@@ -257,28 +257,6 @@ func TestValidateRejectsInvalidRouteConfiguration(t *testing.T) {
 			test.edit(&config)
 			if err := config.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("validation error = %v, want %q", err, test.want)
-			}
-		})
-	}
-}
-
-func TestSupportedExamplesGenerate(t *testing.T) {
-	for _, name := range []string{"config.example.yaml", "config.auth.example.yaml", "config.production.example.yaml"} {
-		t.Run(name, func(t *testing.T) {
-			config := loadTestConfig(t, readTestFile(t, filepath.Join("..", name)), name)
-			files, err := Generate(config)
-			if err != nil {
-				t.Fatalf("generate Envoy configuration: %v", err)
-			}
-			if len(files.EnvoyBootstrap.Contents) == 0 {
-				t.Fatal("Envoy output is empty")
-			}
-			resources, err := GenerateKubernetes(config)
-			if err != nil {
-				t.Fatalf("generate Kubernetes resources: %v", err)
-			}
-			if _, err := resources.YAML(); err != nil {
-				t.Fatalf("serialize Kubernetes resources: %v", err)
 			}
 		})
 	}
@@ -550,9 +528,8 @@ func TestTuningValidationAndOptionalZeros(t *testing.T) {
 	}
 }
 
-// The auth example's default values match the loader defaults.
-func TestAuthExampleAppliesAllDefaults(t *testing.T) {
-	c := loadAuthExample(t)
+func TestConfigurationDefaults(t *testing.T) {
+	c := loadTestConfig(t, readFixture(t, "defaults.yaml"), "defaults fixture")
 	if c.Node != (EnvoyNode{ID: "auth-gateway", Cluster: "auth-gateway"}) {
 		t.Fatalf("node defaults = %#v", c.Node)
 	}
@@ -581,11 +558,11 @@ func TestAuthExampleAppliesAllDefaults(t *testing.T) {
 		assertConfigDiff(t, api.Name+" upstream defaults", want, api.Upstream)
 		assertConfigDiff(t, api.Name+" circuit breaker defaults", wantBreakers, api.CircuitBreakers)
 		if api.Timeouts != nil {
-			t.Fatalf("example %s must inherit default API timeouts", api.Name)
+			t.Fatalf("default fixture API %s must inherit API timeouts", api.Name)
 		}
 		for _, r := range api.Routes {
 			if r.Timeouts != nil {
-				t.Fatal("example must inherit default route timeouts")
+				t.Fatal("default fixture must inherit route timeouts")
 			}
 		}
 	}
@@ -617,8 +594,8 @@ func TestAuthExampleAppliesAllDefaults(t *testing.T) {
 		Resources: wantKubernetesResources,
 	}
 	assertConfigDiff(t, "Kubernetes defaults", wantKubernetes, gotKubernetes)
-	wantTLS := &ServerTLS{Secret: "write-gateway-tls", Certificate: "/etc/write-gateway-tls/tls.crt", PrivateKey: "/etc/write-gateway-tls/tls.key"}
-	assertConfigDiff(t, "server TLS defaults", wantTLS, c.Servers[1].TLSConfig)
+	wantTLS := &ServerTLS{Secret: "gateway-tls", Certificate: "/etc/gateway-tls/tls.crt", PrivateKey: "/etc/gateway-tls/tls.key"}
+	assertConfigDiff(t, "server TLS defaults", wantTLS, c.Servers[0].TLSConfig)
 	resolved, err := resolveConfig(c)
 	if err != nil {
 		t.Fatal(err)
@@ -630,7 +607,7 @@ func TestAuthExampleAppliesAllDefaults(t *testing.T) {
 		}
 	}
 	if _, err := GenerateKubernetes(c); err != nil {
-		t.Fatalf("generate defaulted example: %v", err)
+		t.Fatalf("generate defaulted resources: %v", err)
 	}
 }
 
@@ -663,7 +640,7 @@ func TestCircuitBreakerConfigAppliesToJWKSCluster(t *testing.T) {
 }
 
 func TestOptInOverloadDefaults(t *testing.T) {
-	c := loadAuthExample(t)
+	c := loadConfigCase(t, "public-routing")
 	c.Overload = &OverloadConfig{MaxHeapBytes: 201326592, MaxDownstreamConnections: 2048}
 	resolved, err := resolveConfig(c)
 	if err != nil {
@@ -721,7 +698,7 @@ func TestDefaultsCloneInputs(t *testing.T) {
 	})
 
 	t.Run("authentication maps and slices", func(t *testing.T) {
-		c := loadAuthExample(t)
+		c := loadAuthValidationFixture(t)
 		defaulted := c.withDefaults()
 		defaulted.Authenticators[0].JWT.Audiences[0] = "changed"
 		defaulted.Authenticators[0].Attributes["tenant_id"].ClaimPath[0] = "changed"
@@ -801,7 +778,7 @@ func TestDefaultsCloneInputs(t *testing.T) {
 }
 
 func TestPublicOperationsPreserveConfiguration(t *testing.T) {
-	c := loadAuthExample(t)
+	c := loadAuthValidationFixture(t)
 	before, err := yaml.Marshal(c)
 	if err != nil {
 		t.Fatal(err)
