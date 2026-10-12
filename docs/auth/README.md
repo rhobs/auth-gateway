@@ -2,9 +2,9 @@
 
 The gateway supports [JWT](jwt.md) and [API keys](api-key.md). Each method
 page explains how credentials are checked and how to grant access.
-[config.auth.example.yaml](../../config.auth.example.yaml) shows complete
+[config.example.yaml](../../config.example.yaml) shows the full supported
 JWT, API-key, and mixed server configurations. A server without
-`authentication` is public. Client-certificate mTLS is not supported yet.
+`authentication` is public. Client-certificate mTLS is unsupported.
 
 ## Authentication
 

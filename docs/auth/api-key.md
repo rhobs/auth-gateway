@@ -93,7 +93,7 @@ GitOps can bypass the gateway's credential validation. Generate the Secret
 from validated API-key credentials rather than editing the Envoy resource by
 hand. Envoy's `--mode validate` checks the bootstrap but does not validate
 this file-backed ECDS resource. See
-[Envoy file updates](../envoy.md#kubernetes-files-and-reloads) for its runtime
+[Envoy file updates](../envoy.md#files-and-reloads) for its runtime
 failure counters and monitoring.
 
 A client sends both the key and the tenant it requests:
@@ -142,7 +142,7 @@ a credential-bound condition when access must also be tied to the issued
 key. A missing or unlisted value is denied before the backend receives the
 request.
 
-The full [gateway example](../../config.auth.example.yaml) maps
+The full [gateway example](../../config.example.yaml) maps
 `tenant_id: client-123` to `team-a` for upstream use. A route can also map
 `requested_tenant` to an output header, and `metrics.labels` can use its
 processed value:

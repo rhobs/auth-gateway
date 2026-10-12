@@ -1,161 +1,126 @@
-# Envoy configuration and runtime behavior
+# Envoy behavior and deployment
 
-This document explains how the Go configuration library builds Envoy resources. For configuration and deployment steps, start with the [README](../README.md).
+This page describes request handling and configuration reloads. See the
+[README](../README.md) for library usage and the
+[configuration reference](configuration-reference.md) for supported YAML
+fields.
 
-## Generation flow and outputs
+## Listener and routes
 
-```text
-one strict YAML document
-  -> config.Load: defaults and validation
-  -> resolve API and route settings on a private copy
-  -> config.Generate: Envoy files
-     or config.GenerateKubernetes: Kubernetes resources
-```
+One listener serves all configured hosts on port `8080` by default. HTTP hosts
+share a filter chain. HTTPS hosts select a certificate using TLS SNI, then
+match the exact HTTP `Host` or `:authority` value. A successful TLS handshake
+does not grant access to a host's routes. HTTPS termination does not request a
+client certificate.
 
-`Load` rejects unknown fields and extra YAML documents. It returns a defaulted
-configuration without materializing inherited API and route timeout overrides.
-Validation checks effective timeouts without changing the input. Generation
-resolves them on a private copy, so caller-owned maps, slices, and pointers
-remain unchanged.
+Each host exposes only its listed APIs. API bindings and routes keep their
+declared order. Routes match an exact path, prefix, or RE2 expression and can
+rewrite the path. A known path with an unsupported method returns `405` with
+an `Allow` header. An unknown host or path returns `404`.
 
-`Generate` returns a `config.GeneratedFiles` value with named Envoy bootstrap, optional processing configuration, and one file-based Secret Discovery Service (SDS) resource for each HTTPS server. Each generated file includes its required absolute path and contents. It does not require Kubernetes settings.
+Upstreams use HTTP/1 unless `http_protocol: http2` is set. HTTP/2 connection
+options apply only when HTTP/2 is enabled. TLS upstreams verify both the
+certificate chain and the configured DNS or IP identity. A custom
+`trusted_ca` replaces Envoy's system CA bundle. Kubernetes output uses a
+ConfigMap reference; file-based output uses an absolute filename.
 
-`GenerateKubernetes` requires the `kubernetes` section. It returns the main `<name>-config` ConfigMap, an optional `<name>-processing` ConfigMap, an optional collector ConfigMap when metrics or traces are enabled, a ServiceAccount, a Deployment, and a Service. The main ConfigMap contains the Envoy bootstrap and file-based Transport Layer Security (TLS) SDS resources. Certificate authority (CA) ConfigMaps, TLS Secrets, and the API-key Secret remain external references. `config.APIKeySecret` builds the latter. `YAML` serializes the resources as a multi-document stream. `Objects` returns typed Kubernetes objects in apply order.
+## Authentication and request handling
 
-### File-based output layout
+Envoy validates JWT signatures, issuer, expiry, and `nbf`; configured
+`audiences` are also checked. Each issuer has isolated claim metadata. The
+API-key filter validates the configured header against the complete
+Secret-backed credential set.
 
-`GeneratedFiles.All()` returns every file created by `Generate`. Each file's
-`Path` is the absolute location Envoy uses, and `Contents` contains the resource
-to write there.
+For mixed `authentication.any_of`, a verified JWT takes precedence when both
+credentials are present. If the JWT is absent or invalid, Envoy can try the
+API key. A valid JWT without an authorization grant is denied without trying
+the key. `all_of` requires both selected credentials. Shared attributes must
+be nonempty scalar strings with equal original values. Invalid credentials
+return `401`; authenticated requests without a matching grant return `403`.
 
-| Resource | Required path | Source |
-| --- | --- | --- |
-| Envoy bootstrap | `/etc/auth-gateway/envoy.yaml` | `config.GeneratedFiles.EnvoyBootstrap` |
-| Attribute processing ECDS resource, when mappings are configured | `/etc/auth-gateway/processing/processing.yaml` | `config.GeneratedFiles.ProcessingConfig` |
-| One TLS SDS resource per HTTPS server | `/etc/auth-gateway/server-certificate-N.yaml`, where `N` is its zero-based position in `servers` | `config.GeneratedFiles.ServerCertificateResources` |
-| API-key ECDS resource, when API keys are used | `/etc/auth-gateway/api-keys/api-keys.yaml` | `config.GenerateAPIKeyECDS`; path constant `config.APIKeyECDSPath` |
-| CA ConfigMap entry | `/etc/auth-gateway-ca/<hashed-id>/ca.crt` | `config.CAConfigMap.FilePath()` |
+Authorization checks the original claim, key credential, or source-header
+value. Attribute mappings change values used for upstream headers and metric
+labels, not grant decisions. A missing value needed by a request-header mapping
+is denied before the upstream request. Envoy replaces caller values for
+managed output headers and removes bearer tokens, API keys, and internal
+identity headers before forwarding.
 
-`Generate` creates the bootstrap, processing, and TLS SDS files. It does not
-copy downstream certificate or private-key material; those files must exist at
-the paths configured for the HTTPS server. API-key ECDS content is generated
-separately. `GenerateKubernetes` mounts API-key Secrets and CA ConfigMaps at the
-same paths automatically; file-based Envoy deployments must provide those
-external resources at the paths above. A `TrustedCA.Filename` is already the
-required path for file-based CA configuration.
+## Files and reloads
 
-## Listener, hosts, and routes
+File-based deployments must place generated resources at the paths Envoy reads:
 
-One Envoy listener serves all configured servers. Its address defaults to `0.0.0.0:8080`. Servers without TLS share an HTTP filter chain. HTTPS servers use the TLS inspector and select a filter chain by Server Name Indication (SNI). The HTTP virtual host then matches the exact `Host` or `:authority`; a successful TLS handshake alone does not select the API.
+| Resource                                        | Path                                           |
+|-------------------------------------------------|------------------------------------------------|
+| Bootstrap                                       | `/etc/auth-gateway/envoy.yaml`                 |
+| Attribute mapping ECDS resource, when used      | `/etc/auth-gateway/processing/processing.yaml` |
+| Downstream TLS SDS resource for each HTTPS host | `/etc/auth-gateway/server-certificate-N.yaml`  |
+| API-key ECDS resource, when keys are used       | `/etc/auth-gateway/api-keys/api-keys.yaml`     |
+| Custom CA bundle                                | Configured absolute path                       |
 
-Each server exposes only the APIs in its `apis` list. The list order controls API route order for that host. Routes within an API preserve their declaration order. Matches use an exact path, prefix, or safe regular expression. Rewrites replace the matched path, prefix, or regex capture. A path match with no allowed method returns a local `405` and the combined `Allow` header. Unmatched hosts and paths return local `404` responses.
+File-based output does not include downstream certificates, private keys, API
+keys, or custom CA bundles. Provide those files with the configured names and
+permissions. Kubernetes output creates the Envoy Deployment and its ConfigMaps,
+but TLS Secrets, the API-key Secret, and CA ConfigMaps remain external and must
+exist in the gateway namespace. See the [API-key guide](auth/api-key.md) for
+the Secret format.
 
-## Conditional HTTP filter chain
+Kubernetes mounts TLS Secrets and API-key Secrets as projected directories
+without `subPath`, so Envoy can observe valid changes without replacing the
+Pod. SDS reloads downstream certificates for new connections. ECDS reloads
+the complete API-key set and mapping tables. Setting a valid empty API-key
+credential list revokes all keys. Envoy keeps the last accepted resource after
+a failed update.
 
-Public requests use request-control header removal and the router. Metered routes add a response counter. Protected requests select these native Envoy filters as needed:
+Mapping updates change only the separate `<name>-processing` ConfigMap. The
+bootstrap, Deployment template, and Pod identity stay the same. Changes to
+routes, authentication, authorization, request-header bindings, metric
+bindings, or other bootstrap data require a Deployment rollout. Changed CA
+bundles also require a rollout. Collector ConfigMap changes require restarting
+the collector so it reads the new settings. Generated Deployments have no
+checksum annotation.
 
-```text
-auth_gateway.request_controls
-  -> [envoy.filters.http.lua]                  (response counter)
-  -> [envoy.filters.http.jwt_authn]
-  -> [envoy.filters.http.api_key_auth]         (Secret-backed ECDS)
-  -> [envoy.filters.http.header_to_metadata]  (key identity and source headers)
-  -> [auth_gateway.authentication]             (mixed credential RBAC)
-  -> [auth_gateway.attributes.server-N]        (working attributes)
-  -> [envoy.filters.http.set_filter_state]     (mapping ECDS)
-  -> envoy.filters.http.rbac                   (raw attribute grants)
-  -> [auth_gateway.required_headers]           (route-specific checks)
-  -> [auth_gateway.credentials]                (credential removal)
-  -> [envoy.filters.http.header_mutation]      (managed upstream headers)
-  -> envoy.filters.http.router
-```
+Envoy's validation mode checks the bootstrap, but does not validate the
+file-backed API-key ECDS resource. Generate API-key Secrets from validated
+credentials rather than editing `api-keys.yaml` by hand.
 
-The request-control filter removes fixed Envoy retry, timeout, and alternate-stat headers on both public and protected chains. These controls cannot be passed through as identity headers.
+Envoy exports native update-failure counters for ECDS and SDS. The generated
+Collector exposes these counters at `/metrics`; production alerting is tracked
+in [resource update monitoring](resource-update-monitoring.md).
 
-The JWT filter validates signature, issuer, expiration, and not-before values. If an authenticator sets `audiences`, the filter also requires the token's `aud` claim to match one of them. It reads the bearer token from `Authorization` and stores each provider's verified claims in separate Envoy dynamic metadata. The API-key filter reads the configured header, validates it against one ECDS credential set, and forwards a verified identity through an internal header. The identity has alphabetically ordered credential `attribute=value` fields. Generated `header_to_metadata` rules copy the identity, extract each credential attribute with a regex, then remove the internal header. The same filter captures each distinct declared source header once in separate dynamic metadata without removing it. Request controls remove caller-supplied identity markers before either credential filter runs. Envoy's native filters handle authentication and attribute processing.
+## Timeouts and overload protection
 
-On mixed `authentication.any_of`, the JWT filter permits a missing or failed token so a key can be tried. A verified JWT writes a marker that makes the API-key matcher skip key validation, including when a key is also present. Authorization then uses the JWT's named metadata. A valid but unprivileged JWT does not fall back to a key. On mixed `all_of`, JWT verification is strict and the key filter also runs. The authentication RBAC rule requires both credentials. For every attribute declared by both authenticators, it also requires nonempty scalar strings with exact equality in their original claim, credential, or header sources. Missing or invalid credentials return `401`; a valid identity without a matching grant, or with unequal shared attributes, returns `403`.
+Listener defaults include a `5s` request-header timeout, `30s` request timeout,
+`1m` connection and stream idle timeouts, and a `30s` maximum stream duration.
+API and route overrides apply independently; route values take precedence.
+The response timeout defaults to `30s`. Missing idle and stream-duration
+values inherit from the listener. Client-supplied Envoy timeout and retry
+headers are removed.
 
-Attribute initialization runs when request headers or metric labels need working attributes. With API keys, host-scoped inline `set_filter_state` filters initialize them from the selected JWT or key, including its declared source headers. The separate ECDS `set_filter_state` filter then applies mappings. JWT-only configurations initialize attributes in the same stage as their mappings, either inline or through ECDS. Header initialization checks the named authenticator's verified identity before copying a value, so an unselected header source cannot replace the selected value on mixed `any_of`. Authorization RBAC reads original claim, credential, or source-header metadata. Required-header checks run after authorization and before header mutation. The credential cleanup filter removes `Authorization`, the configured key header, and internal markers, including on public chains in a gateway that uses keys. Header mutation removes caller values for every managed output name and sets the selected route's outputs. The router forwards only after these filters allow the request.
+Overload protection is disabled unless `overload` is configured with both a
+heap budget and a downstream connection limit. Its default heap-shrink and
+request-reject thresholds are `0.90` and `0.95`. For Kubernetes output, the
+heap budget must be below the Envoy container memory limit. Envoy chooses its
+worker count unless `kubernetes.envoy_concurrency` is set.
 
-## Attribute sources and working values
+## Logs, metrics, and traces
 
-A JWT attribute's `claim_path` is a list of literal object keys. For example, `[organization, id]` reads two nested keys, while `[customer.id]` reads one top-level key containing a dot. To authorize `{"x":{"my_list":["y","z"]}}`, set `claim_path: [x, my_list]` and allow values with `attributes.my_list: [y, z]`. Any string member that matches an allowed value is sufficient; scalar claims still use exact matching. The path may end at a list-valued claim, but it cannot traverse into a list. Different attributes in one grant must all match.
+Envoy writes structured JSON access logs to stdout for responses with status
+`400` or higher. When metrics are enabled, the Collector scrapes Envoy's
+loopback admin endpoint at `127.0.0.1:9901/stats/prometheus` and exposes
+Prometheus metrics on port `8889`. The admin endpoint is not exposed by the
+Service. Metrics collection is enabled by default; disabling it does not
+disable per-API counters.
 
-Declare attributes beside `jwt` or `api_key`. JWT attributes use `claim_path` or `header`; API-key attributes use `credential: true` or `header`. Working attributes used for processing require a nonempty scalar string. Missing, null, empty, non-string, or list-valued claims leave the corresponding working attribute unset; they do not invalidate an otherwise valid JWT. A missing or empty source header also leaves its attribute unset. Each API-key credential stores only its declared credential-backed string attributes in the Secret. Key grants match exact original values, and missing attributes deny any grant that requires them.
+Each API with `metrics` configured counts responses by API and exact
+downstream status. `metrics: {}` enables the counter without attribute labels.
+The counter includes authentication and authorization denials, but excludes
+gateway `404` and `405` fallback routes. Missing or unsafe label values become
+`__unattributed__`. Envoy adds the `envoy_http_lua_` prefix; the Collector
+removes it before exposing the configured metric name. Label combinations
+remain in memory until Envoy restarts, so use bounded values.
 
-Authorization grants are tied to a named authenticator and use its original claim, credential, or source-header values. A header-only JWT grant also checks the verified issuer; a header-only key grant also checks the verified key identity. A caller can choose a source-header value, but cannot use it to bypass authentication. The optional top-level `processing` list changes working attributes after authentication and before RBAC. Each processor performs one exact lookup per configured attribute. Entries in one table do not chain. Later processors see earlier results and may replace them. Unmatched values pass through. Mappings do not change raw authorization decisions. Header-backed grants do depend on the original caller-supplied header.
-
-Envoy `v1.39.1` exposes `envoy.string` filter-state values as bytes in Common Expression Language (CEL). The generator compares mapping inputs with byte literals and uses `skip_if_empty` so unmatched values pass through and missing values do not become placeholder strings. It emits one update per attribute per processor to preserve processor order.
-
-A route that selects output headers also selects required working attributes. If an attribute is missing or unsuitable for an HTTP header after processing, the required-header RBAC filter returns `403` before upstream delivery. A caller-supplied output header cannot fill the missing value. If a source header has a managed output name, the source is captured before mutation; that name is replaced on routes with an output and removed on other routes. Other source headers pass through.
-
-## JWT and upstream trust
-
-Each JWT authenticator gets its own JSON Web Key Set (JWKS) cluster and cache, even when providers share a URI. JWKS fetching is on demand and cache state is per worker. A usable cached key may survive a short issuer outage. A cold cache or expired key fails closed when the issuer is unavailable. Cache duration does not guarantee immediate key revocation; rotate keys with an overlap period.
-
-JWKS and TLS upstream connections verify certificate chains and endpoint identity. The default trust bundle is `/etc/ssl/certs/ca-certificates.crt`. A configured CA replaces system trust. DNS identities use SNI and hostname validation. IP upstreams use IP Subject Alternative Name validation.
-
-The `trusted_ca` form depends on the deployment mode. With Kubernetes settings, use `config_map` to select a key from an existing ConfigMap in the gateway namespace; the generated resources mount it under `/etc/auth-gateway-ca/<hashed-id>/ca.crt`. For file-based configuration without Kubernetes settings, use `filename` with a clean absolute path to a CA bundle that Envoy can read. These options apply to both JWKS and upstream TLS trust. A changed CA ConfigMap requires a rollout.
-
-Upstreams use HTTP/1 unless `http_protocol: http2` is set. HTTP/2 connection options are emitted only for explicit HTTP/2 configuration. Circuit-breaker values control cluster limits; a nonzero retry breaker does not add a retry policy.
-
-## Kubernetes files and reloads
-
-The Envoy bootstrap and SDS resource files are projected from the main ConfigMap. TLS Secrets are mounted as read-only directories without `subPath`, so Kubernetes can refresh their projected files. Identical Secret and path bindings share a volume mount; different server chains keep separate SDS resources. File-only generation returns those SDS files but does not create or mount the certificate material.
-
-When mappings exist, the generator puts `processing.yaml` in the separate processing ConfigMap and mounts it at `/etc/auth-gateway/processing`. This file is an ECDS resource for `envoy.filters.http.set_filter_state`. With keys, it contains only mapping updates; host-scoped initializers in the bootstrap extract claims, credential attributes, or source headers first. JWT-only configurations keep attribute extraction in the ECDS resource. Envoy watches the mounted directory. Updating mapping values changes only that ConfigMap. The bootstrap, Deployment template, and Pod identity remain unchanged.
-
-All keys used by this gateway's servers live in one same-namespace Secret with
-an `api-keys.yaml` entry. The Deployment mounts that Secret as a read-only
-directory at `/etc/auth-gateway/api-keys`, without `subPath`, and Envoy watches
-it through ECDS. Each credential binds an opaque key to the named authenticator
-and its original attributes. Replacing the Secret entry replaces the complete
-accepted key set across HTTP and HTTPS chains without changing the Pod. Envoy
-keeps its last accepted set if a projected update is invalid. Kubernetes
-volumes cannot read Secrets across namespaces, so each gateway Deployment uses
-a Secret in its own namespace. The same Secret name may have independent
-contents in another namespace. See the [API-key guide](auth/api-key.md#api-key-secret-format)
-for the credential document and Secret layout.
-
-When Envoy cannot load a projected ECDS or SDS update, it records a native
-`update_failure` counter and keeps the last accepted resource. With the pinned
-Envoy image, the Prometheus names are
-`envoy_extension_config_discovery_http_filter_envoy_filters_http_set_filter_state_update_failure`,
-`envoy_extension_config_discovery_http_filter_envoy_filters_http_api_key_auth_update_failure`,
-and `envoy_sds_update_failure`. The SDS counter includes the resource name as a
-label; the ECDS counters are not resource-labeled. The generated Collector
-scrapes Envoy's `/stats/prometheus` endpoint and does not filter these counters,
-so they are available from the Collector's `/metrics` endpoint. A production
-alert for increases in these counters is tracked in the
-[production readiness to-do](production-readiness-to-do.md).
-
-Envoy's `--mode validate -c /etc/auth-gateway/envoy.yaml` validates the
-bootstrap, but does not validate the file-backed API-key ECDS resource in
-`api-keys.yaml`. With the pinned image, validation mode still reports the
-bootstrap as OK when that file contains malformed YAML. Generate the Secret
-from validated credentials before applying it; Kubernetes only validates the
-Secret object, not the Envoy resource stored inside it. See the
-[API-key guide](auth/api-key.md#api-key-secret-format) for the Secret format.
-
-### Mapping and rollout behavior
-
-The static bootstrap embeds the shared request metric name, Lua's label names, and each API's label-to-attribute bindings in route metadata. Attribute mapping tables stay in the ECDS-loaded `set_filter_state` filter. Lua reads its processed values. For example, `tenant: requested_tenant` with a `client-123: team-a` mapping emits `tenant="team-a"` for `X-Tenant: client-123`, while RBAC checks the original `client-123`. Changing the metric name or a binding requires a rollout; changing a mapping value updates only the processing ConfigMap and changes subsequent metric labels without a Pod restart.
-
-SDS reloads updated downstream certificates and keys for new TLS connections. ECDS reloads mapping tables and the API-key credential set. Routes, authenticator definitions (including attribute sources and credential headers), authorization policies, other bootstrap data, deployment settings, and upstream/JWKS CA bundles require the documented regeneration and rollout steps. The generator does not add a checksum annotation.
-
-## Timeouts, overload, logs, metrics, and traces
-
-Listener defaults include a `5s` request-header timeout, `30s` request timeout, `60s` connection and stream idle timeouts, and `30s` maximum stream duration. API and route values override independently. Route values take precedence over API values. Response timeout defaults to `30s`; omitted idle and maximum stream duration values inherit from the listener. Current duration settings must be at least `1ms`.
-
-The request-control filter strips client-supplied Envoy timeout and retry headers. The generator does not infer worker count from CPU limits. When `kubernetes.envoy_concurrency` is omitted, Envoy selects its worker count.
-
-Overload protection is opt-in. Its fixed heap monitor and global downstream-connection monitor use the configured budgets. The default heap-shrink threshold is `0.90`; the default request-reject threshold is `0.95`. Kubernetes generation requires the heap budget to be below the Envoy memory limit.
-
-The Envoy access logger writes structured JSON to stdout for HTTP responses with status `400` or higher. When `observability.metrics.enabled` is true (the default), a Kubernetes OpenTelemetry Collector sidecar scrapes `127.0.0.1:9901/stats/prometheus` every `30s` by default, with a `10s` timeout, and exposes metrics at `/metrics` on port `8889`. Set the scrape timing under `observability.metrics`; collector resources remain under `kubernetes.metrics.resources`. Setting `observability.metrics.enabled: false` omits metrics scraping and the metrics Service port, while API counter generation under `apis[].metrics` remains independent. The Envoy admin endpoint stays on loopback and is not published by the Service.
-
-Set `observability.tracing.enabled: true` to enable Envoy's native OpenTelemetry HTTP tracer. Envoy sends OTLP/gRPC spans to the local collector at `127.0.0.1:4317`; the collector exports them to the required `observability.tracing.endpoint` (`host:port`). TLS is enabled by default; set `insecure: true` only for a trusted plaintext endpoint. The service name defaults to `node.cluster`, and `sampling_percentage` defaults to `100` and accepts values from `0` to `100`. The collector sidecar is generated when either metrics or tracing is enabled, and its OTLP receiver is not exposed through the Service. With file-based Envoy generation, configure a collector yourself to receive on the local OTLP port and export to the configured endpoint. Changes to collector scrape settings, tracing endpoint, or tracing TLS mode require an explicit Deployment rollout so the collector loads its new ConfigMap. The Deployment has no checksum annotation.
-
-For each API with `metrics` configured, a Lua response filter counts responses by `api`, exact downstream `http_status_code`, and the union of configured label names. `metrics: {}` enables the counter without attribute bindings. Envoy's built-in HTTP stats cannot currently combine route metadata, the final downstream status (including authentication and RBAC local replies), and processed filter-state values in one counter, so Lua remains limited to this counter. The filter runs before authentication and reads processed filter state in its response callback. Named API routes carry the metric metadata. Gateway 404 and 405 fallback routes do not, so they are excluded. A missing, unavailable, empty, non-ASCII, control-character, over-128-byte, or `|`-containing attribute becomes `__unattributed__`.
-
-Envoy exposes the series as `envoy_http_lua_<name>` after extracting stat tags. The OpenTelemetry Collector strips that prefix before exposing the metric to Prometheus, so `observability.metrics.custom_metric_name` is the exported name. It defaults to `auth_gateway_http_requests_total` and must use ASCII letters, numbers, and underscores, start with a letter or underscore, and not start with `__`. Setting the name alone does not enable the counter; APIs still need `metrics`. The counter covers responses that reach Lua. Envoy retains each distinct label combination in memory until restart; use bounded label values.
+Tracing is disabled by default. When enabled, Envoy sends sampled OTLP/gRPC
+spans to the local Collector on `127.0.0.1:4317`. The Collector exports to the
+configured `host:port` endpoint with TLS by default. Set `insecure: true` only
+for a trusted plaintext endpoint. The receiver is local to the Pod and is not
+exposed by the Service.

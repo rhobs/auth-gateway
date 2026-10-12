@@ -4,6 +4,9 @@ This page covers every field in the supported gateway YAML schema. Unknown
 fields and documents with more than one YAML document are rejected. The
 top-level `version` must be `1`.
 
+See [config.example.yaml](../config.example.yaml) for a full configuration.
+Optional settings are commented where the example uses their defaults.
+
 Fields written as `[]` are repeated list entries. Fields written as
 `<name>` are user-defined mapping keys. `None` in the Default column means the
 field has no configured default. Durations are strings in Go duration syntax,
@@ -315,5 +318,5 @@ contain exactly one document and use only the fields below. An empty
 | `credentials[].attributes` | map of attribute name to string | Empty   | Attribute names must be declared as `credential: true` by the API-key authenticator. Values must be nonempty HTTP header values without surrounding whitespace, control characters, or semicolons. |
 
 See the [API-key guide](auth/api-key.md) for the Secret layout and client
-requests, and the [configuration examples](../config.example.yaml) for
-complete gateway configurations.
+requests, and [config.example.yaml](../config.example.yaml) for a full gateway
+configuration.

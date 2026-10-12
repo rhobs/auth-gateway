@@ -1,6 +1,6 @@
 # Local playground
 
-This playground runs Envoy, an OpenTelemetry Collector, Jaeger, [navikt/mock-oauth2-server](https://github.com/navikt/mock-oauth2-server), and Prometheus in Docker Compose. It routes the `metrics-write` and `logs` APIs from [config.example.yaml](../config.example.yaml) to `https://httpbin.org/anything`; the query API is omitted. The two JWT issuers use [Mock OAuth JSON token callbacks](https://github.com/navikt/mock-oauth2-server#token-customization-via-json_config).
+This playground runs Envoy, an OpenTelemetry Collector, Jaeger, [navikt/mock-oauth2-server](https://github.com/navikt/mock-oauth2-server), and Prometheus in Docker Compose. It uses [playground/config.yaml](config.yaml) to route the `metrics-write` and `logs` APIs to `https://httpbin.org/anything`; the query API is omitted. The two JWT issuers use [Mock OAuth JSON token callbacks](https://github.com/navikt/mock-oauth2-server#token-customization-via-json_config).
 
 Requirements: Docker Compose v2, Go, OpenSSL, `jq`, and `curl`. Go is used by `make generate` to refresh the Envoy bootstrap from the library. No local Go server is kept running.
 

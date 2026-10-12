@@ -53,7 +53,7 @@ servers:
     apis: [metrics-write]
 ```
 
-Define `metrics-write` under `apis` as in the [full example](../../config.auth.example.yaml).
+Define `metrics-write` under `apis` as in the [full example](../../config.example.yaml).
 The client sends both the bearer token and header:
 
 ```http
