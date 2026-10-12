@@ -418,7 +418,7 @@ func (c Config) toHTTPFilters(hosts []indexedVirtualHost, protected bool) ([]*hc
 			return nil, err
 		}
 	}
-	if c.usesAPIKeys() && !protected {
+	if (c.usesAPIKeys() || c.usesJWT()) && !protected {
 		cleanup, err := c.toCredentialCleanupFilter()
 		if err != nil {
 			return nil, err
@@ -432,10 +432,10 @@ func (c Config) requestControlFilters(hosts []*route.VirtualHost) ([]*hcm.HttpFi
 	var identityHeaders []string
 	if c.usesAPIKeys() {
 		identityHeaders = append(identityHeaders, apiKeyClientHeader)
-		for _, authenticator := range c.Authenticators {
-			if authenticator.JWT != nil {
-				identityHeaders = append(identityHeaders, jwtVerifiedHeaderName(authenticator.Name))
-			}
+	}
+	for _, authenticator := range c.Authenticators {
+		if authenticator.JWT != nil && authenticatorUsed(c.Servers, authenticator.Name) {
+			identityHeaders = append(identityHeaders, jwtVerifiedHeaderName(authenticator.Name))
 		}
 	}
 	controls, err := packEnvoy(requestControlMutations(identityHeaders...))
@@ -598,7 +598,7 @@ func (c Config) authorizationHTTPFilters(filters []*hcm.HttpFilter) ([]*hcm.Http
 			return nil, err
 		}
 	}
-	if c.usesAPIKeys() {
+	if c.usesAPIKeys() || c.usesJWT() {
 		cleanup, err := c.toCredentialCleanupFilter()
 		if err != nil {
 			return nil, err

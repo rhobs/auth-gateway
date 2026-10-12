@@ -307,7 +307,7 @@ func TestRequestMetricsUseAttributesWithoutHeaderProcessing(t *testing.T) {
 		t.Fatal("a label binding without mappings created an ECDS file")
 	}
 	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
-	want := []string{requestControlsFilterName, requestMetricsFilterName, jwtAuthnFilterName, attributeFilterName, authorizationFilterName, routerFilterName}
+	want := []string{requestControlsFilterName, requestMetricsFilterName, jwtAuthnFilterName, attributeFilterName, authorizationFilterName, credentialCleanupFilterName, routerFilterName}
 	if got := httpFilterNames(manager); !slices.Equal(got, want) {
 		t.Fatalf("HTTP filters = %v, want %v", got, want)
 	}
@@ -322,7 +322,7 @@ func TestRequestMetricsFilterPrecedesMappedJWTProcessing(t *testing.T) {
 	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
 	want := []string{
 		requestControlsFilterName, requestMetricsFilterName, jwtAuthnFilterName, attributeFilterName,
-		authorizationFilterName, requiredHeaderFilterName, headerMutationFilterName, routerFilterName,
+		authorizationFilterName, requiredHeaderFilterName, credentialCleanupFilterName, headerMutationFilterName, routerFilterName,
 	}
 	if got := httpFilterNames(manager); !slices.Equal(got, want) {
 		t.Fatalf("HTTP filters = %v, want %v", got, want)

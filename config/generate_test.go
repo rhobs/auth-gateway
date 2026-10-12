@@ -870,10 +870,10 @@ func TestJWTAuthorizationMatchesAnyAllowedListClaimValue(t *testing.T) {
 }
 
 func TestConditionalJWTFilterOrder(t *testing.T) {
-	plainJWT := []string{requestControlsFilterName, jwtAuthnFilterName, authorizationFilterName, routerFilterName}
+	plainJWT := []string{requestControlsFilterName, jwtAuthnFilterName, authorizationFilterName, credentialCleanupFilterName, routerFilterName}
 	processedJWT := []string{
 		requestControlsFilterName, jwtAuthnFilterName, attributeFilterName, authorizationFilterName,
-		requiredHeaderFilterName, headerMutationFilterName, routerFilterName,
+		requiredHeaderFilterName, credentialCleanupFilterName, headerMutationFilterName, routerFilterName,
 	}
 	tests := []struct {
 		name                  string

@@ -126,6 +126,7 @@ static_resources:
                                     - remove: x-envoy-upstream-rq-timeout-alt-response
                                     - remove: x-envoy-retriable-status-codes
                                     - remove: x-envoy-retriable-header-names
+                                    - remove: x-auth-gateway-jwt-verified-internal-jwt
                         - name: envoy.filters.http.jwt_authn
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
@@ -173,6 +174,14 @@ static_resources:
                         - name: auth_gateway.required_headers
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+                        - name: auth_gateway.credentials
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
+                            mutations:
+                                request_mutations:
+                                    - remove: authorization
+                                    - remove: x-auth-gateway-api-key-client
+                                    - remove: x-auth-gateway-jwt-verified-internal-jwt
                         - name: envoy.filters.http.header_mutation
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation

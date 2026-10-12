@@ -876,6 +876,15 @@ func (c Config) usesAPIKeys() bool {
 	return exists && authenticatorUsed(c.Servers, authenticator.Name)
 }
 
+func (c Config) usesJWT() bool {
+	for _, authenticator := range c.Authenticators {
+		if authenticator.JWT != nil && authenticatorUsed(c.Servers, authenticator.Name) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c Config) caMounts() []CAConfigMap {
 	var mounts []CAConfigMap
 	seen := map[CAConfigMap]bool{}
