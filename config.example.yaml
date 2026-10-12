@@ -147,6 +147,9 @@ observability:
 
 apis:
   - name: metrics-write
+    # Optional per-API request counter. `api` is this API's name and
+    # `http_status_code` comes from the response. Additional label names map to
+    # authenticator attributes declared under authenticators[].attributes.
     metrics:
       labels:
         tenant: tenant_id
@@ -193,6 +196,13 @@ apis:
         #   response_timeout: 20s
 
   - name: metrics-query
+    # Optional admission control, applied to this API's routes.
+    admission_control:
+      enabled: true
+      sampling_window: 30s
+      sr_threshold: 95
+      rps_threshold: 10
+      max_rejection_probability: 80
     upstream:
       address: thanos-query.observability.svc.cluster.local
       port: 9090
@@ -204,6 +214,7 @@ apis:
             key: ca.crt
       # For file-based output, use trusted_ca.filename instead of config_map.
       # Upstream TLS is optional. Omit tls_config for plaintext HTTP.
+    # Optional API-level timeout overrides. Omit to use the response and listener defaults.
     timeouts:
       response_timeout: 60s
       idle_timeout: 65s

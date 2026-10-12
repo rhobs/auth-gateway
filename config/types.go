@@ -56,12 +56,13 @@ type Listener struct {
 
 // API describes one upstream and its routes.
 type API struct {
-	Name            string                `yaml:"name"`
-	Routes          []Route               `yaml:"routes"`
-	Upstream        Upstream              `yaml:"upstream"`
-	Metrics         *APIMetrics           `yaml:"metrics,omitempty"`
-	CircuitBreakers *CircuitBreakerConfig `yaml:"circuit_breakers,omitempty"`
-	Timeouts        *RouteTimeouts        `yaml:"timeouts,omitempty"`
+	Name             string                  `yaml:"name"`
+	Routes           []Route                 `yaml:"routes"`
+	Upstream         Upstream                `yaml:"upstream"`
+	Metrics          *APIMetrics             `yaml:"metrics,omitempty"`
+	AdmissionControl *AdmissionControlConfig `yaml:"admission_control,omitempty"`
+	CircuitBreakers  *CircuitBreakerConfig   `yaml:"circuit_breakers,omitempty"`
+	Timeouts         *RouteTimeouts          `yaml:"timeouts,omitempty"`
 }
 
 // Route describes the required methods and path matcher, plus optional rewrite and processing.
@@ -362,6 +363,7 @@ func (a API) clone() API {
 	a.Routes = cloneSlice(a.Routes)
 	a.Upstream = a.Upstream.clone()
 	a.Metrics = cloneConfigPointer(a.Metrics)
+	a.AdmissionControl = cloneConfigPointer(a.AdmissionControl)
 	if a.CircuitBreakers != nil {
 		circuitBreakers := a.CircuitBreakers.clone()
 		a.CircuitBreakers = &circuitBreakers

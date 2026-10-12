@@ -62,6 +62,6 @@ golden-file updates.
 - Keep user guides focused on configuration, client requests, observable
   behavior, and required external resources. Technical docs should explain
   Envoy behavior, not Go function names or code structure.
-- Work on a feature branch. Never push directly to `main`; keep changes local
-  and do not open a PR or MR unless asked.
+- Work on a feature branch and submit feature changes through an upstream PR
+  or MR for review. Never push directly to `main`.
 - Use concise, natural-language commit messages without emojis.

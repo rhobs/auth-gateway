@@ -114,9 +114,11 @@ The Docker Compose demo exercises public, JWT, API-key, and mixed-auth servers
 with mock OAuth, httpbin, metrics, and traces. Start with
 [playground/README.md](playground/README.md).
 
-## Development
+## Development and contributions
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for local checks and golden-file updates.
+Develop feature changes on a branch and submit them to the upstream repository
+through a pull request for review. See [CONTRIBUTING.md](CONTRIBUTING.md) for
+the contribution workflow, checks, and golden-file updates.
 
 ## License
 
