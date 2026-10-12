@@ -1,0 +1,52 @@
+version: 1
+node:
+  id: tracing-e2e
+  cluster: tracing-e2e
+observability:
+  metrics:
+    enabled: true
+    custom_metric_name: gateway_http_requests_total
+  tracing:
+    enabled: true
+    endpoint: trace-sink.auth-gateway-tracing-e2e.svc.cluster.local:4317
+    service_name: auth-gateway-tracing-e2e
+    sampling_percentage: 100
+    insecure: true
+authenticators:
+  - name: tracing-key
+    api_key:
+      secret: auth-gateway-tracing-keys
+      header: X-Trace-Key
+    attributes:
+      tenant_id: {credential: true}
+authorization_policies:
+  - name: tracing-requests
+    grants:
+      - authenticator: tracing-key
+        apis: [tracing]
+        attributes:
+          tenant_id: [trace-client]
+apis:
+  - name: tracing
+    metrics: {}
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [GET]
+        path:
+          exact: /trace
+        rewrite:
+          path: /anything/trace
+servers:
+  - hostname: tracing.auth-gateway.test
+    authentication:
+      any_of: [tracing-key]
+    authorization:
+      any_of: [tracing-requests]
+    apis: [tracing]
+kubernetes:
+  name: auth-gateway
+  namespace: auth-gateway-tracing-e2e
+  replicas: 1
+  service_port: 80

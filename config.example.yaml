@@ -1,70 +1,243 @@
-# Version of the gateway configuration format.
+# Full supported gateway configuration. Replace example hosts, upstreams, and
+# resource names before use. Referenced Secrets and ConfigMaps must exist first.
 version: 1
 
+# Optional Envoy node identity. Both fields default to auth-gateway.
+# node:
+#   id: auth-gateway
+#   cluster: auth-gateway
+
 listener:
-  # One Envoy listener port handles all configured protocols. Defaults to 8080.
-  port: 8080
+  port: 8080 # Default.
+  # Optional listener settings; defaults shown.
+  # per_connection_buffer_limit_bytes: 1048576
+  # max_request_headers_kb: 32
+  # max_request_headers_count: 100
+  # request_headers_timeout: 5s
+  # request_timeout: 30s
+  # connection_idle_timeout: 1m
+  # stream_idle_timeout: 1m
+  # max_stream_duration: 30s
+  # stream_flush_timeout: 5s
+  # tls_handshake_timeout: 5s
+  # Optional HTTP/2 overrides. Omitted fields use Envoy defaults.
+  # http2:
+  #   max_concurrent_streams: 1000
+  #   initial_stream_window_size: 16777216
+  #   initial_connection_window_size: 25165824
 
-# Optional Envoy node metadata. Both values default to auth-gateway.
-node:
-  # Identifier for this Envoy instance.
-  id: auth-gateway
-  # Logical service cluster that this Envoy belongs to.
-  cluster: auth-gateway
+# Optional overload protection. It is disabled unless this section is set.
+# Keep max_heap_bytes below the Envoy memory limit.
+# overload:
+#   max_heap_bytes: 201326592
+#   max_downstream_connections: 2048
+#   heap_shrink_threshold: 0.90 # Default.
+#   request_reject_threshold: 0.95 # Default.
 
-# Each API defines one upstream and one or more routes to it.
+authenticators:
+  - name: internal-jwt
+    jwt:
+      issuer: https://sso.internal.example.com/realms/observability
+      jwks:
+        uri: https://sso.internal.example.com/realms/observability/protocol/openid-connect/certs
+        # Defaults: cache_duration 5m, fetch_timeout 5s, connect_timeout 5s.
+        # cache_duration: 5m
+        # fetch_timeout: 5s
+        # connect_timeout: 5s
+        # Optional replacement trust bundle. Omit to use system CAs.
+        # trusted_ca:
+        #   config_map: {name: internal-issuer-ca, key: ca.crt}
+        # Or, for file-based output without Kubernetes:
+        # trusted_ca:
+        #   filename: /etc/auth-gateway-ca/internal-issuer-ca.pem
+        # Optional circuit breakers. Defaults are 1024, 1024, 1024, and 0.
+        # circuit_breakers:
+        #   max_connections: 1024
+        #   max_pending_requests: 1024
+        #   max_requests: 1024
+        #   max_retries: 0
+      audiences: [observability-ingestion]
+    attributes:
+      tenant_id:
+        claim_path: [organization, id]
+      writer_id:
+        claim_path: [sub]
+      requested_tenant:
+        header: X-Tenant
+
+  - name: external-jwt
+    jwt:
+      issuer: https://sso.external.example.com/realms/observability
+      jwks:
+        uri: https://sso.external.example.com/realms/observability/protocol/openid-connect/certs
+      audiences: [observability-ingestion]
+    attributes:
+      tenant_id:
+        claim_path: [organization, id]
+      writer_id:
+        claim_path: [sub]
+
+  - name: partner-key
+    api_key:
+      secret: auth-gateway-api-keys
+      header: X-Partner-Key # Optional; defaults to X-API-Key.
+    attributes:
+      tenant_id: {credential: true}
+      writer_id: {credential: true}
+      requested_tenant:
+        header: X-Tenant
+
+authorization_policies:
+  - name: metrics-writers
+    grants:
+      - authenticator: internal-jwt
+        apis: [metrics-write]
+        attributes:
+          tenant_id: [client-123, client-456]
+      - authenticator: external-jwt
+        apis: [metrics-write]
+        attributes:
+          tenant_id: [customer-456]
+
+  - name: logs-writers
+    grants:
+      - authenticator: internal-jwt
+        apis: [logs]
+        attributes:
+          tenant_id: [client-123]
+      - authenticator: external-jwt
+        apis: [logs]
+        attributes:
+          tenant_id: [customer-456, customer-789]
+
+  - name: query-readers
+    grants:
+      - authenticator: internal-jwt
+        apis: [metrics-query]
+        attributes:
+          tenant_id: [client-123, client-456]
+      - authenticator: external-jwt
+        apis: [metrics-query]
+        attributes:
+          tenant_id: [customer-456]
+
+  - name: partner-metrics-writers
+    grants:
+      - authenticator: partner-key
+        apis: [metrics-write]
+        attributes:
+          tenant_id: [client-123]
+          writer_id: [writer-17]
+          requested_tenant: [client-123]
+
+# Metrics collection is enabled by default. Per-API counters still need
+# apis[].metrics. Tracing is disabled by default.
+observability:
+  metrics:
+    enabled: true # Default.
+    # scrape_interval: 30s # Default.
+    # scrape_timeout: 10s # Default.
+    # custom_metric_name: auth_gateway_http_requests_total # Default.
+  # tracing:
+  #   enabled: true
+  #   endpoint: otel-collector.observability.svc:4317 # Required when enabled.
+  #   service_name: auth-gateway # Defaults to node.cluster.
+  #   sampling_percentage: 100 # Default; range is 0 to 100.
+  #   insecure: false # Default; true disables TLS to the collector.
+
 apis:
   - name: metrics-write
+    metrics:
+      labels:
+        tenant: tenant_id
+        writer: writer_id
     upstream:
       address: thanos-receive
       port: 19291
-    # Optional limits for this API's upstream cluster.
+      # connect_timeout: 5s # Default.
+      # per_connection_buffer_limit_bytes: 1048576 # Default.
+      # http_protocol: http1 # Default; set to http2 only if the backend supports it.
+      # When using HTTP/2, optional connection overrides go here:
+      # http_protocol: http2
+      # http2:
+      #   max_concurrent_streams: 1000
+      #   initial_stream_window_size: 16777216
+      #   initial_connection_window_size: 25165824
+    # Optional API circuit breakers; defaults are 1024, 1024, 1024, and 0.
     # circuit_breakers:
-    #   # Maximum upstream connections. Envoy default: 1024.
     #   max_connections: 1024
-    #   # Maximum pending requests. Envoy default: 1024.
     #   max_pending_requests: 1024
-    #   # Maximum parallel requests. Envoy default: 1024.
     #   max_requests: 1024
-    #   # Maximum parallel retries. Default: 0.
     #   max_retries: 0
+    # Optional API timeouts. Response timeout defaults to 30s; idle and
+    # maximum stream duration inherit from the listener.
+    # timeouts:
+    #   response_timeout: 30s
+    #   idle_timeout: 1m
+    #   max_stream_duration: 30s
     routes:
       - methods: [POST]
         path:
           exact: /metrics/api/v1/receive
         rewrite:
-          # Replace the complete request path with the upstream path.
           path: /api/v1/receive
+        processing:
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: tenant_id
+            - name: X-Writer-ID
+              from_attribute: writer_id
+        # Optional per-route timeout overrides have the same fields as
+        # API-level timeouts and take precedence over them.
+        # timeouts:
+        #   response_timeout: 20s
 
   - name: metrics-query
     upstream:
-      address: thanos-query
+      address: thanos-query.observability.svc.cluster.local
       port: 9090
+      tls_config:
+        server_name: query.backend.example.com
+        trusted_ca:
+          config_map:
+            name: backend-ca
+            key: ca.crt
+      # For file-based output, use trusted_ca.filename instead of config_map.
+      # Upstream TLS is optional. Omit tls_config for plaintext HTTP.
+    timeouts:
+      response_timeout: 60s
+      idle_timeout: 65s
+      max_stream_duration: 90s
     routes:
-      # Routes are checked in declaration order. Put narrower matches first.
-      # One safe regex route covers both query endpoints and keeps the suffix.
       - methods: [GET, POST]
         path:
-          regex: '^/metrics/api/v1/(query|query_range)$'
+          regex: '^/metrics/api/v1/query$'
         rewrite:
           regex:
             pattern: '^/metrics/(.*)$'
             substitution: '/\1'
-
-      # Prefix matching forwards label names below this path.
       - methods: [GET]
         path:
           prefix: /metrics/api/v1/label/
         rewrite:
           prefix: /api/v1/label/
-
       - methods: [GET]
         path:
           exact: /metrics/api/v1/labels
         rewrite:
           path: /api/v1/labels
+      - methods: [GET, POST]
+        path:
+          exact: /metrics/api/v1/query_range
+        rewrite:
+          path: /api/v1/query_range
+        timeouts:
+          response_timeout: 90s
+          idle_timeout: 95s
+          max_stream_duration: 120s
 
   - name: logs
+    metrics: {} # Count responses without attribute labels.
     upstream:
       address: loki
       port: 3100
@@ -74,39 +247,80 @@ apis:
           prefix: /logs/otlp/
         rewrite:
           prefix: /otlp/
+        processing:
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: tenant_id
+
+processing:
+  - name: upstream-tenants
+    type: attribute-mapper
+    attributes:
+      tenant_id:
+        mappings:
+          client-123: team-a
+          client-456: team-b
+          customer-456: team-a
+          customer-789: team-b
 
 servers:
-  # Each exact hostname can appear only once.
+  - hostname: write-internal.auth.example.com
+    authentication:
+      any_of: [internal-jwt, external-jwt]
+    authorization:
+      any_of: [metrics-writers, logs-writers, query-readers]
+    apis: [metrics-write, metrics-query, logs]
+
   - hostname: write.auth.example.com
-    # Omit tls_config to serve this hostname over plaintext HTTP.
     tls_config:
       secret: write-gateway-tls
-      # Optional paths default to /etc/<secret>/tls.crt and tls.key.
+      # certificate and private_key default to /etc/<secret>/tls.crt and
+      # /etc/<secret>/tls.key. Set them only for a custom file layout.
       # certificate: /etc/write-gateway-tls/tls.crt
       # private_key: /etc/write-gateway-tls/tls.key
-    # API bindings and routes are checked in declaration order.
-    # Missing or empty bindings serve 404 for every path.
-    apis: [metrics-write, logs]
+    authentication:
+      any_of: [internal-jwt, external-jwt]
+    authorization:
+      any_of: [metrics-writers, logs-writers, query-readers]
+    apis: [metrics-write, metrics-query, logs]
 
-  - hostname: query.auth.example.com
-    tls_config:
-      secret: query-gateway-tls
-    apis: [metrics-query]
+  - hostname: partner.auth.example.com
+    authentication:
+      any_of: [partner-key]
+    authorization:
+      any_of: [partner-metrics-writers]
+    apis: [metrics-write]
 
-# Optional. Required when generating Kubernetes resources.
+  - hostname: either.auth.example.com
+    authentication:
+      # A valid JWT wins when both JWT and API-key credentials are present.
+      any_of: [internal-jwt, partner-key]
+    authorization:
+      any_of: [metrics-writers, partner-metrics-writers]
+    apis: [metrics-write]
+
+  - hostname: both.auth.example.com
+    authentication:
+      # Shared attributes must have matching nonempty raw values.
+      all_of: [internal-jwt, partner-key]
+    authorization:
+      all_of: [metrics-writers, partner-metrics-writers]
+    apis: [metrics-write]
+
+  # A server without authentication is public.
+  # - hostname: public.auth.example.com
+  #   apis: [metrics-query]
+
 kubernetes:
   name: auth-gateway
   namespace: observability
-  image: envoyproxy/envoy:v1.39.1
-  # Optional. Defaults to the OpenTelemetry Collector image used by the PoC.
-  otel_collector_image: otel/opentelemetry-collector-contrib:0.135.0
-  replicas: 2
-  # Optional Service port. Defaults to 80.
-  # service_port: 80
-  # Optional HTTPS Service port. Defaults to 443 when HTTPS servers are configured.
-  # https_service_port: 443
-  # Optional Envoy container resources. Omitted requests and limits use the defaults below.
-  # Set a category to {} to omit its defaults.
+  image: "" # Empty or omitted uses config.DefaultEnvoyImage.
+  otel_collector_image: "" # Empty or omitted uses config.DefaultOTelCollectorImage.
+  replicas: 2 # Default.
+  # service_port: 80 # Default.
+  # https_service_port: 443 # Default when an HTTPS server exists.
+  # envoy_concurrency: 2 # Optional; omitted lets Envoy choose workers.
+  # Omit these maps to use defaults. Set a map to {} to omit that category.
   # resources:
   #   requests:
   #     cpu: 50m
@@ -114,3 +328,10 @@ kubernetes:
   #   limits:
   #     cpu: "1"
   #     memory: 256Mi
+  # metrics:
+  #   resources:
+  #     requests:
+  #       cpu: 20m
+  #       memory: 64Mi
+  #     limits:
+  #       memory: 256Mi # No CPU limit by default.

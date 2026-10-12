@@ -1,0 +1,24 @@
+version: 1
+servers:
+  - hostname: auth.example.com
+    apis: [metrics]
+apis:
+  - name: metrics
+    upstream:
+      address: thanos-receive
+      port: 19291
+    routes:
+      - methods: [POST]
+        path:
+          exact: /metrics/api/v1/receive
+observability:
+  metrics:
+    enabled: null
+    scrape_interval: null
+    scrape_timeout: null
+kubernetes:
+  name: auth-gateway
+  namespace: observability
+  metrics:
+    resources: {requests: null, limits: null}
+overload: null

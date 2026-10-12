@@ -1,0 +1,141 @@
+version: 1
+listener:
+  port: 8080
+
+authenticators:
+  - name: playground-key
+    api_key:
+      header: X-API-Key
+    attributes:
+      user_id: {credential: true}
+  - name: playground-metrics-jwt
+    jwt:
+      issuer: https://auth.localhost:8443/metrics
+      audiences: [auth-gateway-playground]
+      jwks:
+        uri: https://mock-oauth2-server:8443/metrics/jwks
+        trusted_ca:
+          filename: /etc/auth-gateway/mock-oauth2.crt
+    attributes:
+      user_id:
+        claim_path: [sub]
+  - name: playground-logs-jwt
+    jwt:
+      issuer: https://auth.localhost:8443/logs
+      audiences: [auth-gateway-playground]
+      jwks:
+        uri: https://mock-oauth2-server:8443/logs/jwks
+        trusted_ca:
+          filename: /etc/auth-gateway/mock-oauth2.crt
+    attributes:
+      user_id:
+        claim_path: [sub]
+
+authorization_policies:
+  - name: playground-metrics-write-access
+    grants:
+      - authenticator: playground-key
+        apis: [metrics-write]
+        attributes:
+          user_id: [metrics-writer]
+      - authenticator: playground-metrics-jwt
+        apis: [metrics-write]
+        attributes:
+          user_id: [metrics-writer]
+  - name: playground-logs-access
+    grants:
+      - authenticator: playground-key
+        apis: [logs]
+        attributes:
+          user_id: [logs-writer]
+      - authenticator: playground-logs-jwt
+        apis: [logs]
+        attributes:
+          user_id: [logs-writer]
+
+observability:
+  metrics:
+    custom_metric_name: gateway_http_requests_total
+    enabled: true
+    scrape_interval: 5s
+    scrape_timeout: 2s
+  tracing:
+    enabled: true
+    endpoint: jaeger:4317
+    service_name: auth-gateway-playground
+    sampling_percentage: 100
+    insecure: true
+
+apis:
+  - name: playground-public
+    upstream:
+      address: httpbin.org
+      port: 443
+      tls_config:
+        server_name: httpbin.org
+    routes:
+      - methods: [GET]
+        path:
+          exact: /anything
+
+  - name: metrics-write
+    upstream:
+      address: httpbin.org
+      port: 443
+      tls_config:
+        server_name: httpbin.org
+    metrics:
+      labels:
+        user_id: user_id
+    routes:
+      - methods: [POST]
+        path:
+          exact: /metrics/api/v1/receive
+        rewrite:
+          path: /anything
+        processing:
+          request_headers:
+            - name: X-Authenticated-User
+              from_attribute: user_id
+
+  - name: logs
+    upstream:
+      address: httpbin.org
+      port: 443
+      tls_config:
+        server_name: httpbin.org
+    metrics:
+      labels:
+        user_id: user_id
+    routes:
+      - methods: [POST]
+        path:
+          prefix: /logs/otlp/
+        rewrite:
+          prefix: /anything/
+        processing:
+          request_headers:
+            - name: X-Authenticated-User
+              from_attribute: user_id
+
+servers:
+  - hostname: unprotected.localhost
+    apis: [playground-public]
+  - hostname: api-key.localhost
+    authentication:
+      any_of: [playground-key]
+    authorization:
+      any_of: [playground-metrics-write-access, playground-logs-access]
+    apis: [metrics-write, logs]
+  - hostname: jwt.localhost
+    authentication:
+      any_of: [playground-metrics-jwt, playground-logs-jwt]
+    authorization:
+      any_of: [playground-metrics-write-access, playground-logs-access]
+    apis: [metrics-write, logs]
+  - hostname: mixed.localhost
+    authentication:
+      any_of: [playground-metrics-jwt, playground-logs-jwt, playground-key]
+    authorization:
+      any_of: [playground-metrics-write-access, playground-logs-access]
+    apis: [metrics-write, logs]

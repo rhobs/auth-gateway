@@ -1,0 +1,83 @@
+version: 1
+listener:
+  max_request_headers_count: 80
+  request_headers_timeout: 2s
+  request_timeout: 45s
+  http2:
+    max_concurrent_streams: 100
+    initial_stream_window_size: 1048576
+    initial_connection_window_size: 1048576
+overload:
+  max_heap_bytes: 201326592
+  max_downstream_connections: 2048
+authenticators:
+  - name: issuer
+    jwt:
+      issuer: https://issuer.example.test
+      audiences: [observability]
+      jwks:
+        uri: https://issuer.example.test/jwks
+        cache_duration: 2m
+        connect_timeout: 1s
+        fetch_timeout: 2s
+        trusted_ca:
+          config_map: {name: shared-ca, key: ca.crt}
+    attributes:
+      tenant_id: {claim_path: [organization, id]}
+authorization_policies:
+  - name: observability
+    grants:
+      - authenticator: issuer
+        apis: [metrics]
+        attributes: {tenant_id: [customer-a]}
+apis:
+  - name: metrics
+    upstream:
+      address: backend.observability.svc.cluster.local
+      port: 8443
+      connect_timeout: 2s
+      per_connection_buffer_limit_bytes: 65536
+      http_protocol: http2
+      http2:
+        max_concurrent_streams: 16
+        initial_stream_window_size: 65535
+      tls_config:
+        server_name: backend.example.test
+        trusted_ca:
+          config_map: {name: shared-ca, key: ca.crt}
+    circuit_breakers:
+      max_connections: 32
+      max_pending_requests: 16
+      max_requests: 128
+      max_retries: 0
+    timeouts:
+      response_timeout: 60s
+      idle_timeout: 65s
+      max_stream_duration: 90s
+    routes:
+      - methods: [GET, POST]
+        path: {exact: /api/v1/query}
+      - methods: [POST]
+        path: {exact: /api/v1/receive}
+        timeouts:
+          response_timeout: 20s
+          max_stream_duration: 30s
+servers:
+  - hostname: gateway.example.test
+    tls_config: {secret: gateway-tls}
+    authentication: {any_of: [issuer]}
+    authorization: {any_of: [observability]}
+    apis: [metrics]
+observability:
+  metrics:
+    enabled: true
+    scrape_interval: 1500ms
+    scrape_timeout: 250ms
+kubernetes:
+  name: auth-gateway
+  namespace: observability
+  envoy_concurrency: 2
+  metrics:
+    resources:
+      requests: {cpu: 30m, memory: 64Mi}
+      limits: {memory: 128Mi}

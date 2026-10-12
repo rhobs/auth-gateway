@@ -1,0 +1,31 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  build-tags: [e2e, envoyruntime]
+  modules-download-mode: readonly
+
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - goconst
+    - dupl
+  exclusions:
+    rules:
+      # Tests keep expected strings literal so they stay independent of generator constants.
+      - path: _test\.go$
+        linters:
+          - goconst
+  settings:
+    goconst:
+      min-occurrences: 4
+      ignore-calls: false
+      exclude-types: []
+    dupl:
+      threshold: 150

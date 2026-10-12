@@ -1,0 +1,61 @@
+version: 1
+
+listener:
+  port: 8080
+
+apis:
+  - name: tls-echo
+    upstream:
+      address: transport-backend
+      port: 8443
+      tls_config:
+        server_name: transport-backend.upstream-transport-e2e.svc.cluster.local
+        trusted_ca:
+          config_map:
+            name: transport-backend-ca
+            key: ca.pem
+    routes:
+      - methods: [POST]
+        path:
+          exact: /tls-echo
+        rewrite:
+          path: /anything/tls-echo
+
+  - name: tls-mismatch
+    upstream:
+      address: transport-backend
+      port: 8443
+      tls_config:
+        server_name: wrong-name.upstream-transport-e2e.svc.cluster.local
+        trusted_ca:
+          config_map:
+            name: transport-backend-ca
+            key: ca.pem
+    routes:
+      - methods: [POST]
+        path:
+          exact: /tls-mismatch
+        rewrite:
+          path: /anything/tls-mismatch
+
+  - name: http2-echo
+    upstream:
+      address: transport-backend
+      port: 8081
+      http_protocol: http2
+    routes:
+      - methods: [POST]
+        path:
+          exact: /http2-echo
+        rewrite:
+          path: /anything/http2-echo
+
+servers:
+  - hostname: upstream-transport.auth-gateway.test
+    apis: [tls-echo, tls-mismatch, http2-echo]
+
+kubernetes:
+  name: auth-gateway
+  namespace: default
+  replicas: 1
+  service_port: 80

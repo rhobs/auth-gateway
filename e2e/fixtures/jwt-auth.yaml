@@ -1,0 +1,75 @@
+version: 1
+node:
+  id: jwt-auth-e2e
+  cluster: jwt-auth-e2e
+listener:
+  port: 8080
+authenticators:
+  - name: issuer-one
+    jwt:
+      issuer: https://issuer-one.jwt.test
+      jwks:
+        uri: https://jwks.jwt.test/issuer-one
+      # Deliberately omitted to exercise tokens without an aud claim.
+    attributes:
+      my_list:
+        claim_path: [x, my_list]
+authorization_policies:
+  - name: metrics-writers
+    grants:
+      - authenticator: issuer-one
+        apis: [metrics]
+        attributes:
+          my_list: [y, z]
+  - name: metrics-z-writers
+    grants:
+      - authenticator: issuer-one
+        apis: [metrics]
+        attributes:
+          my_list: [z]
+apis:
+  - name: metrics
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [GET]
+        path:
+          exact: /protected
+        rewrite:
+          path: /anything
+servers:
+  - hostname: plain.jwt.auth-gateway.test
+    authentication:
+      any_of: [issuer-one]
+    authorization:
+      any_of: [metrics-writers]
+    apis: [metrics]
+  - hostname: no-policy.jwt.auth-gateway.test
+    authentication:
+      any_of: [issuer-one]
+    apis: [metrics]
+  - hostname: any-policy.jwt.auth-gateway.test
+    authentication:
+      any_of: [issuer-one]
+    authorization:
+      any_of: [metrics-writers, metrics-z-writers]
+    apis: [metrics]
+  - hostname: all-policy.jwt.auth-gateway.test
+    authentication:
+      any_of: [issuer-one]
+    authorization:
+      all_of: [metrics-writers, metrics-z-writers]
+    apis: [metrics]
+kubernetes:
+  name: auth-gateway
+  namespace: default
+  replicas: 1
+  service_port: 80
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: "1"
+      memory: 256Mi

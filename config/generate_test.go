@@ -3,22 +3,133 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
+	"os"
+	"path"
+	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	bootstrap "github.com/envoyproxy/go-control-plane/envoy/config/bootstrap/v3"
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
+	rbac "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	setfilterstatecommon "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
+	headermutation "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
+	jwt "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/jwt_authn/v3"
+	httpRBAC "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
+	setfilterstate "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	"github.com/google/go-cmp/cmp"
 	"go.yaml.in/yaml/v3"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
+var updateGoldens = flag.Bool("update", false, "update generated reference files")
+
+func TestRequiredHeaderRBACRulesRejectsEmptyMappings(t *testing.T) {
+	_, err := requiredHeaderRBACRules(nil)
+	if err == nil || !strings.Contains(err.Error(), "at least one request header mapping") {
+		t.Fatalf("required header rules error = %v, want empty mapping error", err)
+	}
+}
+
+func TestGeneratedReferenceFiles(t *testing.T) {
+	cases, err := filepath.Glob(filepath.Join("testdata", "*", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, inputPath := range cases {
+		name := filepath.Base(filepath.Dir(inputPath))
+		t.Run(name, func(t *testing.T) {
+			input, err := os.Open(inputPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gatewayConfig, err := Load(input)
+			closeErr := input.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if closeErr != nil {
+				t.Fatal(closeErr)
+			}
+
+			caseDir := filepath.Dir(inputPath)
+			envoyFiles, err := Generate(gatewayConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkReference(t, filepath.Join(caseDir, "envoy.yaml.golden"), envoyFiles.EnvoyBootstrap.Contents)
+			processingPath := filepath.Join(caseDir, "processing.yaml.golden")
+			if envoyFiles.ProcessingConfig != nil {
+				checkReference(t, processingPath, envoyFiles.ProcessingConfig.Contents)
+			} else if *updateGoldens {
+				if err := os.Remove(processingPath); err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+			} else if _, err := os.Stat(processingPath); !os.IsNotExist(err) {
+				t.Errorf("unexpected processing reference %s", processingPath)
+			}
+
+			resources, err := GenerateKubernetes(gatewayConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest, err := resources.YAML()
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkReference(t, filepath.Join(caseDir, "kubernetes.yaml.golden"), manifest)
+		})
+	}
+}
+
+func TestPlaygroundBootstrap(t *testing.T) {
+	inputPath := filepath.Join("..", "playground", "config.yaml")
+	c := loadTestConfig(t, readTestFile(t, inputPath), inputPath)
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap := files.EnvoyBootstrap.Contents
+	if files.EnvoyBootstrap.Path != EnvoyBootstrapPath || len(bootstrap) == 0 {
+		t.Fatal("playground bootstrap is missing")
+	}
+	if len(files.All()) != 1 {
+		t.Fatalf("playground needs a file layout for %d generated files", len(files.All()))
+	}
+	checkReference(t, filepath.Join("..", "playground", "envoy.yaml.golden"), bootstrap)
+
+}
+
+func checkReference(t *testing.T, path string, generated []byte) {
+	t.Helper()
+	if *updateGoldens {
+		if err := os.WriteFile(path, generated, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	reference, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	referenceLines := strings.Split(string(reference), "\n")
+	generatedLines := strings.Split(string(generated), "\n")
+	if diff := cmp.Diff(referenceLines, generatedLines); diff != "" {
+		t.Errorf("%s is out of date; run make update-golden (-reference +generated):\n%s", path, diff)
+	}
+}
+
 func TestGenerateBuildsNamedAPIClustersAndRoutes(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,10 +151,10 @@ func TestGenerateBuildsNamedAPIClustersAndRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 1 || len(files["envoy.yaml"]) == 0 {
+	if len(files.All()) != 1 || files.EnvoyBootstrap.Path != EnvoyBootstrapPath || len(files.EnvoyBootstrap.Contents) == 0 {
 		t.Fatalf("generated files = %v", files)
 	}
-	bootstrapConfig := decodeBootstrap(t, files["envoy.yaml"])
+	bootstrapConfig := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	if got := bootstrapConfig.Node.GetId(); got != "auth-gateway" {
 		t.Fatalf("node ID = %q", got)
 	}
@@ -76,6 +187,9 @@ func TestGenerateBuildsNamedAPIClustersAndRoutes(t *testing.T) {
 	if err := listener.FilterChains[0].Filters[0].GetTypedConfig().UnmarshalTo(&manager); err != nil {
 		t.Fatal(err)
 	}
+	if !manager.GetRouteConfig().GetIgnorePortInHostMatching() {
+		t.Fatal("route configuration does not ignore the listener port during virtual-host matching")
+	}
 	routes := manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()
 	if len(routes) != 5 {
 		t.Fatalf("route count = %d, want 5", len(routes))
@@ -99,17 +213,10 @@ func TestGenerateBuildsNamedAPIClustersAndRoutes(t *testing.T) {
 		t.Fatalf("not found status = %d", status)
 	}
 
-	second, err := Generate(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(files["envoy.yaml"], second["envoy.yaml"]) {
-		t.Fatal("generation is not deterministic")
-	}
 }
 
 func TestGenerateAllowsMethodsOnOnePath(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +233,7 @@ func TestGenerateAllowsMethodsOnOnePath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bootstrapConfig := decodeBootstrap(t, files["envoy.yaml"])
+	bootstrapConfig := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	var manager hcm.HttpConnectionManager
 	if err := bootstrapConfig.StaticResources.Listeners[0].FilterChains[0].Filters[0].GetTypedConfig().UnmarshalTo(&manager); err != nil {
 		t.Fatal(err)
@@ -138,7 +245,7 @@ func TestGenerateAllowsMethodsOnOnePath(t *testing.T) {
 }
 
 func TestGenerateBuildsRoutesFromRouteLists(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "route-list.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "route-lists/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +253,7 @@ func TestGenerateBuildsRoutesFromRouteLists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bootstrapConfig := decodeBootstrap(t, files["envoy.yaml"])
+	bootstrapConfig := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	var manager hcm.HttpConnectionManager
 	if err := bootstrapConfig.StaticResources.Listeners[0].FilterChains[0].Filters[0].GetTypedConfig().UnmarshalTo(&manager); err != nil {
 		t.Fatal(err)
@@ -198,10 +305,11 @@ func TestGenerateBuildsRoutesFromRouteLists(t *testing.T) {
 }
 
 func TestGenerateBuildsHTTPAndSNISelectedHTTPSChains(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "route-list.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "route-lists/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
+	config.Kubernetes = nil
 	tlsConfig := &ServerTLS{
 		Certificate: "/etc/gateway-certs/tls.crt",
 		PrivateKey:  "/etc/gateway-certs/tls.key",
@@ -215,10 +323,10 @@ func TestGenerateBuildsHTTPAndSNISelectedHTTPSChains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 2 {
+	if len(files.All()) != 2 {
 		t.Fatalf("generated files = %v, want bootstrap and server certificate SDS resource", files)
 	}
-	bootstrapConfig := decodeBootstrap(t, files["envoy.yaml"])
+	bootstrapConfig := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	generatedListener := bootstrapConfig.StaticResources.Listeners[0]
 	if len(generatedListener.ListenerFilters) != 1 || generatedListener.ListenerFilters[0].Name != "envoy.filters.listener.tls_inspector" {
 		t.Fatalf("listener filters = %#v, want TLS inspector", generatedListener.ListenerFilters)
@@ -265,7 +373,7 @@ func TestGenerateBuildsHTTPAndSNISelectedHTTPSChains(t *testing.T) {
 		t.Fatalf("certificate SDS resource path = %q", got)
 	}
 
-	secret := decodeTLSSecret(t, files["server-certificate-1.yaml"])
+	secret := decodeTLSSecret(t, generatedContentsByPath(t, files, "/etc/auth-gateway/server-certificate-1.yaml"))
 	certificate := secret.GetTlsCertificate()
 	if secret.GetName() != "gateway_server_1" || certificate == nil {
 		t.Fatalf("generated SDS resource = %#v", secret)
@@ -282,18 +390,42 @@ func TestGenerateBuildsHTTPAndSNISelectedHTTPSChains(t *testing.T) {
 }
 
 func TestGenerateRejectsInvalidConfiguration(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	config.Version = 2
-	if _, err := Generate(config); err == nil {
-		t.Fatal("Generate accepted an unsupported config version")
+	if _, err := Generate(config); err == nil || !strings.Contains(err.Error(), "version must") {
+		t.Fatalf("Generate error = %v, want unsupported config version", err)
+	}
+}
+
+func TestGenerateReturnsNamedFilesWithRequiredPaths(t *testing.T) {
+	files, err := Generate(loadConfigCase(t, "jwt-auth-with-mappings"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.ProcessingConfig == nil {
+		t.Fatal("mapped configuration has no processing file")
+	}
+	wantPaths := []string{
+		EnvoyBootstrapPath,
+		ProcessingConfigPath,
+		path.Join(EnvoyConfigDirectory, "server-certificate-1.yaml"),
+	}
+	generated := files.All()
+	if len(generated) != len(wantPaths) {
+		t.Fatalf("generated files = %#v, want paths %v", generated, wantPaths)
+	}
+	for i, file := range generated {
+		if file.Path != wantPaths[i] || len(file.Contents) == 0 {
+			t.Fatalf("generated file %d = %#v, want nonempty file at %q", i, file, wantPaths[i])
+		}
 	}
 }
 
 func TestGenerateScopesAPIExposureToServers(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,10 +449,10 @@ func TestGenerateScopesAPIExposureToServers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 3 {
-		t.Fatalf("file count = %d, want bootstrap and two SDS files", len(files))
+	if len(files.All()) != 3 {
+		t.Fatalf("file count = %d, want bootstrap and two SDS files", len(files.All()))
 	}
-	bootstrap := decodeBootstrap(t, files["envoy.yaml"])
+	bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	if len(bootstrap.StaticResources.Clusters) != 3 {
 		t.Fatal("API bindings duplicated upstream clusters")
 	}
@@ -382,25 +514,138 @@ func TestGenerateScopesAPIExposureToServers(t *testing.T) {
 		}
 	}
 	for i, filename := range []string{"server-certificate-3.yaml", "server-certificate-4.yaml"} {
-		secret := decodeTLSSecret(t, files[filename])
+		secret := decodeTLSSecret(t, generatedContentsByPath(t, files, path.Join(EnvoyConfigDirectory, filename)))
 		wantName := []string{"gateway_server_3", "gateway_server_4"}[i]
 		if secret.Name != wantName || secret.GetTlsCertificate().GetWatchedDirectory().GetPath() != "/etc/shared-tls" {
 			t.Fatalf("SDS file %s does not reference the shared certificate with a distinct name", filename)
 		}
 	}
-	second, err := Generate(config)
-	if err != nil {
-		t.Fatal(err)
+}
+
+func TestGenerationIsDeterministic(t *testing.T) {
+	buildMapped := func(t *testing.T, reverse bool) Config {
+		t.Helper()
+		c := loadConfigCase(t, "jwt-auth-with-mappings")
+		entries := []struct{ source, target string }{
+			{source: "client-123", target: "team-a"},
+			{source: "client-456", target: "team-b"},
+			{source: "customer-456", target: "team-a"},
+			{source: "customer-789", target: "team-b"},
+		}
+		mappings := make(map[string]string, len(entries))
+		for i := range entries {
+			index := i
+			if reverse {
+				index = len(entries) - i - 1
+			}
+			mappings[entries[index].source] = entries[index].target
+		}
+		attributes := c.Processing[0].Attributes
+		attribute := attributes["tenant_id"]
+		attribute.Mappings = mappings
+		attributes["tenant_id"] = attribute
+		return c
 	}
-	for filename, data := range files {
-		if !bytes.Equal(data, second[filename]) {
-			t.Fatalf("%s generation is not deterministic", filename)
+	buildMultipleCAs := func(t *testing.T, reverse bool) Config {
+		t.Helper()
+		c := loadConfigCase(t, "jwt-auth-multiple-issuers")
+		c.Authenticators[0].JWT.JWKS.TrustedCA = &TrustedCA{ConfigMap: &CAConfigMap{Name: "issuer-one-ca", Key: "ca.crt"}}
+		c.Authenticators[1].JWT.JWKS.TrustedCA = &TrustedCA{ConfigMap: &CAConfigMap{Name: "issuer-two-ca", Key: "ca.crt"}}
+		c.APIs[0].Upstream.TLSConfig = &UpstreamTLS{
+			ServerName: "backend.example.test",
+			TrustedCA:  &TrustedCA{ConfigMap: &CAConfigMap{Name: "backend-ca", Key: "ca.crt"}},
+		}
+		requests := []struct{ name, value string }{{name: "cpu", value: "50m"}, {name: "memory", value: "64Mi"}}
+		limits := []struct{ name, value string }{{name: "cpu", value: "1"}, {name: "memory", value: "256Mi"}}
+		c.Kubernetes.Resources.Requests = resourceMap(requests, reverse)
+		c.Kubernetes.Resources.Limits = resourceMap(limits, reverse)
+		return c
+	}
+	tests := []struct {
+		name  string
+		build func(*testing.T, bool) Config
+	}{
+		{name: "public routing", build: func(t *testing.T, _ bool) Config { return loadConfigCase(t, "public-routing") }},
+		{name: "mapping insertion order", build: buildMapped},
+		{name: "multiple CA mounts", build: buildMultipleCAs},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			firstConfig := test.build(t, false)
+			secondConfig := test.build(t, true)
+			firstFiles, err := Generate(firstConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			secondFiles, err := Generate(secondConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertGeneratedFilesEqual(t, firstFiles, secondFiles)
+
+			firstResources, err := GenerateKubernetes(firstConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			secondResources, err := GenerateKubernetes(secondConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			firstManifest, err := firstResources.YAML()
+			if err != nil {
+				t.Fatal(err)
+			}
+			secondManifest, err := secondResources.YAML()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(firstManifest, secondManifest) {
+				t.Fatal("Kubernetes manifest changed with map insertion order")
+			}
+		})
+	}
+}
+
+func resourceMap(entries []struct{ name, value string }, reverse bool) map[string]string {
+	values := make(map[string]string, len(entries))
+	for i := range entries {
+		index := i
+		if reverse {
+			index = len(entries) - i - 1
+		}
+		values[entries[index].name] = entries[index].value
+	}
+	return values
+}
+
+func assertGeneratedFilesEqual(t testing.TB, left, right GeneratedFiles) {
+	t.Helper()
+	leftFiles := left.All()
+	rightFiles := right.All()
+	if len(leftFiles) != len(rightFiles) {
+		t.Fatalf("generated file counts differ: %d and %d", len(leftFiles), len(rightFiles))
+	}
+	for i, file := range leftFiles {
+		other := rightFiles[i]
+		if file.Path != other.Path || !bytes.Equal(file.Contents, other.Contents) {
+			t.Fatalf("generated file %q differs from %q", file.Path, other.Path)
 		}
 	}
 }
 
+func generatedContentsByPath(t testing.TB, files GeneratedFiles, filePath string) []byte {
+	t.Helper()
+	for _, file := range files.All() {
+		if file.Path == filePath {
+			return file.Contents
+		}
+	}
+	t.Fatalf("generated file %q is missing", filePath)
+	return nil
+}
+
 func TestGenerateUsesAPIBindingOrder(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +659,7 @@ func TestGenerateUsesAPIBindingOrder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		bootstrap := decodeBootstrap(t, files["envoy.yaml"])
+		bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 		manager := decodeHTTPManager(t, bootstrap.StaticResources.Listeners[0].FilterChains[0])
 		routes := manager.GetRouteConfig().VirtualHosts[0].Routes
 		for i, apiName := range order {
@@ -423,6 +668,416 @@ func TestGenerateUsesAPIBindingOrder(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestJWTHeaderOnlyGrantRequiresNamedVerifiedIssuer(t *testing.T) {
+	c := loadConfigCase(t, "jwt-auth-multiple-issuers")
+	c.Authenticators[0].Attributes["requested_tenant"] = AttributeSource{Header: new("X-Tenant")}
+	c.AuthorizationPolicies[0].Grants[0].Attributes = map[string][]string{"requested_tenant": {"customer-a"}}
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
+	names := httpFilterNames(manager)
+	if slices.Index(names, "envoy.filters.http.header_to_metadata") < 0 ||
+		slices.Index(names, "envoy.filters.http.set_filter_state") >= 0 {
+		t.Fatalf("header-only grant needs capture but no working attributes: %v", names)
+	}
+	grant := c.toGrantPrincipal(c.AuthorizationPolicies[0].Grants[0]).GetAndIds().GetIds()
+	if len(grant) != 2 {
+		t.Fatalf("header-only JWT grant principals = %#v", grant)
+	}
+	header := grant[0].GetSourcedMetadata().GetMetadataMatcher()
+	issuer := grant[1].GetSourcedMetadata().GetMetadataMatcher()
+	if header.GetFilter() != "auth_gateway.request_headers" ||
+		!slices.Equal(metadataMatcherPath(header.GetPath()), []string{"x-tenant"}) ||
+		header.GetValue().GetStringMatch().GetExact() != "customer-a" ||
+		issuer.GetFilter() != "envoy.filters.http.jwt_authn" ||
+		!slices.Equal(metadataMatcherPath(issuer.GetPath()), []string{"issuer-one", "iss"}) ||
+		issuer.GetValue().GetStringMatch().GetExact() != "https://issuer-one.jwt.test" {
+		t.Fatalf("header-only JWT grant does not bind the named issuer: %#v", grant)
+	}
+}
+
+func TestJWTProviderClustersAndTrust(t *testing.T) {
+	c := loadConfigCase(t, "jwt-auth-multiple-issuers")
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
+	manager := decodeHTTPManager(t, generated.StaticResources.Listeners[0].FilterChains[0])
+
+	var jwtConfig jwt.JwtAuthentication
+	var jwtFilter *hcm.HttpFilter
+	for _, filter := range manager.HttpFilters {
+		if filter.Name == jwtAuthnFilterName {
+			jwtFilter = filter
+			break
+		}
+	}
+	if jwtFilter == nil {
+		t.Fatal("JWT filter is missing")
+	}
+	if err := jwtFilter.GetTypedConfig().UnmarshalTo(&jwtConfig); err != nil {
+		t.Fatal(err)
+	}
+	if len(jwtConfig.Providers) != 2 || len(jwtConfig.RequirementMap) != 2 {
+		t.Fatalf("JWT provider/requirement counts = %d/%d", len(jwtConfig.Providers), len(jwtConfig.RequirementMap))
+	}
+	for name, issuer := range map[string]string{
+		"issuer-one": "https://issuer-one.jwt.test",
+		"issuer-two": "https://issuer-two.jwt.test",
+	} {
+		provider := jwtConfig.Providers[name]
+		if provider == nil || provider.Issuer != issuer || provider.PayloadInMetadata != name ||
+			!provider.RequireExpiration || provider.Forward || len(provider.FromHeaders) != 1 ||
+			provider.FromHeaders[0].Name != "Authorization" || provider.FromHeaders[0].ValuePrefix != "Bearer " {
+			t.Fatalf("JWT provider %q = %#v", name, provider)
+		}
+		remote := provider.GetRemoteJwks()
+		if remote == nil || remote.HttpUri == nil || remote.HttpUri.GetCluster() != jwksClusterName(name) {
+			t.Fatalf("JWT provider %q has no dedicated JWKS cluster", name)
+		}
+		if remote.CacheDuration == nil {
+			t.Fatalf("JWT provider %q has no JWKS cache duration", name)
+		}
+		if got, want := remote.CacheDuration.AsDuration(), 5*time.Minute; got != want {
+			t.Fatalf("JWT provider %q cache duration = %s, want default %s", name, got, want)
+		}
+	}
+	if jwtConfig.RequirementMap[serverJWTRequirementName(1)].GetProviderName() != "issuer-one" {
+		t.Fatalf("issuer-restricted server JWT requirement = %#v", jwtConfig.RequirementMap[serverJWTRequirementName(1)])
+	}
+
+	clusters := make(map[string]*cluster.Cluster, len(generated.StaticResources.Clusters))
+	for _, item := range generated.StaticResources.Clusters {
+		clusters[item.Name] = item
+	}
+	for _, name := range []string{"issuer-one", "issuer-two"} {
+		jwks := clusters[jwksClusterName(name)]
+		if jwks == nil || jwks.TransportSocket == nil {
+			t.Fatalf("missing TLS JWKS cluster for %q", name)
+		}
+		var upstream tls.UpstreamTlsContext
+		if err := jwks.TransportSocket.GetTypedConfig().UnmarshalTo(&upstream); err != nil {
+			t.Fatal(err)
+		}
+		if upstream.GetSni() == "" || upstream.GetCommonTlsContext().GetValidationContext().GetTrustedCa().GetFilename() == "" {
+			t.Fatalf("JWKS TLS validation is not enabled for %q", name)
+		}
+	}
+	if got, want := len(generated.StaticResources.Clusters), len(c.APIs)+len(jwtConfig.Providers); got != want {
+		t.Fatalf("upstream/JWKS cluster count = %d, want %d", got, want)
+	}
+}
+
+func TestJWTAuthorizationReadsOriginalClaimsFromNamedProvider(t *testing.T) {
+	c := loadConfigCase(t, "jwt-auth-multiple-issuers")
+	rules := c.toServerRBACRules(c.Servers[0])
+	policy := rules.Policies["api-metrics"]
+	if policy == nil || len(policy.Principals) != 1 {
+		t.Fatalf("API authorization policy = %#v", policy)
+	}
+	grants := policy.Principals[0].GetOrIds().Ids
+	if len(grants) != 2 {
+		t.Fatalf("provider grant count = %d, want one for each issuer", len(grants))
+	}
+	gotValues := make(map[string]string, len(grants))
+	for _, grant := range grants {
+		claim := grant.GetSourcedMetadata()
+		if claim == nil || claim.MetadataSource != rbac.MetadataSource_DYNAMIC || claim.GetMetadataMatcher().GetFilter() != "envoy.filters.http.jwt_authn" {
+			t.Fatalf("grant does not use verified JWT metadata: %#v", grant)
+		}
+		var path []string
+		for _, segment := range claim.GetMetadataMatcher().GetPath() {
+			path = append(path, segment.GetKey())
+		}
+		if len(path) != 3 || path[1] != "organization" || path[2] != "id" {
+			t.Fatalf("grant claim path = %v, want provider.organization.id", path)
+		}
+		valueMatcher := claim.GetMetadataMatcher().GetValue()
+		branches := valueMatcher.GetOrMatch().GetValueMatchers()
+		if len(branches) != 2 || branches[0].GetStringMatch() == nil || branches[1].GetListMatch() == nil {
+			t.Fatalf("claim matcher = %#v, want scalar and list branches", valueMatcher)
+		}
+		listValueMatcher := branches[1].GetListMatch().GetOneOf()
+		if listValueMatcher == nil || listValueMatcher.GetStringMatch() == nil {
+			t.Fatalf("list matcher = %#v, want an exact string member matcher", branches[1].GetListMatch())
+		}
+		value := branches[0].GetStringMatch().GetExact()
+		if listValueMatcher.GetStringMatch().GetExact() != value {
+			t.Fatalf("scalar and list match values = %q and %q", value, listValueMatcher.GetStringMatch().GetExact())
+		}
+		gotValues[path[0]] = value
+	}
+	if !reflect.DeepEqual(gotValues, map[string]string{"issuer-one": "customer-a", "issuer-two": "customer-b"}) {
+		t.Fatalf("raw provider grants = %v", gotValues)
+	}
+
+	config, err := c.toJWTFilterConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	any := config.RequirementMap[serverJWTRequirementName(0)].GetRequiresAny().Requirements
+	if len(any) != 2 || any[0].GetProviderName() != "issuer-one" || any[1].GetProviderName() != "issuer-two" {
+		t.Fatalf("alternative issuer requirement = %#v", any)
+	}
+}
+
+func TestJWTAuthorizationMatchesAnyAllowedListClaimValue(t *testing.T) {
+	c := loadConfigCase(t, "jwt-auth")
+	c.Authenticators[0].Attributes["my_list"] = AttributeSource{ClaimPath: []string{"x", "my_list"}}
+	grant := c.AuthorizationPolicies[0].Grants[0]
+	grant.Attributes = map[string][]string{"my_list": {"y", "z"}}
+
+	principal := c.toGrantPrincipal(grant)
+	claim := principal.GetSourcedMetadata()
+	if claim == nil {
+		t.Fatalf("grant principal = %#v, want a JWT metadata matcher", principal)
+	}
+	var gotPath []string
+	for _, segment := range claim.GetMetadataMatcher().GetPath() {
+		gotPath = append(gotPath, segment.GetKey())
+	}
+	if !slices.Equal(gotPath, []string{"internal-jwt", "x", "my_list"}) {
+		t.Fatalf("claim path = %v, want internal-jwt.x.my_list", gotPath)
+	}
+
+	valueMatcher := claim.GetMetadataMatcher().GetValue()
+	branches := valueMatcher.GetOrMatch().GetValueMatchers()
+	if len(branches) != 2 || branches[0].GetOrMatch() == nil || branches[1].GetListMatch() == nil {
+		t.Fatalf("claim matcher = %#v, want scalar allowlist and list-member branches", valueMatcher)
+	}
+	scalarValues := branches[0].GetOrMatch().GetValueMatchers()
+	listMatcher := branches[1].GetListMatch().GetOneOf()
+	if listMatcher == nil || listMatcher.GetOrMatch() == nil {
+		t.Fatalf("list matcher = %#v, want an allowlist matcher for list members", branches[1].GetListMatch())
+	}
+	listValues := listMatcher.GetOrMatch().GetValueMatchers()
+	if len(scalarValues) != 2 || len(listValues) != 2 {
+		t.Fatalf("scalar/list allowlist lengths = %d/%d, want 2/2", len(scalarValues), len(listValues))
+	}
+	for i, want := range []string{"y", "z"} {
+		if scalarValues[i].GetStringMatch() == nil || scalarValues[i].GetStringMatch().GetExact() != want {
+			t.Fatalf("scalar allowlist value %d = %#v, want %q", i, scalarValues[i], want)
+		}
+		if listValues[i].GetStringMatch() == nil || listValues[i].GetStringMatch().GetExact() != want {
+			t.Fatalf("list-member allowlist value %d = %#v, want %q", i, listValues[i], want)
+		}
+	}
+}
+
+func TestConditionalJWTFilterOrder(t *testing.T) {
+	plainJWT := []string{requestControlsFilterName, jwtAuthnFilterName, authorizationFilterName, credentialCleanupFilterName, routerFilterName}
+	processedJWT := []string{
+		requestControlsFilterName, jwtAuthnFilterName, attributeFilterName, authorizationFilterName,
+		requiredHeaderFilterName, credentialCleanupFilterName, headerMutationFilterName, routerFilterName,
+	}
+	tests := []struct {
+		name                  string
+		fixture               string
+		wantOrder             []string
+		wantFiles             []string
+		withoutRequestMetrics bool
+	}{
+		{name: "public", fixture: "public-routing", wantOrder: []string{requestControlsFilterName, routerFilterName}, wantFiles: []string{envoyConfigFilename}},
+		{name: "plain JWT", fixture: "jwt-auth", wantOrder: plainJWT, wantFiles: []string{envoyConfigFilename}},
+		{name: "direct headers", fixture: "jwt-auth-with-headers", wantOrder: processedJWT, wantFiles: []string{envoyConfigFilename}},
+		{name: "mapped headers", fixture: "jwt-auth-with-mappings", wantOrder: processedJWT, wantFiles: []string{envoyConfigFilename, processingConfigFilename, "server-certificate-1.yaml"}, withoutRequestMetrics: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c := loadConfigCase(t, test.fixture)
+			if test.withoutRequestMetrics {
+				for i := range c.APIs {
+					c.APIs[i].Metrics = nil
+				}
+			}
+			files, err := Generate(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
+			manager := decodeHTTPManager(t, bootstrap.StaticResources.Listeners[0].FilterChains[0])
+			if got := httpFilterNames(manager); !slices.Equal(got, test.wantOrder) {
+				t.Fatalf("HTTP filter order = %v, want %v", got, test.wantOrder)
+			}
+			got := make([]string, 0, len(files.All()))
+			for _, file := range files.All() {
+				got = append(got, filepath.Base(file.Path))
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, test.wantFiles) {
+				t.Fatalf("generated files = %v, want %v", got, test.wantFiles)
+			}
+		})
+	}
+}
+
+func TestJWTRequiredHeadersAreRouteScopedAndManaged(t *testing.T) {
+	c := loadConfigCase(t, "jwt-auth-with-headers")
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
+	var globalMutation headermutation.HeaderMutation
+	for _, filter := range manager.HttpFilters {
+		if filter.Name == "envoy.filters.http.header_mutation" {
+			if err := filter.GetTypedConfig().UnmarshalTo(&globalMutation); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	removed := make(map[string]bool)
+	for _, mutation := range globalMutation.GetMutations().GetRequestMutations() {
+		removed[mutation.GetRemove()] = mutation.GetRemove() != ""
+	}
+	if len(removed) != 2 || !removed["x-scope-orgid"] || !removed["x-writer-id"] {
+		t.Fatalf("managed headers removed = %v", removed)
+	}
+	var initialized setfilterstate.Config
+	for _, filter := range manager.HttpFilters {
+		if filter.Name == attributeFilterName {
+			if err := filter.GetTypedConfig().UnmarshalTo(&initialized); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if len(initialized.OnRequestHeaders) != 2 {
+		t.Fatalf("initialized attribute count = %d, want tenant_id and writer_id", len(initialized.OnRequestHeaders))
+	}
+	for i, name := range []string{"tenant_id", "writer_id"} {
+		update := initialized.OnRequestHeaders[i]
+		key, ok := update.GetKey().(*setfilterstatecommon.FilterStateValue_ObjectKey)
+		value, valueOK := update.GetValue().(*setfilterstatecommon.FilterStateValue_FormatString)
+		if !ok || key.ObjectKey != filterStateKey(name) || !valueOK || update.FactoryKey != "envoy.string" || !update.SkipIfEmpty || !value.FormatString.OmitEmptyValues {
+			t.Fatalf("initialized attribute %q has unsafe or incomplete filter-state settings: %#v", name, update)
+		}
+	}
+
+	host := manager.GetRouteConfig().GetVirtualHosts()[0]
+	var protected, methodFallback, notFound bool
+	for _, generatedRoute := range host.GetRoutes() {
+		switch generatedRoute.Name {
+		case "api-0-metrics-route-0-method-0":
+			protected = true
+			headerConfig := generatedRoute.TypedPerFilterConfig["envoy.filters.http.header_mutation"]
+			if headerConfig == nil {
+				t.Fatal("protected route has no per-route header values")
+			}
+			var perRoute headermutation.HeaderMutationPerRoute
+			if err := headerConfig.UnmarshalTo(&perRoute); err != nil {
+				t.Fatal(err)
+			}
+			values := make(map[string]string)
+			for _, mutation := range perRoute.GetMutations().GetRequestMutations() {
+				append := mutation.GetAppend()
+				if append != nil && append.GetHeader() != nil {
+					values[append.GetHeader().GetKey()] = append.GetHeader().GetValue()
+				}
+			}
+			if !reflect.DeepEqual(values, map[string]string{
+				"X-Scope-OrgID": "%FILTER_STATE(auth_gateway.attributes.tenant_id:PLAIN)%",
+				"X-Writer-ID":   "%FILTER_STATE(auth_gateway.attributes.writer_id:PLAIN)%",
+			}) {
+				t.Fatalf("per-route header values = %v", values)
+			}
+			rbacConfig := generatedRoute.TypedPerFilterConfig[requiredHeaderFilterName]
+			if rbacConfig == nil {
+				t.Fatal("protected route has no required-attribute check")
+			}
+			var required httpRBAC.RBACPerRoute
+			if err := rbacConfig.UnmarshalTo(&required); err != nil {
+				t.Fatal(err)
+			}
+			policy := required.GetRbac().GetRules().GetPolicies()["required-attributes"]
+			if policy == nil || len(policy.Principals) != 1 {
+				t.Fatalf("required header policy = %#v", policy)
+			}
+			principals := policy.Principals[0].GetAndIds().Ids
+			if len(principals) != 2 {
+				t.Fatalf("required header attribute count = %d", len(principals))
+			}
+			keys := make([]string, 0, len(principals))
+			for _, principal := range principals {
+				filterState := principal.GetFilterState()
+				if filterState.GetStringMatch().GetSafeRegex().GetRegex() != headerValuePattern {
+					t.Fatalf("required attribute matcher = %#v", filterState.GetStringMatch())
+				}
+				keys = append(keys, filterState.GetKey())
+			}
+			if !reflect.DeepEqual(keys, []string{filterStateKey("tenant_id"), filterStateKey("writer_id")}) {
+				t.Fatalf("required header filter-state keys = %v", keys)
+			}
+		case "method-not-allowed-0":
+			methodFallback = true
+			if generatedRoute.TypedPerFilterConfig[requiredHeaderFilterName] != nil {
+				t.Fatal("method fallback incorrectly requires upstream header values")
+			}
+		case "not-found":
+			notFound = true
+			if generatedRoute.TypedPerFilterConfig[requiredHeaderFilterName] != nil {
+				t.Fatal("not-found route incorrectly requires upstream header values")
+			}
+		}
+	}
+	if !protected || !methodFallback || !notFound {
+		t.Fatalf("route cases protected/fallback/not-found = %t/%t/%t", protected, methodFallback, notFound)
+	}
+}
+
+func TestJWTAuthorizationPolicyCombinationsAreAPIScoped(t *testing.T) {
+	c := loadConfigCase(t, "jwt-auth-with-mappings")
+	rules := c.toServerRBACRules(c.Servers[0])
+	if rules.Policies["api-metrics-write"] == nil || rules.Policies["api-logs"] == nil {
+		t.Fatalf("any_of policies did not generate both granted API rules: %#v", rules.Policies)
+	}
+	metricsGrants := rules.Policies["api-metrics-write"].Principals[0].GetOrIds().Ids
+	if len(metricsGrants) != 2 {
+		t.Fatalf("metrics API grant principals = %d, want one grant from each issuer", len(metricsGrants))
+	}
+
+	c.Servers[0].Authorization = &Authorization{AllOf: []string{"metrics-writers", "logs-writers"}}
+	rules = c.toServerRBACRules(c.Servers[0])
+	if rules.Policies["api-metrics-write"] != nil || rules.Policies["api-logs"] != nil {
+		t.Fatalf("all_of policies for disjoint APIs granted access: %#v", rules.Policies)
+	}
+	if rules.Policies["local-responses"] == nil {
+		t.Fatal("all_of denied APIs but removed local 404/405 responses")
+	}
+}
+
+func firstHTTPManager(t testing.TB, data []byte) *hcm.HttpConnectionManager {
+	t.Helper()
+	generated := decodeBootstrap(t, data)
+	for _, chain := range generated.StaticResources.Listeners[0].FilterChains {
+		manager := decodeHTTPManager(t, chain)
+		if containsFilter(manager, "envoy.filters.http.jwt_authn") {
+			return manager
+		}
+	}
+	t.Fatal("no protected HTTP manager was generated")
+	return nil
+}
+
+func httpFilterNames(manager *hcm.HttpConnectionManager) []string {
+	names := make([]string, len(manager.HttpFilters))
+	for i, filter := range manager.HttpFilters {
+		names[i] = filter.Name
+	}
+	return names
+}
+
+func containsFilter(manager *hcm.HttpConnectionManager, name string) bool {
+	for _, filter := range manager.HttpFilters {
+		if filter.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeHTTPManager(t testing.TB, chain *listener.FilterChain) *hcm.HttpConnectionManager {
@@ -434,7 +1089,7 @@ func decodeHTTPManager(t testing.TB, chain *listener.FilterChain) *hcm.HttpConne
 	return &manager
 }
 
-func decodeBootstrap(t *testing.T, data []byte) *bootstrap.Bootstrap {
+func decodeBootstrap(t testing.TB, data []byte) *bootstrap.Bootstrap {
 	t.Helper()
 	var document map[string]any
 	if err := yaml.Unmarshal(data, &document); err != nil {

@@ -1,0 +1,30 @@
+version: 1
+servers:
+  - hostname: query.example.com
+    apis: [metrics-query]
+apis:
+  - name: metrics-query
+    upstream:
+      address: thanos-query
+      port: 9090
+    routes:
+      - methods: [GET, POST]
+        path:
+          regex: '^/metrics/api/v1/(query|query_range)$'
+        rewrite:
+          regex:
+            pattern: '^/metrics/(.*)$'
+            substitution: '/\1'
+      - methods: [GET]
+        path:
+          prefix: /metrics/api/v1/label/
+        rewrite:
+          prefix: /api/v1/label/
+      - methods: [GET]
+        path:
+          exact: /metrics/api/v1/labels
+        rewrite:
+          path: /api/v1/labels
+kubernetes:
+  name: auth-gateway
+  namespace: observability

@@ -1,0 +1,42 @@
+{
+  "interactiveLogin": true,
+  "httpServer": {
+    "type": "NettyWrapper",
+    "ssl": {
+      "keyPassword": "playground",
+      "keystoreFile": "/app/mock-oauth2.p12",
+      "keystoreType": "PKCS12",
+      "keystorePassword": "playground"
+    }
+  },
+  "tokenCallbacks": [
+    {
+      "issuerId": "metrics",
+      "tokenExpiry": 28800,
+      "requestMappings": [
+        {
+          "requestParam": "grant_type",
+          "match": "client_credentials",
+          "claims": {
+            "sub": "metrics-writer",
+            "aud": ["auth-gateway-playground"]
+          }
+        }
+      ]
+    },
+    {
+      "issuerId": "logs",
+      "tokenExpiry": 28800,
+      "requestMappings": [
+        {
+          "requestParam": "grant_type",
+          "match": "client_credentials",
+          "claims": {
+            "sub": "logs-writer",
+            "aud": ["auth-gateway-playground"]
+          }
+        }
+      ]
+    }
+  ]
+}

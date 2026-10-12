@@ -1,0 +1,101 @@
+version: 1
+authenticators:
+  - name: issuer-one
+    jwt:
+      issuer: https://issuer-one.jwt.test
+      jwks:
+        uri: https://jwks.jwt.test/issuer-one
+      audiences: [gateway-test]
+    attributes:
+      tenant_id:
+        claim_path: [organization, id]
+      writer_id:
+        claim_path: [sub]
+  - name: partner-key
+    api_key:
+      secret: gateway-api-keys
+      header: X-Partner-Key
+    attributes:
+      tenant_id: {credential: true}
+      writer_id: {credential: true}
+authorization_policies:
+  - name: jwt-writers
+    grants:
+      - authenticator: issuer-one
+        apis: [ingest]
+        attributes:
+          tenant_id: [client-a]
+  - name: key-writers
+    grants:
+      - authenticator: partner-key
+        apis: [ingest]
+        attributes:
+          tenant_id: [client-a]
+observability:
+  metrics:
+    custom_metric_name: gateway_http_requests_total
+
+apis:
+  - name: ingest
+    metrics:
+      labels:
+        tenant: tenant_id
+        writer: writer_id
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [POST]
+        path:
+          exact: /ingest
+        rewrite:
+          path: /anything
+        processing:
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: tenant_id
+            - name: X-Writer-ID
+              from_attribute: writer_id
+  - name: public
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [GET]
+        path:
+          exact: /health
+        rewrite:
+          path: /anything
+processing:
+  - name: tenants
+    type: attribute-mapper
+    attributes:
+      tenant_id:
+        mappings:
+          client-a: team-a
+servers:
+  - hostname: public.gateway.test
+    apis: [public]
+  - hostname: key.gateway.test
+    authentication:
+      any_of: [partner-key]
+    authorization:
+      any_of: [key-writers]
+    apis: [ingest]
+  - hostname: mixed.gateway.test
+    authentication:
+      any_of: [partner-key, issuer-one]
+    authorization:
+      any_of: [jwt-writers, key-writers]
+    apis: [ingest]
+  - hostname: dual.gateway.test
+    tls_config:
+      secret: gateway-tls
+    authentication:
+      all_of: [issuer-one, partner-key]
+    authorization:
+      all_of: [jwt-writers, key-writers]
+    apis: [ingest]
+kubernetes:
+  name: auth-gateway
+  namespace: gateway-test

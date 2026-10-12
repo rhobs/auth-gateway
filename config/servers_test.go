@@ -23,7 +23,7 @@ apis:
 }
 
 func TestServerRouteConflictsAreScopedToBindings(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,8 +44,59 @@ func TestServerRouteConflictsAreScopedToBindings(t *testing.T) {
 	}
 }
 
+func TestValidateServers(t *testing.T) {
+	newConfig := func(t *testing.T) Config {
+		t.Helper()
+		c := loadConfigCase(t, "public-routing")
+		c.Kubernetes = nil
+		c.Servers = []Server{
+			{Hostname: "auth.example.com", APIs: []string{"metrics"}},
+			{Hostname: "tls.example.com", TLSConfig: &ServerTLS{}, APIs: []string{"metrics"}},
+		}
+		return c
+	}
+
+	if err := newConfig(t).Validate(); err != nil {
+		t.Fatalf("valid HTTP and HTTPS servers rejected: %v", err)
+	}
+	tests := []struct {
+		name  string
+		field string
+		edit  func(*Config)
+	}{
+		{name: "no servers", field: "servers", edit: func(c *Config) { c.Servers = nil }},
+		{name: "empty servers", field: "servers", edit: func(c *Config) { c.Servers = []Server{} }},
+		{name: "missing hostname", field: "servers[0].hostname", edit: func(c *Config) { c.Servers[0].Hostname = "" }},
+		{name: "invalid hostname", field: "servers[0].hostname", edit: func(c *Config) { c.Servers[0].Hostname = "https://auth.example.com" }},
+		{name: "wildcard hostname", field: "servers[0].hostname", edit: func(c *Config) { c.Servers[0].Hostname = "*.example.com" }},
+		{name: "IP hostname", field: "servers[0].hostname", edit: func(c *Config) { c.Servers[0].Hostname = "127.0.0.1" }},
+		{name: "duplicate hostname", field: "servers[2].hostname", edit: func(c *Config) { c.Servers = append(c.Servers, c.Servers[0]) }},
+		{name: "host bound to both protocols", field: "servers[1].hostname", edit: func(c *Config) { c.Servers[1].Hostname = c.Servers[0].Hostname }},
+		{name: "unknown API", field: "servers[0].apis", edit: func(c *Config) { c.Servers[0].APIs = []string{"unknown"} }},
+		{name: "duplicate API binding", field: "servers[0].apis", edit: func(c *Config) { c.Servers[0].APIs = []string{"metrics", "metrics"} }},
+		{name: "certificate paths share a directory", field: "servers[1].tls_config.certificate", edit: func(c *Config) {
+			c.Servers[1].TLSConfig.Certificate = "/etc/certs/tls.crt"
+			c.Servers[1].TLSConfig.PrivateKey = "/etc/keys/tls.key"
+		}},
+		{name: "relative certificate path", field: "servers[1].tls_config.certificate", edit: func(c *Config) { c.Servers[1].TLSConfig.Certificate = "tls.crt" }},
+		{name: "identical certificate and key", field: "servers[1].tls_config.certificate", edit: func(c *Config) {
+			c.Servers[1].TLSConfig.Certificate = "/etc/certs/tls.crt"
+			c.Servers[1].TLSConfig.PrivateKey = "/etc/certs/tls.crt"
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c := newConfig(t)
+			test.edit(&c)
+			if err := c.Validate(); err == nil || !strings.Contains(err.Error(), test.field) {
+				t.Fatalf("validation error = %v, want field %q", err, test.field)
+			}
+		})
+	}
+}
+
 func TestValidateRejectsInvalidUnboundAPI(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+	config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,106 +106,58 @@ func TestValidateRejectsInvalidUnboundAPI(t *testing.T) {
 	api.Routes[0].Methods = nil
 	config.APIs = append(config.APIs, api)
 
-	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), ".methods") {
+	if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "apis[1].routes[0].methods") {
 		t.Fatalf("Validate error = %v, want missing route methods error for unbound API", err)
 	}
 }
 
-func TestServerTLSDefaults(t *testing.T) {
+func TestValidateKubernetesTLSMounts(t *testing.T) {
 	tests := []struct {
-		name        string
-		tls         ServerTLS
-		certificate string
-		privateKey  string
+		name string
+		want string
+		edit func(*Config)
 	}{
-		{name: "file only", certificate: defaultServerTLSCertificate, privateKey: defaultServerTLSPrivateKey},
-		{name: "named Secret", tls: ServerTLS{Secret: "other-tls"}, certificate: "/etc/other-tls/tls.crt", privateKey: "/etc/other-tls/tls.key"},
-		{name: "explicit paths", tls: ServerTLS{Secret: "other-tls", Certificate: "/certs/server.pem", PrivateKey: "/certs/key.pem"}, certificate: "/certs/server.pem", privateKey: "/certs/key.pem"},
+		{name: "missing Secret", want: "servers[1].tls_config.secret", edit: func(c *Config) { c.Servers[1].TLSConfig.Secret = "" }},
+		{name: "same directory", want: "servers[1].tls_config", edit: func(c *Config) {
+			c.Servers[1].TLSConfig.Certificate = "/etc/tls-one/tls.crt"
+			c.Servers[1].TLSConfig.PrivateKey = "/etc/tls-one/tls.key"
+		}},
+		{name: "nested directory", want: "servers[1].tls_config", edit: func(c *Config) {
+			c.Servers[1].TLSConfig.Certificate = "/etc/tls-one/nested/tls.crt"
+			c.Servers[1].TLSConfig.PrivateKey = "/etc/tls-one/nested/tls.key"
+		}},
+		{name: "gateway configuration", want: "servers[1].tls_config", edit: func(c *Config) {
+			c.Servers[1].TLSConfig.Certificate = "/etc/auth-gateway/tls.crt"
+			c.Servers[1].TLSConfig.PrivateKey = "/etc/auth-gateway/tls.key"
+		}},
+		{name: "collector configuration", want: "servers[1].tls_config", edit: func(c *Config) {
+			c.Servers[1].TLSConfig.Certificate = "/etc/collector/tls.crt"
+			c.Servers[1].TLSConfig.PrivateKey = "/etc/collector/tls.key"
+		}},
+		{name: "parent of configuration", want: "servers[1].tls_config", edit: func(c *Config) {
+			c.Servers[1].TLSConfig.Certificate = "/etc/tls.crt"
+			c.Servers[1].TLSConfig.PrivateKey = "/etc/tls.key"
+		}},
+		{name: "filesystem root", want: "servers[1].tls_config", edit: func(c *Config) {
+			c.Servers[1].TLSConfig.Certificate = "/tls.crt"
+			c.Servers[1].TLSConfig.PrivateKey = "/tls.key"
+		}},
+		{name: "conflicting filenames for a shared Secret", want: "servers[1].tls_config", edit: func(c *Config) {
+			c.Servers[1].TLSConfig = &ServerTLS{Secret: "tls-one", Certificate: "/etc/tls-one/server.pem", PrivateKey: "/etc/tls-one/key.pem"}
+		}},
+		{name: "HTTP and HTTPS port conflict", want: "kubernetes.service_port and kubernetes.https_service_port", edit: func(c *Config) {
+			c.Servers = append(c.Servers, Server{Hostname: "http.example.com", APIs: []string{"metrics"}})
+			c.Kubernetes.HTTPSServicePort = new(int32(80))
+		}},
+		{name: "HTTPS port without HTTPS", want: "kubernetes.https_service_port", edit: func(c *Config) {
+			c.Servers[0].TLSConfig = nil
+			c.Servers[1].TLSConfig = nil
+			c.Kubernetes.HTTPSServicePort = new(int32(443))
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
-			if err != nil {
-				t.Fatal(err)
-			}
-			config.Kubernetes = nil
-			config.Servers[0].TLSConfig = &test.tls
-			defaulted := config.withDefaults()
-			if err := defaulted.Validate(); err != nil {
-				t.Fatal(err)
-			}
-			tls := defaulted.Servers[0].TLSConfig
-			if tls.Certificate != test.certificate || tls.PrivateKey != test.privateKey {
-				t.Fatalf("TLS paths = %s, %s, want %s, %s", tls.Certificate, tls.PrivateKey, test.certificate, test.privateKey)
-			}
-		})
-	}
-}
-
-func TestServerDefaultsDoNotMutateInput(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	config.Servers[0].TLSConfig = &ServerTLS{Secret: "server-tls"}
-	defaulted := config.withDefaults()
-	if config.Servers[0].TLSConfig.Certificate != "" || config.Servers[0].TLSConfig.PrivateKey != "" || config.Kubernetes.HTTPSServicePort != 0 {
-		t.Fatal("defaults changed the input TLS configuration")
-	}
-	if defaulted.Kubernetes.HTTPSServicePort != defaultHTTPSServicePort {
-		t.Fatal("HTTPS Service port was not defaulted")
-	}
-	defaulted.Servers[0].APIs[0] = "other"
-	defaulted.Servers[0].TLSConfig.Secret = "other-tls"
-	if config.Servers[0].APIs[0] != "metrics" || config.Servers[0].TLSConfig.Secret != "server-tls" {
-		t.Fatal("defaulted server aliases the input configuration")
-	}
-}
-
-func TestValidateKubernetesTLSMounts(t *testing.T) {
-	tests := map[string]func(*Config){
-		"missing Secret": func(c *Config) { c.Servers[1].TLSConfig.Secret = "" },
-		"same directory": func(c *Config) {
-			c.Servers[1].TLSConfig.Certificate = "/etc/tls-one/tls.crt"
-			c.Servers[1].TLSConfig.PrivateKey = "/etc/tls-one/tls.key"
-		},
-		"nested directory": func(c *Config) {
-			c.Servers[1].TLSConfig.Certificate = "/etc/tls-one/nested/tls.crt"
-			c.Servers[1].TLSConfig.PrivateKey = "/etc/tls-one/nested/tls.key"
-		},
-		"gateway configuration": func(c *Config) {
-			c.Servers[1].TLSConfig.Certificate = "/etc/auth-gateway/tls.crt"
-			c.Servers[1].TLSConfig.PrivateKey = "/etc/auth-gateway/tls.key"
-		},
-		"collector configuration": func(c *Config) {
-			c.Servers[1].TLSConfig.Certificate = "/etc/collector/tls.crt"
-			c.Servers[1].TLSConfig.PrivateKey = "/etc/collector/tls.key"
-		},
-		"parent of configuration": func(c *Config) {
-			c.Servers[1].TLSConfig.Certificate = "/etc/tls.crt"
-			c.Servers[1].TLSConfig.PrivateKey = "/etc/tls.key"
-		},
-		"filesystem root": func(c *Config) {
-			c.Servers[1].TLSConfig.Certificate = "/tls.crt"
-			c.Servers[1].TLSConfig.PrivateKey = "/tls.key"
-		},
-		"conflicting filenames for a shared Secret": func(c *Config) {
-			c.Servers[1].TLSConfig = &ServerTLS{Secret: "tls-one", Certificate: "/etc/tls-one/server.pem", PrivateKey: "/etc/tls-one/key.pem"}
-		},
-		"metrics port conflict": func(c *Config) { c.Kubernetes.HTTPSServicePort = 8889 },
-		"HTTP and HTTPS port conflict": func(c *Config) {
-			c.Servers = append(c.Servers, Server{Hostname: "http.example.com", APIs: []string{"metrics"}})
-			c.Kubernetes.HTTPSServicePort = 80
-		},
-		"HTTPS port without HTTPS": func(c *Config) {
-			c.Servers[0].TLSConfig = nil
-			c.Servers[1].TLSConfig = nil
-			c.Kubernetes.HTTPSServicePort = 443
-		},
-	}
-	for name, change := range tests {
-		t.Run(name, func(t *testing.T) {
-			config, err := Load(strings.NewReader(readFixture(t, "example.yaml")))
+			config, err := Load(strings.NewReader(readFixture(t, "public-routing/config.yaml")))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -162,9 +165,9 @@ func TestValidateKubernetesTLSMounts(t *testing.T) {
 				{Hostname: "one.example.com", TLSConfig: &ServerTLS{Secret: "tls-one"}, APIs: []string{"metrics"}},
 				{Hostname: "two.example.com", TLSConfig: &ServerTLS{Secret: "tls-two"}, APIs: []string{"metrics"}},
 			}
-			change(&config)
-			if err := config.Validate(); err == nil {
-				t.Fatal("invalid Kubernetes TLS configuration accepted")
+			test.edit(&config)
+			if err := config.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validation error = %v, want %q", err, test.want)
 			}
 		})
 	}

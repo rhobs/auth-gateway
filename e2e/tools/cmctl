@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+tool_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
+exec go -C "$tool_dir" tool cmctl "$@"

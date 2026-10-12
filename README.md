@@ -1,143 +1,123 @@
 # RHOBS Auth Gateway
 
-The goal of this project is to expose a simple API and configuration layer on top of Envoy proxy
-to support common observability use cases around authentication, authorization and request transformation.
+RHOBS Auth Gateway is a Go library that loads one YAML configuration and
+generates Envoy files or Kubernetes resources. It does not run Envoy or a
+controller.
 
-It is tailored towards the following access patterns:
+The supported features include exact-host routing, HTTP and HTTPS listeners,
+HTTP/1 and HTTP/2 upstreams, JWT and API-key authentication, attribute-based
+authorization, request header mapping, per-API response counters, access logs,
+Prometheus metrics, and OpenTelemetry traces. Client-certificate mTLS is not
+supported.
 
-1. Read and write typically have different needs from an observability perspective.
-2. Within an organization, there may be a need to support varying methods of authentication and authorization for a backend.
-3. The team that runs this service has full or partial control over the shape of the credentials that consume it.
+## Requirements
 
+Importing this module requires Go 1.26 or later. The module is pre-v1.0 and
+does not promise a stable Go API. The YAML schema accepts only `version: 1`;
+the loader rejects unknown fields and extra YAML documents and does not migrate
+older formats.
 
-This project will focus on well-defined use cases to support well known backends and APIs and will leverage
-comprehensive e2e testing to ensure that the gateway fulfills these requirements.
+## Generate configuration
 
-## Why Envoy
+Install the module:
 
-Envoy Proxy is the foundation of this gateway. These are the reasons
-for that choice:
+```sh
+go get github.com/rhobs/auth-gateway
+```
 
-- **Extensibility**
-  - A filter chain architecture lets you add custom logic with
-    [ext_authz](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/ext_authz_filter),
-    [ext_proc](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/ext_proc_filter),
-    and [WebAssembly](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/wasm_filter)
-    filters.
-- **Multi-method authentication**
-  - Native support for
-    [JWT](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/jwt_authn_filter)
-    and [mTLS](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/security/ssl).
-- **Configuration over code**
-  - Define behaviour in configuration files, not in application code.
-  - This produces a well-known API and a declarative, auditable configuration.
-- **Observability**
-  - Built-in
-    [metrics](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/observability/statistics),
-    [distributed tracing](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/observability/tracing),
-    and [access logging](https://www.envoyproxy.io/docs/envoy/latest/configuration/observability/access_log).
-- **Traffic management**
-  - Production-grade
-    [circuit breaking](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/circuit_breaking)
-    and [rate limiting](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/rate_limit_filter).
-- **gRPC support**
-  - [First-class gRPC support](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/http/grpc),
-    including gRPC-specific load balancing and health checking.
-- **Zero-downtime updates**
-  - Envoy's
-    [hot restart](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/operations/hot_restart)
-    mechanism applies configuration and binary updates without dropping connections.
-- **Red Hat product support**
-  - Envoy is the data-plane proxy in Red Hat OpenShift Service Mesh.
-  - Red Hat provides support, security patches, and a managed release lifecycle.
-- **Mature ecosystem**
-  - Envoy is a CNCF graduated project with broad adoption and a proven production track record.
+Load and generate files or a Kubernetes manifest from Go:
 
+```go
+package main
 
+import (
+	"fmt"
+	"log"
+	"strings"
 
+	"github.com/rhobs/auth-gateway/config"
+)
 
-## Writing Observability Data
+func main() {
+	gateway, err := config.Load(strings.NewReader(`version: 1
+servers:
+  - hostname: status.example.com
+    apis: [status]
+apis:
+  - name: status
+    upstream: {address: httpbin, port: 8080}
+    routes:
+      - methods: [GET]
+        path: {exact: /status}
+kubernetes:
+  name: auth-gateway
+  namespace: observability
+`))
+	if err != nil {
+		log.Fatal(err)
+	}
 
-Writing data is typically a service-to-service operation.
+	files, err := config.Generate(gateway)
+	if err != nil {
+		log.Fatal(err)
+	}
+	resources, err := config.GenerateKubernetes(gateway)
+	if err != nil {
+		log.Fatal(err)
+	}
+	manifest, err := resources.YAML()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(files.EnvoyBootstrap.Path)
+	fmt.Print(string(manifest))
+}
+```
 
-If we control the client credentials, we can use a simple authentication and
-authorization model. Anyone with valid credentials can write data, and those
-credentials are not shared with other tenants. We can use part of the
-credentials to identify the tenant and add that value to the request headers.
-The backend can then use that header to determine which tenant owns the data.
+`config.Generate` returns Envoy files with their required paths. It does not
+need Kubernetes settings. `config.GenerateKubernetes` requires a `kubernetes`
+section and returns typed resources. Neither call contacts a cluster or creates
+the referenced namespace, TLS Secrets, API-key Secret, or CA ConfigMaps. Create
+those resources first, then apply the manifest.
 
-This makes it easier to onboard multiple tenants or teams within an
-organization without managing complex authorization policies. It also lets us
-make runtime decisions about how data is routed and processed on the backend.
-This keeps us free from any specific tenancy model, which we consider more of
-a query-time concern than a write-time concern.
+The [full configuration example](config.example.yaml) covers the supported
+schema and comments optional settings and defaults. The
+[configuration reference](docs/configuration-reference.md) lists every field,
+default, and validation rule. Empty Kubernetes image values use the pinned Go
+defaults documented there; set image fields to use approved images or mirrors.
 
-## Configuration
-The `config` package loads one strict YAML document, applies defaults, and
-validates it. It generates Envoy config and Kubernetes resources. See
-[config.example.yaml](config.example.yaml) for a complete example.
+For file-based API-key deployments, omit `api_key.secret` and provide the
+separate API-key ECDS file. See the [API-key guide](docs/auth/api-key.md) for
+the credential format.
 
-Each API entry defines one upstream and must include one or more routes. A
-route must list one or more HTTP methods and match an exact path, a prefix, or
-an Envoy safe RE2 regular expression against the full path. A route with no
-methods is a configuration error. Rewrites are optional; use path, prefix, or
-regular expression rewrites when the upstream path differs. Routes are checked
-in the order listed, so put narrower matches first.
+## Gateway behavior
 
+Each server binds one exact hostname to an ordered list of APIs. API routes use
+an exact path, prefix, or regular expression. A matching path with an
+unsupported method returns `405`; an unknown host or path returns `404`.
+HTTPS uses SNI to select a certificate and then checks the request host.
 
-## Testing
+JWTs and API keys authenticate independently. Authorization grants name the
+authenticator, APIs, and allowed attribute values. Attribute mappings affect
+upstream headers and metric labels; grants check the original values. See the
+[JWT guide](docs/auth/jwt.md), [API-key guide](docs/auth/api-key.md), and
+[Envoy behavior guide](docs/envoy.md) for request and update behavior.
 
-Run `make test` for unit tests. Run `make e2e` for the local Kind test. The e2e
-test needs Docker, Kind, Go, curl, and network access. It downloads cmctl
-v2.6.1 on first use, creates or reuses the `auth-gateway-e2e` cluster, and
-deletes its test namespaces when it ends.
+Mapping changes update the separate ECDS processing ConfigMap. API-key changes
+update the Secret. Downstream certificate changes reload through SDS. Static
+Envoy configuration changes require an explicit Deployment rollout; the
+generated Deployment has no checksum annotation.
 
-## Servers
+## Local playground
 
-The required `servers` list binds exact DNS hostnames to named APIs. Each
-hostname appears once. An entry without `tls_config` serves HTTP; an entry
-with `tls_config` serves HTTPS. There is no wildcard fallback.
+The Docker Compose demo exercises public, JWT, API-key, and mixed-auth servers
+with mock OAuth, httpbin, metrics, and traces. Start with
+[playground/README.md](playground/README.md).
 
-Only APIs named in a server's `apis` list are exposed. Missing or empty
-bindings serve 404 for every path. Unknown API names and repeated bindings are
-configuration errors. An API can be shared by several servers or remain
-unbound. The binding list sets the order between APIs, and each API keeps its
-route order. Duplicate path/method matches are rejected within a server;
-separate servers can expose different APIs at the same path.
+## Development
 
-HTTPS uses SNI to select a server's TLS chain. The HTTP `Host` or
-`:authority` must also match that server. Set `tls_config.secret` to a
-Kubernetes TLS Secret containing `tls.crt` and `tls.key`. Paths default to
-`/etc/<secret>/tls.crt` and `/etc/<secret>/tls.key`. Servers can use different
-Secrets or share one. Envoy's file-based SDS reloads projected certificate
-updates without a Pod restart. Server TLS does not request client certificates.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local checks and golden-file updates.
 
-All servers share one Envoy listener port (8080 by default). The generated
-Service exposes port 80 when HTTP servers exist and port 443 when HTTPS servers
-exist, both targeting that listener. Metrics stay on port 8889.
+## License
 
-The TLS e2e group creates a local CA and two server certificates with
-cert-manager. It checks hostname and API isolation, then uses `cmctl renew`
-to renew one certificate. It verifies that Envoy serves the new certificate and
-key while the other certificate and gateway Pod UID stay unchanged.
-
-See [TLS secrets and rotation](docs/tls-secrets.md) for how Secret projection
-and Envoy file-based SDS work.
-
-## Access logging
-
-Envoy writes structured JSON access logs to stdout for HTTP responses with a
-status code of 400 or higher. Entries include the route, method, status,
-duration, response details, and upstream information.
-
-## Prometheus metrics
-
-Generated Kubernetes resources include an OpenTelemetry Collector sidecar. It
-scrapes Envoy's loopback admin endpoint at `127.0.0.1:9901/stats/prometheus`
-every 30 seconds and exposes Prometheus metrics on the `metrics` port (`8889`)
-of the existing `<name>` Service at path `/metrics`. The Envoy admin endpoint
-stays bound to loopback and is not exposed by the Service.
-
-The collector image defaults to
-`otel/opentelemetry-collector-contrib:0.135.0`. Set
-`kubernetes.otel_collector_image` to use a mirrored or different image.
+This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE).

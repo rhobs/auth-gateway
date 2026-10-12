@@ -1,0 +1,197 @@
+version: 1
+node:
+  id: jwt-e2e
+  cluster: jwt-e2e
+listener:
+  port: 8080
+authenticators:
+  - name: issuer-one
+    jwt:
+      issuer: https://issuer-one.jwt.test
+      jwks:
+        uri: https://jwks.jwt.test/issuer-one
+      audiences: [gateway-test]
+    attributes:
+      tenant_id:
+        claim_path: [organization, id]
+      writer_id:
+        claim_path: [sub]
+      chain_id:
+        claim_path: [chain]
+      order_id:
+        claim_path: [order]
+      escaped_id:
+        claim_path: [literal.claim]
+  - name: issuer-two
+    jwt:
+      issuer: https://issuer-two.jwt.test
+      jwks:
+        uri: https://jwks.jwt.test/issuer-two
+      audiences: [gateway-test]
+    attributes:
+      tenant_id:
+        claim_path: [organization, id]
+      writer_id:
+        claim_path: [sub]
+      chain_id:
+        claim_path: [chain]
+      order_id:
+        claim_path: [order]
+      escaped_id:
+        claim_path: [literal.claim]
+authorization_policies:
+  - name: api-writers
+    grants:
+      - authenticator: issuer-one
+        apis: [metrics, unmetered]
+        attributes:
+          tenant_id: [customer-a, customer-pass]
+      - authenticator: issuer-two
+        apis: [status-only]
+        attributes:
+          tenant_id: [customer-b]
+observability:
+  metrics:
+    custom_metric_name: gateway_http_requests_total
+    scrape_interval: 1s
+    scrape_timeout: 500ms
+
+apis:
+  - name: metrics
+    metrics:
+      labels:
+        tenant: tenant_id
+        writer: writer_id
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [GET]
+        path:
+          exact: /protected
+        rewrite:
+          path: /anything
+        processing:
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: tenant_id
+            - name: X-Writer-ID
+              from_attribute: writer_id
+            - name: X-Chain
+              from_attribute: chain_id
+            - name: X-Order
+              from_attribute: order_id
+            - name: X-Literal
+              from_attribute: escaped_id
+      - methods: [GET]
+        path:
+          exact: /headerless
+        rewrite:
+          path: /anything
+      - methods: [GET]
+        path:
+          exact: /required-writer
+        rewrite:
+          path: /anything
+        processing:
+          request_headers:
+            - name: X-Writer-ID
+              from_attribute: writer_id
+      - methods: [GET]
+        path:
+          exact: /upstream-status
+        rewrite:
+          path: /status/418
+  - name: status-only
+    metrics: {}
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [GET]
+        path:
+          exact: /status-only
+        rewrite:
+          path: /anything
+        processing:
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: tenant_id
+            - name: X-Writer-ID
+              from_attribute: writer_id
+            - name: X-Chain
+              from_attribute: chain_id
+            - name: X-Order
+              from_attribute: order_id
+            - name: X-Literal
+              from_attribute: escaped_id
+  - name: unmetered
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [GET]
+        path:
+          exact: /unmetered
+        rewrite:
+          path: /anything
+processing:
+  - name: first-mappings
+    type: attribute-mapper
+    attributes:
+      tenant_id:
+        mappings:
+          customer-a: team-a
+          customer-b: team-b
+      chain_id:
+        mappings:
+          first: second
+          second: third
+      order_id:
+        mappings:
+          first: second
+      escaped_id:
+        mappings:
+          'source "quoted" \ value': 'mapped "quoted" \ value'
+  - name: later-mappings
+    type: attribute-mapper
+    attributes:
+      order_id:
+        mappings:
+          second: final
+servers:
+  - hostname: writer.jwt.auth-gateway.test
+    authentication:
+      any_of: [issuer-one, issuer-two]
+    authorization:
+      any_of: [api-writers]
+    apis: [metrics, status-only, unmetered]
+  - hostname: writer-tls.jwt.auth-gateway.test
+    tls_config:
+      secret: jwt-gateway-tls
+      certificate: /etc/jwt-gateway-tls/tls.crt
+      private_key: /etc/jwt-gateway-tls/tls.key
+    authentication:
+      any_of: [issuer-one, issuer-two]
+    authorization:
+      any_of: [api-writers]
+    apis: [metrics, status-only, unmetered]
+  - hostname: issuer-one-only.jwt.auth-gateway.test
+    authentication:
+      any_of: [issuer-one]
+    authorization:
+      any_of: [api-writers]
+    apis: [metrics, status-only, unmetered]
+kubernetes:
+  name: auth-gateway
+  namespace: default
+  replicas: 1
+  service_port: 80
+  https_service_port: 443
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: "1"
+      memory: 256Mi
