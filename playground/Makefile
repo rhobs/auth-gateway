@@ -13,7 +13,7 @@ OTEL_METRICS_HOST_PORT ?= 8889
 JAEGER_HOST_PORT ?= 16686
 
 REPOSITORY_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))..)
-IMAGE_DEFAULTS := $(shell go -C "$(REPOSITORY_ROOT)" run ./cmd/playground-generate -print-image-defaults)
+IMAGE_DEFAULTS := $(shell go -C "$(REPOSITORY_ROOT)" run ./playground/cmd/generate -print-image-defaults)
 ENVOY_IMAGE ?= $(word 1,$(IMAGE_DEFAULTS))
 OTEL_COLLECTOR_IMAGE ?= $(word 2,$(IMAGE_DEFAULTS))
 
@@ -58,7 +58,7 @@ generate:
 	  chmod 755 generated; \
 	  umask 022; \
 	  rm -f generated/envoy.yaml generated/otel-collector.yaml generated/processing/processing.yaml generated/api-keys/api-keys.yaml generated/server-certificate-*.yaml generated/metrics.jwt generated/logs.jwt generated/metrics-token-response.json generated/logs-token-response.json; \
-	  go run ../cmd/playground-generate -config config.yaml -output generated; \
+	  go run ./cmd/generate -config config.yaml -output generated; \
 	  chmod 644 generated/envoy.yaml generated/otel-collector.yaml; \
 	  printf '%s\n' 'Generated Envoy and collector configs and local OAuth certificate'
 

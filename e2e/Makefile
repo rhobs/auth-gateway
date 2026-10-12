@@ -22,7 +22,7 @@ TIMING_SCRIPT := $(REPOSITORY_ROOT)/scripts/time-command.py
 REPORT_DIR := .state/reports/$(E2E_RUN_ID)
 TIMINGS_FILE := $(REPORT_DIR)/timings.json
 E2E_TEST_BIN := .state/bin/$(E2E_RUN_ID)/auth-gateway.test
-IMAGE_DEFAULTS := $(shell $(PYTHON) "$(TIMING_SCRIPT)" --timings-file "$(TIMINGS_FILE)" --stage image-defaults --capture-output -- go -C "$(REPOSITORY_ROOT)" run ./cmd/playground-generate -print-image-defaults)
+IMAGE_DEFAULTS := $(shell $(PYTHON) "$(TIMING_SCRIPT)" --timings-file "$(TIMINGS_FILE)" --stage image-defaults --capture-output -- go -C "$(REPOSITORY_ROOT)" run ./playground/cmd/generate -print-image-defaults)
 ENVOY_IMAGE ?= $(word 1,$(IMAGE_DEFAULTS))
 OTEL_COLLECTOR_IMAGE ?= $(word 2,$(IMAGE_DEFAULTS))
 
