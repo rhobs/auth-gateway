@@ -21,8 +21,9 @@ an `Allow` header. An unknown host or path returns `404`.
 Upstreams use HTTP/1 unless `http_protocol: http2` is set. HTTP/2 connection
 options apply only when HTTP/2 is enabled. TLS upstreams verify both the
 certificate chain and the configured DNS or IP identity. A custom
-`trusted_ca` replaces Envoy's system CA bundle. Kubernetes output uses a
-ConfigMap reference; file-based output uses an absolute filename.
+`trusted_ca` replaces Envoy's system CA bundle. Kubernetes output can use a
+ConfigMap reference or an absolute filename for a CA file that already exists
+in the Envoy container. File-based output uses an absolute filename.
 
 ## Authentication and request handling
 

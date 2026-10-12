@@ -765,3 +765,47 @@ func TestJWKSTransportAndTrust(t *testing.T) {
 		}
 	}
 }
+
+func TestKubernetesTrustedCAFilenameUsesContainerFileWithoutMount(t *testing.T) {
+	const filename = "/etc/pki/tls/certs/ca-bundle.crt"
+	c := loadConfigCase(t, "jwt-auth")
+	if ca := c.Authenticators[0].JWT.JWKS.TrustedCA; ca == nil || ca.Filename != filename {
+		t.Fatalf("JWT trusted CA = %#v, want filename %q", ca, filename)
+	}
+
+	resources, err := GenerateKubernetes(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := decodeBootstrap(t, []byte(resources.ConfigMap.Data["envoy.yaml"]))
+	var gotFilename string
+	for _, cluster := range b.StaticResources.Clusters {
+		if cluster.Name != jwksClusterName(c.Authenticators[0].Name) {
+			continue
+		}
+		var transport tls.UpstreamTlsContext
+		if err := cluster.TransportSocket.GetTypedConfig().UnmarshalTo(&transport); err != nil {
+			t.Fatal(err)
+		}
+		gotFilename = transport.CommonTlsContext.GetValidationContext().TrustedCa.GetFilename()
+	}
+	if gotFilename != filename {
+		t.Fatalf("generated trusted CA filename = %q, want %q", gotFilename, filename)
+	}
+
+	configMapNames := map[string]bool{resources.ConfigMap.Name: true}
+	if resources.ProcessingConfigMap != nil {
+		configMapNames[resources.ProcessingConfigMap.Name] = true
+	}
+	if resources.OTelCollectorConfigMap != nil {
+		configMapNames[resources.OTelCollectorConfigMap.Name] = true
+	}
+	for _, volume := range resources.Deployment.Spec.Template.Spec.Volumes {
+		if volume.ConfigMap == nil {
+			continue
+		}
+		if !configMapNames[volume.ConfigMap.Name] {
+			t.Fatalf("unexpected ConfigMap volume for a trusted CA filename: %#v", volume)
+		}
+	}
+}

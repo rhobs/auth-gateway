@@ -37,9 +37,6 @@ func validateTrustedCA(name string, ca *TrustedCA, kubernetes bool) error {
 		}
 		return nil
 	}
-	if kubernetes {
-		return fmt.Errorf("%s.filename is supported only without kubernetes settings; use config_map", name)
-	}
 	if !path.IsAbs(ca.Filename) || path.Clean(ca.Filename) != ca.Filename || ca.Filename == "/" || strings.ContainsAny(ca.Filename, invalidControlCharacters) {
 		return fmt.Errorf("%s.filename must be a clean absolute file path", name)
 	}

@@ -6,6 +6,8 @@ authenticators:
       issuer: https://issuer-one.jwt.test
       jwks:
         uri: https://issuer-one.jwt.test/jwks
+        trusted_ca:
+          filename: /etc/pki/tls/certs/ca-bundle.crt
       audiences: [gateway-test]
     attributes:
       tenant_id:
