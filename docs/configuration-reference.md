@@ -77,6 +77,7 @@ cannot repeat a method and path matcher.
 | `apis[].routes`           | list of objects | None                     | Required; at least one route.                                     |
 | `apis[].upstream`         | object          | None                     | Required; see [upstream](#upstream).                              |
 | `apis[].metrics`          | object          | None                     | Optional per-API counter labels; see [API metrics](#api-metrics). |
+| `apis[].admission_control` | object          | Disabled                 | Optional per-API Envoy admission control; see [API admission control](#api-admission-control). |
 | `apis[].circuit_breakers` | object          | Defaults below           | Optional; omission still applies the listed defaults.             |
 | `apis[].timeouts`         | object          | Effective defaults below | Optional defaults for every route in this API.                    |
 
@@ -154,9 +155,31 @@ object is omitted.
 
 ### API metrics
 
+Each configured API emits one request counter. The automatic `api` label is
+the API name, and `http_status_code` comes from the response. Additional labels
+use values from authenticator attributes declared under
+`authenticators[].attributes`.
+
 | Field                   | Type                                | Default | Constraint                                                                                                                                                                                                                  |
 |-------------------------|-------------------------------------|---------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `apis[].metrics.labels` | map of label name to attribute name | Empty   | Label names must be valid Prometheus names, must not start with `__`, and cannot be `api`, `http_status_code`, or `envoy_http_conn_manager_prefix`. Each value must be a valid attribute name declared by an authenticator. |
+
+### API admission control
+
+Set `apis[].admission_control.enabled: true` to apply Envoy admission control
+to every route in that API. Omit the block or leave `enabled` false to keep
+that API out of admission control, including when it shares a server with an
+enabled API. Omitted tuning fields keep Envoy's defaults. By default, HTTP
+responses below status `500` count as successes; gRPC uses Envoy's default
+success status codes.
+
+| Field                                           | Type     | Default  | Constraint                                                               |
+|-------------------------------------------------|----------|----------|--------------------------------------------------------------------------|
+| `apis[].admission_control.enabled`             | boolean  | `false`  | Set to `true` to enable the filter for this API.                         |
+| `apis[].admission_control.sampling_window`      | duration | `30s`    | At least `1ms`; Envoy rounds the window to the nearest second.            |
+| `apis[].admission_control.sr_threshold`         | number   | `95`     | Percentage from `0` to `100`; rejection probability rises below it.     |
+| `apis[].admission_control.rps_threshold`        | uint32   | `0`      | When average requests per second is below this value, requests are not rejected. |
+| `apis[].admission_control.max_rejection_probability` | number | `80` | Percentage from `0` to `100`; caps the rejection probability.           |
 
 ### Route processing
 

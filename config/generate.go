@@ -425,6 +425,17 @@ func (c Config) toHTTPFilters(hosts []indexedVirtualHost, protected bool) ([]*hc
 		}
 		filters = append(filters, cleanup)
 	}
+	if hasAdmissionControlRoutes(routeVirtualHosts(hosts)) {
+		config, err := packEnvoy(defaultAdmissionControlEnvoyConfig())
+		if err != nil {
+			return nil, fmt.Errorf("encode admission control filter: %w", err)
+		}
+		filters = append(filters, &hcm.HttpFilter{
+			Name:       admissionControlFilterName,
+			Disabled:   true,
+			ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: config},
+		})
+	}
 	return filters, nil
 }
 
@@ -924,7 +935,51 @@ func apiRoutesWithRequestHeaderMutations(apis []API, includeMetadata bool) ([]*r
 			}
 		}
 	}
+	if err := addAdmissionControlPerRouteConfigs(apis, routesByName); err != nil {
+		return nil, err
+	}
 	return routes, nil
+}
+
+func addAdmissionControlPerRouteConfigs(apis []API, routesByName map[string]*route.Route) error {
+	for apiIndex, api := range apis {
+		if !api.AdmissionControl.enabled() {
+			continue
+		}
+		config, err := packEnvoy(api.AdmissionControl.toEnvoy())
+		if err != nil {
+			return fmt.Errorf("encode admission control config for API %q: %w", api.Name, err)
+		}
+		perRouteConfig, err := packEnvoy(&route.FilterConfig{Config: config})
+		if err != nil {
+			return fmt.Errorf("encode per-route admission control config for API %q: %w", api.Name, err)
+		}
+		for routeIndex, apiRoute := range api.Routes {
+			for methodIndex := range apiRoute.Methods {
+				name := apiRouteName(apiIndex, api.Name, routeIndex, methodIndex)
+				generatedRoute := routesByName[name]
+				if generatedRoute == nil {
+					return fmt.Errorf("generated route %q is missing", name)
+				}
+				if generatedRoute.TypedPerFilterConfig == nil {
+					generatedRoute.TypedPerFilterConfig = make(map[string]*anypb.Any)
+				}
+				generatedRoute.TypedPerFilterConfig[admissionControlFilterName] = perRouteConfig
+			}
+		}
+	}
+	return nil
+}
+
+func hasAdmissionControlRoutes(hosts []*route.VirtualHost) bool {
+	for _, host := range hosts {
+		for _, generatedRoute := range host.Routes {
+			if generatedRoute.TypedPerFilterConfig[admissionControlFilterName] != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func apiRouteName(apiIndex int, apiName string, routeIndex, methodIndex int) string {
