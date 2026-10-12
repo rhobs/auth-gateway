@@ -3,6 +3,13 @@
 Use Go 1.26 or later. The module targets Go 1.26 and pins golangci-lint
 v2.14.0. `make tools` installs the pinned Ginkgo, lint, Kind, and cmctl tools.
 
+## Pull requests
+
+Develop feature and fix changes on a feature branch, then submit them to the
+upstream repository through a pull request for review. Do not push directly to
+`main`. Feature work is complete when it has passed review and is merged
+upstream; local changes are for development and validation.
+
 ## Checks
 
 Run checks relevant to the change. Before handoff, run the full e2e suite as
