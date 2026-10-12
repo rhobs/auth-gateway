@@ -484,7 +484,7 @@ func (e *Environment) PodContainerNames(ctx context.Context, namespace, labelSel
 	return pod.Name, names, nil
 }
 
-// EnsureCertManager installs the cert-manager manifest and waits for its controllers.
+// EnsureCertManager installs cert-manager and waits for its controllers and admission webhook.
 func (e *Environment) EnsureCertManager(ctx context.Context, manifestSource string) error {
 	if manifestSource == "" {
 		manifestSource = defaultCertManagerManifest
@@ -500,6 +500,9 @@ func (e *Environment) EnsureCertManager(ctx context.Context, manifestSource stri
 		if err := e.WaitForDeployment(ctx, certManagerNamespaceName, deployment, 4*time.Minute); err != nil {
 			return err
 		}
+	}
+	if err := e.waitForCertManagerWebhook(ctx, certManagerWebhookReadinessTimeout); err != nil {
+		return err
 	}
 	return nil
 }

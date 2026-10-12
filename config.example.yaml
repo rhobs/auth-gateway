@@ -212,7 +212,7 @@ apis:
           config_map:
             name: backend-ca
             key: ca.crt
-      # For file-based output, use trusted_ca.filename instead of config_map.
+      # For a path already in the Envoy container, use trusted_ca.filename instead of config_map.
       # Upstream TLS is optional. Omit tls_config for plaintext HTTP.
     # Optional API-level timeout overrides. Omit to use the response and listener defaults.
     timeouts:

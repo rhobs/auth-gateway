@@ -276,8 +276,8 @@ bundle. If present, set exactly one of `filename` or `config_map`.
 
 | Field                        | Type          | Default | Constraint                                                                          |
 |------------------------------|---------------|---------|-------------------------------------------------------------------------------------|
-| `trusted_ca.filename`        | absolute path | None    | File-based output only; clean absolute path other than `/`, without CR, LF, or NUL. |
-| `trusted_ca.config_map`      | object        | None    | Kubernetes output only; selects a key from a ConfigMap in the gateway namespace.    |
+| `trusted_ca.filename`        | absolute path | None    | Clean absolute path other than `/`, without CR, LF, or NUL; for Kubernetes output, the file must exist in the Envoy container. |
+| `trusted_ca.config_map`      | object        | None    | Kubernetes output only; mounts a selected key from a ConfigMap in the gateway namespace. |
 | `trusted_ca.config_map.name` | string        | None    | Required valid Kubernetes ConfigMap name.                                           |
 | `trusted_ca.config_map.key`  | string        | None    | Required valid ConfigMap data key.                                                  |
 

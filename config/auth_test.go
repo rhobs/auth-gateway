@@ -247,7 +247,6 @@ func TestJWKSValidationIncludesUnusedProviders(t *testing.T) {
 		{"both sources", func(c *Config) {
 			c.Authenticators[0].JWT.JWKS.TrustedCA = &TrustedCA{Filename: "/ca.pem", ConfigMap: &CAConfigMap{Name: "ca", Key: "ca.pem"}}
 		}, ".trusted_ca"},
-		{"file in Kubernetes", func(c *Config) { c.Authenticators[0].JWT.JWKS.TrustedCA = &TrustedCA{Filename: "/ca.pem"} }, ".trusted_ca.filename"},
 		{"ConfigMap without Kubernetes", func(c *Config) {
 			c.Kubernetes = nil
 			c.Authenticators[0].JWT.JWKS.TrustedCA = &TrustedCA{ConfigMap: &CAConfigMap{Name: "ca", Key: "ca.pem"}}
@@ -260,6 +259,9 @@ func TestJWKSValidationIncludesUnusedProviders(t *testing.T) {
 		}, ".trusted_ca.config_map.key"},
 		{"relative file", func(c *Config) {
 			c.Kubernetes = nil
+			c.Authenticators[0].JWT.JWKS.TrustedCA = &TrustedCA{Filename: "ca.pem"}
+		}, ".trusted_ca.filename"},
+		{"relative file in Kubernetes", func(c *Config) {
 			c.Authenticators[0].JWT.JWKS.TrustedCA = &TrustedCA{Filename: "ca.pem"}
 		}, ".trusted_ca.filename"},
 	}
