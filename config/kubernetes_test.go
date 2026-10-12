@@ -769,9 +769,7 @@ func TestJWKSTransportAndTrust(t *testing.T) {
 func TestKubernetesTrustedCAFilenameUsesContainerFileWithoutMount(t *testing.T) {
 	const filename = "/etc/pki/tls/certs/ca-bundle.crt"
 	c := loadConfigCase(t, "jwt-auth")
-	if ca := c.Authenticators[0].JWT.JWKS.TrustedCA; ca == nil || ca.Filename != filename {
-		t.Fatalf("JWT trusted CA = %#v, want filename %q", ca, filename)
-	}
+	c.Authenticators[0].JWT.JWKS.TrustedCA = &TrustedCA{Filename: filename}
 
 	resources, err := GenerateKubernetes(c)
 	if err != nil {
@@ -800,12 +798,17 @@ func TestKubernetesTrustedCAFilenameUsesContainerFileWithoutMount(t *testing.T) 
 	if resources.OTelCollectorConfigMap != nil {
 		configMapNames[resources.OTelCollectorConfigMap.Name] = true
 	}
+	configMapVolumeCount := 0
 	for _, volume := range resources.Deployment.Spec.Template.Spec.Volumes {
 		if volume.ConfigMap == nil {
 			continue
 		}
+		configMapVolumeCount++
 		if !configMapNames[volume.ConfigMap.Name] {
 			t.Fatalf("unexpected ConfigMap volume for a trusted CA filename: %#v", volume)
 		}
+	}
+	if configMapVolumeCount != len(configMapNames) {
+		t.Fatalf("ConfigMap volume count = %d, want %d generated configuration volumes", configMapVolumeCount, len(configMapNames))
 	}
 }

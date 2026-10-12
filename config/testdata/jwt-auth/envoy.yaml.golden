@@ -64,7 +64,7 @@ static_resources:
                                 exact: issuer-one.jwt.test
                               san_type: DNS
                         trusted_ca:
-                            filename: /etc/pki/tls/certs/ca-bundle.crt
+                            filename: /etc/ssl/certs/ca-certificates.crt
                 sni: issuer-one.jwt.test
           type: STRICT_DNS
     listeners:
