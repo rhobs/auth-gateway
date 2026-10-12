@@ -138,50 +138,38 @@ var _ = Describe("Upstream TLS and HTTP/2", Label("gateway", "upstream-transport
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
 
-		timeE2EPhase("upstream certificate and CA ConfigMap apply", func() {
-			Expect(env.Apply(ctx, upstreamTransportNamespace, backend)).To(Succeed())
-		})
-		timeE2EPhase("upstream certificate Deployment restart", func() {
-			Expect(env.RestartDeployment(ctx, upstreamTransportNamespace, "transport-backend", 4*time.Minute)).To(Succeed())
-			Eventually(func() error {
-				return probeTransportBackendCertificate(ctx, rotatedRoots)
-			}).WithContext(ctx).WithTimeout(30 * time.Second).WithPolling(250 * time.Millisecond).Should(Succeed())
-		})
+		Expect(env.Apply(ctx, upstreamTransportNamespace, backend)).To(Succeed())
+		Expect(env.RestartDeployment(ctx, upstreamTransportNamespace, "transport-backend", 4*time.Minute)).To(Succeed())
+		Eventually(func() error {
+			return probeTransportBackendCertificate(ctx, rotatedRoots)
+		}).WithContext(ctx).WithTimeout(30 * time.Second).WithPolling(250 * time.Millisecond).Should(Succeed())
 
-		timeE2EPhase("upstream CA inactive behavior before gateway rollout", func() {
-			status, body, err = requestUpstreamTransport(ctx, gatewayAddress, "/tls-echo?source=ca-rotation", payload)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(status).To(Equal(http.StatusServiceUnavailable), string(body))
-			currentUID, uidErr := gatewayPodUID(ctx, upstreamTransportNamespace)
-			Expect(uidErr).NotTo(HaveOccurred())
-			Expect(currentUID).To(Equal(initialGatewayUID), "updating an upstream CA ConfigMap must not replace gateway Pods")
-		})
+		status, body, err = requestUpstreamTransport(ctx, gatewayAddress, "/tls-echo?source=ca-rotation", payload)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(http.StatusServiceUnavailable), string(body))
+		currentUID, uidErr := gatewayPodUID(ctx, upstreamTransportNamespace)
+		Expect(uidErr).NotTo(HaveOccurred())
+		Expect(currentUID).To(Equal(initialGatewayUID), "updating an upstream CA ConfigMap must not replace gateway Pods")
 
-		timeE2EPhase("gateway Deployment rollout for upstream CA", func() {
-			Expect(env.RestartDeployment(ctx, upstreamTransportNamespace, "auth-gateway", 4*time.Minute)).To(Succeed())
-		})
-		timeE2EPhase("gateway port-forward rebind", func() {
-			gatewayAddress = env.ForwardWithCleanup(ctx, upstreamTransportNamespace, "service/auth-gateway", 80)
-			adminAddress = env.ForwardEnvoyAdminWithCleanup(ctx, upstreamTransportNamespace)
-		})
-		timeE2EPhase("upstream CA post-rollout request assertions", func() {
-			newGatewayUID, uidErr := gatewayPodUID(ctx, upstreamTransportNamespace)
-			Expect(uidErr).NotTo(HaveOccurred())
-			Expect(newGatewayUID).NotTo(Equal(initialGatewayUID), "a gateway rollout must replace the Pod")
+		Expect(env.RestartDeployment(ctx, upstreamTransportNamespace, "auth-gateway", 4*time.Minute)).To(Succeed())
+		gatewayAddress = env.ForwardWithCleanup(ctx, upstreamTransportNamespace, "service/auth-gateway", 80)
+		adminAddress = env.ForwardEnvoyAdminWithCleanup(ctx, upstreamTransportNamespace)
+		newGatewayUID, uidErr := gatewayPodUID(ctx, upstreamTransportNamespace)
+		Expect(uidErr).NotTo(HaveOccurred())
+		Expect(newGatewayUID).NotTo(Equal(initialGatewayUID), "a gateway rollout must replace the Pod")
 
-			status, body = expectUpstreamRequestDelta(ctx, adminAddress, "api-tls-echo", "upstream CA after rollout", 1, func() (int, []byte, error) {
-				return requestUpstreamTransport(ctx, gatewayAddress, "/tls-echo?source=ca-rotation", payload)
-			})
-			Expect(status).To(Equal(http.StatusOK), string(body))
-
-			echo, decodeErr := decodeHTTPBinEcho(body)
-			Expect(decodeErr).NotTo(HaveOccurred())
-			Expect(echo.Method).To(Equal(http.MethodPost))
-			Expect(echo.URL).To(HaveSuffix("/anything/tls-echo?source=ca-rotation"))
-			Expect(echo.Data).To(Equal("data:application/octet-stream;base64," + base64.StdEncoding.EncodeToString(payload)))
-			Expect(headerValue(echo.Headers, "Content-Type")).To(Equal("application/octet-stream"))
-			Expect(headerValue(echo.Headers, "X-E2E-Upstream-Transport")).To(Equal("forwarded"))
+		status, body = expectUpstreamRequestDelta(ctx, adminAddress, "api-tls-echo", "upstream CA after rollout", 1, func() (int, []byte, error) {
+			return requestUpstreamTransport(ctx, gatewayAddress, "/tls-echo?source=ca-rotation", payload)
 		})
+		Expect(status).To(Equal(http.StatusOK), string(body))
+
+		echo, decodeErr := decodeHTTPBinEcho(body)
+		Expect(decodeErr).NotTo(HaveOccurred())
+		Expect(echo.Method).To(Equal(http.MethodPost))
+		Expect(echo.URL).To(HaveSuffix("/anything/tls-echo?source=ca-rotation"))
+		Expect(echo.Data).To(Equal("data:application/octet-stream;base64," + base64.StdEncoding.EncodeToString(payload)))
+		Expect(headerValue(echo.Headers, "Content-Type")).To(Equal("application/octet-stream"))
+		Expect(headerValue(echo.Headers, "X-E2E-Upstream-Transport")).To(Equal("forwarded"))
 	}, SpecTimeout(10*time.Minute))
 })
 

@@ -13,16 +13,12 @@ KIND_TOOL := go -C tools tool kind
 CERT_MANAGER_MANIFEST_ARG = $(if $(filter http://% https://%,$(CERT_MANAGER_MANIFEST)),$(CERT_MANAGER_MANIFEST),$(abspath $(CERT_MANAGER_MANIFEST)))
 GINKGO_ARGS ?=
 GINKGO_PROCS ?= 2
-PYTHON ?= python3
 E2E_RUN_ID ?= r$(shell od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
 E2E_RUN_ID := $(E2E_RUN_ID)
 
 REPOSITORY_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))..)
-TIMING_SCRIPT := $(REPOSITORY_ROOT)/scripts/time-command.py
-REPORT_DIR := .state/reports/$(E2E_RUN_ID)
-TIMINGS_FILE := $(REPORT_DIR)/timings.json
 E2E_TEST_BIN := .state/bin/$(E2E_RUN_ID)/auth-gateway.test
-IMAGE_DEFAULTS := $(shell $(PYTHON) "$(TIMING_SCRIPT)" --timings-file "$(TIMINGS_FILE)" --stage image-defaults --capture-output -- go -C "$(REPOSITORY_ROOT)" run ./playground/cmd/generate -print-image-defaults)
+IMAGE_DEFAULTS := $(shell go -C "$(REPOSITORY_ROOT)" run ./playground/cmd/generate -print-image-defaults)
 ENVOY_IMAGE ?= $(word 1,$(IMAGE_DEFAULTS))
 OTEL_COLLECTOR_IMAGE ?= $(word 2,$(IMAGE_DEFAULTS))
 
@@ -32,7 +28,7 @@ endif
 
 check-tools:
 	@set -eu; \
-	for tool in docker go '$(PYTHON)'; do \
+	for tool in docker go; do \
 		command -v "$$tool" >/dev/null || { echo "$$tool is required" >&2; exit 1; }; \
 	done
 	@docker info >/dev/null
@@ -41,7 +37,7 @@ kind-tool:
 	$(KIND_TOOL) version >/dev/null
 
 setup:
-	$(PYTHON) "$(TIMING_SCRIPT)" --timings-file "$(TIMINGS_FILE)" --stage cluster-setup -- $(MAKE) --no-print-directory setup-internal 'E2E_RUN_ID=$(E2E_RUN_ID)' 'IMAGE_DEFAULTS=$(IMAGE_DEFAULTS)' 'ENVOY_IMAGE=$(ENVOY_IMAGE)' 'OTEL_COLLECTOR_IMAGE=$(OTEL_COLLECTOR_IMAGE)'
+	$(MAKE) --no-print-directory setup-internal 'IMAGE_DEFAULTS=$(IMAGE_DEFAULTS)' 'ENVOY_IMAGE=$(ENVOY_IMAGE)' 'OTEL_COLLECTOR_IMAGE=$(OTEL_COLLECTOR_IMAGE)'
 
 setup-internal: check-tools kind-tool
 	@set -eu; \
@@ -69,23 +65,22 @@ setup-internal: check-tools kind-tool
 	$(KIND_TOOL) load docker-image --name '$(CLUSTER_NAME)' '$(ENVOY_IMAGE)' '$(HTTPBIN_IMAGE)' '$(OTEL_COLLECTOR_IMAGE)' '$(CERT_MANAGER_CONTROLLER_IMAGE)' '$(CERT_MANAGER_CAINJECTOR_IMAGE)' '$(CERT_MANAGER_WEBHOOK_IMAGE)'
 
 cmctl:
-	$(PYTHON) "$(TIMING_SCRIPT)" --timings-file "$(TIMINGS_FILE)" --stage cmctl -- sh -c 'go -C tools tool cmctl --help >/dev/null'
+	go -C tools tool cmctl --help >/dev/null
 
 test: cmctl setup
-	$(PYTHON) "$(TIMING_SCRIPT)" --timings-file "$(TIMINGS_FILE)" --stage framework-test -- go -C .. test -tags=e2e ./e2e/internal/framework
+	go -C .. test -tags=e2e ./e2e/internal/framework
 	@mkdir -p "$(dir $(E2E_TEST_BIN))"
-	$(PYTHON) "$(TIMING_SCRIPT)" --timings-file "$(TIMINGS_FILE)" --stage e2e-compile -- go -C .. test -tags=e2e -c -o "e2e/$(E2E_TEST_BIN)" ./e2e
+	go -C .. test -tags=e2e -c -o "e2e/$(E2E_TEST_BIN)" ./e2e
 	@set -eu; \
 	trap 'rm -rf "$(dir $(E2E_TEST_BIN))"' EXIT; \
-	$(PYTHON) "$(TIMING_SCRIPT)" --timings-file "$(TIMINGS_FILE)" --stage ginkgo-cli -- env \
+	env \
 		AUTH_GATEWAY_E2E_CONTEXT='kind-$(CLUSTER_NAME)' \
 		AUTH_GATEWAY_E2E_RUN_ID='$(E2E_RUN_ID)' \
 		AUTH_GATEWAY_E2E_CMCTL='$(abspath $(CMCTL_BIN))' \
 		AUTH_GATEWAY_E2E_CERT_MANAGER_MANIFEST='$(CERT_MANAGER_MANIFEST_ARG)' \
 		go -C .. tool ginkgo --procs='$(GINKGO_PROCS)' --timeout=30m --no-color \
-		--output-dir='e2e/$(REPORT_DIR)' --json-report=auth-gateway.json \
 		$(GINKGO_ARGS) 'e2e/$(E2E_TEST_BIN)'
 
 e2e-compile:
 	@mkdir -p "$(dir $(E2E_TEST_BIN))"
-	$(PYTHON) "$(TIMING_SCRIPT)" --timings-file "$(TIMINGS_FILE)" --stage e2e-compile -- go -C .. test -tags=e2e -c -o "e2e/$(E2E_TEST_BIN)" ./e2e
+	go -C .. test -tags=e2e -c -o "e2e/$(E2E_TEST_BIN)" ./e2e

@@ -219,37 +219,31 @@ var _ = Describe("API-key Secret projection", Label("gateway", "api-key", "authe
 		oldUID, err := gatewayPodUID(ctx, apiKeyProjectionNS)
 		Expect(err).NotTo(HaveOccurred())
 
-		timeE2EPhase("API-key Secret rotation apply", func() {
-			Expect(gateway.applySecret(ctx, []config.APIKeyCredential{
-				{Key: "key-b", Attributes: map[string]string{"tenant_id": "client-b", "writer_id": "writer-b"}},
-			})).To(Succeed())
-		})
+		Expect(gateway.applySecret(ctx, []config.APIKeyCredential{
+			{Key: "key-b", Attributes: map[string]string{"tenant_id": "client-b", "writer_id": "writer-b"}},
+		})).To(Succeed())
 		var status int
 		var body []byte
-		timeE2EPhase("API-key Secret rotation observed", func() {
-			Eventually(func() bool {
-				_ = nudgeGatewayPod(ctx, apiKeyProjectionNS)
-				status, body, err = gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", "key-b", nil)
-				if err != nil || status != http.StatusOK || headerValue(jwtEchoHeaders(body), "X-Scope-OrgID") != "team-b" {
-					return false
-				}
-				status, body, err = gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", apiKeySharedSecretKey, nil)
-				return err == nil && status == http.StatusUnauthorized
-			}).WithContext(ctx).WithTimeout(4*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
-				return fmt.Sprintf("Secret rotation did not replace the accepted key: HTTP %d: %s (error: %v)", status, body, err)
-			})
+		Eventually(func() bool {
+			_ = nudgeGatewayPod(ctx, apiKeyProjectionNS)
+			status, body, err = gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", "key-b", nil)
+			if err != nil || status != http.StatusOK || headerValue(jwtEchoHeaders(body), "X-Scope-OrgID") != "team-b" {
+				return false
+			}
+			status, body, err = gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", apiKeySharedSecretKey, nil)
+			return err == nil && status == http.StatusUnauthorized
+		}).WithContext(ctx).WithTimeout(4*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
+			return fmt.Sprintf("Secret rotation did not replace the accepted key: HTTP %d: %s (error: %v)", status, body, err)
 		})
-		timeE2EPhase("API-key rotation request assertions", func() {
-			status, body, err = gateway.request(ctx, apiKeyAnyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", "key-b", nil)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(status).To(Equal(http.StatusOK), string(body))
-			expectAPIKeyEcho(body, "team-b", "writer-b")
-			status, body, err = gateway.request(ctx, apiKeyAllHost, true, http.MethodPost, "/ingest", apiKeyRequestBody,
-				gateway.token("client-b", "writer-b"), "key-b", nil)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(status).To(Equal(http.StatusOK), string(body))
-			expectAPIKeyEcho(body, "team-b", "writer-b")
-		})
+		status, body, err = gateway.request(ctx, apiKeyAnyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", "key-b", nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(http.StatusOK), string(body))
+		expectAPIKeyEcho(body, "team-b", "writer-b")
+		status, body, err = gateway.request(ctx, apiKeyAllHost, true, http.MethodPost, "/ingest", apiKeyRequestBody,
+			gateway.token("client-b", "writer-b"), "key-b", nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(http.StatusOK), string(body))
+		expectAPIKeyEcho(body, "team-b", "writer-b")
 
 		currentUID, err := gatewayPodUID(ctx, apiKeyProjectionNS)
 		Expect(err).NotTo(HaveOccurred())

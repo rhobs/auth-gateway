@@ -510,27 +510,21 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		Expect(updatedResources.ProcessingConfigMap.Data["processing.yaml"]).NotTo(Equal(jwtGateway.resources.ProcessingConfigMap.Data["processing.yaml"]))
 		manifest, err := yamlDocuments(updatedResources.ProcessingConfigMap)
 		Expect(err).NotTo(HaveOccurred())
-		timeE2EPhase("JWT mapping resource apply", func() {
-			Expect(env.Apply(ctx, jwtNamespace, manifest)).To(Succeed())
-		})
+		Expect(env.Apply(ctx, jwtNamespace, manifest)).To(Succeed())
 
-		timeE2EPhase("JWT mapping apply-to-observed reload", func() {
-			Eventually(func() bool {
-				_ = nudgeGatewayPod(ctx, jwtNamespace)
-				status, body, err = jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, token, false)
-				return err == nil && status == http.StatusOK && headerValue(jwtEchoHeaders(body), "X-Scope-OrgID") == "team-b"
-			}).WithContext(ctx).WithTimeout(3*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
-				return fmt.Sprintf("ECDS mapping update did not change the output while preserving authorization: status=%d body=%s error=%v", status, body, err)
-			})
+		Eventually(func() bool {
+			_ = nudgeGatewayPod(ctx, jwtNamespace)
+			status, body, err = jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, token, false)
+			return err == nil && status == http.StatusOK && headerValue(jwtEchoHeaders(body), "X-Scope-OrgID") == "team-b"
+		}).WithContext(ctx).WithTimeout(3*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
+			return fmt.Sprintf("ECDS mapping update did not change the output while preserving authorization: status=%d body=%s error=%v", status, body, err)
 		})
-		timeE2EPhase("JWT mapping post-reload assertions", func() {
-			afterUpdatedMetric, err := requestMetricCount(ctx, adminAddress, updatedMetricLabels)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(afterUpdatedMetric).To(BeNumerically(">", beforeUpdatedMetric), "ECDS mapping update did not change the metric label")
-			newUID, err := env.PodUID(ctx, jwtNamespace, selector)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(newUID).To(Equal(oldUID), "an ECDS processing update must not replace the gateway Pod")
-		})
+		afterUpdatedMetric, err := requestMetricCount(ctx, adminAddress, updatedMetricLabels)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(afterUpdatedMetric).To(BeNumerically(">", beforeUpdatedMetric), "ECDS mapping update did not change the metric label")
+		newUID, err := env.PodUID(ctx, jwtNamespace, selector)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(newUID).To(Equal(oldUID), "an ECDS processing update must not replace the gateway Pod")
 
 	}, SpecTimeout(8*time.Minute))
 })

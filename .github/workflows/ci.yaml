@@ -34,12 +34,3 @@ jobs:
 
       - name: Runtime image checks
         run: make test-runtime
-
-      - name: Upload e2e reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-reports
-          path: e2e/.state/reports/
-          include-hidden-files: true
-          if-no-files-found: ignore
