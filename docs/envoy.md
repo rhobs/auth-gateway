@@ -50,6 +50,16 @@ is denied before the upstream request. Envoy replaces caller values for
 managed output headers and removes bearer tokens, API keys, and internal
 identity headers before forwarding.
 
+### Attribute flow
+
+Envoy keeps source values in per-request dynamic metadata: `jwt_authn` provides
+verified JWT claims, while `header_to_metadata` captures configured request
+headers and values emitted by the API-key and mTLS filters. The native
+`set_filter_state` filter uses CEL to copy selected values into
+`auth_gateway.attributes.<name>` and apply optional exact mappings from the
+`processing.yaml` ECDS resource. RBAC evaluates grants against original source
+values; mapped filter state feeds managed upstream headers and metric labels.
+
 ## Files and reloads
 
 File-based deployments must place generated resources at the paths Envoy reads:
