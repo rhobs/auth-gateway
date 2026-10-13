@@ -5,10 +5,9 @@ generates Envoy files or Kubernetes resources. It does not run Envoy or a
 controller.
 
 The supported features include exact-host routing, HTTP and HTTPS listeners,
-HTTP/1 and HTTP/2 upstreams, JWT and API-key authentication, attribute-based
-authorization, request header mapping, per-API response counters, access logs,
-Prometheus metrics, and OpenTelemetry traces. Client-certificate mTLS is not
-supported.
+HTTP/1 and HTTP/2 upstreams, JWT, API-key, and client-certificate mTLS
+authentication, attribute-based authorization, request header mapping, per-API
+response counters, access logs, Prometheus metrics, and OpenTelemetry traces.
 
 ## Requirements
 
@@ -87,8 +86,9 @@ default, and validation rule. Empty Kubernetes image values use the pinned Go
 defaults documented there; set image fields to use approved images or mirrors.
 
 For file-based API-key deployments, omit `api_key.secret` and provide the
-separate API-key ECDS file. See the [API-key guide](docs/auth/api-key.md) for
-the credential format.
+separate API-key ECDS file. mTLS deployments must provide the configured client
+CA bundle. See the [API-key guide](docs/auth/api-key.md) for the credential
+format and the [mTLS guide](docs/auth/mtls.md) for client certificate setup.
 
 ## Gateway behavior
 
@@ -97,16 +97,18 @@ an exact path, prefix, or regular expression. A matching path with an
 unsupported method returns `405`; an unknown host or path returns `404`.
 HTTPS uses SNI to select a certificate and then checks the request host.
 
-JWTs and API keys authenticate independently. Authorization grants name the
-authenticator, APIs, and allowed attribute values. Attribute mappings affect
-upstream headers and metric labels; grants check the original values. See the
-[JWT guide](docs/auth/jwt.md), [API-key guide](docs/auth/api-key.md), and
+JWTs, API keys, and client certificates can authenticate HTTPS requests.
+Authorization grants name the authenticator, APIs, and allowed attribute
+values. Attribute mappings affect upstream headers and metric labels; grants
+check the original values. See the [JWT guide](docs/auth/jwt.md),
+[API-key guide](docs/auth/api-key.md), [mTLS guide](docs/auth/mtls.md), and
 [Envoy behavior guide](docs/envoy.md) for request and update behavior.
 
 Mapping changes update the separate ECDS processing ConfigMap. API-key changes
-update the Secret. Downstream certificate changes reload through SDS. Static
-Envoy configuration changes require an explicit Deployment rollout; the
-generated Deployment has no checksum annotation.
+update the Secret. Downstream certificate and client CA ConfigMap changes reload
+through SDS for new connections. Static Envoy configuration changes require an
+explicit Deployment rollout; the generated Deployment has no checksum
+annotation.
 
 ## Local playground
 

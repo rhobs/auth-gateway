@@ -87,7 +87,7 @@ func GenerateAPIKeyECDS(authenticator Authenticator, credentials []APIKeyCredent
 }
 
 func generateAPIKeyECDS(authenticator Authenticator, credentials []APIKeyCredential, requireSecret bool) ([]byte, error) {
-	if !apiNamePattern.MatchString(authenticator.Name) || authenticator.JWT != nil || authenticator.APIKey == nil {
+	if !apiNamePattern.MatchString(authenticator.Name) || authenticator.JWT != nil || authenticator.MTLS != nil || authenticator.APIKey == nil {
 		return nil, fmt.Errorf("authenticator must be a named API-key authenticator")
 	}
 	apiKey := authenticator.APIKey.withDefaults()
@@ -228,7 +228,16 @@ func serverSelectsAuthenticator(server Server, name string) bool {
 }
 
 func mixedAnyOf(c Config, server Server) bool {
-	return server.Authentication != nil && server.Authentication.AnyOf != nil && serverUsesJWT(c, server) && serverUsesAPIKey(c, server)
+	if server.Authentication == nil || server.Authentication.AnyOf == nil {
+		return false
+	}
+	types := 0
+	for _, used := range []bool{serverUsesJWT(c, server), serverUsesMTLS(c, server), serverUsesAPIKey(c, server)} {
+		if used {
+			types++
+		}
+	}
+	return types > 1
 }
 
 func jwtVerifiedHeaderName(name string) string { return jwtVerifiedHeaderPrefix + name }
@@ -283,6 +292,24 @@ func (c Config) toAPIKeySkipMatcher(server Server) (*xdsmatcher.Matcher, error) 
 			OnMatch: action,
 		})
 	}
+	if serverUsesMTLS(c, server) {
+		input, err := packEnvoy(&matcher.HttpRequestHeaderMatchInput{HeaderName: mtlsFingerprintHeaderName})
+		if err != nil {
+			return nil, fmt.Errorf("encode mTLS marker input: %w", err)
+		}
+		fields = append(fields, &xdsmatcher.Matcher_MatcherList_FieldMatcher{
+			Predicate: &xdsmatcher.Matcher_MatcherList_Predicate{MatchType: &xdsmatcher.Matcher_MatcherList_Predicate_SinglePredicate_{SinglePredicate: &xdsmatcher.Matcher_MatcherList_Predicate_SinglePredicate{
+				Input: &xdscore.TypedExtensionConfig{Name: "envoy.matching.inputs.request_headers", TypedConfig: input},
+				Matcher: &xdsmatcher.Matcher_MatcherList_Predicate_SinglePredicate_ValueMatch{ValueMatch: &xdsmatcher.StringMatcher{
+					MatchPattern: &xdsmatcher.StringMatcher_SafeRegex{SafeRegex: &xdsmatcher.RegexMatcher{
+						EngineType: &xdsmatcher.RegexMatcher_GoogleRe2{GoogleRe2: &xdsmatcher.RegexMatcher_GoogleRE2{}},
+						Regex:      mtlsFingerprintPattern,
+					}},
+				}},
+			}}},
+			OnMatch: action,
+		})
+	}
 	return &xdsmatcher.Matcher{MatcherType: &xdsmatcher.Matcher_MatcherList_{MatcherList: &xdsmatcher.Matcher_MatcherList{Matchers: fields}}}, nil
 }
 
@@ -300,7 +327,7 @@ func requestHeaderSources(c Config, serverIndexes []int) []string {
 	return slices.Sorted(maps.Keys(headers))
 }
 
-func (authenticator Authenticator) toRequestMetadataFilter(headers []string) (*hcm.HttpFilter, error) {
+func (authenticator Authenticator) toRequestMetadataFilter(headers []string, includeMTLS bool) (*hcm.HttpFilter, error) {
 	var rules []*headertometadata.Config_Rule
 	if authenticator.APIKey != nil {
 		attributeNames := authenticator.credentialAttributeNames()
@@ -323,6 +350,9 @@ func (authenticator Authenticator) toRequestMetadataFilter(headers []string) (*h
 				},
 			})
 		}
+	}
+	if includeMTLS {
+		rules = append(rules, mtlsPeerMetadataRules()...)
 	}
 	for _, header := range headers {
 		rules = append(rules, &headertometadata.Config_Rule{
@@ -387,10 +417,23 @@ func (authenticator Authenticator) toJWTMarkerPrincipal() *rbac.Principal {
 
 func (c Config) toGrantPrincipalForServer(server Server, grant AuthorizationGrant) *rbac.Principal {
 	principal := c.toGrantPrincipal(grant)
-	if mixedAnyOf(c, server) {
-		if authenticator := findAuthenticator(c, grant.Authenticator); authenticator.JWT != nil {
-			return andPrincipals(principal, authenticator.toJWTMarkerPrincipal())
+	if !mixedAnyOf(c, server) {
+		return principal
+	}
+	authenticator := findAuthenticator(c, grant.Authenticator)
+	if authenticator.JWT != nil {
+		return andPrincipals(principal, authenticator.toJWTMarkerPrincipal())
+	}
+	if !serverUsesMTLS(c, server) {
+		return principal
+	}
+	for _, name := range selectedAuthenticatorNames(server) {
+		if higher := findAuthenticator(c, name); higher.JWT != nil {
+			principal = andPrincipals(principal, &rbac.Principal{Identifier: &rbac.Principal_NotId{NotId: higher.toJWTMarkerPrincipal()}})
 		}
+	}
+	if authenticator.APIKey != nil && serverUsesMTLS(c, server) {
+		principal = andPrincipals(principal, &rbac.Principal{Identifier: &rbac.Principal_NotId{NotId: mtlsPresentPrincipal()}})
 	}
 	return principal
 }
@@ -402,7 +445,7 @@ func andPrincipals(values ...*rbac.Principal) *rbac.Principal {
 	return &rbac.Principal{Identifier: &rbac.Principal_AndIds{AndIds: &rbac.Principal_Set{Ids: values}}}
 }
 
-func (c Config) toServerAuthenticationRBACRules(server Server) *rbac.RBAC {
+func (c Config) toServerAuthenticationRBACRules(server Server) (*rbac.RBAC, error) {
 	var keyAuthenticator Authenticator
 	for _, name := range selectedAuthenticatorNames(server) {
 		if selected := findAuthenticator(c, name); selected.APIKey != nil {
@@ -410,34 +453,80 @@ func (c Config) toServerAuthenticationRBACRules(server Server) *rbac.RBAC {
 			break
 		}
 	}
-	principal := keyAuthenticator.toAPIKeyIdentityPrincipal()
+	var principal *rbac.Principal
+	if keyAuthenticator.APIKey != nil {
+		principal = keyAuthenticator.toAPIKeyIdentityPrincipal()
+	}
+	if serverUsesMTLS(c, server) {
+		mtlsPrincipal, err := mtlsValidatedPrincipal()
+		if err != nil {
+			return nil, err
+		}
+		if server.Authentication.AnyOf != nil && mixedAnyOf(c, server) {
+			if principal == nil {
+				principal = mtlsPrincipal
+			} else {
+				principal = &rbac.Principal{Identifier: &rbac.Principal_OrIds{OrIds: &rbac.Principal_Set{Ids: []*rbac.Principal{principal, mtlsPrincipal}}}}
+			}
+		} else if principal == nil {
+			principal = mtlsPrincipal
+		} else {
+			principal = andPrincipals(principal, mtlsPrincipal)
+		}
+	}
 	policy := &rbac.Policy{Permissions: []*rbac.Permission{{Rule: &rbac.Permission_Any{Any: true}}}}
 	if mixedAnyOf(c, server) {
-		alternatives := []*rbac.Principal{principal}
+		var alternatives []*rbac.Principal
+		if principal != nil {
+			if ids := principal.GetOrIds(); ids != nil {
+				alternatives = append(alternatives, ids.Ids...)
+			} else {
+				alternatives = append(alternatives, principal)
+			}
+		}
 		for _, name := range selectedAuthenticatorNames(server) {
 			if authenticator := findAuthenticator(c, name); authenticator.JWT != nil {
 				alternatives = append(alternatives, authenticator.toJWTMarkerPrincipal())
 			}
 		}
 		principal = &rbac.Principal{Identifier: &rbac.Principal_OrIds{OrIds: &rbac.Principal_Set{Ids: alternatives}}}
-	} else if server.Authentication.AllOf != nil && serverUsesJWT(c, server) {
-		var jwtAuthenticator Authenticator
+	} else if server.Authentication != nil && len(server.Authentication.AllOf) > 1 {
+		selected := make([]Authenticator, 0, len(server.Authentication.AllOf))
 		for _, name := range selectedAuthenticatorNames(server) {
-			if selected := findAuthenticator(c, name); selected.JWT != nil {
-				jwtAuthenticator = selected
-				break
-			}
+			selected = append(selected, findAuthenticator(c, name))
 		}
-		principals := []*rbac.Principal{principal}
-		sharedPrincipals, condition := sharedAttributeConditions(jwtAuthenticator, keyAuthenticator)
-		principals = append(principals, sharedPrincipals...)
-		principal = andPrincipals(principals...)
-		if condition != nil {
-			policy.Condition = condition
+		if !serverUsesMTLS(c, server) {
+			principals := []*rbac.Principal{principal}
+			sharedPrincipals, condition := sharedAttributeConditions(selected...)
+			principals = append(principals, sharedPrincipals...)
+			principal = andPrincipals(principals...)
+			if condition != nil {
+				policy.Condition = condition
+			}
 		}
 	}
 	policy.Principals = []*rbac.Principal{principal}
-	return &rbac.RBAC{Action: rbac.RBAC_ALLOW, Policies: map[string]*rbac.Policy{"authenticated": policy}}
+	return &rbac.RBAC{Action: rbac.RBAC_ALLOW, Policies: map[string]*rbac.Policy{"authenticated": policy}}, nil
+}
+
+func (c Config) toServerMTLSSharedAttributeRBACRules(server Server) *rbac.RBAC {
+	if !serverUsesMTLS(c, server) || server.Authentication == nil || len(server.Authentication.AllOf) < 2 {
+		return nil
+	}
+	selected := make([]Authenticator, 0, len(server.Authentication.AllOf))
+	for _, name := range selectedAuthenticatorNames(server) {
+		selected = append(selected, findAuthenticator(c, name))
+	}
+	principals, condition := sharedAttributeConditions(selected...)
+	if condition == nil {
+		return nil
+	}
+	policy := &rbac.Policy{
+		Permissions: []*rbac.Permission{{Rule: &rbac.Permission_Any{Any: true}}},
+		Principals:  principals,
+		Condition:   condition,
+	}
+	return &rbac.RBAC{Action: rbac.RBAC_ALLOW, Policies: map[string]*rbac.Policy{"shared-attributes": policy}}
 }
 
 func nonemptyScalarValueMatcher() *matcher.ValueMatcher {
@@ -457,6 +546,11 @@ func (authenticator Authenticator) toKeyGrantPrincipal(grant AuthorizationGrant)
 
 func (c Config) toCredentialCleanupConfig() *headermutation.HeaderMutation {
 	removed := map[string]struct{}{authorizationHeaderName: {}, apiKeyClientHeader: {}}
+	if c.usesMTLS() {
+		for _, name := range []string{mtlsPendingHeaderName, mtlsFingerprintHeaderName, mtlsURIHeaderName, mtlsDNSHeaderName} {
+			removed[name] = struct{}{}
+		}
+	}
 	if authenticator, exists := c.apiKeyAuthenticator(); exists {
 		removed[strings.ToLower(authenticator.APIKey.Header)] = struct{}{}
 	}

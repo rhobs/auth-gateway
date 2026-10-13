@@ -21,7 +21,7 @@ be at least `1ms`.
 | `node`                   | object          | Defaults below | Optional Envoy node identity.                                            |
 | `listener`               | object          | Defaults below | Listener fields use the defaults below if omitted.                       |
 | `overload`               | object          | Disabled       | If present, both capacity limits are required.                           |
-| `authenticators`         | list of objects | Empty          | Names must be unique. Each entry sets exactly one of `jwt` or `api_key`. |
+| `authenticators`         | list of objects | Empty          | Names must be unique. Each entry sets exactly one of `jwt`, `api_key`, or `mtls`. |
 | `authorization_policies` | list of objects | Empty          | Policy names must be unique.                                             |
 | `processing`             | list of objects | Empty          | Processor names must be unique.                                          |
 | `servers`                | list of objects | None           | Required; at least one server.                                           |
@@ -203,7 +203,10 @@ For authentication and authorization selections, the chosen list must contain
 at least one existing name and cannot contain duplicates. `any_of` accepts a
 request when one selected method or policy succeeds; `all_of` requires every
 selected entry. An `all_of` selection allows at most one JWT authenticator.
-Selected JWT authenticators must have distinct issuer values.
+Selected JWT authenticators must have distinct issuer values. A server can
+select at most one mTLS authenticator and must set `tls_config` when it does.
+Certificate-only and `all_of` mTLS servers require a client certificate during
+the TLS handshake. Mixed `any_of` servers allow a connection without one.
 
 | Field                             | Type            | Default | Constraint                                                        |
 |-----------------------------------|-----------------|---------|-------------------------------------------------------------------|
@@ -225,8 +228,9 @@ Selected JWT authenticators must have distinct issuer values.
 | Field                                                | Type                            | Default          | Constraint                                                                                                                      |
 |------------------------------------------------------|---------------------------------|------------------|---------------------------------------------------------------------------------------------------------------------------------|
 | `authenticators[].name`                              | string                          | None             | Required unique name using the format above.                                                                                    |
-| `authenticators[].jwt`                               | object                          | None             | Set exactly one of `jwt` or `api_key`.                                                                                          |
-| `authenticators[].api_key`                           | object                          | None             | Set exactly one of `jwt` or `api_key`; only one API-key authenticator is supported per configuration.                           |
+| `authenticators[].jwt`                               | object                          | None             | Set exactly one of `jwt`, `api_key`, or `mtls`.                                                                                   |
+| `authenticators[].api_key`                           | object                          | None             | Set exactly one of `jwt`, `api_key`, or `mtls`; only one API-key authenticator is supported per configuration.                    |
+| `authenticators[].mtls`                              | object                          | None             | Set exactly one of `jwt`, `api_key`, or `mtls`; only HTTPS servers may select it.                                                 |
 | `authenticators[].attributes`                        | map of attribute name to object | Empty            | Attribute keys use the format above. Each source sets exactly one supported input for its authenticator type.                   |
 | `authenticators[].jwt.issuer`                        | string                          | None             | Required nonempty issuer identifier without surrounding whitespace, CR, LF, or tab.                                             |
 | `authenticators[].jwt.jwks`                          | object                          | None             | Required JWKS endpoint and optional fetch settings.                                                                             |
@@ -239,14 +243,20 @@ Selected JWT authenticators must have distinct issuer values.
 | `authenticators[].jwt.jwks.circuit_breakers`         | object                          | Defaults above   | Optional; circuit-breaker defaults are still applied when omitted.                                                              |
 | `authenticators[].api_key.secret`                    | string                          | None             | Required for Kubernetes output; must be a Kubernetes Secret name. Optional for file-based output.                               |
 | `authenticators[].api_key.header`                    | string                          | `X-API-Key`      | Safe HTTP header name; no `_` and no reserved header names.                                                                     |
+| `authenticators[].mtls.trusted_ca`                   | object                          | None             | Required explicit client CA bundle; see [trusted CA](#trusted-ca).                                                               |
 | `authenticators[].attributes.<attribute>`            | object                          | None             | Dynamic key is an attribute name.                                                                                               |
 | `authenticators[].attributes.<attribute>.claim_path` | list of strings                 | None             | JWT only; one or more nonempty literal object keys.                                                                             |
 | `authenticators[].attributes.<attribute>.header`     | string                          | None             | A safe request header name; no `_` or reserved identity headers. Cannot equal the API-key credential header.                    |
 | `authenticators[].attributes.<attribute>.credential` | boolean                         | None             | API-key only; if set, must be `true`.                                                                                           |
+| `authenticators[].attributes.<attribute>.uri_san`    | boolean                         | None             | mTLS only; if set, must be `true`. Reads the verified certificate's single URI SAN.                                              |
+| `authenticators[].attributes.<attribute>.dns_san`    | boolean                         | None             | mTLS only; if set, must be `true`. Reads the verified certificate's single DNS SAN.                                              |
 
 An attribute source uses `claim_path` or `header` for JWTs, and `credential:
-true` or `header` for API keys. Header names follow HTTP field-name syntax and
-cannot use reserved identity, routing, connection, or framing headers.
+true` or `header` for API keys. mTLS attributes use `uri_san: true`,
+`dns_san: true`, or `header`. Each certificate may have at most one URI SAN and
+one DNS SAN; a SAN containing a comma is rejected. Header names follow HTTP
+field-name syntax and cannot use reserved identity, routing, connection, or
+framing headers.
 
 ### Authorization policies
 
@@ -256,7 +266,7 @@ cannot use reserved identity, routing, connection, or framing headers.
 | `authorization_policies[].grants`                          | list of objects                          | Empty   | Each grant allows one authenticator to access selected APIs and attribute values.                                                                           |
 | `authorization_policies[].grants[].authenticator`          | string                                   | None    | Required name of an existing authenticator.                                                                                                                 |
 | `authorization_policies[].grants[].apis`                   | list of strings                          | None    | Required; at least one unique existing API name.                                                                                                            |
-| `authorization_policies[].grants[].attributes`             | map of attribute name to list of strings | None    | Required; at least one attribute provided by the selected authenticator. Each allowlist must contain unique nonempty values without surrounding whitespace. |
+| `authorization_policies[].grants[].attributes`             | map of attribute name to list of strings | None    | JWT and API-key grants require at least one attribute. mTLS grants may omit this map or set `{}` to trust the CA alone. Each allowlist must contain unique nonempty values without surrounding whitespace. |
 | `authorization_policies[].grants[].attributes.<attribute>` | list of strings                          | None    | Attribute name must be valid and provided by the selected authenticator; at least one unique nonempty allowed value without surrounding whitespace.         |
 
 ## Attribute processing
@@ -271,8 +281,10 @@ cannot use reserved identity, routing, connection, or framing headers.
 ## Trusted CA
 
 Trusted CA settings appear under `apis[].upstream.tls_config.trusted_ca` or
-`authenticators[].jwt.jwks.trusted_ca`. Omit the object to use the system CA
-bundle. If present, set exactly one of `filename` or `config_map`.
+`authenticators[].jwt.jwks.trusted_ca`, and are required under
+`authenticators[].mtls.trusted_ca`. Upstream and JWKS trust use the system CA
+bundle when this object is omitted. mTLS client trust has no system CA fallback.
+Set exactly one of `filename` or `config_map` when the object is present.
 
 | Field                        | Type          | Default | Constraint                                                                          |
 |------------------------------|---------------|---------|-------------------------------------------------------------------------------------|

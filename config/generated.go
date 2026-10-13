@@ -30,7 +30,8 @@ type GeneratedFile struct {
 
 // GeneratedFiles names the files returned by Generate. ProcessingConfig is nil
 // when the configuration has no attribute mappings. ServerCertificateResources
-// contains one SDS resource per HTTPS server, in server declaration order.
+// contains one SDS resource per HTTPS server. ClientCAResources contains one
+// validation-context SDS resource per server selecting mTLS.
 type GeneratedFiles struct {
 	// EnvoyBootstrap is always present when Generate succeeds.
 	EnvoyBootstrap GeneratedFile
@@ -38,11 +39,13 @@ type GeneratedFiles struct {
 	ProcessingConfig *GeneratedFile
 	// ServerCertificateResources contains one SDS resource for each HTTPS server.
 	ServerCertificateResources []GeneratedFile
+	// ClientCAResources contains one SDS resource for each mTLS server.
+	ClientCAResources []GeneratedFile
 }
 
-// All returns the generated files in bootstrap, processing, and server order.
+// All returns the generated files in bootstrap, processing, server, and client CA order.
 func (files GeneratedFiles) All() []GeneratedFile {
-	result := make([]GeneratedFile, 0, 1+len(files.ServerCertificateResources)+1)
+	result := make([]GeneratedFile, 0, 2+len(files.ServerCertificateResources)+len(files.ClientCAResources))
 	if files.EnvoyBootstrap.Path != "" {
 		result = append(result, files.EnvoyBootstrap)
 	}
@@ -50,5 +53,6 @@ func (files GeneratedFiles) All() []GeneratedFile {
 		result = append(result, *files.ProcessingConfig)
 	}
 	result = append(result, files.ServerCertificateResources...)
+	result = append(result, files.ClientCAResources...)
 	return result
 }

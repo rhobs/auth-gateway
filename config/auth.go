@@ -50,19 +50,19 @@ func validatePermissiveJWTIssuerBindings(servers []Server, authenticators map[st
 		if names == nil {
 			names = server.Authentication.AllOf
 		}
-		hasKey, hasJWT := false, false
+		hasOther, hasJWT := false, false
 		for _, name := range names {
-			if authenticators[name].APIKey != nil {
-				hasKey = true
-			} else {
+			if authenticators[name].JWT != nil {
 				hasJWT = true
 				if _, exists := seen[name]; !exists {
 					selected = append(selected, name)
 					seen[name] = struct{}{}
 				}
+			} else {
+				hasOther = true
 			}
 		}
-		if server.Authentication.AnyOf != nil && hasKey && hasJWT {
+		if server.Authentication.AnyOf != nil && hasOther && hasJWT {
 			mixedServer = index
 		}
 	}
@@ -120,11 +120,23 @@ func validateAuthenticatorAttributes(name string, authenticator Authenticator, a
 		source := authenticator.Attributes[attribute]
 		field := name + ".attributes." + attribute
 		if authenticator.JWT != nil {
-			if source.Credential != nil || (source.ClaimPath == nil) == (source.Header == nil) {
+			if source.Credential != nil || source.URISAN != nil || source.DNSSAN != nil || (source.ClaimPath == nil) == (source.Header == nil) {
 				return fmt.Errorf("%s must set exactly one of claim_path or header", field)
 			}
-		} else if source.ClaimPath != nil || (source.Credential == nil) == (source.Header == nil) {
-			return fmt.Errorf("%s must set exactly one of credential: true or header", field)
+		} else if authenticator.APIKey != nil {
+			if source.ClaimPath != nil || source.URISAN != nil || source.DNSSAN != nil || (source.Credential == nil) == (source.Header == nil) {
+				return fmt.Errorf("%s must set exactly one of credential: true or header", field)
+			}
+		} else {
+			sources := 0
+			for _, present := range []bool{source.Header != nil, source.URISAN != nil, source.DNSSAN != nil} {
+				if present {
+					sources++
+				}
+			}
+			if source.ClaimPath != nil || source.Credential != nil || sources != 1 {
+				return fmt.Errorf("%s must set exactly one of uri_san: true, dns_san: true, or header", field)
+			}
 		}
 		if source.ClaimPath != nil {
 			if len(source.ClaimPath) == 0 {
@@ -136,6 +148,12 @@ func validateAuthenticatorAttributes(name string, authenticator Authenticator, a
 		}
 		if source.Credential != nil && !*source.Credential {
 			return fmt.Errorf("%s.credential must be true", field)
+		}
+		if source.URISAN != nil && !*source.URISAN {
+			return fmt.Errorf("%s.uri_san must be true", field)
+		}
+		if source.DNSSAN != nil && !*source.DNSSAN {
+			return fmt.Errorf("%s.dns_san must be true", field)
 		}
 		if source.Header != nil {
 			header := *source.Header

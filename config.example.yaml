@@ -87,6 +87,18 @@ authenticators:
       requested_tenant:
         header: X-Tenant
 
+  - name: partner-cert
+    mtls:
+      # Client trust is required; there is no system CA fallback.
+      trusted_ca:
+        config_map: {name: partner-client-ca, key: ca.crt}
+        # For file-based output, use filename: /etc/partner-client-ca.pem.
+    attributes:
+      tenant_id: {uri_san: true}
+      writer_id: {dns_san: true}
+      requested_tenant:
+        header: X-Tenant
+
 authorization_policies:
   - name: metrics-writers
     grants:
@@ -128,6 +140,15 @@ authorization_policies:
         attributes:
           tenant_id: [client-123]
           writer_id: [writer-17]
+          requested_tenant: [client-123]
+
+  - name: partner-certificate-writers
+    grants:
+      - authenticator: partner-cert
+        apis: [metrics-write]
+        attributes:
+          tenant_id: [spiffe://partners.example.com/client-123]
+          writer_id: [writer-17.partners.example.com]
           requested_tenant: [client-123]
 
 # Metrics collection is enabled by default. Per-API counters still need
@@ -273,6 +294,7 @@ processing:
           client-456: team-b
           customer-456: team-a
           customer-789: team-b
+          spiffe://partners.example.com/client-123: team-a
 
 servers:
   - hostname: write-internal.auth.example.com
@@ -302,12 +324,31 @@ servers:
       any_of: [partner-metrics-writers]
     apis: [metrics-write]
 
+  - hostname: cert.auth.example.com
+    tls_config:
+      secret: write-gateway-tls
+    authentication:
+      any_of: [partner-cert]
+    authorization:
+      any_of: [partner-certificate-writers]
+    apis: [metrics-write]
+
   - hostname: either.auth.example.com
     authentication:
       # A valid JWT wins when both JWT and API-key credentials are present.
       any_of: [internal-jwt, partner-key]
     authorization:
       any_of: [metrics-writers, partner-metrics-writers]
+    apis: [metrics-write]
+
+  - hostname: either-with-cert.auth.example.com
+    tls_config:
+      secret: write-gateway-tls
+    authentication:
+      # A valid JWT wins, followed by a verified certificate, then an API key.
+      any_of: [internal-jwt, partner-cert, partner-key]
+    authorization:
+      any_of: [metrics-writers, partner-certificate-writers, partner-metrics-writers]
     apis: [metrics-write]
 
   - hostname: both.auth.example.com

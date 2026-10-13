@@ -49,26 +49,16 @@ func TestValidateAcceptsLiteralClaimKeysAndSingleJWTAllOf(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsFutureMTLSAuthenticatorSchema(t *testing.T) {
-	input := `version: 1
-authenticators:
-  - name: client-certificate
-    mtls: {}
-servers:
-  - hostname: write.example.com
-    apis: [write]
-apis:
-  - name: write
-    upstream:
-      address: backend.example.com
-      port: 8080
-    routes:
-      - methods: [POST]
-        path:
-          exact: /write
-`
-	if _, err := Load(strings.NewReader(input)); err == nil || !strings.Contains(err.Error(), "field mtls not found") {
-		t.Fatalf("Load error = %v, want strict rejection of the future mTLS field", err)
+func TestLoadAcceptsMTLSAuthenticatorSchema(t *testing.T) {
+	c := loadConfigCase(t, "mtls-auth")
+	authenticator := c.Authenticators[1]
+	if authenticator.MTLS == nil || authenticator.MTLS.TrustedCA == nil || authenticator.MTLS.TrustedCA.ConfigMap == nil ||
+		authenticator.MTLS.TrustedCA.ConfigMap.Name != "gateway-client-ca" || authenticator.Attributes["tenant_id"].URISAN == nil ||
+		authenticator.Attributes["dns_id"].DNSSAN == nil {
+		t.Fatalf("loaded mTLS authenticator = %#v", authenticator)
+	}
+	if len(c.AuthorizationPolicies[3].Grants[0].Attributes) != 0 {
+		t.Fatalf("CA-only grant has unexpected attribute constraints: %#v", c.AuthorizationPolicies[3].Grants[0])
 	}
 }
 
@@ -145,7 +135,7 @@ func TestValidateRejectsInvalidAuthenticationAndAuthorization(t *testing.T) {
 		edit func(*Config)
 	}{
 		{name: "duplicate authenticator", want: "duplicate authenticator name", edit: func(c *Config) { c.Authenticators[1].Name = c.Authenticators[0].Name }},
-		{name: "missing authenticator type", want: "authenticators[0] must set exactly one of jwt or api_key", edit: func(c *Config) { c.Authenticators[0].JWT = nil }},
+		{name: "missing authenticator type", want: "authenticators[0] must set exactly one of jwt, api_key, or mtls", edit: func(c *Config) { c.Authenticators[0].JWT = nil }},
 		{name: "missing issuer", want: "authenticators[0].jwt.issuer", edit: func(c *Config) { c.Authenticators[0].JWT.Issuer = "" }},
 		{name: "non-HTTPS JWKS", want: "authenticators[0].jwt.jwks.uri", edit: func(c *Config) { c.Authenticators[0].JWT.JWKS.URI = "http://sso.example.com/jwks" }},
 		{name: "JWKS user information", want: "authenticators[0].jwt.jwks.uri", edit: func(c *Config) { c.Authenticators[0].JWT.JWKS.URI = "https://user@sso.example.com/jwks" }},
@@ -287,5 +277,114 @@ func TestJWKSValidationIncludesUnusedProviders(t *testing.T) {
 	c.Servers[1].TLSConfig.PrivateKey = caDirectory + "/roots/tls.key"
 	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), caDirectory) {
 		t.Fatalf("reserved CA mount tree: %v", err)
+	}
+}
+
+func TestValidateMTLSRequiresExplicitClientCA(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+		edit func(*Config)
+	}{
+		{name: "missing CA", want: "authenticators[1].mtls.trusted_ca", edit: func(c *Config) {
+			c.Authenticators[1].MTLS.TrustedCA = nil
+		}},
+		{name: "empty CA", want: "authenticators[1].mtls.trusted_ca", edit: func(c *Config) {
+			c.Authenticators[1].MTLS.TrustedCA = &TrustedCA{}
+		}},
+		{name: "both CA sources", want: "authenticators[1].mtls.trusted_ca", edit: func(c *Config) {
+			c.Authenticators[1].MTLS.TrustedCA.Filename = "/etc/client-ca.crt"
+		}},
+		{name: "relative CA file", want: "authenticators[1].mtls.trusted_ca.filename", edit: func(c *Config) {
+			c.Authenticators[1].MTLS.TrustedCA = &TrustedCA{Filename: "client-ca.crt"}
+		}},
+		{name: "ConfigMap without Kubernetes", want: "authenticators[1].mtls.trusted_ca.config_map", edit: func(c *Config) {
+			c.Kubernetes = nil
+		}},
+		{name: "invalid ConfigMap key", want: "authenticators[1].mtls.trusted_ca.config_map.key", edit: func(c *Config) {
+			c.Authenticators[1].MTLS.TrustedCA.ConfigMap.Key = "../ca.crt"
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c := loadConfigCase(t, "mtls-auth")
+			test.edit(&c)
+			if err := c.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validation error = %v, want %q", err, test.want)
+			}
+		})
+	}
+	c := loadConfigCase(t, "mtls-auth")
+	c.Kubernetes = nil
+	c.Authenticators[1].MTLS.TrustedCA = &TrustedCA{Filename: "/etc/client-ca.crt"}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("file-based mTLS CA was rejected: %v", err)
+	}
+}
+
+func TestValidateMTLSRequiresHTTPSAndOneAuthenticatorPerServer(t *testing.T) {
+	c := loadConfigCase(t, "mtls-auth")
+	c.Servers[0].TLSConfig = nil
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "servers[0].authentication requires tls_config") {
+		t.Fatalf("HTTP mTLS binding error = %v", err)
+	}
+
+	c = loadConfigCase(t, "mtls-auth")
+	second := c.Authenticators[1].clone()
+	second.Name = "second-client-cert"
+	c.Authenticators = append(c.Authenticators, second)
+	c.Servers[0].Authentication.AnyOf = []string{"client-cert", second.Name}
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "servers[0].authentication cannot contain more than one mTLS") {
+		t.Fatalf("duplicate mTLS binding error = %v", err)
+	}
+}
+
+func TestValidateMTLSAttributeSources(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+		edit func(*Config)
+	}{
+		{name: "missing source", want: "authenticators[1].attributes.tenant_id", edit: func(c *Config) {
+			c.Authenticators[1].Attributes["tenant_id"] = AttributeSource{}
+		}},
+		{name: "false URI SAN", want: "authenticators[1].attributes.tenant_id.uri_san", edit: func(c *Config) {
+			c.Authenticators[1].Attributes["tenant_id"] = AttributeSource{URISAN: new(false)}
+		}},
+		{name: "false DNS SAN", want: "authenticators[1].attributes.dns_id.dns_san", edit: func(c *Config) {
+			c.Authenticators[1].Attributes["dns_id"] = AttributeSource{DNSSAN: new(false)}
+		}},
+		{name: "multiple sources", want: "authenticators[1].attributes.tenant_id", edit: func(c *Config) {
+			c.Authenticators[1].Attributes["tenant_id"] = AttributeSource{URISAN: new(true), DNSSAN: new(true)}
+		}},
+		{name: "JWT source", want: "authenticators[1].attributes.tenant_id", edit: func(c *Config) {
+			c.Authenticators[1].Attributes["tenant_id"] = AttributeSource{ClaimPath: []string{"sub"}}
+		}},
+		{name: "API key source", want: "authenticators[1].attributes.tenant_id", edit: func(c *Config) {
+			c.Authenticators[1].Attributes["tenant_id"] = AttributeSource{Credential: new(true)}
+		}},
+		{name: "URI SAN on JWT", want: "authenticators[0].attributes.tenant_id", edit: func(c *Config) {
+			c.Authenticators[0].Attributes["tenant_id"] = AttributeSource{URISAN: new(true)}
+		}},
+		{name: "DNS SAN on API key", want: "authenticators[2].attributes.tenant_id", edit: func(c *Config) {
+			c.Authenticators[2].Attributes["tenant_id"] = AttributeSource{DNSSAN: new(true)}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c := loadConfigCase(t, "mtls-auth")
+			test.edit(&c)
+			if err := c.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validation error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestValidateMTLSGrantMayUseOnlyHeaders(t *testing.T) {
+	c := loadConfigCase(t, "mtls-auth")
+	c.AuthorizationPolicies[1].Grants[0].Attributes = map[string][]string{"requested_tenant": {"client-a"}}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("header-only mTLS grant was rejected: %v", err)
 	}
 }
