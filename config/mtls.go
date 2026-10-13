@@ -52,6 +52,24 @@ func serverUsesMTLS(c Config, server Server) bool {
 	return selected
 }
 
+func (c Config) clientCAAuthenticators() []Authenticator {
+	var authenticators []Authenticator
+	for _, authenticator := range c.Authenticators {
+		if authenticator.MTLS != nil && authenticatorUsed(c.Servers, authenticator.Name) {
+			authenticators = append(authenticators, authenticator)
+		}
+	}
+	return authenticators
+}
+
+func (c Config) clientCAResourceIndices() map[string]int {
+	indices := make(map[string]int)
+	for index, authenticator := range c.clientCAAuthenticators() {
+		indices[authenticator.Name] = index
+	}
+	return indices
+}
+
 func requiresClientCertificate(server Server) bool {
 	return server.Authentication.AllOf != nil || len(server.Authentication.AnyOf) == 1
 }
@@ -64,10 +82,10 @@ func clientCAResourceFilename(index int) string {
 	return "client-ca-" + strconv.Itoa(index) + ".yaml"
 }
 
-func (m MTLSAuthenticator) toEnvoySecret(index int) *tls.Secret {
+func (m MTLSAuthenticator) toEnvoySecret(authenticatorIndex int) *tls.Secret {
 	filename := m.TrustedCA.filename()
 	return &tls.Secret{
-		Name: clientCASecretName(index),
+		Name: clientCASecretName(authenticatorIndex),
 		Type: &tls.Secret_ValidationContext{ValidationContext: &tls.CertificateValidationContext{
 			TrustedCa:        fileDataSource(filename),
 			WatchedDirectory: &core.WatchedDirectory{Path: path.Dir(filename)},

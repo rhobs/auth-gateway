@@ -31,7 +31,7 @@ type GeneratedFile struct {
 // GeneratedFiles names the files returned by Generate. ProcessingConfig is nil
 // when the configuration has no attribute mappings. ServerCertificateResources
 // contains one SDS resource per HTTPS server. ClientCAResources contains one
-// validation-context SDS resource per server selecting mTLS.
+// validation-context SDS resource per used mTLS authenticator.
 type GeneratedFiles struct {
 	// EnvoyBootstrap is always present when Generate succeeds.
 	EnvoyBootstrap GeneratedFile
@@ -39,7 +39,7 @@ type GeneratedFiles struct {
 	ProcessingConfig *GeneratedFile
 	// ServerCertificateResources contains one SDS resource for each HTTPS server.
 	ServerCertificateResources []GeneratedFile
-	// ClientCAResources contains one SDS resource for each mTLS server.
+	// ClientCAResources contains one SDS resource for each used mTLS authenticator.
 	ClientCAResources []GeneratedFile
 }
 

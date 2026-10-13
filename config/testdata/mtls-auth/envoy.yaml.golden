@@ -1184,10 +1184,10 @@ static_resources:
                             tls_maximum_protocol_version: TLSv1_3
                             tls_minimum_protocol_version: TLSv1_2
                         validation_context_sds_secret_config:
-                            name: gateway_client_ca_1
+                            name: gateway_client_ca_0
                             sds_config:
                                 path_config_source:
-                                    path: /etc/auth-gateway/client-ca-1.yaml
+                                    path: /etc/auth-gateway/client-ca-0.yaml
                                     watched_directory:
                                         path: /etc/auth-gateway
                                 resource_api_version: V3
@@ -2227,10 +2227,10 @@ static_resources:
                             tls_maximum_protocol_version: TLSv1_3
                             tls_minimum_protocol_version: TLSv1_2
                         validation_context_sds_secret_config:
-                            name: gateway_client_ca_2
+                            name: gateway_client_ca_0
                             sds_config:
                                 path_config_source:
-                                    path: /etc/auth-gateway/client-ca-2.yaml
+                                    path: /etc/auth-gateway/client-ca-0.yaml
                                     watched_directory:
                                         path: /etc/auth-gateway
                                 resource_api_version: V3
@@ -2672,10 +2672,10 @@ static_resources:
                             tls_maximum_protocol_version: TLSv1_3
                             tls_minimum_protocol_version: TLSv1_2
                         validation_context_sds_secret_config:
-                            name: gateway_client_ca_3
+                            name: gateway_client_ca_0
                             sds_config:
                                 path_config_source:
-                                    path: /etc/auth-gateway/client-ca-3.yaml
+                                    path: /etc/auth-gateway/client-ca-0.yaml
                                     watched_directory:
                                         path: /etc/auth-gateway
                                 resource_api_version: V3

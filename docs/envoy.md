@@ -59,7 +59,7 @@ File-based deployments must place generated resources at the paths Envoy reads:
 | Bootstrap                                       | `/etc/auth-gateway/envoy.yaml`                 |
 | Attribute mapping ECDS resource, when used      | `/etc/auth-gateway/processing/processing.yaml` |
 | Downstream TLS SDS resource for each HTTPS host | `/etc/auth-gateway/server-certificate-N.yaml`  |
-| Client CA SDS resource for each mTLS host       | `/etc/auth-gateway/client-ca-N.yaml`           |
+| Client CA SDS resource for each used mTLS authenticator | `/etc/auth-gateway/client-ca-N.yaml` |
 | API-key ECDS resource, when keys are used       | `/etc/auth-gateway/api-keys/api-keys.yaml`     |
 | Custom CA bundle                                | Configured absolute path                       |
 

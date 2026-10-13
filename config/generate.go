@@ -101,13 +101,13 @@ func Generate(c Config) (GeneratedFiles, error) {
 			Path:     path.Join(EnvoyConfigDirectory, filename),
 			Contents: contents[filename],
 		})
-		if _, selected := effective.serverMTLSAuthenticator(server); selected {
-			caFilename := clientCAResourceFilename(index)
-			files.ClientCAResources = append(files.ClientCAResources, GeneratedFile{
-				Path:     path.Join(EnvoyConfigDirectory, caFilename),
-				Contents: contents[caFilename],
-			})
-		}
+	}
+	for index := range effective.clientCAAuthenticators() {
+		caFilename := clientCAResourceFilename(index)
+		files.ClientCAResources = append(files.ClientCAResources, GeneratedFile{
+			Path:     path.Join(EnvoyConfigDirectory, caFilename),
+			Contents: contents[caFilename],
+		})
 	}
 	return files, nil
 }
@@ -194,6 +194,7 @@ func routeVirtualHosts(hosts []indexedVirtualHost) []*route.VirtualHost {
 
 func generateFilterChains(c Config) ([]*listener.FilterChain, error) {
 	apis := c.apisByName()
+	clientCAResourceIndices := c.clientCAResourceIndices()
 	var filterChains []*listener.FilterChain
 	var httpHosts []indexedVirtualHost
 	for i, server := range c.Servers {
@@ -212,7 +213,15 @@ func generateFilterChains(c Config) ([]*listener.FilterChain, error) {
 		}
 		chain.FilterChainMatch = &listener.FilterChainMatch{TransportProtocol: "tls", ServerNames: []string{server.Hostname}}
 		mtlsAuthenticator, selected := c.serverMTLSAuthenticator(server)
-		chain.TransportSocket, err = serverTLSTransportSocket(i, mtlsAuthenticator.MTLS, selected && requiresClientCertificate(server))
+		clientCAIndex := -1
+		if selected {
+			var exists bool
+			clientCAIndex, exists = clientCAResourceIndices[mtlsAuthenticator.Name]
+			if !exists {
+				return nil, fmt.Errorf("servers[%d] mTLS authenticator %q has no client CA resource", i, mtlsAuthenticator.Name)
+			}
+		}
+		chain.TransportSocket, err = serverTLSTransportSocket(i, clientCAIndex, mtlsAuthenticator.MTLS, selected && requiresClientCertificate(server))
 		if err != nil {
 			return nil, fmt.Errorf("servers[%d] downstream TLS context: %w", i, err)
 		}
@@ -382,14 +391,10 @@ func addServerCertificateFiles(c Config, files map[string][]byte) error {
 }
 
 func addClientCAFiles(c Config, files map[string][]byte) error {
-	for index, server := range c.Servers {
-		authenticator, selected := c.serverMTLSAuthenticator(server)
-		if !selected {
-			continue
-		}
+	for index, authenticator := range c.clientCAAuthenticators() {
 		data, err := marshalEnvoyFileDiscoveryResponse(authenticator.MTLS.toEnvoySecret(index))
 		if err != nil {
-			return fmt.Errorf("servers[%d] client CA SDS resource: %w", index, err)
+			return fmt.Errorf("authenticator %q client CA SDS resource: %w", authenticator.Name, err)
 		}
 		files[clientCAResourceFilename(index)] = append([]byte(generatedFileHeader), data...)
 	}
@@ -1293,7 +1298,7 @@ func serverTLSResourceFilename(index int) string {
 	return "server-certificate-" + strconv.Itoa(index) + ".yaml"
 }
 
-func serverTLSTransportSocket(index int, mtls *MTLSAuthenticator, requireClientCertificate bool) (*core.TransportSocket, error) {
+func serverTLSTransportSocket(serverIndex, clientCAIndex int, mtls *MTLSAuthenticator, requireClientCertificate bool) (*core.TransportSocket, error) {
 	context := &tls.DownstreamTlsContext{CommonTlsContext: &tls.CommonTlsContext{
 		TlsParams: &tls.TlsParameters{
 			TlsMinimumProtocolVersion: tls.TlsParameters_TLSv1_2,
@@ -1301,13 +1306,16 @@ func serverTLSTransportSocket(index int, mtls *MTLSAuthenticator, requireClientC
 		},
 		AlpnProtocols: []string{"h2", googleHTTP11ALPN},
 		TlsCertificateSdsSecretConfigs: []*tls.SdsSecretConfig{{
-			Name:      serverTLSSecretName(index),
-			SdsConfig: serverTLSSecretConfigSource(index),
+			Name:      serverTLSSecretName(serverIndex),
+			SdsConfig: serverTLSSecretConfigSource(serverIndex),
 		}},
 	}}
 	if mtls != nil {
+		if clientCAIndex < 0 {
+			return nil, fmt.Errorf("mTLS client CA resource index is missing")
+		}
 		context.CommonTlsContext.ValidationContextType = &tls.CommonTlsContext_ValidationContextSdsSecretConfig{ValidationContextSdsSecretConfig: &tls.SdsSecretConfig{
-			Name: clientCASecretName(index), SdsConfig: fileConfigSource(path.Join(EnvoyConfigDirectory, clientCAResourceFilename(index))),
+			Name: clientCASecretName(clientCAIndex), SdsConfig: fileConfigSource(path.Join(EnvoyConfigDirectory, clientCAResourceFilename(clientCAIndex))),
 		}}
 		context.RequireClientCertificate = wrapperspb.Bool(requireClientCertificate)
 		context.DisableStatefulSessionResumption = true
