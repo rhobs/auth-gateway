@@ -77,6 +77,9 @@ func TestGeneratedReferenceFiles(t *testing.T) {
 			} else if _, err := os.Stat(processingPath); !os.IsNotExist(err) {
 				t.Errorf("unexpected processing reference %s", processingPath)
 			}
+			for _, file := range envoyFiles.ClientCAResources {
+				checkReference(t, filepath.Join(caseDir, filepath.Base(file.Path)+".golden"), file.Contents)
+			}
 
 			resources, err := GenerateKubernetes(gatewayConfig)
 			if err != nil {

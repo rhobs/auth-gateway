@@ -20,7 +20,13 @@ const (
 
 func (c Config) toServerAttributeInitializationConfig(server Server) *setfilterstate.Config {
 	config := &setfilterstate.Config{}
-	for _, name := range selectedAuthenticatorNames(server) {
+	names := slices.Clone(selectedAuthenticatorNames(server))
+	if serverUsesMTLS(c, server) {
+		slices.SortStableFunc(names, func(a, b string) int {
+			return authenticatorPriority(findAuthenticator(c, a)) - authenticatorPriority(findAuthenticator(c, b))
+		})
+	}
+	for _, name := range names {
 		authenticator := findAuthenticator(c, name)
 		for _, attribute := range slices.Sorted(maps.Keys(authenticator.Attributes)) {
 			source := authenticator.Attributes[attribute]
@@ -30,6 +36,8 @@ func (c Config) toServerAttributeInitializationConfig(server Server) *setfilters
 				expression = headerAttributeExpression(authenticator, *source.Header)
 			case authenticator.JWT != nil:
 				expression = jwtClaimExpression(append([]string{name}, source.ClaimPath...))
+			case authenticator.MTLS != nil:
+				expression = mtlsSANAttributeExpression(source)
 			default:
 				expression = apiKeyAttributeExpression(attribute)
 			}
@@ -37,6 +45,17 @@ func (c Config) toServerAttributeInitializationConfig(server Server) *setfilters
 		}
 	}
 	return config
+}
+
+func authenticatorPriority(authenticator Authenticator) int {
+	switch {
+	case authenticator.JWT != nil:
+		return 3
+	case authenticator.MTLS != nil:
+		return 2
+	default:
+		return 1
+	}
 }
 
 func (c Config) toAttributeInitializationConfig() *setfilterstate.Config {
@@ -62,7 +81,7 @@ func (c Config) toAttributeInitializationConfig() *setfilterstate.Config {
 
 func (c Config) toAttributeProcessingConfig() *setfilterstate.Config {
 	config := &setfilterstate.Config{}
-	if !c.usesAPIKeys() {
+	if !c.usesAPIKeys() && !c.usesMTLS() {
 		config = c.toAttributeInitializationConfig()
 	}
 	if c.hasAttributeMappings() {
@@ -123,12 +142,28 @@ func headerAttributeExpression(authenticator Authenticator, header string) strin
 	if authenticator.JWT != nil {
 		current, checks := metadataStringPathExpression(jwtAuthnFilterName, []string{authenticator.Name, jwtIssuerClaimName})
 		verified = checks + " && " + current + " == " + celStringLiteral(authenticator.JWT.Issuer)
+	} else if authenticator.MTLS != nil {
+		verified = mtlsPresentExpression()
 	} else {
 		current, checks := metadataStringPathExpression(apiKeyMetadataNamespace, []string{apiKeyMetadataKey})
 		verified = checks + " && " + current + " != \"\""
 	}
 	current, checks := metadataStringPathExpression(requestHeaderMetadataNamespace, []string{strings.ToLower(header)})
 	return "((" + verified + " && " + checks + " && " + current + " != \"\") ? " + current + " : \"\")"
+}
+
+func mtlsPresentExpression() string {
+	current, checks := metadataStringPathExpression(mtlsMetadataNamespace, []string{mtlsFingerprintMetadataKey})
+	return checks + " && size(" + current + ") >= 64"
+}
+
+func mtlsSANAttributeExpression(source AttributeSource) string {
+	key := mtlsDNSMetadataKey
+	if source.URISAN != nil {
+		key = mtlsURIMetadataKey
+	}
+	current, checks := metadataStringPathExpression(mtlsMetadataNamespace, []string{key})
+	return "((" + mtlsPresentExpression() + " && " + checks + " && " + current + " != \"\") ? " + current + " : \"\")"
 }
 
 func metadataStringPathExpression(namespace string, path []string) (string, string) {
@@ -243,23 +278,27 @@ func (b *celExpressionBuilder) metadataValue(namespace string, keys []string) *e
 	return value
 }
 
-func sharedAttributeConditions(jwtAuthenticator, keyAuthenticator Authenticator) ([]*rbac.Principal, *expr.Expr) {
+func sharedAttributeConditions(authenticators ...Authenticator) ([]*rbac.Principal, *expr.Expr) {
 	builder := &celExpressionBuilder{}
 	var principals []*rbac.Principal
 	var equality []*expr.Expr
-	for _, attribute := range slices.Sorted(maps.Keys(keyAuthenticator.Attributes)) {
-		if _, shared := jwtAuthenticator.Attributes[attribute]; !shared {
-			continue
+	for first := range authenticators {
+		for second := first + 1; second < len(authenticators); second++ {
+			for _, attribute := range slices.Sorted(maps.Keys(authenticators[second].Attributes)) {
+				if _, shared := authenticators[first].Attributes[attribute]; !shared {
+					continue
+				}
+				firstNamespace, firstPath := attributeMetadataPath(authenticators[first], attribute)
+				secondNamespace, secondPath := attributeMetadataPath(authenticators[second], attribute)
+				valueMatcher := nonemptyScalarValueMatcher()
+				principals = append(principals,
+					dynamicMetadataPrincipal(firstNamespace, firstPath, valueMatcher),
+					dynamicMetadataPrincipal(secondNamespace, secondPath, valueMatcher))
+				equality = append(equality, builder.call("_==_",
+					builder.metadataValue(firstNamespace, firstPath),
+					builder.metadataValue(secondNamespace, secondPath)))
+			}
 		}
-		jwtNamespace, jwtPath := attributeMetadataPath(jwtAuthenticator, attribute)
-		keyNamespace, keyPath := attributeMetadataPath(keyAuthenticator, attribute)
-		valueMatcher := nonemptyScalarValueMatcher()
-		principals = append(principals,
-			dynamicMetadataPrincipal(jwtNamespace, jwtPath, valueMatcher),
-			dynamicMetadataPrincipal(keyNamespace, keyPath, valueMatcher))
-		equality = append(equality, builder.call("_==_",
-			builder.metadataValue(jwtNamespace, jwtPath),
-			builder.metadataValue(keyNamespace, keyPath)))
 	}
 	if len(equality) == 0 {
 		return principals, nil

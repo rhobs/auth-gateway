@@ -640,8 +640,14 @@ func (c Config) validateAuthenticators() (map[string]Authenticator, string, erro
 		if _, exists := authenticators[authenticator.Name]; exists {
 			return nil, "", fmt.Errorf("duplicate authenticator name %q", authenticator.Name)
 		}
-		if (authenticator.JWT == nil) == (authenticator.APIKey == nil) {
-			return nil, "", fmt.Errorf("%s must set exactly one of jwt or api_key", name)
+		types := 0
+		for _, present := range []bool{authenticator.JWT != nil, authenticator.APIKey != nil, authenticator.MTLS != nil} {
+			if present {
+				types++
+			}
+		}
+		if types != 1 {
+			return nil, "", fmt.Errorf("%s must set exactly one of jwt, api_key, or mtls", name)
 		}
 		if authenticator.JWT != nil {
 			if err := validateJWTAuthenticator(name+".jwt", *authenticator.JWT); err != nil {
@@ -650,7 +656,7 @@ func (c Config) validateAuthenticators() (map[string]Authenticator, string, erro
 			if err := authenticator.JWT.JWKS.validate(name+".jwt.jwks", c.Kubernetes != nil); err != nil {
 				return nil, "", err
 			}
-		} else {
+		} else if authenticator.APIKey != nil {
 			apiKeyCount++
 			if apiKeyCount > 1 {
 				return nil, "", fmt.Errorf("%s.api_key: only one API-key authenticator is supported", name)
@@ -659,6 +665,13 @@ func (c Config) validateAuthenticators() (map[string]Authenticator, string, erro
 				return nil, "", err
 			}
 			apiKeyHeader = authenticator.APIKey.Header
+		} else {
+			if authenticator.MTLS.TrustedCA == nil {
+				return nil, "", fmt.Errorf("%s.mtls.trusted_ca is required", name)
+			}
+			if err := validateTrustedCA(name+".mtls.trusted_ca", authenticator.MTLS.TrustedCA, c.Kubernetes != nil); err != nil {
+				return nil, "", err
+			}
 		}
 		authenticators[authenticator.Name] = authenticator
 	}
@@ -732,7 +745,7 @@ func validateAuthorizationGrant(name string, grant AuthorizationGrant, apiNames 
 	if err := validateUniqueReferences(name+".apis", grant.APIs, apiNames); err != nil {
 		return err
 	}
-	if len(grant.Attributes) == 0 {
+	if len(grant.Attributes) == 0 && authenticator.MTLS == nil {
 		return fmt.Errorf("%s.attributes must contain at least one attribute allowlist", name)
 	}
 	for _, attribute := range slices.Sorted(maps.Keys(grant.Attributes)) {
@@ -774,7 +787,18 @@ func (c Config) validateServerAuthentication(apis map[string]API, authenticators
 			if err != nil {
 				return err
 			}
-			jwtCount := 0
+			jwtCount, mtlsCount := 0, 0
+			for _, selectedName := range selected {
+				if authenticators[selectedName].MTLS != nil {
+					mtlsCount++
+				}
+			}
+			if mtlsCount > 1 {
+				return fmt.Errorf("%s.authentication cannot contain more than one mTLS authenticator", name)
+			}
+			if mtlsCount > 0 && server.TLSConfig == nil {
+				return fmt.Errorf("%s.authentication requires tls_config for mTLS", name)
+			}
 			for _, selectedName := range server.Authentication.AllOf {
 				if authenticators[selectedName].JWT != nil {
 					jwtCount++
@@ -888,6 +912,15 @@ func (c Config) usesJWT() bool {
 	return false
 }
 
+func (c Config) usesMTLS() bool {
+	for _, authenticator := range c.Authenticators {
+		if authenticator.MTLS != nil && authenticatorUsed(c.Servers, authenticator.Name) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c Config) caMounts() []CAConfigMap {
 	var mounts []CAConfigMap
 	seen := map[CAConfigMap]bool{}
@@ -900,6 +933,9 @@ func (c Config) caMounts() []CAConfigMap {
 	for _, authenticator := range c.Authenticators {
 		if authenticator.JWT != nil && authenticatorUsed(c.Servers, authenticator.Name) {
 			add(authenticator.JWT.JWKS.TrustedCA)
+		}
+		if authenticator.MTLS != nil && authenticatorUsed(c.Servers, authenticator.Name) {
+			add(authenticator.MTLS.TrustedCA)
 		}
 	}
 	for _, api := range c.APIs {

@@ -101,6 +101,13 @@ func Generate(c Config) (GeneratedFiles, error) {
 			Path:     path.Join(EnvoyConfigDirectory, filename),
 			Contents: contents[filename],
 		})
+		if _, selected := effective.serverMTLSAuthenticator(server); selected {
+			caFilename := clientCAResourceFilename(index)
+			files.ClientCAResources = append(files.ClientCAResources, GeneratedFile{
+				Path:     path.Join(EnvoyConfigDirectory, caFilename),
+				Contents: contents[caFilename],
+			})
+		}
 	}
 	return files, nil
 }
@@ -204,7 +211,8 @@ func generateFilterChains(c Config) ([]*listener.FilterChain, error) {
 			return nil, fmt.Errorf("servers[%d]: %w", i, err)
 		}
 		chain.FilterChainMatch = &listener.FilterChainMatch{TransportProtocol: "tls", ServerNames: []string{server.Hostname}}
-		chain.TransportSocket, err = serverTLSTransportSocket(i)
+		mtlsAuthenticator, selected := c.serverMTLSAuthenticator(server)
+		chain.TransportSocket, err = serverTLSTransportSocket(i, mtlsAuthenticator.MTLS, selected && requiresClientCertificate(server))
 		if err != nil {
 			return nil, fmt.Errorf("servers[%d] downstream TLS context: %w", i, err)
 		}
@@ -244,6 +252,12 @@ func serverVirtualHost(c Config, index int, server Server, apis map[string]API) 
 	if err := addServerAPIKeyConfig(c, host, index, server); err != nil {
 		return nil, err
 	}
+	if err := addServerAuthenticationConfig(c, host, index, server); err != nil {
+		return nil, err
+	}
+	if err := addServerMTLSSharedAttributeConfig(c, host, index, server); err != nil {
+		return nil, err
+	}
 	rbacConfig, err := packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: c.toServerRBACRules(server)}})
 	if err != nil {
 		return nil, fmt.Errorf("servers[%d] RBAC rules: %w", index, err)
@@ -274,11 +288,35 @@ func addServerAPIKeyConfig(c Config, host *route.VirtualHost, index int, server 
 		return fmt.Errorf("servers[%d] API-key matcher: %w", index, err)
 	}
 	host.TypedPerFilterConfig[apiKeyFilterName] = perRoute
-	authentication, err := packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: c.toServerAuthenticationRBACRules(server)}})
+	return nil
+}
+
+func addServerAuthenticationConfig(c Config, host *route.VirtualHost, index int, server Server) error {
+	if !serverUsesAPIKey(c, server) && !serverUsesMTLS(c, server) {
+		return nil
+	}
+	rules, err := c.toServerAuthenticationRBACRules(server)
+	if err != nil {
+		return fmt.Errorf("servers[%d] authentication rules: %w", index, err)
+	}
+	authentication, err := packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: rules}})
 	if err != nil {
 		return fmt.Errorf("servers[%d] authentication rules: %w", index, err)
 	}
 	host.TypedPerFilterConfig[authenticationFilterName] = authentication
+	return nil
+}
+
+func addServerMTLSSharedAttributeConfig(c Config, host *route.VirtualHost, index int, server Server) error {
+	rules := c.toServerMTLSSharedAttributeRBACRules(server)
+	if rules == nil {
+		return nil
+	}
+	config, err := packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: rules}})
+	if err != nil {
+		return fmt.Errorf("servers[%d] mTLS shared attribute rules: %w", index, err)
+	}
+	host.TypedPerFilterConfig[mtlsSharedAttributesFilterName] = config
 	return nil
 }
 
@@ -310,6 +348,9 @@ func generateFiles(c Config, bootstrapConfig *bootstrap.Bootstrap) (map[string][
 	if err := addServerCertificateFiles(c, files); err != nil {
 		return nil, err
 	}
+	if err := addClientCAFiles(c, files); err != nil {
+		return nil, err
+	}
 	return files, nil
 }
 
@@ -336,6 +377,21 @@ func addServerCertificateFiles(c Config, files map[string][]byte) error {
 			return fmt.Errorf("servers[%d] certificate SDS resource: %w", i, err)
 		}
 		files[serverTLSResourceFilename(i)] = append([]byte(generatedFileHeader), data...)
+	}
+	return nil
+}
+
+func addClientCAFiles(c Config, files map[string][]byte) error {
+	for index, server := range c.Servers {
+		authenticator, selected := c.serverMTLSAuthenticator(server)
+		if !selected {
+			continue
+		}
+		data, err := marshalEnvoyFileDiscoveryResponse(authenticator.MTLS.toEnvoySecret(index))
+		if err != nil {
+			return fmt.Errorf("servers[%d] client CA SDS resource: %w", index, err)
+		}
+		files[clientCAResourceFilename(index)] = append([]byte(generatedFileHeader), data...)
 	}
 	return nil
 }
@@ -379,7 +435,7 @@ func (c Config) toHTTPManager(hosts []indexedVirtualHost) (*hcm.HttpConnectionMa
 	if c.Listener.HTTP2 != nil {
 		http2Options = c.Listener.HTTP2.envoy()
 	}
-	return &hcm.HttpConnectionManager{
+	manager := &hcm.HttpConnectionManager{
 		StatPrefix:            httpManagerStatPrefix,
 		CodecType:             hcm.HttpConnectionManager_AUTO,
 		MaxRequestHeadersKb:   optionalUint32(c.Listener.MaxRequestHeadersKB),
@@ -404,7 +460,14 @@ func (c Config) toHTTPManager(hosts []indexedVirtualHost) (*hcm.HttpConnectionMa
 		}},
 		AccessLog:   accessLogs,
 		HttpFilters: filters,
-	}, nil
+	}
+	for _, host := range hosts {
+		if serverUsesMTLS(c, c.Servers[host.serverIndex]) {
+			manager.LocalReplyConfig = mtlsMissingCredentialReply()
+			break
+		}
+	}
+	return manager, nil
 }
 
 func (c Config) toHTTPFilters(hosts []indexedVirtualHost, protected bool) ([]*hcm.HttpFilter, error) {
@@ -418,7 +481,7 @@ func (c Config) toHTTPFilters(hosts []indexedVirtualHost, protected bool) ([]*hc
 			return nil, err
 		}
 	}
-	if (c.usesAPIKeys() || c.usesJWT()) && !protected {
+	if (c.usesAPIKeys() || c.usesJWT() || c.usesMTLS()) && !protected {
 		cleanup, err := c.toCredentialCleanupFilter()
 		if err != nil {
 			return nil, err
@@ -449,6 +512,9 @@ func (c Config) requestControlFilters(hosts []*route.VirtualHost) ([]*hcm.HttpFi
 			identityHeaders = append(identityHeaders, jwtVerifiedHeaderName(authenticator.Name))
 		}
 	}
+	if c.usesMTLS() {
+		identityHeaders = append(identityHeaders, mtlsPendingHeaderName, mtlsFingerprintHeaderName, mtlsURIHeaderName, mtlsDNSHeaderName)
+	}
 	controls, err := packEnvoy(requestControlMutations(identityHeaders...))
 	if err != nil {
 		return nil, fmt.Errorf("encode request-control header removal: %w", err)
@@ -468,15 +534,16 @@ func (c Config) requestControlFilters(hosts []*route.VirtualHost) ([]*hcm.HttpFi
 }
 
 func (c Config) protectedHTTPFilters(filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
-	usesJWT, usesKey := false, false
+	usesJWT, usesKey, usesMTLS := false, false, false
 	serverIndexes := make([]int, 0, len(hosts))
 	for _, host := range hosts {
 		serverIndexes = append(serverIndexes, host.serverIndex)
 		usesJWT = usesJWT || serverUsesJWT(c, c.Servers[host.serverIndex])
 		usesKey = usesKey || serverUsesAPIKey(c, c.Servers[host.serverIndex])
+		usesMTLS = usesMTLS || serverUsesMTLS(c, c.Servers[host.serverIndex])
 	}
 	var err error
-	filters, err = c.authenticationHTTPFilters(filters, serverIndexes, usesJWT, usesKey)
+	filters, err = c.authenticationHTTPFilters(filters, serverIndexes, usesJWT, usesKey, usesMTLS)
 	if err != nil {
 		return nil, err
 	}
@@ -489,11 +556,18 @@ func (c Config) protectedHTTPFilters(filters []*hcm.HttpFilter, hosts []indexedV
 	return c.authorizationHTTPFilters(filters)
 }
 
-func (c Config) authenticationHTTPFilters(filters []*hcm.HttpFilter, serverIndexes []int, usesJWT, usesKey bool) ([]*hcm.HttpFilter, error) {
+func (c Config) authenticationHTTPFilters(filters []*hcm.HttpFilter, serverIndexes []int, usesJWT, usesKey, usesMTLS bool) ([]*hcm.HttpFilter, error) {
+	if usesMTLS {
+		peer, err := mtlsPeerHeadersFilter()
+		if err != nil {
+			return nil, fmt.Errorf("encode mTLS peer headers: %w", err)
+		}
+		filters = append(filters, peer)
+	}
 	if usesJWT {
 		var jwtConfig *jwt.JwtAuthentication
 		var err error
-		if c.usesAPIKeys() {
+		if c.usesAPIKeys() || c.usesMTLS() {
 			jwtConfig, err = c.toJWTFilterConfig(serverIndexes...)
 		} else {
 			jwtConfig, err = c.toJWTFilterConfig()
@@ -513,19 +587,40 @@ func (c Config) authenticationHTTPFilters(filters []*hcm.HttpFilter, serverIndex
 		filters = append(filters, apiKeyFilter())
 		keyAuthenticator, _ = c.apiKeyAuthenticator()
 	}
-	if usesKey || len(headers) > 0 {
-		metadata, err := keyAuthenticator.toRequestMetadataFilter(headers)
+	if usesKey || usesMTLS || len(headers) > 0 {
+		metadata, err := keyAuthenticator.toRequestMetadataFilter(headers, usesMTLS)
 		if err != nil {
 			return nil, fmt.Errorf("encode request metadata filter: %w", err)
 		}
 		filters = append(filters, metadata)
 	}
-	if usesKey {
+	if usesKey || usesMTLS {
 		var err error
 		filters, err = appendAuthenticationRBAC(filters)
 		if err != nil {
 			return nil, err
 		}
+	}
+	if usesMTLS {
+		cleanup, err := mtlsPendingCleanupFilter()
+		if err != nil {
+			return nil, fmt.Errorf("encode mTLS authentication marker cleanup: %w", err)
+		}
+		filters = append(filters, cleanup)
+		cardinality, err := mtlsSANCardinalityFilter()
+		if err != nil {
+			return nil, fmt.Errorf("encode mTLS SAN cardinality: %w", err)
+		}
+		filters = append(filters, cardinality)
+		sharedAttributesConfig, err := packEnvoy(&httpRBAC.RBAC{})
+		if err != nil {
+			return nil, fmt.Errorf("encode mTLS shared attribute filter: %w", err)
+		}
+		filters = append(filters, &hcm.HttpFilter{
+			Name:       mtlsSharedAttributesFilterName,
+			Disabled:   true,
+			ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: sharedAttributesConfig},
+		})
 	}
 	return filters, nil
 }
@@ -539,7 +634,7 @@ func appendAuthenticationRBAC(filters []*hcm.HttpFilter) ([]*hcm.HttpFilter, err
 }
 
 func (c Config) attributeHTTPFilters(filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
-	if c.usesAPIKeys() {
+	if c.usesAPIKeys() || c.usesMTLS() {
 		var err error
 		filters, err = c.apiKeyAttributeFilters(filters, hosts)
 		if err != nil {
@@ -609,7 +704,7 @@ func (c Config) authorizationHTTPFilters(filters []*hcm.HttpFilter) ([]*hcm.Http
 			return nil, err
 		}
 	}
-	if c.usesAPIKeys() || c.usesJWT() {
+	if c.usesAPIKeys() || c.usesJWT() || c.usesMTLS() {
 		cleanup, err := c.toCredentialCleanupFilter()
 		if err != nil {
 			return nil, err
@@ -755,7 +850,7 @@ func (c Config) toServerRBACRules(server Server) *rbac.RBAC {
 func (c Config) grantPrincipalsForAPI(server Server, apiName, policyName string) []*rbac.Principal {
 	var grants []*rbac.Principal
 	for _, grant := range authorizationPolicy(c, policyName).Grants {
-		if slices.Contains(grant.APIs, apiName) && (!c.usesAPIKeys() || serverSelectsAuthenticator(server, grant.Authenticator)) {
+		if slices.Contains(grant.APIs, apiName) && (!c.usesAPIKeys() && !c.usesMTLS() || serverSelectsAuthenticator(server, grant.Authenticator)) {
 			grants = append(grants, c.toGrantPrincipalForServer(server, grant))
 		}
 	}
@@ -782,6 +877,14 @@ func (c Config) toGrantPrincipal(grant AuthorizationGrant) *rbac.Principal {
 	authenticator := findAuthenticator(c, grant.Authenticator)
 	if authenticator.APIKey != nil {
 		return authenticator.toKeyGrantPrincipal(grant)
+	}
+	if authenticator.MTLS != nil {
+		conditions := []*rbac.Principal{mtlsPresentPrincipal()}
+		for _, attribute := range slices.Sorted(maps.Keys(grant.Attributes)) {
+			namespace, path := attributeMetadataPath(authenticator, attribute)
+			conditions = append(conditions, dynamicMetadataPrincipal(namespace, path, allowedStringValueMatcher(grant.Attributes[attribute])))
+		}
+		return andPrincipals(conditions...)
 	}
 	conditions := make([]*rbac.Principal, 0, len(grant.Attributes)+1)
 	hasClaim := false
@@ -845,6 +948,12 @@ func attributeMetadataPath(authenticator Authenticator, attribute string) (strin
 	}
 	if authenticator.JWT != nil {
 		return jwtAuthnFilterName, append([]string{authenticator.Name}, source.ClaimPath...)
+	}
+	if authenticator.MTLS != nil {
+		if source.URISAN != nil {
+			return mtlsMetadataNamespace, []string{mtlsURIMetadataKey}
+		}
+		return mtlsMetadataNamespace, []string{mtlsDNSMetadataKey}
 	}
 	return apiKeyMetadataNamespace, []string{apiKeyAttributeMetadataKey(attribute)}
 }
@@ -1184,8 +1293,8 @@ func serverTLSResourceFilename(index int) string {
 	return "server-certificate-" + strconv.Itoa(index) + ".yaml"
 }
 
-func serverTLSTransportSocket(index int) (*core.TransportSocket, error) {
-	config, err := packEnvoy(&tls.DownstreamTlsContext{CommonTlsContext: &tls.CommonTlsContext{
+func serverTLSTransportSocket(index int, mtls *MTLSAuthenticator, requireClientCertificate bool) (*core.TransportSocket, error) {
+	context := &tls.DownstreamTlsContext{CommonTlsContext: &tls.CommonTlsContext{
 		TlsParams: &tls.TlsParameters{
 			TlsMinimumProtocolVersion: tls.TlsParameters_TLSv1_2,
 			TlsMaximumProtocolVersion: tls.TlsParameters_TLSv1_3,
@@ -1195,7 +1304,16 @@ func serverTLSTransportSocket(index int) (*core.TransportSocket, error) {
 			Name:      serverTLSSecretName(index),
 			SdsConfig: serverTLSSecretConfigSource(index),
 		}},
-	}})
+	}}
+	if mtls != nil {
+		context.CommonTlsContext.ValidationContextType = &tls.CommonTlsContext_ValidationContextSdsSecretConfig{ValidationContextSdsSecretConfig: &tls.SdsSecretConfig{
+			Name: clientCASecretName(index), SdsConfig: fileConfigSource(path.Join(EnvoyConfigDirectory, clientCAResourceFilename(index))),
+		}}
+		context.RequireClientCertificate = wrapperspb.Bool(requireClientCertificate)
+		context.DisableStatefulSessionResumption = true
+		context.SessionTicketKeysType = &tls.DownstreamTlsContext_DisableStatelessSessionResumption{DisableStatelessSessionResumption: true}
+	}
+	config, err := packEnvoy(context)
 	if err != nil {
 		return nil, err
 	}

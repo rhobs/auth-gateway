@@ -162,6 +162,7 @@ type Authenticator struct {
 	Name       string                     `yaml:"name"`
 	JWT        *JWTAuthenticator          `yaml:"jwt,omitempty"`
 	APIKey     *APIKeyAuthenticator       `yaml:"api_key,omitempty"`
+	MTLS       *MTLSAuthenticator         `yaml:"mtls,omitempty"`
 	Attributes map[string]AttributeSource `yaml:"attributes,omitempty"`
 }
 
@@ -172,11 +173,18 @@ type JWTAuthenticator struct {
 	Audiences []string   `yaml:"audiences,omitempty"`
 }
 
-// AttributeSource selects one original value from a verified claim, key credential, or request header.
+// MTLSAuthenticator validates client certificates against an explicit CA bundle.
+type MTLSAuthenticator struct {
+	TrustedCA *TrustedCA `yaml:"trusted_ca"`
+}
+
+// AttributeSource selects one original value from a verified credential or request header.
 type AttributeSource struct {
 	ClaimPath  []string `yaml:"claim_path,omitempty"`
 	Header     *string  `yaml:"header,omitempty"`
 	Credential *bool    `yaml:"credential,omitempty"`
+	URISAN     *bool    `yaml:"uri_san,omitempty"`
+	DNSSAN     *bool    `yaml:"dns_san,omitempty"`
 }
 
 // APIKeyAuthenticator reads keys from an ECDS file.
@@ -448,6 +456,7 @@ func (authenticator Authenticator) clone() Authenticator {
 	}
 	authenticator.JWT = cloneConfigPointer(authenticator.JWT)
 	authenticator.APIKey = clonePointer(authenticator.APIKey)
+	authenticator.MTLS = cloneConfigPointer(authenticator.MTLS)
 	return authenticator
 }
 
@@ -457,10 +466,17 @@ func (j JWTAuthenticator) clone() JWTAuthenticator {
 	return j
 }
 
+func (m MTLSAuthenticator) clone() MTLSAuthenticator {
+	m.TrustedCA = cloneConfigPointer(m.TrustedCA)
+	return m
+}
+
 func (a AttributeSource) clone() AttributeSource {
 	a.ClaimPath = slices.Clone(a.ClaimPath)
 	a.Header = clonePointer(a.Header)
 	a.Credential = clonePointer(a.Credential)
+	a.URISAN = clonePointer(a.URISAN)
+	a.DNSSAN = clonePointer(a.DNSSAN)
 	return a
 }
 

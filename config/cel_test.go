@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	rbac "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	setfilterstatecommon "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
 	setfilterstate "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
@@ -136,17 +137,17 @@ func TestJWTExpressionsUseEnvoyCELVariablesAndGuardMissingAttributes(t *testing.
 
 func TestAPIKeyRawAuthorizationAndSharedAttributeEquality(t *testing.T) {
 	c := loadConfigCase(t, "api-key-auth")
-	keyOnly := c.toServerAuthenticationRBACRules(c.Servers[1]).Policies["authenticated"].Principals[0]
+	keyOnly := testServerAuthenticationRules(t, c, c.Servers[1]).Policies["authenticated"].Principals[0]
 	if matcher := keyOnly.GetSourcedMetadata().GetMetadataMatcher(); matcher == nil || matcher.Filter != apiKeyMetadataNamespace ||
 		!slices.Equal(metadataMatcherPath(matcher.GetPath()), []string{"identity"}) ||
 		matcher.GetValue().GetStringMatch().GetSafeRegex().GetRegex() != apiKeyClientPattern(c.Authenticators[1].credentialAttributeNames(), "") {
 		t.Fatalf("key-only authentication principal = %#v", keyOnly)
 	}
-	mixed := c.toServerAuthenticationRBACRules(c.Servers[2]).Policies["authenticated"].Principals[0].GetOrIds().GetIds()
+	mixed := testServerAuthenticationRules(t, c, c.Servers[2]).Policies["authenticated"].Principals[0].GetOrIds().GetIds()
 	if len(mixed) != 2 || mixed[0].GetSourcedMetadata() == nil || mixed[1].GetHeader().GetName() != jwtVerifiedHeaderName("issuer-one") {
 		t.Fatalf("mixed any_of authentication principal = %#v", mixed)
 	}
-	dualPolicy := c.toServerAuthenticationRBACRules(c.Servers[3]).Policies["authenticated"]
+	dualPolicy := testServerAuthenticationRules(t, c, c.Servers[3]).Policies["authenticated"]
 	principals := dualPolicy.Principals[0].GetAndIds().GetIds()
 	if len(principals) != 5 || dualPolicy.Condition.GetCallExpr().GetFunction() != "_&&_" {
 		t.Fatalf("all_of authentication policy = %#v", dualPolicy)
@@ -251,7 +252,7 @@ func TestMixedAllOfComparesHeaderAndVerifiedAttributeSources(t *testing.T) {
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	policy := c.toServerAuthenticationRBACRules(c.Servers[3]).Policies["authenticated"]
+	policy := testServerAuthenticationRules(t, c, c.Servers[3]).Policies["authenticated"]
 	if len(policy.Principals[0].GetAndIds().GetIds()) != 5 {
 		t.Fatalf("all_of shared-attribute principals = %#v", policy.Principals)
 	}
@@ -270,6 +271,15 @@ func TestMixedAllOfComparesHeaderAndVerifiedAttributeSources(t *testing.T) {
 			t.Fatalf("shared attribute %d compares %v, want %v", index, equality, want)
 		}
 	}
+}
+
+func testServerAuthenticationRules(t *testing.T, c Config, server Server) *rbac.RBAC {
+	t.Helper()
+	rules, err := c.toServerAuthenticationRBACRules(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rules
 }
 
 func metadataReference(value *expr.Expr) []string {

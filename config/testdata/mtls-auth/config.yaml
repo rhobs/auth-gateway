@@ -1,0 +1,94 @@
+version: 1
+authenticators:
+  - name: issuer-one
+    jwt:
+      issuer: https://issuer-one.jwt.test
+      jwks:
+        uri: https://jwks.jwt.test/issuer-one
+      audiences: [gateway-test]
+    attributes:
+      tenant_id: {claim_path: [organization, id]}
+      requested_tenant: {header: X-Tenant}
+  - name: client-cert
+    mtls:
+      trusted_ca:
+        config_map: {name: gateway-client-ca, key: ca.crt}
+    attributes:
+      tenant_id: {uri_san: true}
+      dns_id: {dns_san: true}
+      requested_tenant: {header: X-Tenant}
+  - name: partner-key
+    api_key:
+      secret: gateway-api-keys
+      header: X-Partner-Key
+    attributes:
+      tenant_id: {credential: true}
+      requested_tenant: {header: X-Tenant}
+authorization_policies:
+  - name: jwt-writers
+    grants:
+      - authenticator: issuer-one
+        apis: [ingest]
+        attributes:
+          tenant_id: [spiffe://clients.example.test/client-a]
+  - name: mtls-writers
+    grants:
+      - authenticator: client-cert
+        apis: [ingest]
+        attributes:
+          tenant_id: [spiffe://clients.example.test/client-a]
+          dns_id: [client-a.example.test]
+  - name: key-writers
+    grants:
+      - authenticator: partner-key
+        apis: [ingest]
+        attributes:
+          tenant_id: [spiffe://clients.example.test/client-a]
+  - name: trusted-clients
+    grants:
+      - authenticator: client-cert
+        apis: [ingest]
+        attributes: {}
+apis:
+  - name: ingest
+    metrics:
+      labels: {tenant: tenant_id}
+    upstream: {address: httpbin, port: 8080}
+    routes:
+      - methods: [POST]
+        path: {exact: /ingest}
+        rewrite: {path: /anything}
+        processing:
+          request_headers:
+            - {name: X-Scope-OrgID, from_attribute: tenant_id}
+processing:
+  - name: tenants
+    type: attribute-mapper
+    attributes:
+      tenant_id:
+        mappings:
+          spiffe://clients.example.test/client-a: team-a
+servers:
+  - hostname: mtls.gateway.test
+    tls_config: {secret: gateway-tls}
+    authentication: {any_of: [client-cert]}
+    authorization: {any_of: [mtls-writers]}
+    apis: [ingest]
+  - hostname: mixed.gateway.test
+    tls_config: {secret: gateway-tls}
+    authentication: {any_of: [issuer-one, client-cert, partner-key]}
+    authorization: {any_of: [jwt-writers, mtls-writers, key-writers]}
+    apis: [ingest]
+  - hostname: all.gateway.test
+    tls_config: {secret: gateway-tls}
+    authentication: {all_of: [issuer-one, client-cert, partner-key]}
+    authorization: {all_of: [jwt-writers, mtls-writers, key-writers]}
+    apis: [ingest]
+  - hostname: trust.gateway.test
+    tls_config: {secret: gateway-tls}
+    authentication: {any_of: [client-cert]}
+    authorization: {any_of: [trusted-clients]}
+    apis: [ingest]
+kubernetes:
+  name: auth-gateway
+  namespace: gateway-test

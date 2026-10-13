@@ -16,7 +16,7 @@ tools:
 	$(MAKE) -C e2e cmctl kind-tool
 
 test-runtime:
-	go test -tags=envoyruntime ./config -run 'TestPinnedImagesValidateGeneratedFiles|TestEnvoyReloadsFileBasedResources' -count=1
+	go test -tags=envoyruntime ./config -run 'TestPinnedImagesValidateGeneratedFiles|TestEnvoyReloadsFileBasedResources|TestEnvoyReloadsClientCAForNewConnections' -count=1
 
 update-golden:
 	go test ./config -update

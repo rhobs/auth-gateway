@@ -10,8 +10,10 @@ fields.
 One listener serves all configured hosts on port `8080` by default. HTTP hosts
 share a filter chain. HTTPS hosts select a certificate using TLS SNI, then
 match the exact HTTP `Host` or `:authority` value. A successful TLS handshake
-does not grant access to a host's routes. HTTPS termination does not request a
-client certificate.
+does not grant access to a host's routes. HTTPS hosts selecting an mTLS
+authenticator validate client certificates against its configured CA bundle.
+Certificate-only and `all_of` servers require a client certificate during the
+handshake; mixed `any_of` servers allow clients to connect without one.
 
 Each host exposes only its listed APIs. API bindings and routes keep their
 declared order. Routes match an exact path, prefix, or RE2 expression and can
@@ -33,11 +35,13 @@ API-key filter validates the configured header against the complete
 Secret-backed credential set.
 
 For mixed `authentication.any_of`, a verified JWT takes precedence when both
-credentials are present. If the JWT is absent or invalid, Envoy can try the
-API key. A valid JWT without an authorization grant is denied without trying
-the key. `all_of` requires both selected credentials. Shared attributes must
-be nonempty scalar strings with equal original values. Invalid credentials
-return `401`; authenticated requests without a matching grant return `403`.
+credentials are present, followed by a verified client certificate and then an
+API key. If a higher-priority credential is absent or invalid, Envoy can try
+the next method. An authenticated identity without an authorization grant is
+denied without trying a lower-priority credential. `all_of` requires every
+selected credential. Shared attributes must be nonempty scalar strings with
+equal original values. Invalid credentials return `401`; authenticated
+requests without a matching grant return `403`.
 
 Authorization checks the original claim, key credential, or source-header
 value. Attribute mappings change values used for upstream headers and metric
@@ -55,6 +59,7 @@ File-based deployments must place generated resources at the paths Envoy reads:
 | Bootstrap                                       | `/etc/auth-gateway/envoy.yaml`                 |
 | Attribute mapping ECDS resource, when used      | `/etc/auth-gateway/processing/processing.yaml` |
 | Downstream TLS SDS resource for each HTTPS host | `/etc/auth-gateway/server-certificate-N.yaml`  |
+| Client CA SDS resource for each mTLS host       | `/etc/auth-gateway/client-ca-N.yaml`           |
 | API-key ECDS resource, when keys are used       | `/etc/auth-gateway/api-keys/api-keys.yaml`     |
 | Custom CA bundle                                | Configured absolute path                       |
 
@@ -63,22 +68,23 @@ keys, or custom CA bundles. Provide those files with the configured names and
 permissions. Kubernetes output creates the Envoy Deployment and its ConfigMaps,
 but TLS Secrets, the API-key Secret, and CA ConfigMaps remain external and must
 exist in the gateway namespace. See the [API-key guide](auth/api-key.md) for
-the Secret format.
+the Secret format and the [mTLS guide](auth/mtls.md) for client CA setup.
 
-Kubernetes mounts TLS Secrets and API-key Secrets as projected directories
-without `subPath`, so Envoy can observe valid changes without replacing the
-Pod. SDS reloads downstream certificates for new connections. ECDS reloads
-the complete API-key set and mapping tables. Setting a valid empty API-key
-credential list revokes all keys. Envoy keeps the last accepted resource after
-a failed update.
+Kubernetes mounts TLS Secrets, API-key Secrets, and client CA ConfigMaps as
+projected directories without `subPath`, so Envoy can observe valid changes
+without replacing the Pod. SDS reloads downstream certificates and client CA
+validation for new connections. ECDS reloads the complete API-key set and
+mapping tables. Setting a valid empty API-key credential list revokes all keys.
+Envoy keeps the last accepted resource after a failed update.
 
 Mapping updates change only the separate `<name>-processing` ConfigMap. The
 bootstrap, Deployment template, and Pod identity stay the same. Changes to
 routes, authentication, authorization, request-header bindings, metric
-bindings, or other bootstrap data require a Deployment rollout. Changed CA
-bundles also require a rollout. Collector ConfigMap changes require restarting
-the collector so it reads the new settings. Generated Deployments have no
-checksum annotation.
+bindings, or other bootstrap data require a Deployment rollout. Changes to
+upstream or JWKS CA bundles require a rollout. Client CA ConfigMap updates are
+watched and take effect on new TLS connections. Collector ConfigMap changes
+require restarting the collector so it reads the new settings. Generated
+Deployments have no checksum annotation.
 
 Envoy's validation mode checks the bootstrap, but does not validate the
 file-backed API-key ECDS resource. Generate API-key Secrets from validated
