@@ -120,6 +120,7 @@ func TestLoadRejectsInvalidYAML(t *testing.T) {
 		want  string
 	}{
 		{name: "unknown field", input: "version: 1\nunknown: true\n", want: "field unknown not found"},
+		{name: "API-scoped admission control", input: "version: 1\napis:\n  - admission_control: {}\n", want: "field admission_control not found"},
 		{name: "duplicate field", input: "version: 1\nversion: 1\n", want: "already defined"},
 		{name: "multiple documents", input: "version: 1\n---\nversion: 1\n", want: "expected exactly one YAML document"},
 		{name: "invalid syntax", input: "version: [\n", want: "did not find expected node content"},

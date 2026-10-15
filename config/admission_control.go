@@ -12,7 +12,7 @@ import (
 
 const admissionControlFilterName = "envoy.filters.http.admission_control"
 
-// AdmissionControlConfig enables Envoy admission control for one API.
+// AdmissionControlConfig enables Envoy admission control at the gateway level.
 type AdmissionControlConfig struct {
 	Enabled                 bool      `yaml:"enabled,omitempty"`
 	SamplingWindow          *Duration `yaml:"sampling_window,omitempty"`
@@ -29,10 +29,7 @@ func (c AdmissionControlConfig) clone() AdmissionControlConfig {
 	return c
 }
 
-func (c *AdmissionControlConfig) validate(name string) error {
-	if c == nil {
-		return nil
-	}
+func (c AdmissionControlConfig) validate(name string) error {
 	if err := validateDuration(name+".sampling_window", c.SamplingWindow, false); err != nil {
 		return err
 	}
@@ -53,11 +50,7 @@ func (c *AdmissionControlConfig) validate(name string) error {
 	return nil
 }
 
-func (c *AdmissionControlConfig) enabled() bool {
-	return c != nil && c.Enabled
-}
-
-func (c *AdmissionControlConfig) toEnvoy() *admissioncontrol.AdmissionControl {
+func (c AdmissionControlConfig) toEnvoy() *admissioncontrol.AdmissionControl {
 	config := defaultAdmissionControlEnvoyConfig()
 	config.Enabled = &core.RuntimeFeatureFlag{DefaultValue: wrapperspb.Bool(c.Enabled)}
 	if c.SamplingWindow != nil {
