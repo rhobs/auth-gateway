@@ -119,10 +119,20 @@ data:
                                         - remove: x-envoy-upstream-rq-timeout-alt-response
                                         - remove: x-envoy-retriable-status-codes
                                         - remove: x-envoy-retriable-header-names
-                            - disabled: true
-                              name: envoy.filters.http.admission_control
+                            - name: envoy.filters.http.admission_control
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.admission_control.v3.AdmissionControl
+                                enabled:
+                                    default_value: true
+                                max_rejection_probability:
+                                    default_value:
+                                        value: 65
+                                rps_threshold:
+                                    default_value: 25
+                                sampling_window: 45s
+                                sr_threshold:
+                                    default_value:
+                                        value: 91.5
                                 success_criteria: {}
                             - name: envoy.filters.http.router
                               typed_config:
@@ -155,23 +165,6 @@ data:
                                             max_stream_duration: 30s
                                         timeout: 30s
                                       stat_prefix: api-0-protected-route-0-method-0
-                                      typed_per_filter_config:
-                                        envoy.filters.http.admission_control:
-                                            '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
-                                            config:
-                                                '@type': type.googleapis.com/envoy.extensions.filters.http.admission_control.v3.AdmissionControl
-                                                enabled:
-                                                    default_value: true
-                                                max_rejection_probability:
-                                                    default_value:
-                                                        value: 65
-                                                rps_threshold:
-                                                    default_value: 25
-                                                sampling_window: 45s
-                                                sr_threshold:
-                                                    default_value:
-                                                        value: 91.5
-                                                success_criteria: {}
                                     - match:
                                         headers:
                                             - name: :method

@@ -34,6 +34,15 @@ listener:
 #   heap_shrink_threshold: 0.90 # Default.
 #   request_reject_threshold: 0.95 # Default.
 
+# Optional gateway-wide admission control. Envoy applies it to every request
+# handled by the gateway.
+admission_control:
+  enabled: true
+  sampling_window: 30s
+  sr_threshold: 95
+  rps_threshold: 10
+  max_rejection_probability: 80
+
 authenticators:
   - name: internal-jwt
     jwt:
@@ -217,13 +226,6 @@ apis:
         #   response_timeout: 20s
 
   - name: metrics-query
-    # Optional admission control, applied to this API's routes.
-    admission_control:
-      enabled: true
-      sampling_window: 30s
-      sr_threshold: 95
-      rps_threshold: 10
-      max_rejection_probability: 80
     upstream:
       address: thanos-query.observability.svc.cluster.local
       port: 9090

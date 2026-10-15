@@ -10,7 +10,7 @@ import (
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 )
 
-func TestAdmissionControlIsConfiguredPerAPI(t *testing.T) {
+func TestGlobalAdmissionControlIsConfiguredAtHTTPManagerScope(t *testing.T) {
 	config := loadConfigCase(t, "admission-control")
 	files, err := Generate(config)
 	if err != nil {
@@ -29,8 +29,27 @@ func TestAdmissionControlIsConfiguredPerAPI(t *testing.T) {
 		t.Fatal("no HTTP manager contains the admission control filter")
 	}
 	filter := generatedHTTPFilter(manager, admissionControlFilterName)
-	if !filter.GetDisabled() {
-		t.Fatal("admission control filter should be disabled by default")
+	if filter.GetDisabled() {
+		t.Fatal("admission control filter should be enabled at the HTTP manager")
+	}
+	var global admissioncontrol.AdmissionControl
+	if err := filter.GetTypedConfig().UnmarshalTo(&global); err != nil {
+		t.Fatal(err)
+	}
+	if !global.GetEnabled().GetDefaultValue().GetValue() {
+		t.Fatal("HTTP manager admission control is not enabled")
+	}
+	if got := global.GetSamplingWindow().AsDuration(); got != 45*time.Second {
+		t.Errorf("sampling window = %s, want 45s", got)
+	}
+	if got := global.GetSrThreshold().GetDefaultValue().GetValue(); got != 91.5 {
+		t.Errorf("success rate threshold = %v, want 91.5", got)
+	}
+	if got := global.GetRpsThreshold().GetDefaultValue(); got != 25 {
+		t.Errorf("RPS threshold = %d, want 25", got)
+	}
+	if got := global.GetMaxRejectionProbability().GetDefaultValue().GetValue(); got != 65 {
+		t.Errorf("maximum rejection probability = %v, want 65", got)
 	}
 
 	routes := make(map[string]*routev3.Route)
@@ -39,50 +58,20 @@ func TestAdmissionControlIsConfiguredPerAPI(t *testing.T) {
 			routes[generatedRoute.GetName()] = generatedRoute
 		}
 	}
-	protected := routes["api-0-protected-route-0-method-0"]
-	if protected == nil {
-		t.Fatal("protected API route is missing")
-	}
-	packed := protected.GetTypedPerFilterConfig()[admissionControlFilterName]
-	if packed == nil {
-		t.Fatal("protected API route is missing its admission control config")
-	}
-	var filterConfig routev3.FilterConfig
-	if err := packed.UnmarshalTo(&filterConfig); err != nil {
-		t.Fatal(err)
-	}
-	var perRoute admissioncontrol.AdmissionControl
-	if err := filterConfig.GetConfig().UnmarshalTo(&perRoute); err != nil {
-		t.Fatal(err)
-	}
-	if !perRoute.GetEnabled().GetDefaultValue().GetValue() {
-		t.Fatal("protected API admission control is not enabled")
-	}
-	if got := perRoute.GetSamplingWindow().AsDuration(); got != 45*time.Second {
-		t.Errorf("sampling window = %s, want 45s", got)
-	}
-	if got := perRoute.GetSrThreshold().GetDefaultValue().GetValue(); got != 91.5 {
-		t.Errorf("success rate threshold = %v, want 91.5", got)
-	}
-	if got := perRoute.GetRpsThreshold().GetDefaultValue(); got != 25 {
-		t.Errorf("RPS threshold = %d, want 25", got)
-	}
-	if got := perRoute.GetMaxRejectionProbability().GetDefaultValue().GetValue(); got != 65 {
-		t.Errorf("maximum rejection probability = %v, want 65", got)
-	}
-
-	plain := routes["api-1-plain-route-0-method-0"]
-	if plain == nil {
-		t.Fatal("plain API route is missing")
-	}
-	if plain.GetTypedPerFilterConfig()[admissionControlFilterName] != nil {
-		t.Fatal("plain API route unexpectedly has admission control config")
+	for _, name := range []string{"api-0-protected-route-0-method-0", "api-1-plain-route-0-method-0"} {
+		generatedRoute := routes[name]
+		if generatedRoute == nil {
+			t.Fatalf("route %q is missing", name)
+		}
+		if generatedRoute.GetTypedPerFilterConfig()[admissionControlFilterName] != nil {
+			t.Fatalf("route %q unexpectedly has route-level admission control config", name)
+		}
 	}
 }
 
 func TestAdmissionControlFilterIsOmittedWhenDisabled(t *testing.T) {
 	config := loadConfigCase(t, "admission-control")
-	config.APIs[0].AdmissionControl.Enabled = false
+	config.AdmissionControl.Enabled = false
 	files, err := Generate(config)
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +80,7 @@ func TestAdmissionControlFilterIsOmittedWhenDisabled(t *testing.T) {
 	for _, chain := range bootstrap.GetStaticResources().GetListeners()[0].GetFilterChains() {
 		manager := decodeHTTPManager(t, chain)
 		if hasHTTPFilter(manager, admissionControlFilterName) {
-			t.Fatal("admission control filter was generated with no enabled APIs")
+			t.Fatal("admission control filter was generated while disabled")
 		}
 	}
 }
@@ -121,8 +110,8 @@ func TestAdmissionControlRejectsInvalidSettings(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			config := loadConfigCase(t, "admission-control")
-			test.edit(config.APIs[0].AdmissionControl)
-			if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "apis[0].admission_control."+test.field) {
+			test.edit(config.AdmissionControl)
+			if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "admission_control."+test.field) {
 				t.Fatalf("validation error = %v, want field admission_control.%s", err, test.field)
 			}
 		})

@@ -19,17 +19,18 @@ import (
 
 // Config describes gateway behavior, observability, and optional Kubernetes output.
 type Config struct {
-	Version               int                   `yaml:"version"`
-	Node                  EnvoyNode             `yaml:"node,omitempty"`
-	Listener              Listener              `yaml:"listener"`
-	Overload              *OverloadConfig       `yaml:"overload,omitempty"`
-	Authenticators        []Authenticator       `yaml:"authenticators,omitempty"`
-	AuthorizationPolicies []AuthorizationPolicy `yaml:"authorization_policies,omitempty"`
-	Processing            []Processor           `yaml:"processing,omitempty"`
-	Servers               []Server              `yaml:"servers"`
-	APIs                  []API                 `yaml:"apis"`
-	Observability         ObservabilityConfig   `yaml:"observability,omitempty"`
-	Kubernetes            *Kubernetes           `yaml:"kubernetes,omitempty"`
+	Version               int                     `yaml:"version"`
+	Node                  EnvoyNode               `yaml:"node,omitempty"`
+	Listener              Listener                `yaml:"listener"`
+	Overload              *OverloadConfig         `yaml:"overload,omitempty"`
+	AdmissionControl      *AdmissionControlConfig `yaml:"admission_control,omitempty"`
+	Authenticators        []Authenticator         `yaml:"authenticators,omitempty"`
+	AuthorizationPolicies []AuthorizationPolicy   `yaml:"authorization_policies,omitempty"`
+	Processing            []Processor             `yaml:"processing,omitempty"`
+	Servers               []Server                `yaml:"servers"`
+	APIs                  []API                   `yaml:"apis"`
+	Observability         ObservabilityConfig     `yaml:"observability,omitempty"`
+	Kubernetes            *Kubernetes             `yaml:"kubernetes,omitempty"`
 }
 
 // EnvoyNode describes the identity and logical cluster of this Envoy instance.
@@ -56,13 +57,12 @@ type Listener struct {
 
 // API describes one upstream and its routes.
 type API struct {
-	Name             string                  `yaml:"name"`
-	Routes           []Route                 `yaml:"routes"`
-	Upstream         Upstream                `yaml:"upstream"`
-	Metrics          *APIMetrics             `yaml:"metrics,omitempty"`
-	AdmissionControl *AdmissionControlConfig `yaml:"admission_control,omitempty"`
-	CircuitBreakers  *CircuitBreakerConfig   `yaml:"circuit_breakers,omitempty"`
-	Timeouts         *RouteTimeouts          `yaml:"timeouts,omitempty"`
+	Name            string                `yaml:"name"`
+	Routes          []Route               `yaml:"routes"`
+	Upstream        Upstream              `yaml:"upstream"`
+	Metrics         *APIMetrics           `yaml:"metrics,omitempty"`
+	CircuitBreakers *CircuitBreakerConfig `yaml:"circuit_breakers,omitempty"`
+	Timeouts        *RouteTimeouts        `yaml:"timeouts,omitempty"`
 }
 
 // Route describes the required methods and path matcher, plus optional rewrite and processing.
@@ -341,6 +341,7 @@ func clonePointer[T any](value *T) *T {
 func (c Config) clone() Config {
 	c.Listener = c.Listener.clone()
 	c.Overload = cloneConfigPointer(c.Overload)
+	c.AdmissionControl = cloneConfigPointer(c.AdmissionControl)
 	c.Authenticators = cloneSlice(c.Authenticators)
 	c.AuthorizationPolicies = cloneSlice(c.AuthorizationPolicies)
 	c.Processing = cloneSlice(c.Processing)
@@ -371,7 +372,6 @@ func (a API) clone() API {
 	a.Routes = cloneSlice(a.Routes)
 	a.Upstream = a.Upstream.clone()
 	a.Metrics = cloneConfigPointer(a.Metrics)
-	a.AdmissionControl = cloneConfigPointer(a.AdmissionControl)
 	if a.CircuitBreakers != nil {
 		circuitBreakers := a.CircuitBreakers.clone()
 		a.CircuitBreakers = &circuitBreakers

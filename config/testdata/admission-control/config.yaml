@@ -1,17 +1,18 @@
 version: 1
 
+admission_control:
+  enabled: true
+  sampling_window: 45s
+  sr_threshold: 91.5
+  rps_threshold: 25
+  max_rejection_probability: 65
+
 servers:
   - hostname: admission.test
     apis: [protected, plain]
 
 apis:
   - name: protected
-    admission_control:
-      enabled: true
-      sampling_window: 45s
-      sr_threshold: 91.5
-      rps_threshold: 25
-      max_rejection_probability: 65
     upstream:
       address: httpbin
       port: 8080
