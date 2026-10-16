@@ -26,9 +26,9 @@ make e2e
 
 `make test` runs unit tests and golden comparisons. `make lint` checks formatting,
 tagged code, linters, and Markdown links. The tagged compile command does not
-start a cluster. `make test-runtime` uses Docker to validate generated files
-and exercise valid Envoy file reloads. `make e2e` runs the live Kind suite and
-needs Docker, Go, and network access. It creates or reuses the
+start a cluster. `make test-runtime` uses Docker to validate checked-in Envoy
+goldens and exercise valid Envoy file reloads. `make e2e` runs the live Kind suite
+and needs Docker, Go, and network access. It creates or reuses the
 `auth-gateway-e2e` cluster and removes its test namespaces afterward. For
 JWT-only iteration, run
 `make -C e2e test GINKGO_ARGS='--label-filter=jwt'`; a filtered run does not
