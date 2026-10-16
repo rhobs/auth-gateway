@@ -763,6 +763,13 @@ func TestJWTProviderClustersAndTrust(t *testing.T) {
 		if jwks == nil || jwks.TransportSocket == nil {
 			t.Fatalf("missing TLS JWKS cluster for %q", name)
 		}
+		wantFamily := cluster.Cluster_V4_ONLY
+		if name == "issuer-two" {
+			wantFamily = cluster.Cluster_V6_ONLY
+		}
+		if got := jwks.GetDnsLookupFamily(); got != wantFamily {
+			t.Fatalf("JWKS cluster %q DNS lookup family = %s, want %s", name, got, wantFamily)
+		}
 		var upstream tls.UpstreamTlsContext
 		if err := jwks.TransportSocket.GetTypedConfig().UnmarshalTo(&upstream); err != nil {
 			t.Fatal(err)

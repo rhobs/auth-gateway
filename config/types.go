@@ -244,12 +244,21 @@ type RequestHeaderMapping struct {
 // JWKSConfig controls on-demand key fetching for one JWT authenticator.
 type JWKSConfig struct {
 	URI             string                `yaml:"uri"`
+	DNSLookupFamily string                `yaml:"dns_lookup_family,omitempty"`
 	CacheDuration   *Duration             `yaml:"cache_duration,omitempty"`
 	FetchTimeout    *Duration             `yaml:"fetch_timeout,omitempty"`
 	ConnectTimeout  *Duration             `yaml:"connect_timeout,omitempty"`
 	TrustedCA       *TrustedCA            `yaml:"trusted_ca,omitempty"`
 	CircuitBreakers *CircuitBreakerConfig `yaml:"circuit_breakers,omitempty"`
 }
+
+const (
+	jwksDNSLookupFamilyAuto        = "AUTO"
+	jwksDNSLookupFamilyV4Only      = "V4_ONLY"
+	jwksDNSLookupFamilyV6Only      = "V6_ONLY"
+	jwksDNSLookupFamilyV4Preferred = "V4_PREFERRED"
+	jwksDNSLookupFamilyAll         = "ALL"
+)
 
 // TrustedCA selects a replacement trust bundle. Omission uses the system bundle.
 type TrustedCA struct {
@@ -581,6 +590,11 @@ func (authenticator Authenticator) credentialAttributeNames() []string {
 }
 
 func (j JWKSConfig) validate(name string, kubernetes bool) error {
+	switch j.DNSLookupFamily {
+	case "", jwksDNSLookupFamilyAuto, jwksDNSLookupFamilyV4Only, jwksDNSLookupFamilyV6Only, jwksDNSLookupFamilyV4Preferred, jwksDNSLookupFamilyAll:
+	default:
+		return fmt.Errorf("%s.dns_lookup_family must be one of AUTO, V4_ONLY, V6_ONLY, V4_PREFERRED, or ALL", name)
+	}
 	for _, setting := range []struct {
 		name  string
 		value *Duration

@@ -15,6 +15,7 @@ authenticators:
       issuer: https://issuer-two.jwt.test
       jwks:
         uri: https://issuer-two.jwt.test/jwks
+        dns_lookup_family: V6_ONLY
       audiences: [gateway-test]
     attributes:
       tenant_id:

@@ -551,7 +551,7 @@ func TestConfigurationDefaults(t *testing.T) {
 		if a.JWT == nil {
 			continue
 		}
-		want := JWKSConfig{URI: a.JWT.JWKS.URI, CacheDuration: duration(5 * time.Minute), FetchTimeout: duration(5 * time.Second), ConnectTimeout: duration(5 * time.Second), CircuitBreakers: wantBreakers}
+		want := JWKSConfig{URI: a.JWT.JWKS.URI, DNSLookupFamily: jwksDNSLookupFamilyV4Only, CacheDuration: duration(5 * time.Minute), FetchTimeout: duration(5 * time.Second), ConnectTimeout: duration(5 * time.Second), CircuitBreakers: wantBreakers}
 		assertConfigDiff(t, a.Name+" JWKS defaults", want, a.JWT.JWKS)
 	}
 	for _, api := range c.APIs {

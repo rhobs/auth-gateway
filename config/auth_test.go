@@ -138,6 +138,7 @@ func TestValidateRejectsInvalidAuthenticationAndAuthorization(t *testing.T) {
 		{name: "missing authenticator type", want: "authenticators[0] must set exactly one of jwt, api_key, or mtls", edit: func(c *Config) { c.Authenticators[0].JWT = nil }},
 		{name: "missing issuer", want: "authenticators[0].jwt.issuer", edit: func(c *Config) { c.Authenticators[0].JWT.Issuer = "" }},
 		{name: "non-HTTPS JWKS", want: "authenticators[0].jwt.jwks.uri", edit: func(c *Config) { c.Authenticators[0].JWT.JWKS.URI = "http://sso.example.com/jwks" }},
+		{name: "unsupported JWKS DNS lookup family", want: "authenticators[0].jwt.jwks.dns_lookup_family", edit: func(c *Config) { c.Authenticators[0].JWT.JWKS.DNSLookupFamily = "V5_ONLY" }},
 		{name: "JWKS user information", want: "authenticators[0].jwt.jwks.uri", edit: func(c *Config) { c.Authenticators[0].JWT.JWKS.URI = "https://user@sso.example.com/jwks" }},
 		{name: "duplicate audience", want: "authenticators[0].jwt.audiences", edit: func(c *Config) { c.Authenticators[0].JWT.Audiences = []string{"same", "same"} }},
 		{name: "empty claim path", want: "authenticators[0].attributes.tenant_id.claim_path", edit: func(c *Config) {

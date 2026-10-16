@@ -22,6 +22,10 @@ authenticators:
       requested_tenant: {header: X-Tenant}
 ```
 
+JWKS clusters use IPv4-only DNS resolution by default. For IPv6-only egress,
+set `dns_lookup_family: V6_ONLY` under `jwks`. Other supported values are
+`AUTO`, `V4_PREFERRED`, and `ALL`.
+
 `claim_path` follows literal object keys in the token payload. Here,
 `tenant_id` comes from `organization.id`, while `requested_tenant` uses the
 original `X-Tenant` request header. Envoy keeps claims from different
