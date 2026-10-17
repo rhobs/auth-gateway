@@ -40,6 +40,7 @@ static_resources:
                   max_requests: 1024
                   max_retries: 0
           connect_timeout: 5s
+          dns_lookup_family: V4_ONLY
           load_assignment:
             cluster_name: jwks-issuer-one
             endpoints:
@@ -74,6 +75,7 @@ static_resources:
                   max_requests: 1024
                   max_retries: 0
           connect_timeout: 5s
+          dns_lookup_family: V6_ONLY
           load_assignment:
             cluster_name: jwks-issuer-two
             endpoints:

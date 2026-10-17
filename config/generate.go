@@ -1130,12 +1130,30 @@ func jwksClusters(authenticators []Authenticator, servers []Server) ([]*cluster.
 		clusters = append(clusters, &cluster.Cluster{
 			Name: name, ConnectTimeout: authenticator.JWT.JWKS.ConnectTimeout.protobuf(),
 			CircuitBreakers:      authenticator.JWT.JWKS.CircuitBreakers.toCircuitBreakers(),
+			DnsLookupFamily:      jwksDNSLookupFamilyToEnvoy(authenticator.JWT.JWKS.DNSLookupFamily),
 			ClusterDiscoveryType: &cluster.Cluster_Type{Type: cluster.Cluster_STRICT_DNS},
 			LoadAssignment:       &endpoint.ClusterLoadAssignment{ClusterName: name, Endpoints: []*endpoint.LocalityLbEndpoints{{LbEndpoints: []*endpoint.LbEndpoint{{HostIdentifier: &endpoint.LbEndpoint_Endpoint{Endpoint: &endpoint.Endpoint{Address: socket(parsed.Hostname(), port)}}}}}}},
 			TransportSocket:      tlsSocket,
 		})
 	}
 	return clusters, nil
+}
+
+func jwksDNSLookupFamilyToEnvoy(value string) cluster.Cluster_DnsLookupFamily {
+	switch value {
+	case jwksDNSLookupFamilyAuto:
+		return cluster.Cluster_AUTO
+	case jwksDNSLookupFamilyV4Only, "":
+		return cluster.Cluster_V4_ONLY
+	case jwksDNSLookupFamilyV6Only:
+		return cluster.Cluster_V6_ONLY
+	case jwksDNSLookupFamilyV4Preferred:
+		return cluster.Cluster_V4_PREFERRED
+	case jwksDNSLookupFamilyAll:
+		return cluster.Cluster_ALL
+	default:
+		return cluster.Cluster_V4_ONLY
+	}
 }
 
 type methodFallback struct {

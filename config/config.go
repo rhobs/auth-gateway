@@ -381,6 +381,9 @@ func (authenticator Authenticator) withDefaults() Authenticator {
 }
 
 func (j JWKSConfig) withDefaults() JWKSConfig {
+	if j.DNSLookupFamily == "" {
+		j.DNSLookupFamily = jwksDNSLookupFamilyV4Only
+	}
 	j.CacheDuration = j.CacheDuration.withDefault(5 * time.Minute)
 	j.FetchTimeout = j.FetchTimeout.withDefault(5 * time.Second)
 	j.ConnectTimeout = j.ConnectTimeout.withDefault(5 * time.Second)

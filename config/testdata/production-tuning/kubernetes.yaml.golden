@@ -85,6 +85,7 @@ data:
                       max_requests: 1024
                       max_retries: 0
               connect_timeout: 1s
+              dns_lookup_family: V4_ONLY
               load_assignment:
                 cluster_name: jwks-issuer
                 endpoints:

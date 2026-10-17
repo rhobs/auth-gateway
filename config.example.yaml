@@ -49,6 +49,8 @@ authenticators:
       issuer: https://sso.internal.example.com/realms/observability
       jwks:
         uri: https://sso.internal.example.com/realms/observability/protocol/openid-connect/certs
+        # Defaults to IPv4-only. Set V6_ONLY for IPv6-only egress networks.
+        # dns_lookup_family: V6_ONLY
         # Defaults: cache_duration 5m, fetch_timeout 5s, connect_timeout 5s.
         # cache_duration: 5m
         # fetch_timeout: 5s
