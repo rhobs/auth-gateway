@@ -99,6 +99,7 @@ static_resources:
                                     connection_termination: '%CONNECTION_TERMINATION_DETAILS%'
                                     duration_ms: '%DURATION%'
                                     method: '%REQ(:METHOD)%'
+                                    path: '%PATH(NQ)%'
                                     request_id: '%REQ(X-REQUEST-ID)%'
                                     response_code_details: '%RESPONSE_CODE_DETAILS%'
                                     response_flags: '%RESPONSE_FLAGS%'
@@ -119,6 +120,7 @@ static_resources:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
                             mutations:
                                 request_mutations:
+                                    - remove: x-envoy-original-path
                                     - remove: x-envoy-retry-on
                                     - remove: x-envoy-retry-grpc-on
                                     - remove: x-envoy-max-retries
@@ -329,7 +331,6 @@ static_resources:
                         - name: envoy.filters.http.router
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
-                            suppress_envoy_headers: true
                     local_reply_config:
                         mappers:
                             - filter:
@@ -562,6 +563,7 @@ static_resources:
                                     connection_termination: '%CONNECTION_TERMINATION_DETAILS%'
                                     duration_ms: '%DURATION%'
                                     method: '%REQ(:METHOD)%'
+                                    path: '%PATH(NQ)%'
                                     request_id: '%REQ(X-REQUEST-ID)%'
                                     response_code_details: '%RESPONSE_CODE_DETAILS%'
                                     response_flags: '%RESPONSE_FLAGS%'
@@ -582,6 +584,7 @@ static_resources:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
                             mutations:
                                 request_mutations:
+                                    - remove: x-envoy-original-path
                                     - remove: x-envoy-retry-on
                                     - remove: x-envoy-retry-grpc-on
                                     - remove: x-envoy-max-retries
@@ -870,7 +873,6 @@ static_resources:
                         - name: envoy.filters.http.router
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
-                            suppress_envoy_headers: true
                     local_reply_config:
                         mappers:
                             - filter:
@@ -1221,6 +1223,7 @@ static_resources:
                                     connection_termination: '%CONNECTION_TERMINATION_DETAILS%'
                                     duration_ms: '%DURATION%'
                                     method: '%REQ(:METHOD)%'
+                                    path: '%PATH(NQ)%'
                                     request_id: '%REQ(X-REQUEST-ID)%'
                                     response_code_details: '%RESPONSE_CODE_DETAILS%'
                                     response_flags: '%RESPONSE_FLAGS%'
@@ -1241,6 +1244,7 @@ static_resources:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
                             mutations:
                                 request_mutations:
+                                    - remove: x-envoy-original-path
                                     - remove: x-envoy-retry-on
                                     - remove: x-envoy-retry-grpc-on
                                     - remove: x-envoy-max-retries
@@ -1526,7 +1530,6 @@ static_resources:
                         - name: envoy.filters.http.router
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
-                            suppress_envoy_headers: true
                     local_reply_config:
                         mappers:
                             - filter:
@@ -2264,6 +2267,7 @@ static_resources:
                                     connection_termination: '%CONNECTION_TERMINATION_DETAILS%'
                                     duration_ms: '%DURATION%'
                                     method: '%REQ(:METHOD)%'
+                                    path: '%PATH(NQ)%'
                                     request_id: '%REQ(X-REQUEST-ID)%'
                                     response_code_details: '%RESPONSE_CODE_DETAILS%'
                                     response_flags: '%RESPONSE_FLAGS%'
@@ -2284,6 +2288,7 @@ static_resources:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
                             mutations:
                                 request_mutations:
+                                    - remove: x-envoy-original-path
                                     - remove: x-envoy-retry-on
                                     - remove: x-envoy-retry-grpc-on
                                     - remove: x-envoy-max-retries
@@ -2494,7 +2499,6 @@ static_resources:
                         - name: envoy.filters.http.router
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
-                            suppress_envoy_headers: true
                     local_reply_config:
                         mappers:
                             - filter:

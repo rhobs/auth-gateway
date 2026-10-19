@@ -1224,6 +1224,7 @@ func (o OverloadConfig) toOverloadManager() (*overload.OverloadManager, error) {
 const requestControlsFilterName = "auth_gateway.request_controls"
 
 var requestControlHeaders = []string{
+	"x-envoy-original-path",
 	"x-envoy-retry-on",
 	"x-envoy-retry-grpc-on",
 	"x-envoy-max-retries",

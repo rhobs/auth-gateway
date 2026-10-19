@@ -13,15 +13,18 @@ import (
 	"testing"
 	"time"
 
+	accesslog "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
 	bootstrap "github.com/envoyproxy/go-control-plane/envoy/config/bootstrap/v3"
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	rbac "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	stream "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/stream/v3"
 	setfilterstatecommon "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
 	headermutation "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
 	jwt "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/jwt_authn/v3"
 	httpRBAC "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
+	router "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
 	setfilterstate "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
@@ -110,6 +113,68 @@ func TestPlaygroundBootstrap(t *testing.T) {
 	}
 	checkReference(t, filepath.Join("..", "playground", "envoy.yaml.golden"), bootstrap)
 
+}
+
+func TestGeneratedErrorAccessLogUsesQueryFreePath(t *testing.T) {
+	c := loadConfigCase(t, "public-routing")
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
+	manager := decodeHTTPManager(t, generated.StaticResources.Listeners[0].FilterChains[0])
+	logs := manager.GetAccessLog()
+	if len(logs) != 1 {
+		t.Fatalf("access logs = %d, want one", len(logs))
+	}
+	comparison := logs[0].GetFilter().GetStatusCodeFilter().GetComparison()
+	if comparison.GetOp() != accesslog.ComparisonFilter_GE || comparison.GetValue().GetDefaultValue() != 400 {
+		t.Fatalf("error access log status filter = %v, want >= 400", comparison)
+	}
+	var stdout stream.StdoutAccessLog
+	if err := logs[0].GetTypedConfig().UnmarshalTo(&stdout); err != nil {
+		t.Fatal(err)
+	}
+	format := stdout.GetLogFormat().GetJsonFormat()
+	if format == nil {
+		t.Fatal("error access log has no JSON format")
+	}
+	if got := format.GetFields()["path"].GetStringValue(); got != "%PATH(NQ)%" {
+		t.Fatalf("error access log path format = %q, want %%PATH(NQ)%%", got)
+	}
+}
+
+func TestRewrittenRouteUsesEnvoyOriginalPathHeader(t *testing.T) {
+	c := loadConfigCase(t, "public-routing")
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
+	manager := decodeHTTPManager(t, generated.StaticResources.Listeners[0].FilterChains[0])
+	route := manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()[0]
+	if got := route.GetRequestHeadersToAdd(); len(got) != 0 {
+		t.Fatalf("rewritten route adds request headers: %v", got)
+	}
+	filters := manager.GetHttpFilters()
+	var routerConfig router.Router
+	if err := filters[len(filters)-1].GetTypedConfig().UnmarshalTo(&routerConfig); err != nil {
+		t.Fatal(err)
+	}
+	if routerConfig.GetSuppressEnvoyHeaders() {
+		t.Fatal("router suppresses Envoy headers")
+	}
+
+	var controls headermutation.HeaderMutation
+	if err := filters[0].GetTypedConfig().UnmarshalTo(&controls); err != nil {
+		t.Fatal(err)
+	}
+	for _, mutation := range controls.GetMutations().GetRequestMutations() {
+		if mutation.GetRemove() == "x-envoy-original-path" {
+			return
+		}
+	}
+	t.Fatal("request controls do not remove client-supplied x-envoy-original-path")
 }
 
 func checkReference(t *testing.T, path string, generated []byte) {

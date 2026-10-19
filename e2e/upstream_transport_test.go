@@ -104,6 +104,7 @@ var _ = Describe("Upstream TLS and HTTP/2", Label("gateway", "upstream-transport
 			Expect(echo.Data).To(Equal("data:application/octet-stream;base64,"+base64.StdEncoding.EncodeToString(payload)), test.name)
 			Expect(headerValue(echo.Headers, "Content-Type")).To(Equal("application/octet-stream"), test.name)
 			Expect(headerValue(echo.Headers, "X-E2E-Upstream-Transport")).To(Equal("forwarded"), test.name)
+			Expect(headerValue(echo.Headers, "X-Envoy-Original-Path")).To(Equal(test.path), test.name)
 		}
 	}, SpecTimeout(60*time.Second))
 
@@ -119,6 +120,22 @@ var _ = Describe("Upstream TLS and HTTP/2", Label("gateway", "upstream-transport
 		Eventually(func() (uint64, error) {
 			return envoyCounter(ctx, adminAddress, statName)
 		}).WithContext(ctx).WithTimeout(10 * time.Second).WithPolling(250 * time.Millisecond).Should(Equal(before + 1))
+	}, SpecTimeout(30*time.Second))
+
+	It("logs the original path without query after a route rewrite", func(ctx SpecContext) {
+		before, err := envoyAccessLogs(ctx, upstreamTransportNamespace)
+		Expect(err).NotTo(HaveOccurred())
+		status, body, err := requestUpstreamTransport(ctx, gatewayAddress, "/tls-mismatch?secret=not-for-logs", []byte("log path"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(http.StatusServiceUnavailable), string(body))
+
+		var accessLog envoyAccessLog
+		Eventually(func() error {
+			var readErr error
+			accessLog, readErr = envoyAccessLogAfter(ctx, upstreamTransportNamespace, len(before), http.StatusServiceUnavailable)
+			return readErr
+		}).WithContext(ctx).WithTimeout(15 * time.Second).WithPolling(250 * time.Millisecond).Should(Succeed())
+		Expect(accessLog.Path).To(Equal("/tls-mismatch"))
 	}, SpecTimeout(30*time.Second))
 
 	It("keeps upstream CA trust static until an explicit gateway rollout", func(ctx SpecContext) {
