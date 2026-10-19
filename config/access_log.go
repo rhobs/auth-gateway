@@ -13,6 +13,7 @@ func errorAccessLogs() ([]*accesslog.AccessLog, error) {
 		"timestamp":                  "%START_TIME%",
 		"route":                      "%ROUTE_NAME%",
 		"method":                     "%REQ(:METHOD)%",
+		"path":                       "%PATH(NQ)%",
 		"status":                     "%RESPONSE_CODE%",
 		"duration_ms":                "%DURATION%",
 		"bytes_received":             "%BYTES_RECEIVED%",

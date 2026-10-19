@@ -412,7 +412,7 @@ func (c Config) toHTTPFilterChain(hosts []indexedVirtualHost) (*listener.FilterC
 }
 
 func (c Config) toHTTPManager(hosts []indexedVirtualHost) (*hcm.HttpConnectionManager, error) {
-	routerConfig, err := packEnvoy(&router.Router{SuppressEnvoyHeaders: true})
+	routerConfig, err := packEnvoy(&router.Router{})
 	if err != nil {
 		return nil, err
 	}

@@ -72,48 +72,6 @@ func jwtTrustedCA() *config.TrustedCA {
 	return &config.TrustedCA{ConfigMap: &config.CAConfigMap{Name: "jwt-jwks-ca", Key: "ca.pem"}}
 }
 
-type jwtEnvoyAccessLog struct {
-	Status              int    `json:"status"`
-	ResponseCodeDetails string `json:"response_code_details"`
-}
-
-func jwtEnvoyAccessLogs(ctx context.Context, namespace string) ([]jwtEnvoyAccessLog, error) {
-	podName, containers, err := env.PodContainerNames(ctx, namespace, gatewayPodSelector)
-	if err != nil {
-		return nil, err
-	}
-	hasEnvoy := false
-	for _, name := range containers {
-		if name == "envoy" {
-			hasEnvoy = true
-			break
-		}
-	}
-	if !hasEnvoy {
-		return nil, fmt.Errorf("Pod %q has no envoy container", podName)
-	}
-
-	logs, err := env.ContainerLogs(ctx, namespace, podName, "envoy", 0)
-	if err != nil {
-		return nil, err
-	}
-	var entries []jwtEnvoyAccessLog
-	for lineNumber, line := range strings.Split(string(logs), "\n") {
-		if !strings.Contains(line, `"response_code_details"`) {
-			continue
-		}
-		var entry jwtEnvoyAccessLog
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			return nil, fmt.Errorf("decode Envoy access log line %d: %w", lineNumber+1, err)
-		}
-		if entry.Status == 0 {
-			return nil, fmt.Errorf("Envoy access log line %d has no status", lineNumber+1)
-		}
-		entries = append(entries, entry)
-	}
-	return entries, nil
-}
-
 func setupJWTGateway(ctx SpecContext, namespace, fixtureName string) (*jwtE2E, error) {
 	if err := resetE2ENamespace(ctx, namespace); err != nil {
 		return nil, err

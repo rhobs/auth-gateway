@@ -110,10 +110,10 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 			})
 		}
 
-		var accessLogs []jwtEnvoyAccessLog
+		var accessLogs []envoyAccessLog
 		var accessLogsErr error
 		Eventually(func() bool {
-			accessLogs, accessLogsErr = jwtEnvoyAccessLogs(ctx, jwtPlainNamespace)
+			accessLogs, accessLogsErr = envoyAccessLogs(ctx, jwtPlainNamespace)
 			if accessLogsErr != nil {
 				return false
 			}
@@ -136,6 +136,24 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 			}
 		}
 		Expect(foundUnauthorized).To(BeTrue(), "expected a JSON 401 access log with response_code_details")
+	}, NodeTimeout(60*time.Second))
+
+	It("logs denied request paths without query strings", func(ctx SpecContext) {
+		before, err := envoyAccessLogs(ctx, jwtPlainNamespace)
+		Expect(err).NotTo(HaveOccurred())
+		headers := make(http.Header)
+		headers.Set("X-Envoy-Original-Path", "/spoofed?secret=not-for-logs")
+		expectDeniedBeforeUpstream(ctx, jwtPlainGateway.adminAddr, "api-metrics", "query-bearing denied request", http.StatusUnauthorized, func() (int, []byte, error) {
+			return jwtPlainGateway.requestMethodPathHeaders(ctx, jwtPlainGateway.httpAddr, jwtPlainHost, false, http.MethodGet, "/protected?secret=not-for-logs", "", headers)
+		})
+
+		var accessLog envoyAccessLog
+		Eventually(func() error {
+			var readErr error
+			accessLog, readErr = envoyAccessLogAfter(ctx, jwtPlainNamespace, len(before), http.StatusUnauthorized)
+			return readErr
+		}).WithContext(ctx).WithTimeout(15 * time.Second).WithPolling(250 * time.Millisecond).Should(Succeed())
+		Expect(accessLog.Path).To(Equal("/protected"))
 	}, NodeTimeout(60*time.Second))
 
 	It("denies a valid JWT on a protected server with no selected policy", func(ctx SpecContext) {
