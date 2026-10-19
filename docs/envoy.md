@@ -127,8 +127,7 @@ See the [configuration reference](configuration-reference.md#admission-control).
 ## Logs, metrics, and traces
 
 Envoy writes structured JSON access logs to stdout for responses with status
-`400` or higher. Each log includes the request method and path without its query
-string. When metrics are enabled, the Collector scrapes Envoy's
+`400` or higher. When metrics are enabled, the Collector scrapes Envoy's
 loopback admin endpoint at `127.0.0.1:9901/stats/prometheus` and exposes
 Prometheus metrics on port `8889`. The admin endpoint is not exposed by the
 Service. Metrics collection is enabled by default; disabling it does not
