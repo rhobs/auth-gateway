@@ -227,6 +227,11 @@ func validateAPI(name string, api API, hasKubernetes bool) error {
 	if err := validateAPIMetrics(name+".metrics", api.Metrics); err != nil {
 		return err
 	}
+	if api.FaultInjection != nil {
+		if err := api.FaultInjection.validate(name + ".fault_injection"); err != nil {
+			return err
+		}
+	}
 	if len(api.Routes) == 0 {
 		return fmt.Errorf("%s.routes must contain at least one route", name)
 	}

@@ -241,6 +241,9 @@ func serverVirtualHost(c Config, index int, server Server, apis map[string]API) 
 	if err != nil {
 		return nil, fmt.Errorf("servers[%d] routes: %w", index, err)
 	}
+	if err := addAPIFaultRouteConfigs(routes, bound); err != nil {
+		return nil, fmt.Errorf("servers[%d] routes: %w", index, err)
+	}
 	host := &route.VirtualHost{Name: server.Hostname, Domains: []string{server.Hostname}, Routes: routes}
 	if server.Authentication == nil {
 		return host, nil
@@ -474,6 +477,13 @@ func (c Config) toHTTPFilters(hosts []indexedVirtualHost, protected bool) ([]*hc
 	filters, err := c.requestControlFilters(routeVirtualHosts(hosts))
 	if err != nil {
 		return nil, err
+	}
+	if hasFaultRouteConfigs(hosts) {
+		filter, err := faultHTTPFilter()
+		if err != nil {
+			return nil, err
+		}
+		filters = append([]*hcm.HttpFilter{filter}, filters...)
 	}
 	if protected {
 		filters, err = c.protectedHTTPFilters(filters, hosts)

@@ -61,6 +61,7 @@ type API struct {
 	Routes          []Route               `yaml:"routes"`
 	Upstream        Upstream              `yaml:"upstream"`
 	Metrics         *APIMetrics           `yaml:"metrics,omitempty"`
+	FaultInjection  *FaultInjectionConfig `yaml:"fault_injection,omitempty"`
 	CircuitBreakers *CircuitBreakerConfig `yaml:"circuit_breakers,omitempty"`
 	Timeouts        *RouteTimeouts        `yaml:"timeouts,omitempty"`
 }
@@ -381,6 +382,7 @@ func (a API) clone() API {
 	a.Routes = cloneSlice(a.Routes)
 	a.Upstream = a.Upstream.clone()
 	a.Metrics = cloneConfigPointer(a.Metrics)
+	a.FaultInjection = cloneConfigPointer(a.FaultInjection)
 	if a.CircuitBreakers != nil {
 		circuitBreakers := a.CircuitBreakers.clone()
 		a.CircuitBreakers = &circuitBreakers
