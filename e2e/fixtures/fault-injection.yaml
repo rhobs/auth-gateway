@@ -1,0 +1,46 @@
+version: 1
+
+servers:
+  - hostname: fault.auth-gateway.test
+    apis: [injected, healthy]
+
+observability:
+  metrics:
+    custom_metric_name: gateway_http_requests_total
+    scrape_interval: 1s
+    scrape_timeout: 500ms
+
+apis:
+  - name: injected
+    metrics: {}
+    fault_injection:
+      enabled: true
+      abort:
+        http_status: 503
+        percentage: 100
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [GET, POST]
+        path:
+          prefix: /injected/
+        rewrite:
+          prefix: /anything/injected/
+
+  - name: healthy
+    metrics: {}
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [POST]
+        path:
+          prefix: /healthy/
+        rewrite:
+          prefix: /anything/healthy/
+
+kubernetes:
+  name: auth-gateway
+  namespace: default
+  replicas: 1

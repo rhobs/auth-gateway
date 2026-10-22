@@ -7,7 +7,8 @@ controller.
 The supported features include exact-host routing, HTTP and HTTPS listeners,
 HTTP/1 and HTTP/2 upstreams, JWT, API-key, and client-certificate mTLS
 authentication, attribute-based authorization, request header mapping, per-API
-response counters, access logs, Prometheus metrics, and OpenTelemetry traces.
+response counters, opt-in per-API fault injection, access logs, Prometheus
+metrics, and OpenTelemetry traces.
 
 ## Requirements
 
@@ -103,6 +104,11 @@ values. Attribute mappings affect upstream headers and metric labels; grants
 check the original values. See the [JWT guide](docs/auth/jwt.md),
 [API-key guide](docs/auth/api-key.md), [mTLS guide](docs/auth/mtls.md), and
 [Envoy behavior guide](docs/envoy.md) for request and update behavior.
+
+For SLO tests, an API can inject HTTP errors at a configured percentage.
+The policy is off by default and changes take effect after an explicit gateway
+rollout. See [fault injection](docs/configuration-reference.md#fault-injection)
+for the configuration and metric behavior.
 
 Mapping changes update the separate ECDS processing ConfigMap. API-key changes
 update the Secret. Downstream certificate and client CA ConfigMap changes reload

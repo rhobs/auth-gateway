@@ -186,6 +186,13 @@ apis:
       labels:
         tenant: tenant_id
         writer: writer_id
+    # Optional HTTP error injection for SLO tests. Omit or leave disabled to
+    # keep normal traffic. Enabling this requires a gateway rollout.
+    fault_injection:
+      enabled: false # Default.
+      abort:
+        http_status: 503
+        percentage: 10 # Whole-number percentage of this API's requests.
     upstream:
       address: thanos-receive
       port: 19291

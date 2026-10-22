@@ -96,6 +96,7 @@ cannot repeat a method and path matcher.
 | `apis[].routes`           | list of objects | None                     | Required; at least one route.                                     |
 | `apis[].upstream`         | object          | None                     | Required; see [upstream](#upstream).                              |
 | `apis[].metrics`          | object          | None                     | Optional per-API counter labels; see [API metrics](#api-metrics). |
+| `apis[].fault_injection`  | object          | Disabled                 | Optional HTTP error injection; see [Fault injection](#fault-injection). |
 | `apis[].circuit_breakers` | object          | Defaults below           | Optional; omission still applies the listed defaults.             |
 | `apis[].timeouts`         | object          | Effective defaults below | Optional defaults for every route in this API.                    |
 
@@ -181,6 +182,28 @@ use values from authenticator attributes declared under
 | Field                   | Type                                | Default | Constraint                                                                                                                                                                                                                  |
 |-------------------------|-------------------------------------|---------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `apis[].metrics.labels` | map of label name to attribute name | Empty   | Label names must be valid Prometheus names, must not start with `__`, and cannot be `api`, `http_status_code`, or `envoy_http_conn_manager_prefix`. Each value must be a valid attribute name declared by an authenticator. |
+
+### Fault injection
+
+Set `apis[].fault_injection.enabled: true` to abort a percentage of matching
+requests with a configured HTTP error. Every method route of that API is
+eligible; other APIs and gateway `404`/`405` fallback routes are not. Omit the
+block or set `enabled: false` to disable injection. A disabled block may keep
+its abort settings for the next test.
+
+| Field                                      | Type    | Default | Constraint                                                        |
+|--------------------------------------------|---------|---------|-------------------------------------------------------------------|
+| `apis[].fault_injection.enabled`           | boolean | `false` | Requires `abort` when enabled.                                    |
+| `apis[].fault_injection.abort`             | object  | None    | Required when enabled; HTTP errors only.                          |
+| `apis[].fault_injection.abort.http_status` | uint32  | None    | Required error status from `400` to `599`.                         |
+| `apis[].fault_injection.abort.percentage`  | uint32  | None    | Required whole-number percentage from `1` to `100`.               |
+
+The Envoy fault filter runs before authentication. Injected requests do not
+reach the upstream, and their API and HTTP status appear in the per-API
+response counter when `apis[].metrics` is configured. Labels that depend on
+authenticated attributes use `__unattributed__` for these replies. Fault
+settings are part of the static bootstrap: regenerate and apply the gateway
+configuration, then explicitly roll out the Deployment to toggle them.
 
 ### Route processing
 
