@@ -19,6 +19,52 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+func TestGenerateKubernetesIsolatesGatewaySelectors(t *testing.T) {
+	for _, cluster := range []string{"auth-gateway", "shared-cluster"} {
+		t.Run(cluster, func(t *testing.T) {
+			for _, name := range []string{"gateway-one", "gateway-two"} {
+				c := loadConfigCase(t, "public-routing")
+				c.Kubernetes.Name = name
+				c.Node.Cluster = cluster
+				resources, err := GenerateKubernetes(c)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := map[string]string{
+					"app.kubernetes.io/name":     "auth-gateway",
+					"app.kubernetes.io/instance": name,
+				}
+				for _, got := range []map[string]string{
+					resources.ServiceAccount.Labels,
+					resources.Deployment.Labels,
+					resources.Deployment.Spec.Selector.MatchLabels,
+					resources.Deployment.Spec.Template.Labels,
+					resources.Service.Labels,
+					resources.Service.Spec.Selector,
+				} {
+					assertConfigDiff(t, name+" gateway labels", want, got)
+				}
+			}
+		})
+	}
+}
+
+func TestGenerateKubernetesSelectorsIgnoreNodeCluster(t *testing.T) {
+	c := loadConfigCase(t, "public-routing")
+	before, err := GenerateKubernetes(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Node.Cluster = "another-envoy-cluster"
+	after, err := GenerateKubernetes(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertConfigDiff(t, "Deployment selector after node.cluster update", before.Deployment.Spec.Selector, after.Deployment.Spec.Selector)
+	assertConfigDiff(t, "Pod labels after node.cluster update", before.Deployment.Spec.Template.Labels, after.Deployment.Spec.Template.Labels)
+	assertConfigDiff(t, "Service selector after node.cluster update", before.Service.Spec.Selector, after.Service.Spec.Selector)
+}
+
 func TestKubernetesImageDefaultsToSharedImages(t *testing.T) {
 	c := loadConfigCase(t, "public-routing")
 	c.Kubernetes.Image = ""

@@ -389,7 +389,7 @@ func newGatewayService(c Config, metricsEnabled bool) corev1.Service {
 func kubernetesLabels(c Config) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/name":     "auth-gateway",
-		"app.kubernetes.io/instance": c.Node.Cluster,
+		"app.kubernetes.io/instance": c.Kubernetes.Name,
 	}
 }
 

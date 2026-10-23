@@ -362,7 +362,7 @@ are preserved, so set these fields to use approved images or private mirrors.
 
 | Field                                   | Type                                    | Default                                        | Constraint                                                                                                                                                                                  |
 |-----------------------------------------|-----------------------------------------|------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `kubernetes.name`                       | string                                  | None                                           | Supply a valid Kubernetes resource name; used for the Deployment, Service, and related resource names.                                                                                      |
+| `kubernetes.name`                       | string                                  | None                                           | Supply a valid Kubernetes resource name; used for resource names and the `app.kubernetes.io/instance` label in Deployment and Service selectors.                                            |
 | `kubernetes.namespace`                  | string                                  | None                                           | Supply an existing Kubernetes namespace name.                                                                                                                                               |
 | `kubernetes.image`                      | string                                  | `config.DefaultEnvoyImage`                     | Empty or omitted uses the Go default. Set a nonempty image override without spaces, tabs, or line breaks.                                                                                   |
 | `kubernetes.otel_collector_image`       | string                                  | `config.DefaultOTelCollectorImage`             | Empty or omitted uses the Go default. Set a nonempty collector override; when metrics or tracing is enabled, it cannot contain whitespace.                                                  |
@@ -382,6 +382,34 @@ The loader passes `kubernetes.name` and `kubernetes.namespace` to generated
 resource metadata unchanged; Kubernetes enforces their naming rules when the
 manifest is applied. Resource map defaults apply only when the entire map is
 omitted or null. Supplying a partial map does not fill its missing entries.
+
+### Gateway identity and selector upgrades
+
+Deployment selectors, Pod labels, and Service selectors use
+`app.kubernetes.io/name: auth-gateway` and
+`app.kubernetes.io/instance: <kubernetes.name>`. Use distinct names for gateways
+in the same namespace. Changing `node.cluster` preserves these selectors and
+Pod labels; apply the regenerated bootstrap and explicitly roll out the
+Deployment to use the new Envoy cluster identity.
+
+Earlier generated resources used `node.cluster` as the instance label. If
+that value differs from `kubernetes.name`, the new Deployment selector changes.
+Kubernetes rejects an in-place change to an existing Deployment's immutable
+selector. Choose a maintenance window and recreate the Deployment before
+applying the regenerated resources, for example:
+
+```sh
+kubectl -n observability delete deployment auth-gateway --cascade=foreground --wait=true
+kubectl apply -f kubernetes.yaml
+kubectl -n observability rollout status deployment/auth-gateway
+```
+
+This sequence interrupts gateway traffic until the replacement is ready.
+Alternatively, deploy a replacement with a new `kubernetes.name`, verify it,
+switch clients to its Service, then remove the old gateway resources. Choose a
+replacement name distinct from existing legacy instance labels so old
+selectors cannot match its Pods. If the old instance label already equals
+`kubernetes.name`, the selector stays the same and recreation is unnecessary.
 
 ## API-key credential document
 
