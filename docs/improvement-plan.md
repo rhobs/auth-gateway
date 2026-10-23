@@ -5,9 +5,10 @@ Review baseline: `934f4e0`, reviewed on 2026-10-23.
 Status: in progress. D1 and D2 are merged in
 [PR #17](https://github.com/rhobs/auth-gateway/pull/17) and
 [PR #18](https://github.com/rhobs/auth-gateway/pull/18). D3's implementation and
-acceptance checks are done by removing built-in attribute-value mapping,
-following the maintainer's scope decision below. Upstream review and merge
-remain pending. All other items remain planned.
+acceptance checks are done in
+[PR #19](https://github.com/rhobs/auth-gateway/pull/19), awaiting review and
+merge. It removes built-in attribute-value mapping following the maintainer's
+scope decision below. All other items remain planned.
 
 This plan covers six confirmed defects (D1-D6), two gaps (G1-G2), and three
 simplification opportunities (S1-S3). The findings apply to the generator and
@@ -171,7 +172,7 @@ when existing instance labels differ from `kubernetes.name`.
 ### D3. Remove built-in attribute-value mapping (P1, confirmed)
 
 **Status: Done (implementation and acceptance checks, 2026-10-23).**
-Upstream review and merge remain pending.
+[PR #19](https://github.com/rhobs/auth-gateway/pull/19) awaits review and merge.
 
 **Evidence at the review baseline:** Mapping expressions nested one CEL
 conditional per entry. A 25-entry table passed Go generation but exceeded
