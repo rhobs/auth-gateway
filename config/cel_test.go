@@ -192,7 +192,7 @@ func TestAPIKeyInitializersKeepMappingECDSSeparate(t *testing.T) {
 		want  int
 	}{
 		{index: 1, want: 2},
-		{index: 2, want: 4},
+		{index: 2, want: 6},
 	} {
 		filter := apiKeyHTTPFilter(t, manager, attributeInitializationFilterName(test.index))
 		if !filter.Disabled {

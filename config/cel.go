@@ -15,16 +15,26 @@ import (
 
 const (
 	jwtMetadataExpressionPrefix = `metadata.filter_metadata["envoy.filters.http.jwt_authn"]`
+	selectedAuthenticatorKey    = "auth_gateway.authenticator"
 	celAndSeparator             = " && "
 )
 
 func (c Config) toServerAttributeInitializationConfig(server Server) *setfilterstate.Config {
 	config := &setfilterstate.Config{}
+	selectIdentity := mixedAnyOf(c, server)
 	names := slices.Clone(selectedAuthenticatorNames(server))
-	if serverUsesMTLS(c, server) {
+	if selectIdentity || serverUsesMTLS(c, server) {
 		slices.SortStableFunc(names, func(a, b string) int {
 			return authenticatorPriority(findAuthenticator(c, a)) - authenticatorPriority(findAuthenticator(c, b))
 		})
+	}
+	if selectIdentity {
+		// Finish identity selection before any identity can supply attributes.
+		for _, name := range names {
+			authenticator := findAuthenticator(c, name)
+			expression := "((" + authenticatorVerifiedExpression(authenticator) + ") ? " + celStringLiteral(name) + " : \"\")"
+			config.OnRequestHeaders = append(config.OnRequestHeaders, filterStateValue(selectedAuthenticatorKey, expression))
+		}
 	}
 	for _, name := range names {
 		authenticator := findAuthenticator(c, name)
@@ -40,6 +50,10 @@ func (c Config) toServerAttributeInitializationConfig(server Server) *setfilters
 				expression = mtlsSANAttributeExpression(source)
 			default:
 				expression = apiKeyAttributeExpression(attribute)
+			}
+			if selectIdentity {
+				key := celStringLiteral(selectedAuthenticatorKey)
+				expression = "(" + key + " in filter_state && filter_state[" + key + "] == " + celBytesLiteral(name) + ") ? (" + expression + ") : \"\""
 			}
 			config.OnRequestHeaders = append(config.OnRequestHeaders, filterStateValue(filterStateKey(attribute), expression))
 		}
@@ -138,18 +152,21 @@ func jwtClaimExpression(claimPath []string) string {
 }
 
 func headerAttributeExpression(authenticator Authenticator, header string) string {
-	var verified string
-	if authenticator.JWT != nil {
-		current, checks := metadataStringPathExpression(jwtAuthnFilterName, []string{authenticator.Name, jwtIssuerClaimName})
-		verified = checks + " && " + current + " == " + celStringLiteral(authenticator.JWT.Issuer)
-	} else if authenticator.MTLS != nil {
-		verified = mtlsPresentExpression()
-	} else {
-		current, checks := metadataStringPathExpression(apiKeyMetadataNamespace, []string{apiKeyMetadataKey})
-		verified = checks + " && " + current + " != \"\""
-	}
+	verified := authenticatorVerifiedExpression(authenticator)
 	current, checks := metadataStringPathExpression(requestHeaderMetadataNamespace, []string{strings.ToLower(header)})
 	return "((" + verified + " && " + checks + " && " + current + " != \"\") ? " + current + " : \"\")"
+}
+
+func authenticatorVerifiedExpression(authenticator Authenticator) string {
+	if authenticator.JWT != nil {
+		current, checks := metadataStringPathExpression(jwtAuthnFilterName, []string{authenticator.Name, jwtIssuerClaimName})
+		return checks + " && " + current + " == " + celStringLiteral(authenticator.JWT.Issuer)
+	}
+	if authenticator.MTLS != nil {
+		return mtlsPresentExpression()
+	}
+	current, checks := metadataStringPathExpression(apiKeyMetadataNamespace, []string{apiKeyMetadataKey})
+	return checks + " && " + current + " != \"\""
 }
 
 func mtlsPresentExpression() string {

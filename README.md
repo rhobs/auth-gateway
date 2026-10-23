@@ -128,6 +128,9 @@ Develop feature changes on a branch and submit them to the upstream repository
 through a pull request for review. See [CONTRIBUTING.md](CONTRIBUTING.md) for
 the contribution workflow, checks, and golden-file updates.
 
+The [phased improvement plan](docs/improvement-plan.md) records the repository
+review findings, priorities, and acceptance criteria.
+
 ## License
 
 This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
