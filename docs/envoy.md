@@ -102,6 +102,11 @@ watched and take effect on new TLS connections. Collector ConfigMap changes
 require restarting the collector so it reads the new settings. Generated
 Deployments have no checksum annotation.
 
+Kubernetes gateway selectors use `kubernetes.name`, independently of
+`node.cluster`, so separately named gateways in one namespace select distinct
+Pods. See [selector upgrades](configuration-reference.md#gateway-identity-and-selector-upgrades)
+before replacing resources generated with the earlier cluster-based labels.
+
 Envoy's validation mode checks the bootstrap, but does not validate the
 file-backed API-key ECDS resource. Generate API-key Secrets from validated
 credentials rather than editing `api-keys.yaml` by hand.

@@ -387,7 +387,7 @@ servers:
   #   apis: [metrics-query]
 
 kubernetes:
-  name: auth-gateway
+  name: auth-gateway # Also identifies this gateway in Pod and Service selectors.
   namespace: observability
   image: "" # Empty or omitted uses config.DefaultEnvoyImage.
   otel_collector_image: "" # Empty or omitted uses config.DefaultOTelCollectorImage.
