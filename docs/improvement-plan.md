@@ -3,8 +3,10 @@
 Review baseline: `934f4e0`, reviewed on 2026-10-23.
 
 Status: in progress. D1 is merged in
-[PR #17](https://github.com/rhobs/auth-gateway/pull/17). D2 is in progress.
-All other items remain planned.
+[PR #17](https://github.com/rhobs/auth-gateway/pull/17). D2's implementation
+and acceptance checks are done in
+[PR #18](https://github.com/rhobs/auth-gateway/pull/18), awaiting review and
+merge. All other items remain planned.
 
 This plan covers six confirmed defects (D1-D6), two gaps (G1-G2), and three
 simplification opportunities (S1-S3). The findings apply to the generator and
@@ -20,7 +22,7 @@ its generated Envoy and Kubernetes configuration at the review baseline.
 | Phase | Outcome | Items |
 | --- | --- | --- |
 | 0 | Resolve conflicting authentication scope guidance | G1 |
-| 1 | Isolate authenticated identities and gateway workloads | D1 (merged), D2 (in progress) |
+| 1 | Isolate authenticated identities and gateway workloads | D1 (merged), D2 (implementation done) |
 | 2 | Generate configuration that Envoy accepts at realistic sizes | D3, D4 |
 | 3 | Make termination, restricted admission, and metrics predictable | D5, D6, G2 |
 | 4 | Reduce duplication and dependency overhead | S1, S2, S3 |
@@ -126,10 +128,11 @@ Deployments to apply the fix.
 
 ### D2. Give each Kubernetes gateway stable, distinct selectors (P1, confirmed)
 
-**Status: In progress.**
+**Status: Done (implementation and acceptance checks, 2026-10-23).**
+[PR #18](https://github.com/rhobs/auth-gateway/pull/18) awaits review and merge.
 
-**Evidence at the review baseline:** [Kubernetes labels](../config/kubernetes.go) used the fixed name
-`auth-gateway` and `node.cluster` as the instance. Two differently named
+**Evidence at the review baseline:** [Kubernetes labels](../config/kubernetes.go)
+used the fixed name `auth-gateway` and `node.cluster` as the instance. Two differently named
 gateways using the default cluster value have identical Deployment and
 Service selectors in one namespace. Changing `node.cluster` also changes an
 immutable Deployment selector.
@@ -141,14 +144,28 @@ immutable selectors must be recreated or replaced during upgrade.
 
 **Acceptance and validation:**
 
-- Unit tests show that differently named gateways in the same namespace have
+- [x] Unit tests show that differently named gateways in the same namespace have
   distinct selectors, including when they share `node.cluster`.
-- Changing only `node.cluster` preserves the Deployment selector.
-- The existing gateway e2e suite continues to pass. Selector isolation is
+- [x] Changing only `node.cluster` preserves the Deployment selector.
+- [x] The existing gateway e2e suite continues to pass. Selector isolation is
   covered by the generated-output unit tests.
-- Upgrade instructions explain the immutable-selector constraint and the
+- [x] Upgrade instructions explain the immutable-selector constraint and the
   replacement sequence; generated manifests do not imply an in-place update
   will succeed.
+
+**Delivered:** The instance label uses `kubernetes.name` consistently across
+gateway resource labels, Deployment selectors, Pod labels, and Service
+selectors. Focused [unit regressions](../config/kubernetes_test.go) cover
+distinct gateway names and stable selectors after a `node.cluster` update.
+
+**Validation:** `make test`, `make lint`, tagged e2e/runtime compilation,
+framework tests, and `make e2e` passed on 2026-10-23 (80/80 existing Kind
+specs). `make update-golden` left existing fixtures unchanged; their gateway
+names already matched their cluster labels.
+
+**Upgrade:** Follow the
+[selector upgrade instructions](configuration-reference.md#gateway-identity-and-selector-upgrades)
+when existing instance labels differ from `kubernetes.name`.
 
 ## Phase 2: Remove generated-expression limits
 
