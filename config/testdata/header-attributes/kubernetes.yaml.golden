@@ -254,28 +254,42 @@ data:
                                       format_string:
                                         omit_empty_values: true
                                         text_format_source:
-                                            inline_string: '%CEL((("envoy.filters.http.jwt_authn" in metadata.filter_metadata && "issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "iss" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"] == "https://issuer-one.jwt.test" && "auth_gateway.request_headers" in metadata.filter_metadata && "x-tenant" in metadata.filter_metadata["auth_gateway.request_headers"] && type(metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"]) == string && metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] != "") ? metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] : ""))%'
+                                            inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "identity" in metadata.filter_metadata["auth_gateway.api_key"] && type(metadata.filter_metadata["auth_gateway.api_key"]["identity"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["identity"] != "") ? "partner-key" : ""))%'
+                                      object_key: auth_gateway.authenticator
+                                      skip_if_empty: true
+                                    - factory_key: envoy.string
+                                      format_string:
+                                        omit_empty_values: true
+                                        text_format_source:
+                                            inline_string: '%CEL((("envoy.filters.http.jwt_authn" in metadata.filter_metadata && "issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "iss" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"] == "https://issuer-one.jwt.test") ? "issuer-one" : ""))%'
+                                      object_key: auth_gateway.authenticator
+                                      skip_if_empty: true
+                                    - factory_key: envoy.string
+                                      format_string:
+                                        omit_empty_values: true
+                                        text_format_source:
+                                            inline_string: '%CEL(("auth_gateway.authenticator" in filter_state && filter_state["auth_gateway.authenticator"] == b"partner-key") ? ((("auth_gateway.api_key" in metadata.filter_metadata && "identity" in metadata.filter_metadata["auth_gateway.api_key"] && type(metadata.filter_metadata["auth_gateway.api_key"]["identity"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["identity"] != "" && "auth_gateway.request_headers" in metadata.filter_metadata && "x-tenant" in metadata.filter_metadata["auth_gateway.request_headers"] && type(metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"]) == string && metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] != "") ? metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] : "")) : "")%'
                                       object_key: auth_gateway.attributes.requested_tenant
                                       skip_if_empty: true
                                     - factory_key: envoy.string
                                       format_string:
                                         omit_empty_values: true
                                         text_format_source:
-                                            inline_string: '%CEL((("issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "organization" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && "id" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] : "")%'
+                                            inline_string: '%CEL(("auth_gateway.authenticator" in filter_state && filter_state["auth_gateway.authenticator"] == b"partner-key") ? ((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.tenant_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] : "") : "")%'
                                       object_key: auth_gateway.attributes.tenant_id
                                       skip_if_empty: true
                                     - factory_key: envoy.string
                                       format_string:
                                         omit_empty_values: true
                                         text_format_source:
-                                            inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "identity" in metadata.filter_metadata["auth_gateway.api_key"] && type(metadata.filter_metadata["auth_gateway.api_key"]["identity"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["identity"] != "" && "auth_gateway.request_headers" in metadata.filter_metadata && "x-tenant" in metadata.filter_metadata["auth_gateway.request_headers"] && type(metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"]) == string && metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] != "") ? metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] : ""))%'
+                                            inline_string: '%CEL(("auth_gateway.authenticator" in filter_state && filter_state["auth_gateway.authenticator"] == b"issuer-one") ? ((("envoy.filters.http.jwt_authn" in metadata.filter_metadata && "issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "iss" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"] == "https://issuer-one.jwt.test" && "auth_gateway.request_headers" in metadata.filter_metadata && "x-tenant" in metadata.filter_metadata["auth_gateway.request_headers"] && type(metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"]) == string && metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] != "") ? metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] : "")) : "")%'
                                       object_key: auth_gateway.attributes.requested_tenant
                                       skip_if_empty: true
                                     - factory_key: envoy.string
                                       format_string:
                                         omit_empty_values: true
                                         text_format_source:
-                                            inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.tenant_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] : "")%'
+                                            inline_string: '%CEL(("auth_gateway.authenticator" in filter_state && filter_state["auth_gateway.authenticator"] == b"issuer-one") ? ((("issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "organization" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && "id" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] : "") : "")%'
                                       object_key: auth_gateway.attributes.tenant_id
                                       skip_if_empty: true
                             - disabled: true

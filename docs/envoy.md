@@ -55,7 +55,13 @@ identity headers before forwarding.
 Envoy keeps source values in per-request dynamic metadata: `jwt_authn` provides
 verified JWT claims, while `header_to_metadata` captures configured request
 headers and values emitted by the API-key and mTLS filters. The native
-`set_filter_state` filter uses CEL to copy selected values into
+`set_filter_state` filter first records the chosen authenticator for mixed
+`any_of` requests. It copies attributes only from that identity, leaving its
+missing, empty, and undeclared values unset. Lower-priority credentials cannot
+fill those values. For `all_of`, every required identity can contribute
+attributes after shared original values have been checked for equality.
+
+The filter uses CEL to copy source values into
 `auth_gateway.attributes.<name>` and apply optional exact mappings from the
 `processing.yaml` ECDS resource. RBAC evaluates grants against original source
 values; mapped filter state feeds managed upstream headers and metric labels.

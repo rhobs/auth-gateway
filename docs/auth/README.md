@@ -21,9 +21,15 @@ is denied; authorization does not fall back to a lower-priority method. On
 mixed mTLS servers, a connection without a client certificate can use another
 method, but an untrusted client certificate fails the TLS handshake.
 
+The gateway selects one authenticated identity before initializing its
+attributes. Only that identity supplies working values. Missing, empty, or
+undeclared attributes remain unset, even when another credential could supply
+them. A missing attribute required by an upstream header causes a `403`.
+
 Mixed `all_of` requires every selected credential and equal, nonempty raw
 values for each attribute declared by more than one method. It supports at
-most one JWT, one mTLS authenticator, and one API key.
+most one JWT, one mTLS authenticator, and one API key. Each required identity
+can supply attributes that the other methods do not declare.
 
 ## Authorization
 

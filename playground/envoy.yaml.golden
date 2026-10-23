@@ -454,21 +454,42 @@ static_resources:
                                   format_string:
                                     omit_empty_values: true
                                     text_format_source:
-                                        inline_string: '%CEL((("playground-metrics-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["sub"] : "")%'
+                                        inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "identity" in metadata.filter_metadata["auth_gateway.api_key"] && type(metadata.filter_metadata["auth_gateway.api_key"]["identity"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["identity"] != "") ? "playground-key" : ""))%'
+                                  object_key: auth_gateway.authenticator
+                                  skip_if_empty: true
+                                - factory_key: envoy.string
+                                  format_string:
+                                    omit_empty_values: true
+                                    text_format_source:
+                                        inline_string: '%CEL((("envoy.filters.http.jwt_authn" in metadata.filter_metadata && "playground-metrics-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "iss" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"] && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["iss"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["iss"] == "https://auth.localhost:8443/metrics") ? "playground-metrics-jwt" : ""))%'
+                                  object_key: auth_gateway.authenticator
+                                  skip_if_empty: true
+                                - factory_key: envoy.string
+                                  format_string:
+                                    omit_empty_values: true
+                                    text_format_source:
+                                        inline_string: '%CEL((("envoy.filters.http.jwt_authn" in metadata.filter_metadata && "playground-logs-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "iss" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"] && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["iss"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["iss"] == "https://auth.localhost:8443/logs") ? "playground-logs-jwt" : ""))%'
+                                  object_key: auth_gateway.authenticator
+                                  skip_if_empty: true
+                                - factory_key: envoy.string
+                                  format_string:
+                                    omit_empty_values: true
+                                    text_format_source:
+                                        inline_string: '%CEL(("auth_gateway.authenticator" in filter_state && filter_state["auth_gateway.authenticator"] == b"playground-key") ? ((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.user_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"] : "") : "")%'
                                   object_key: auth_gateway.attributes.user_id
                                   skip_if_empty: true
                                 - factory_key: envoy.string
                                   format_string:
                                     omit_empty_values: true
                                     text_format_source:
-                                        inline_string: '%CEL((("playground-logs-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["sub"] : "")%'
+                                        inline_string: '%CEL(("auth_gateway.authenticator" in filter_state && filter_state["auth_gateway.authenticator"] == b"playground-metrics-jwt") ? ((("playground-metrics-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["sub"] : "") : "")%'
                                   object_key: auth_gateway.attributes.user_id
                                   skip_if_empty: true
                                 - factory_key: envoy.string
                                   format_string:
                                     omit_empty_values: true
                                     text_format_source:
-                                        inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.user_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"] : "")%'
+                                        inline_string: '%CEL(("auth_gateway.authenticator" in filter_state && filter_state["auth_gateway.authenticator"] == b"playground-logs-jwt") ? ((("playground-logs-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["sub"] : "") : "")%'
                                   object_key: auth_gateway.attributes.user_id
                                   skip_if_empty: true
                         - name: envoy.filters.http.rbac

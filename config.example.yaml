@@ -357,6 +357,7 @@ servers:
   - hostname: either.auth.example.com
     authentication:
       # A valid JWT wins when both JWT and API-key credentials are present.
+      # Only that identity supplies attributes; missing values stay unset.
       any_of: [internal-jwt, partner-key]
     authorization:
       any_of: [metrics-writers, partner-metrics-writers]
@@ -367,6 +368,7 @@ servers:
       secret: write-gateway-tls
     authentication:
       # A valid JWT wins, followed by a verified certificate, then an API key.
+      # Only that identity supplies attributes; missing values stay unset.
       any_of: [internal-jwt, partner-cert, partner-key]
     authorization:
       any_of: [metrics-writers, partner-certificate-writers, partner-metrics-writers]

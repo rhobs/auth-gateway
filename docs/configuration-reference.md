@@ -244,6 +244,12 @@ select at most one mTLS authenticator and must set `tls_config` when it does.
 Certificate-only and `all_of` mTLS servers require a client certificate during
 the TLS handshake. Mixed `any_of` servers allow a connection without one.
 
+Mixed `any_of` selects one authenticated identity in JWT, mTLS, then API-key
+priority. Only that identity supplies working attributes. Missing, empty, or
+undeclared attributes stay unset; another credential cannot fill them.
+`all_of` requires every selected identity and matching nonempty original
+values for shared attributes. See the [authentication guide](auth/README.md).
+
 | Field                             | Type            | Default | Constraint                                                        |
 |-----------------------------------|-----------------|---------|-------------------------------------------------------------------|
 | `servers[].authentication.any_of` | list of strings | None    | Selects authenticators; mutually exclusive with `all_of`.         |

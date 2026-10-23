@@ -126,6 +126,10 @@ func (ca *mtlsTestCA) clientCertificate(uriValues, dnsNames []string) (tls.Certi
 }
 
 func setupMTLSGateway(ctx SpecContext, namespace string) (*mtlsE2E, error) {
+	return setupMTLSGatewayWithShape(ctx, namespace, nil)
+}
+
+func setupMTLSGatewayWithShape(ctx SpecContext, namespace string, shape func(*config.Config)) (*mtlsE2E, error) {
 	if err := resetE2ENamespace(ctx, namespace); err != nil {
 		return nil, err
 	}
@@ -138,6 +142,9 @@ func setupMTLSGateway(ctx SpecContext, namespace string) (*mtlsE2E, error) {
 		return nil, err
 	}
 	c.Kubernetes.Namespace = namespace
+	if shape != nil {
+		shape(&c)
+	}
 	caA, err := newMTLSTestCA()
 	if err != nil {
 		return nil, err
@@ -179,7 +186,10 @@ func setupMTLSGateway(ctx SpecContext, namespace string) (*mtlsE2E, error) {
 			return nil, err
 		}
 	}
-	serverNames := []string{"jwks." + namespace + ".svc.cluster.local", mtlsOnlyHost, mtlsMixedHost, mtlsJWTCertHost, mtlsAllHost, mtlsTrustHost}
+	serverNames := []string{"jwks." + namespace + ".svc.cluster.local"}
+	for _, server := range c.Servers {
+		serverNames = append(serverNames, server.Hostname)
+	}
 	serverCertificates, err := makeJWTTestCertificates(serverNames)
 	if err != nil {
 		return nil, err
