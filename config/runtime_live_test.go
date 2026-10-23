@@ -197,29 +197,13 @@ func runtimeLiveStart(t *testing.T, configDir string, roots *x509.CertPool) *run
 	nameSuffix := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
 	networkName := "auth-gateway-runtime-" + nameSuffix
 	httpbinName := "auth-gateway-httpbin-" + nameSuffix
-	envoyName := "auth-gateway-envoy-" + nameSuffix
 
 	runtimeLiveDocker(t, "network", "create", networkName)
 	t.Cleanup(func() { runtimeLiveDockerCleanup(t, "network", "rm", networkName) })
 	runtimeLiveDocker(t, "run", "--detach", "--name", httpbinName, "--network", networkName, "--network-alias", "httpbin", runtimeLiveHTTPBinImage)
 	t.Cleanup(func() { runtimeLiveDockerCleanup(t, "rm", "--force", httpbinName) })
 
-	image := os.Getenv("AUTH_GATEWAY_RUNTIME_IMAGE")
-	if image == "" {
-		image = DefaultEnvoyImage
-	}
-	runtimeLiveDocker(t, "run", "--detach", "--user", "101:101", "--name", envoyName,
-		"--network", networkName, "--publish", "127.0.0.1::8080/tcp",
-		"--volume", configDir+":"+EnvoyConfigDirectory, image,
-		"--log-level", "info", "-c", EnvoyBootstrapPath)
-	t.Cleanup(func() { runtimeLiveDockerCleanup(t, "rm", "--force", envoyName) })
-
-	portOutput := runtimeLiveOutput(t, "port", envoyName, "8080/tcp")
-	_, port, err := net.SplitHostPort(strings.TrimSpace(string(portOutput)))
-	if err != nil {
-		t.Fatalf("parse Envoy published port %q: %v", portOutput, err)
-	}
-	address := net.JoinHostPort("127.0.0.1", port)
+	address, envoyName := runtimeLiveStartEnvoy(t, configDir, []string{"--network", networkName}, nil)
 	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true}
 	tlsTransport := &http.Transport{Proxy: nil, DisableKeepAlives: true, TLSClientConfig: &tls.Config{
 		RootCAs: roots, ServerName: runtimeLiveTLSHost, MinVersion: tls.VersionTLS12,
@@ -230,6 +214,34 @@ func runtimeLiveStart(t *testing.T, configDir string, roots *x509.CertPool) *run
 		httpClient: &http.Client{Transport: transport, Timeout: 4 * time.Second},
 		tlsClient:  &http.Client{Transport: tlsTransport, Timeout: 4 * time.Second},
 	}
+}
+
+func runtimeLiveStartEnvoy(t *testing.T, configDir string, dockerArgs, envoyArgs []string) (string, string) {
+	t.Helper()
+	envoyName := fmt.Sprintf("auth-gateway-envoy-%d-%d", os.Getpid(), time.Now().UnixNano())
+	image := os.Getenv("AUTH_GATEWAY_RUNTIME_IMAGE")
+	if image == "" {
+		image = DefaultEnvoyImage
+	}
+	args := []string{"run", "--detach", "--user", "101:101", "--name", envoyName,
+		"--publish", "127.0.0.1::8080/tcp", "--volume", configDir + ":" + EnvoyConfigDirectory}
+	args = append(args, dockerArgs...)
+	args = append(args, image, "--log-level", "info", "-c", EnvoyBootstrapPath)
+	args = append(args, envoyArgs...)
+	runtimeLiveDocker(t, args...)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("Envoy logs:\n%s", runtimeLiveLogs(envoyName))
+		}
+		runtimeLiveDockerCleanup(t, "rm", "--force", envoyName)
+	})
+
+	portOutput := runtimeLiveOutput(t, "port", envoyName, "8080/tcp")
+	_, port, err := net.SplitHostPort(strings.TrimSpace(string(portOutput)))
+	if err != nil {
+		t.Fatalf("parse Envoy published port %q: %v", portOutput, err)
+	}
+	return net.JoinHostPort("127.0.0.1", port), envoyName
 }
 
 func runtimeLiveDocker(t *testing.T, args ...string) {

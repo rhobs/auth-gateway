@@ -176,11 +176,6 @@ func (c Config) validateBaseSettings(metricsEnabled, tracingEnabled bool) error 
 	if err := c.Listener.validate(metricsEnabled, tracingEnabled); err != nil {
 		return err
 	}
-	if c.AdmissionControl != nil {
-		if err := c.AdmissionControl.validate("admission_control"); err != nil {
-			return err
-		}
-	}
 	if err := c.Observability.Metrics.validate(); err != nil {
 		return err
 	}
@@ -226,6 +221,11 @@ func validateAPI(name string, api API, hasKubernetes bool) error {
 	}
 	if err := validateAPIMetrics(name+".metrics", api.Metrics); err != nil {
 		return err
+	}
+	if api.AdmissionControl != nil {
+		if err := api.AdmissionControl.validate(name + ".admission_control"); err != nil {
+			return err
+		}
 	}
 	if api.FaultInjection != nil {
 		if err := api.FaultInjection.validate(name + ".fault_injection"); err != nil {
