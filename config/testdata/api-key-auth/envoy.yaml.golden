@@ -336,16 +336,6 @@ static_resources:
                                         inline_string: '%CEL(("auth_gateway.authenticator" in filter_state && filter_state["auth_gateway.authenticator"] == b"issuer-one") ? ((("issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"] : "") : "")%'
                                   object_key: auth_gateway.attributes.writer_id
                                   skip_if_empty: true
-                        - config_discovery:
-                            config_source:
-                                path_config_source:
-                                    path: /etc/auth-gateway/processing/processing.yaml
-                                    watched_directory:
-                                        path: /etc/auth-gateway/processing
-                                resource_api_version: V3
-                            type_urls:
-                                - envoy.extensions.filters.http.set_filter_state.v3.Config
-                          name: envoy.filters.http.set_filter_state
                         - name: envoy.filters.http.rbac
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
@@ -1011,16 +1001,6 @@ static_resources:
                                         inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.writer_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.writer_id"] : "")%'
                                   object_key: auth_gateway.attributes.writer_id
                                   skip_if_empty: true
-                        - config_discovery:
-                            config_source:
-                                path_config_source:
-                                    path: /etc/auth-gateway/processing/processing.yaml
-                                    watched_directory:
-                                        path: /etc/auth-gateway/processing
-                                resource_api_version: V3
-                            type_urls:
-                                - envoy.extensions.filters.http.set_filter_state.v3.Config
-                          name: envoy.filters.http.set_filter_state
                         - name: envoy.filters.http.rbac
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC

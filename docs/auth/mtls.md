@@ -72,8 +72,8 @@ servers:
     apis: [metrics-write]
 ```
 
-All attributes in a grant must match. Attribute mappings affect values sent to
-the upstream and metric labels, not grant decisions. The [configuration
+All attributes in a grant must match. Forwarded headers and metric labels use
+the declared source values. The [configuration
 reference](../configuration-reference.md) lists the accepted fields and
 constraints.
 

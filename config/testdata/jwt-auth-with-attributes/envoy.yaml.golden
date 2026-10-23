@@ -286,16 +286,38 @@ static_resources:
                                             - provider_name: internal-jwt
                                             - provider_name: external-jwt
                             strip_failure_response: true
-                        - config_discovery:
-                            config_source:
-                                path_config_source:
-                                    path: /etc/auth-gateway/processing/processing.yaml
-                                    watched_directory:
-                                        path: /etc/auth-gateway/processing
-                                resource_api_version: V3
-                            type_urls:
-                                - envoy.extensions.filters.http.set_filter_state.v3.Config
-                          name: envoy.filters.http.set_filter_state
+                        - name: envoy.filters.http.set_filter_state
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
+                            on_request_headers:
+                                - factory_key: envoy.string
+                                  format_string:
+                                    omit_empty_values: true
+                                    text_format_source:
+                                        inline_string: '%CEL((("internal-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "x" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"] && "y" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["x"] && "z" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["x"]["y"] && "claim" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["x"]["y"]["z"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["x"]["y"]["z"]["claim"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["x"]["y"]["z"]["claim"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["x"]["y"]["z"]["claim"] : "")%'
+                                  object_key: auth_gateway.attributes.tenant_id
+                                  skip_if_empty: true
+                                - factory_key: envoy.string
+                                  format_string:
+                                    omit_empty_values: true
+                                    text_format_source:
+                                        inline_string: '%CEL((("internal-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["sub"] : "")%'
+                                  object_key: auth_gateway.attributes.writer_id
+                                  skip_if_empty: true
+                                - factory_key: envoy.string
+                                  format_string:
+                                    omit_empty_values: true
+                                    text_format_source:
+                                        inline_string: '%CEL((("external-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "organization" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["external-jwt"] && "id" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["external-jwt"]["organization"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["external-jwt"]["organization"]["id"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["external-jwt"]["organization"]["id"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["external-jwt"]["organization"]["id"] : "")%'
+                                  object_key: auth_gateway.attributes.tenant_id
+                                  skip_if_empty: true
+                                - factory_key: envoy.string
+                                  format_string:
+                                    omit_empty_values: true
+                                    text_format_source:
+                                        inline_string: '%CEL((("external-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["external-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["external-jwt"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["external-jwt"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["external-jwt"]["sub"] : "")%'
+                                  object_key: auth_gateway.attributes.writer_id
+                                  skip_if_empty: true
                         - name: envoy.filters.http.rbac
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
@@ -768,16 +790,38 @@ static_resources:
                                             - provider_name: internal-jwt
                                             - provider_name: external-jwt
                             strip_failure_response: true
-                        - config_discovery:
-                            config_source:
-                                path_config_source:
-                                    path: /etc/auth-gateway/processing/processing.yaml
-                                    watched_directory:
-                                        path: /etc/auth-gateway/processing
-                                resource_api_version: V3
-                            type_urls:
-                                - envoy.extensions.filters.http.set_filter_state.v3.Config
-                          name: envoy.filters.http.set_filter_state
+                        - name: envoy.filters.http.set_filter_state
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
+                            on_request_headers:
+                                - factory_key: envoy.string
+                                  format_string:
+                                    omit_empty_values: true
+                                    text_format_source:
+                                        inline_string: '%CEL((("internal-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "x" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"] && "y" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["x"] && "z" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["x"]["y"] && "claim" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["x"]["y"]["z"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["x"]["y"]["z"]["claim"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["x"]["y"]["z"]["claim"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["x"]["y"]["z"]["claim"] : "")%'
+                                  object_key: auth_gateway.attributes.tenant_id
+                                  skip_if_empty: true
+                                - factory_key: envoy.string
+                                  format_string:
+                                    omit_empty_values: true
+                                    text_format_source:
+                                        inline_string: '%CEL((("internal-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["sub"] : "")%'
+                                  object_key: auth_gateway.attributes.writer_id
+                                  skip_if_empty: true
+                                - factory_key: envoy.string
+                                  format_string:
+                                    omit_empty_values: true
+                                    text_format_source:
+                                        inline_string: '%CEL((("external-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "organization" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["external-jwt"] && "id" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["external-jwt"]["organization"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["external-jwt"]["organization"]["id"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["external-jwt"]["organization"]["id"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["external-jwt"]["organization"]["id"] : "")%'
+                                  object_key: auth_gateway.attributes.tenant_id
+                                  skip_if_empty: true
+                                - factory_key: envoy.string
+                                  format_string:
+                                    omit_empty_values: true
+                                    text_format_source:
+                                        inline_string: '%CEL((("external-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["external-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["external-jwt"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["external-jwt"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["external-jwt"]["sub"] : "")%'
+                                  object_key: auth_gateway.attributes.writer_id
+                                  skip_if_empty: true
                         - name: envoy.filters.http.rbac
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC

@@ -338,8 +338,6 @@ func jwtTestClaims(tenant string) map[string]any {
 	return map[string]any{
 		"organization":  map[string]any{"id": tenant},
 		"sub":           "writer-17",
-		"chain":         "first",
-		"order":         "first",
 		"literal.claim": `source "quoted" \ value`,
 		"aud":           "gateway-test",
 		"exp":           time.Now().Add(5 * time.Minute).Unix(),

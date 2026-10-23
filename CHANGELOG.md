@@ -8,6 +8,12 @@ Notable changes to RHOBS Auth Gateway are recorded here.
 
 - Add a security reporting policy and repository ownership guidance.
 
+### Removed
+
+- Remove built-in attribute-value mapping and its processing ECDS resource,
+  ConfigMap, and volume. Supply additional source attributes for different
+  upstream values. See the [upgrade steps](docs/envoy.md#upgrading-after-attribute-mapping-removal).
+
 ### Fixed
 
 - Use `kubernetes.name` for gateway selectors so gateways in one namespace

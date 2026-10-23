@@ -29,22 +29,16 @@ const (
 )
 
 const (
-	httpPortName               = "http"
-	httpsPortName              = "https"
-	gatewayConfigVolumeName    = "config"
-	processingConfigVolumeName = "processing-config"
-	apiKeySecretVolumeName     = "api-keys"
+	httpPortName            = "http"
+	httpsPortName           = "https"
+	gatewayConfigVolumeName = "config"
+	apiKeySecretVolumeName  = "api-keys"
 )
 
 const (
-	configDirectory     = EnvoyConfigDirectory
-	processingDirectory = ProcessingConfigDirectory
-	apiKeyDirectory     = APIKeyConfigDirectory
+	configDirectory = EnvoyConfigDirectory
+	apiKeyDirectory = APIKeyConfigDirectory
 )
-
-func processingResourceName(name string) string {
-	return resourceNameWithSuffix(name, "-processing")
-}
 
 func resourceNameWithSuffix(name, suffix string) string {
 	const maxDNSLabelLength = 63
@@ -73,7 +67,6 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	if err != nil {
 		return nil, err
 	}
-	configFiles, processingConfigMap := splitProcessingConfigMap(c, files)
 	configName := c.Kubernetes.Name + "-config"
 	metricsName := metricsResourceName(c.Kubernetes.Name)
 	metricsEnabled := c.Observability.Metrics.enabled()
@@ -81,40 +74,17 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	if err != nil {
 		return nil, err
 	}
-	deployment, err := newGatewayDeployment(c, configFiles, configName, metricsName, processingConfigMap)
+	deployment, err := newGatewayDeployment(c, files, configName, metricsName)
 	if err != nil {
 		return nil, err
 	}
 	return &KubernetesResources{
-		ConfigMap:              newGatewayConfigMap(c, configName, configFiles),
-		ProcessingConfigMap:    processingConfigMap,
+		ConfigMap:              newGatewayConfigMap(c, configName, files),
 		OTelCollectorConfigMap: collectorConfigMap,
 		ServiceAccount:         newGatewayServiceAccount(c),
 		Deployment:             deployment,
 		Service:                newGatewayService(c, metricsEnabled),
 	}, nil
-}
-
-func splitProcessingConfigMap(c Config, files map[string][]byte) (map[string][]byte, *corev1.ConfigMap) {
-	processingData, ok := files[processingConfigFilename]
-	if !ok {
-		return files, nil
-	}
-	configFiles := make(map[string][]byte, len(files)-1)
-	for name, contents := range files {
-		if name != processingConfigFilename {
-			configFiles[name] = contents
-		}
-	}
-	processingConfigMap := &corev1.ConfigMap{
-		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: kubernetesConfigMapKind},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      processingResourceName(c.Kubernetes.Name),
-			Namespace: c.Kubernetes.Namespace,
-		},
-		Data: map[string]string{processingConfigFilename: string(processingData)},
-	}
-	return configFiles, processingConfigMap
 }
 
 func newGatewayConfigMap(c Config, name string, files map[string][]byte) corev1.ConfigMap {
@@ -153,7 +123,7 @@ func newGatewayServiceAccount(c Config) corev1.ServiceAccount {
 	}
 }
 
-func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, metricsName string, processingConfigMap *corev1.ConfigMap) (appsv1.Deployment, error) {
+func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, metricsName string) (appsv1.Deployment, error) {
 	k := c.Kubernetes
 	preStopDrainCommand := fmt.Sprintf("sleep %d", preStopDrainDelaySeconds)
 	gatewayResources, err := kubernetesResourceRequirements(kubernetesResourcesFieldPath, k.Resources)
@@ -230,7 +200,6 @@ func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, m
 		},
 	}
 	addCollectorContainer(&deployment, c, metricsName, collectorResources)
-	addProcessingConfigVolume(&deployment, processingConfigMap)
 	addAPIKeySecretVolume(&deployment, c)
 	addServerTLSVolumes(&deployment, c)
 	addTrustedCAVolumes(&deployment, c)
@@ -273,23 +242,6 @@ func addCollectorContainer(deployment *appsv1.Deployment, c Config, metricsName 
 		VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
 			LocalObjectReference: corev1.LocalObjectReference{Name: metricsName},
 		}},
-	})
-}
-
-func addProcessingConfigVolume(deployment *appsv1.Deployment, processingConfigMap *corev1.ConfigMap) {
-	if processingConfigMap == nil {
-		return
-	}
-	deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
-		Name: processingConfigVolumeName,
-		VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-			LocalObjectReference: corev1.LocalObjectReference{Name: processingConfigMap.Name},
-			Items:                []corev1.KeyToPath{{Key: processingConfigFilename, Path: processingConfigFilename}},
-		}},
-	})
-	envoy := &deployment.Spec.Template.Spec.Containers[0]
-	envoy.VolumeMounts = append(envoy.VolumeMounts, corev1.VolumeMount{
-		Name: processingConfigVolumeName, MountPath: processingDirectory, ReadOnly: true,
 	})
 }
 
@@ -396,9 +348,6 @@ func kubernetesLabels(c Config) map[string]string {
 // Objects returns the resources in apply order.
 func (r *KubernetesResources) Objects() []runtime.Object {
 	objects := []runtime.Object{&r.ConfigMap}
-	if r.ProcessingConfigMap != nil {
-		objects = append(objects, r.ProcessingConfigMap)
-	}
 	if r.OTelCollectorConfigMap != nil {
 		objects = append(objects, r.OTelCollectorConfigMap)
 	}

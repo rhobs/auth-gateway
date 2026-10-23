@@ -97,17 +97,6 @@ apis:
           request_headers:
             - name: X-Scope-OrgID
               from_attribute: tenant_id
-processing:
-  - name: upstream-tenants
-    type: attribute-mapper
-    attributes:
-      tenant_id:
-        mappings:
-          client-123: team-a
-          client-456: team-b
-          customer-456: team-a
-          customer-789: team-b
-
 servers:
   # Plain HTTP for the internal hop after TLS termination at an ingress.
   - hostname: write-internal.auth.example.com

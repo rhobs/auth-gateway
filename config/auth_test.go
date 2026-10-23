@@ -9,11 +9,8 @@ import (
 
 func TestAuthValidationFixtureContainsExpectedConfiguration(t *testing.T) {
 	c := loadAuthValidationFixture(t)
-	if len(c.Authenticators) != 3 || len(c.AuthorizationPolicies) != 3 || len(c.Processing) != 1 {
-		t.Fatalf("fixture counts = %d authenticators, %d policies, %d processors", len(c.Authenticators), len(c.AuthorizationPolicies), len(c.Processing))
-	}
-	if c.Processing[0].Type != "attribute-mapper" {
-		t.Fatalf("processing type = %q", c.Processing[0].Type)
+	if len(c.Authenticators) != 3 || len(c.AuthorizationPolicies) != 3 {
+		t.Fatalf("fixture counts = %d authenticators, %d policies", len(c.Authenticators), len(c.AuthorizationPolicies))
 	}
 	if got, want := c.Authenticators[0].Attributes["tenant_id"].ClaimPath, []string{"organization", "id"}; !slices.Equal(got, want) {
 		t.Fatalf("tenant claim path = %v, want %v", got, want)
@@ -144,16 +141,6 @@ func TestValidateRejectsInvalidAuthenticationAndAuthorization(t *testing.T) {
 		{name: "empty claim path", want: "authenticators[0].attributes.tenant_id.claim_path", edit: func(c *Config) {
 			c.Authenticators[0].Attributes["tenant_id"] = AttributeSource{ClaimPath: []string{""}}
 		}},
-		{name: "empty mapping output", want: "processing[0].attributes.tenant_id.mappings", edit: func(c *Config) { c.Processing[0].Attributes["tenant_id"].Mappings["client-123"] = "" }},
-		{name: "unsafe mapping output", want: "processing[0].attributes.tenant_id.mappings", edit: func(c *Config) {
-			c.Processing[0].Attributes["tenant_id"].Mappings["client-123"] = "team-a\r\nInjected: yes"
-		}},
-		{name: "duplicate processor name", want: "duplicate processing name", edit: func(c *Config) { c.Processing = append(c.Processing, c.Processing[0]) }},
-		{name: "unsupported processor type", want: "processing[0].type", edit: func(c *Config) { c.Processing[0].Type = "unknown" }},
-		{name: "invalid processor attribute", want: "processing[0].attributes.bad.name", edit: func(c *Config) {
-			c.Processing[0].Attributes["bad.name"] = AttributeMappings{Mappings: map[string]string{"from": "to"}}
-		}},
-		{name: "empty mapping source", want: "processing[0].attributes.tenant_id.mappings", edit: func(c *Config) { c.Processing[0].Attributes["tenant_id"].Mappings[""] = "team-a" }},
 		{name: "duplicate policy", want: "duplicate authorization policy name", edit: func(c *Config) { c.AuthorizationPolicies[1].Name = c.AuthorizationPolicies[0].Name }},
 		{name: "unknown authentication method", want: "servers[0].authentication.any_of", edit: func(c *Config) { c.Servers[0].Authentication.AnyOf = []string{"missing"} }},
 		{name: "duplicate authentication method", want: "servers[0].authentication.any_of", edit: func(c *Config) { c.Servers[0].Authentication.AnyOf = []string{"internal-jwt", "internal-jwt"} }},

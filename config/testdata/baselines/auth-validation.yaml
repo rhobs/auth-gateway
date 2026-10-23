@@ -71,16 +71,6 @@ authorization_policies:
         attributes:
           tenant_id: [customer-456]
 
-processing:
-  - name: upstream-tenants
-    type: attribute-mapper
-    attributes:
-      tenant_id:
-        mappings:
-          client-123: team-a
-          client-456: team-b
-          customer-456: team-a
-
 apis:
   - name: metrics-write
     metrics:

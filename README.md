@@ -6,7 +6,7 @@ controller.
 
 The supported features include exact-host routing, HTTP and HTTPS listeners,
 HTTP/1 and HTTP/2 upstreams, JWT, API-key, and client-certificate mTLS
-authentication, attribute-based authorization, request header mapping, per-API
+authentication, attribute-based authorization, request header forwarding, per-API
 response counters, opt-in per-API fault injection, access logs, Prometheus
 metrics, and OpenTelemetry traces.
 
@@ -100,8 +100,9 @@ HTTPS uses SNI to select a certificate and then checks the request host.
 
 JWTs, API keys, and client certificates can authenticate HTTPS requests.
 Authorization grants name the authenticator, APIs, and allowed attribute
-values. Attribute mappings affect upstream headers and metric labels; grants
-check the original values. See the [JWT guide](docs/auth/jwt.md),
+values. Routes forward source attributes to upstream headers, and metrics use
+the same source values. Supply an additional source attribute when an upstream
+needs a different value. See the [JWT guide](docs/auth/jwt.md),
 [API-key guide](docs/auth/api-key.md), [mTLS guide](docs/auth/mtls.md), and
 [Envoy behavior guide](docs/envoy.md) for request and update behavior.
 
@@ -110,11 +111,10 @@ The policy is off by default and changes take effect after an explicit gateway
 rollout. See [fault injection](docs/configuration-reference.md#fault-injection)
 for the configuration and metric behavior.
 
-Mapping changes update the separate ECDS processing ConfigMap. API-key changes
-update the Secret. Downstream certificate and client CA ConfigMap changes reload
-through SDS for new connections. Static Envoy configuration changes require an
-explicit Deployment rollout; the generated Deployment has no checksum
-annotation.
+API-key changes update the Secret. Downstream certificate and client CA
+ConfigMap changes reload through SDS for new connections. Static Envoy
+configuration changes require an explicit Deployment rollout; the generated
+Deployment has no checksum annotation.
 
 ## Local playground
 

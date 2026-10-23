@@ -25,7 +25,6 @@ type Config struct {
 	Overload              *OverloadConfig       `yaml:"overload,omitempty"`
 	Authenticators        []Authenticator       `yaml:"authenticators,omitempty"`
 	AuthorizationPolicies []AuthorizationPolicy `yaml:"authorization_policies,omitempty"`
-	Processing            []Processor           `yaml:"processing,omitempty"`
 	Servers               []Server              `yaml:"servers"`
 	APIs                  []API                 `yaml:"apis"`
 	Observability         ObservabilityConfig   `yaml:"observability,omitempty"`
@@ -194,18 +193,6 @@ type APIKeyAuthenticator struct {
 	Header string `yaml:"header,omitempty"`
 }
 
-// Processor transforms working attributes after JWT verification.
-type Processor struct {
-	Name       string                       `yaml:"name"`
-	Type       string                       `yaml:"type"`
-	Attributes map[string]AttributeMappings `yaml:"attributes,omitempty"`
-}
-
-// AttributeMappings defines exact string lookups for one working attribute.
-type AttributeMappings struct {
-	Mappings map[string]string `yaml:"mappings,omitempty"`
-}
-
 // AuthorizationPolicy contains allow grants for named APIs.
 type AuthorizationPolicy struct {
 	Name   string               `yaml:"name"`
@@ -299,9 +286,6 @@ type APIKeyCredential struct {
 type KubernetesResources struct {
 	// ConfigMap contains the Envoy bootstrap and static Envoy resources.
 	ConfigMap corev1.ConfigMap
-	// ProcessingConfigMap contains mapped-attribute configuration. It is nil
-	// when the gateway has no attribute mappings.
-	ProcessingConfigMap *corev1.ConfigMap
 	// OTelCollectorConfigMap contains collector configuration. It is nil when
 	// both metrics and tracing are disabled.
 	OTelCollectorConfigMap *corev1.ConfigMap
@@ -353,7 +337,6 @@ func (c Config) clone() Config {
 	c.Overload = cloneConfigPointer(c.Overload)
 	c.Authenticators = cloneSlice(c.Authenticators)
 	c.AuthorizationPolicies = cloneSlice(c.AuthorizationPolicies)
-	c.Processing = cloneSlice(c.Processing)
 	c.Servers = cloneSlice(c.Servers)
 	c.APIs = cloneSlice(c.APIs)
 	c.Observability = c.Observability.clone()
@@ -488,22 +471,6 @@ func (a AttributeSource) clone() AttributeSource {
 	a.Credential = clonePointer(a.Credential)
 	a.URISAN = clonePointer(a.URISAN)
 	a.DNSSAN = clonePointer(a.DNSSAN)
-	return a
-}
-
-func (p Processor) clone() Processor {
-	if p.Attributes != nil {
-		attributes := make(map[string]AttributeMappings, len(p.Attributes))
-		for name, attribute := range p.Attributes {
-			attributes[name] = attribute.clone()
-		}
-		p.Attributes = attributes
-	}
-	return p
-}
-
-func (a AttributeMappings) clone() AttributeMappings {
-	a.Mappings = maps.Clone(a.Mappings)
 	return a
 }
 

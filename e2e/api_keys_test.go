@@ -68,7 +68,7 @@ var _ = Describe("API-key request decisions", Label("gateway", "api-key", "authe
 			status, body, err := gateway.request(ctx, host, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", apiKeySharedSecretKey, nil)
 			Expect(err).NotTo(HaveOccurred(), host)
 			Expect(status).To(Equal(http.StatusOK), host+": "+string(body))
-			expectAPIKeyEcho(body, "team-a", "writer-a")
+			expectAPIKeyEcho(body, "client-a", "writer-a")
 		}
 		status, body, err := gateway.request(ctx, apiKeyPublicHost, false, http.MethodGet, "/health", "", "", apiKeySharedSecretKey, nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -108,9 +108,9 @@ var _ = Describe("API-key request decisions", Label("gateway", "api-key", "authe
 			tenant string
 			writer string
 		}{
-			{name: "both credentials", token: jwt, key: apiKeySharedSecretKey, tenant: "team-b", writer: "writer-b"},
-			{name: "valid JWT and invalid key", token: jwt, key: "wrong-key", tenant: "team-b", writer: "writer-b"},
-			{name: "invalid JWT and valid key", token: "broken.jwt", key: apiKeySharedSecretKey, tenant: "team-a", writer: "writer-a"},
+			{name: "both credentials", token: jwt, key: apiKeySharedSecretKey, tenant: "client-b", writer: "writer-b"},
+			{name: "valid JWT and invalid key", token: jwt, key: "wrong-key", tenant: "client-b", writer: "writer-b"},
+			{name: "invalid JWT and valid key", token: "broken.jwt", key: apiKeySharedSecretKey, tenant: "client-a", writer: "writer-a"},
 		} {
 			status, body, err := gateway.request(ctx, apiKeyAnyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, test.token, test.key, nil)
 			Expect(err).NotTo(HaveOccurred(), test.name)
@@ -134,10 +134,10 @@ var _ = Describe("API-key request decisions", Label("gateway", "api-key", "authe
 			tenant string
 			writer string
 		}{
-			{name: "issuer one", token: gateway.tokenForIssuer("issuer-one", "client-a", "writer-a"), tenant: "team-a", writer: "writer-a"},
-			{name: "issuer two", token: gateway.tokenForIssuer("issuer-two", "client-b", "writer-b"), tenant: "team-b", writer: "writer-b"},
-			{name: "API key only", key: apiKeySharedSecretKey, tenant: "team-a", writer: "writer-a"},
-			{name: "invalid JWT with valid key", token: "broken.jwt", key: apiKeySharedSecretKey, tenant: "team-a", writer: "writer-a"},
+			{name: "issuer one", token: gateway.tokenForIssuer("issuer-one", "client-a", "writer-a"), tenant: "client-a", writer: "writer-a"},
+			{name: "issuer two", token: gateway.tokenForIssuer("issuer-two", "client-b", "writer-b"), tenant: "client-b", writer: "writer-b"},
+			{name: "API key only", key: apiKeySharedSecretKey, tenant: "client-a", writer: "writer-a"},
+			{name: "invalid JWT with valid key", token: "broken.jwt", key: apiKeySharedSecretKey, tenant: "client-a", writer: "writer-a"},
 		} {
 			status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, "api-ingest", test.name, 1, func() (int, []byte, error) {
 				return gateway.request(ctx, apiKeyMultiHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, test.token, test.key, nil)
@@ -166,7 +166,7 @@ var _ = Describe("API-key request decisions", Label("gateway", "api-key", "authe
 		status, body, err := gateway.request(ctx, apiKeyAllHost, true, http.MethodPost, "/ingest", apiKeyRequestBody, jwt, apiKeySharedSecretKey, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectAPIKeyEcho(body, "team-a", "writer-a")
+		expectAPIKeyEcho(body, "client-a", "writer-a")
 
 		for _, test := range []struct {
 			name   string
@@ -190,14 +190,14 @@ var _ = Describe("API-key request decisions", Label("gateway", "api-key", "authe
 		expectAPIKeyDenied(ctx, gateway, "list shared claim", apiKeyAllHost, true, listToken, apiKeySharedSecretKey, nil, http.StatusForbidden)
 	}, NodeTimeout(90*time.Second))
 
-	It("counts mapped key attributes in response metrics", func(ctx SpecContext) {
-		labels := requestMetricLabels("ingest", http.StatusOK, "team-a", "writer-a")
+	It("counts source key attributes in response metrics", func(ctx SpecContext) {
+		labels := requestMetricLabels("ingest", http.StatusOK, "client-a", "writer-a")
 		before, err := requestMetricCount(ctx, gateway.adminAddr, labels)
 		Expect(err).NotTo(HaveOccurred())
 		status, body, err := gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", apiKeySharedSecretKey, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectAPIKeyEcho(body, "team-a", "writer-a")
+		expectAPIKeyEcho(body, "client-a", "writer-a")
 		after, err := requestMetricCount(ctx, gateway.adminAddr, labels)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(after).To(Equal(before + 1))
@@ -227,7 +227,7 @@ var _ = Describe("API-key Secret projection", Label("gateway", "api-key", "authe
 		Eventually(func() bool {
 			_ = nudgeGatewayPod(ctx, apiKeyProjectionNS)
 			status, body, err = gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", "key-b", nil)
-			if err != nil || status != http.StatusOK || headerValue(jwtEchoHeaders(body), "X-Scope-OrgID") != "team-b" {
+			if err != nil || status != http.StatusOK || headerValue(jwtEchoHeaders(body), "X-Scope-OrgID") != "client-b" {
 				return false
 			}
 			status, body, err = gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", apiKeySharedSecretKey, nil)
@@ -238,12 +238,12 @@ var _ = Describe("API-key Secret projection", Label("gateway", "api-key", "authe
 		status, body, err = gateway.request(ctx, apiKeyAnyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", "key-b", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectAPIKeyEcho(body, "team-b", "writer-b")
+		expectAPIKeyEcho(body, "client-b", "writer-b")
 		status, body, err = gateway.request(ctx, apiKeyAllHost, true, http.MethodPost, "/ingest", apiKeyRequestBody,
 			gateway.token("client-b", "writer-b"), "key-b", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectAPIKeyEcho(body, "team-b", "writer-b")
+		expectAPIKeyEcho(body, "client-b", "writer-b")
 
 		currentUID, err := gatewayPodUID(ctx, apiKeyProjectionNS)
 		Expect(err).NotTo(HaveOccurred())
@@ -269,7 +269,7 @@ var _ = Describe("API-key namespace isolation", Label("gateway", "api-key", "aut
 		status, body, err := gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", "isolated-key", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectAPIKeyEcho(body, "team-b", "writer-b")
+		expectAPIKeyEcho(body, "client-b", "writer-b")
 		status, body, err = gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", apiKeySharedSecretKey, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusUnauthorized), string(body))

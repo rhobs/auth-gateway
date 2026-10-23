@@ -16,10 +16,6 @@ authenticators:
         claim_path: [organization, id]
       writer_id:
         claim_path: [sub]
-      chain_id:
-        claim_path: [chain]
-      order_id:
-        claim_path: [order]
       escaped_id:
         claim_path: [literal.claim]
   - name: issuer-two
@@ -33,10 +29,6 @@ authenticators:
         claim_path: [organization, id]
       writer_id:
         claim_path: [sub]
-      chain_id:
-        claim_path: [chain]
-      order_id:
-        claim_path: [order]
       escaped_id:
         claim_path: [literal.claim]
 authorization_policies:
@@ -45,7 +37,7 @@ authorization_policies:
       - authenticator: issuer-one
         apis: [metrics, unmetered]
         attributes:
-          tenant_id: [customer-a, customer-pass]
+          tenant_id: [customer-a]
       - authenticator: issuer-two
         apis: [status-only]
         attributes:
@@ -77,10 +69,6 @@ apis:
               from_attribute: tenant_id
             - name: X-Writer-ID
               from_attribute: writer_id
-            - name: X-Chain
-              from_attribute: chain_id
-            - name: X-Order
-              from_attribute: order_id
             - name: X-Literal
               from_attribute: escaped_id
       - methods: [GET]
@@ -119,10 +107,6 @@ apis:
               from_attribute: tenant_id
             - name: X-Writer-ID
               from_attribute: writer_id
-            - name: X-Chain
-              from_attribute: chain_id
-            - name: X-Order
-              from_attribute: order_id
             - name: X-Literal
               from_attribute: escaped_id
   - name: unmetered
@@ -135,30 +119,6 @@ apis:
           exact: /unmetered
         rewrite:
           path: /anything
-processing:
-  - name: first-mappings
-    type: attribute-mapper
-    attributes:
-      tenant_id:
-        mappings:
-          customer-a: team-a
-          customer-b: team-b
-      chain_id:
-        mappings:
-          first: second
-          second: third
-      order_id:
-        mappings:
-          first: second
-      escaped_id:
-        mappings:
-          'source "quoted" \ value': 'mapped "quoted" \ value'
-  - name: later-mappings
-    type: attribute-mapper
-    attributes:
-      order_id:
-        mappings:
-          second: final
 servers:
   - hostname: writer.jwt.auth-gateway.test
     authentication:

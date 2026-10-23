@@ -395,7 +395,7 @@ func TestAPIKeyPipelineUsesFileECDSAndHostScopedFilters(t *testing.T) {
 	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
 	wantOrder := []string{
 		jwtAuthnFilterName, apiKeyFilterName, headerToMetadataFilterName, authenticationFilterName,
-		attributeInitializationFilterName(1), attributeInitializationFilterName(2), attributeFilterName,
+		attributeInitializationFilterName(1), attributeInitializationFilterName(2),
 		authorizationFilterName, requiredHeaderFilterName, credentialCleanupFilterName,
 		headerMutationFilterName, routerFilterName,
 	}

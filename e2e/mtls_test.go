@@ -28,12 +28,12 @@ var _ = Describe("Client-certificate authentication", Label("gateway", "tls", "m
 		gateway.address = env.ForwardWithCleanup(ctx, mtlsNamespace, "service/auth-gateway", 443)
 	})
 
-	It("forwards a verified URI and DNS SAN identity with mapped headers", func(ctx SpecContext) {
+	It("forwards a verified URI and DNS SAN identity in forwarded headers", func(ctx SpecContext) {
 		status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, "api-ingest", "verified client certificate", 1, func() (int, []byte, error) {
 			return gateway.request(ctx, mtlsOnlyHost, &gateway.allowed, "", "", http.MethodPost, "/ingest", mtlsPayload, mtlsRequestHeaders())
 		})
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectMTLSEcho(body, "team-a")
+		expectMTLSEcho(body, mtlsAllowedURI)
 	}, NodeTimeout(60*time.Second))
 
 	It("rejects missing or untrusted certificates during the required TLS handshake", func(ctx SpecContext) {
@@ -94,13 +94,13 @@ var _ = Describe("Client-certificate authentication", Label("gateway", "tls", "m
 			key         string
 			tenant      string
 		}{
-			{name: "JWT without a certificate", token: gateway.token(mtlsSecondURI), tenant: "team-b"},
-			{name: "key without a certificate", key: mtlsAllowedKey, tenant: "team-a"},
-			{name: "invalid JWT and valid key", token: "broken.jwt", key: mtlsAllowedKey, tenant: "team-a"},
-			{name: "JWT before key", token: gateway.token(mtlsSecondURI), key: mtlsAllowedKey, tenant: "team-b"},
-			{name: "mTLS before invalid key", certificate: &gateway.allowed, key: "wrong-key", tenant: "team-a"},
-			{name: "JWT before mTLS and key", certificate: &gateway.allowed, token: gateway.token(mtlsSecondURI), key: mtlsAllowedKey, tenant: "team-b"},
-			{name: "mTLS after invalid JWT", certificate: &gateway.allowed, token: "broken.jwt", tenant: "team-a"},
+			{name: "JWT without a certificate", token: gateway.token(mtlsSecondURI), tenant: mtlsSecondURI},
+			{name: "key without a certificate", key: mtlsAllowedKey, tenant: mtlsAllowedURI},
+			{name: "invalid JWT and valid key", token: "broken.jwt", key: mtlsAllowedKey, tenant: mtlsAllowedURI},
+			{name: "JWT before key", token: gateway.token(mtlsSecondURI), key: mtlsAllowedKey, tenant: mtlsSecondURI},
+			{name: "mTLS before invalid key", certificate: &gateway.allowed, key: "wrong-key", tenant: mtlsAllowedURI},
+			{name: "JWT before mTLS and key", certificate: &gateway.allowed, token: gateway.token(mtlsSecondURI), key: mtlsAllowedKey, tenant: mtlsSecondURI},
+			{name: "mTLS after invalid JWT", certificate: &gateway.allowed, token: "broken.jwt", tenant: mtlsAllowedURI},
 		} {
 			status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, "api-ingest", test.name, 1, func() (int, []byte, error) {
 				return gateway.request(ctx, mtlsMixedHost, test.certificate, test.token, test.key, http.MethodPost, "/ingest", mtlsPayload, mtlsRequestHeaders())
@@ -151,7 +151,7 @@ var _ = Describe("Client-certificate authentication", Label("gateway", "tls", "m
 				http.MethodPost, "/ingest", mtlsPayload, mtlsRequestHeaders())
 		})
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectMTLSEcho(body, "team-a")
+		expectMTLSEcho(body, mtlsAllowedURI)
 		expectMTLSDenied(ctx, gateway, "missing JWT", mtlsAllHost, &gateway.allowed, "", mtlsAllowedKey, mtlsRequestHeaders(), http.StatusUnauthorized)
 		expectMTLSDenied(ctx, gateway, "missing key", mtlsAllHost, &gateway.allowed, gateway.token(mtlsAllowedURI), "", mtlsRequestHeaders(), http.StatusUnauthorized)
 		expectMTLSDenied(ctx, gateway, "shared attribute mismatch", mtlsAllHost, &gateway.allowed, gateway.token(mtlsSecondURI), mtlsAllowedKey,
@@ -176,7 +176,7 @@ var _ = Describe("Client-certificate authentication", Label("gateway", "tls", "m
 		Eventually(func() bool {
 			_ = nudgeGatewayPod(ctx, mtlsNamespace)
 			status, body, err = requestMTLSWithFreshForward(ctx, gateway, mtlsOnlyHost, &gateway.rotated, "", "", http.MethodPost, "/ingest", mtlsPayload, mtlsRequestHeaders())
-			return err == nil && status == http.StatusOK && headerValue(jwtEchoHeaders(body), "X-Scope-OrgID") == "team-a"
+			return err == nil && status == http.StatusOK && headerValue(jwtEchoHeaders(body), "X-Scope-OrgID") == mtlsAllowedURI
 		}).WithContext(ctx).WithTimeout(2*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
 			return fmt.Sprintf("rotated CA was not accepted: HTTP %d, body %s, error %v", status, body, err)
 		})

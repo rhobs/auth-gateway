@@ -3,7 +3,6 @@
 package e2e
 
 import (
-	"bytes"
 	"crypto/rsa"
 	"fmt"
 	"net/http"
@@ -11,8 +10,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"github.com/rhobs/auth-gateway/config"
 )
 
 var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authentication", "authorization", "namespace-"+jwtPlainNamespace), Ordered, func() {
@@ -286,7 +283,7 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		jwtGateway.metricsAddr = env.ForwardWithCleanup(ctx, jwtNamespace, "service/auth-gateway", 8889)
 	}, NodeTimeout(12*time.Minute))
 
-	It("authorizes original claims and sends processed attributes over HTTP and HTTPS", func(ctx SpecContext) {
+	It("authorizes and forwards source attributes over HTTP and HTTPS", func(ctx SpecContext) {
 		for _, target := range []struct {
 			address string
 			host    string
@@ -295,9 +292,8 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 			for _, test := range []struct {
 				issuer string
 				tenant string
-				team   string
 				path   string
-			}{{"issuer-one", "customer-a", "team-a", "/protected"}, {"issuer-two", "customer-b", "team-b", "/status-only"}} {
+			}{{"issuer-one", "customer-a", "/protected"}, {"issuer-two", "customer-b", "/status-only"}} {
 				claims := jwtTestClaims(test.tenant)
 				claims["sub"] = "writer-17"
 				token := jwtGateway.token(test.issuer, claims, nil)
@@ -311,18 +307,14 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 				Expect(err).NotTo(HaveOccurred())
 				Expect(echo.Method).To(Equal(http.MethodGet))
 				Expect(echo.URL).To(HaveSuffix("/anything"))
-				Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(Equal(test.team))
+				Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(Equal(test.tenant))
 				Expect(headerValue(echo.Headers, "X-Writer-ID")).To(Equal("writer-17"))
-				Expect(headerValue(echo.Headers, "X-Chain")).To(Equal("second"), "one processor must perform one lookup")
-				Expect(headerValue(echo.Headers, "X-Order")).To(Equal("final"), "later processors must consume earlier output")
-				Expect(headerValue(echo.Headers, "X-Literal")).To(Equal(`mapped "quoted" \ value`))
+				Expect(headerValue(echo.Headers, "X-Literal")).To(Equal(`source "quoted" \ value`))
 				Expect(headerValue(echo.Headers, "Authorization")).To(BeEmpty())
 			}
 		}
 		claims := jwtTestClaims("customer-a")
 		delete(claims, "sub")
-		delete(claims, "chain")
-		delete(claims, "order")
 		delete(claims, "literal.claim")
 		token := jwtGateway.token("issuer-one", claims, nil)
 		status, responseBody, err := jwtGateway.requestPath(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, "/headerless", token, true)
@@ -373,15 +365,6 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		}
 	}, SpecTimeout(90*time.Second))
 
-	It("passes through authorized values without a mapping", func(ctx SpecContext) {
-		claims := jwtTestClaims("customer-pass")
-		token := jwtGateway.token("issuer-one", claims, nil)
-		status, body, err := jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, token, false)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(status).To(Equal(http.StatusOK), string(body))
-		Expect(headerValue(jwtEchoHeaders(body), "X-Scope-OrgID")).To(Equal("customer-pass"))
-	}, NodeTimeout(60*time.Second))
-
 	It("rejects invalid credentials, missing required attributes, and denied original claims", func(ctx SpecContext) {
 		adminAddress := jwtGateway.adminAddr
 
@@ -398,7 +381,7 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		wrongIssuer := validClaims()
 		wrongIssuer["iss"] = "https://unknown.jwt.test"
 		unknownTenant := validClaims()
-		unknownTenant["organization"].(map[string]any)["id"] = "unmapped-customer"
+		unknownTenant["organization"].(map[string]any)["id"] = "unlisted-customer"
 		deniedTenant := validClaims()
 		deniedTenant["organization"].(map[string]any)["id"] = "customer-b"
 		missingAuthorization := validClaims()
@@ -458,8 +441,6 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		Expect(echo.URL).To(HaveSuffix("/anything"))
 		Expect(headerValue(echo.Headers, "X-Writer-ID")).To(Equal("writer-17"))
 		Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(BeEmpty())
-		Expect(headerValue(echo.Headers, "X-Chain")).To(BeEmpty())
-		Expect(headerValue(echo.Headers, "X-Order")).To(BeEmpty())
 		Expect(headerValue(echo.Headers, "X-Literal")).To(BeEmpty())
 
 		for _, test := range []struct {
@@ -494,55 +475,4 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 
 	registerJWTRequestMetricSpecs()
 
-	It("reloads mapping changes through ECDS without changing authorization or the Pod", func(ctx SpecContext) {
-		claims := jwtTestClaims("customer-a")
-		claims["sub"] = "writer-17"
-		claims["exp"] = time.Now().Add(30 * time.Minute).Unix()
-		token := jwtGateway.token("issuer-one", claims, nil)
-		status, body, err := jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, token, false)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(status).To(Equal(http.StatusOK), "original identity mapping should be authorized: "+string(body))
-		adminAddress := jwtGateway.adminAddr
-		updatedMetricLabels := requestMetricLabels("metrics", http.StatusOK, "team-b", "writer-17")
-		beforeUpdatedMetric, err := requestMetricCount(ctx, adminAddress, updatedMetricLabels)
-		Expect(err).NotTo(HaveOccurred())
-
-		selector := "app.kubernetes.io/name=auth-gateway"
-		oldUID, err := env.PodUID(ctx, jwtNamespace, selector)
-		Expect(err).NotTo(HaveOccurred())
-
-		fixture, err := env.Fixture("jwt-gateway.yaml")
-		Expect(err).NotTo(HaveOccurred())
-		updatedConfig, err := config.Load(bytes.NewReader(fixture))
-		Expect(err).NotTo(HaveOccurred())
-		updatedConfig.Kubernetes.Namespace = jwtNamespace
-		for i := range updatedConfig.Authenticators {
-			updatedConfig.Authenticators[i].JWT.JWKS.URI = "https://jwks." + jwtNamespace + ".svc.cluster.local/" + updatedConfig.Authenticators[i].Name
-			updatedConfig.Authenticators[i].JWT.JWKS.TrustedCA = jwtTrustedCA()
-		}
-		updatedConfig.Processing[0].Attributes["tenant_id"].Mappings["customer-a"] = "team-b"
-		updatedResources, err := config.GenerateKubernetes(updatedConfig)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(updatedResources.ConfigMap.Data).To(Equal(jwtGateway.resources.ConfigMap.Data), "mapping changes must not alter the Envoy bootstrap ConfigMap")
-		Expect(updatedResources.ProcessingConfigMap).NotTo(BeNil())
-		Expect(updatedResources.ProcessingConfigMap.Data["processing.yaml"]).NotTo(Equal(jwtGateway.resources.ProcessingConfigMap.Data["processing.yaml"]))
-		manifest, err := yamlDocuments(updatedResources.ProcessingConfigMap)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(env.Apply(ctx, jwtNamespace, manifest)).To(Succeed())
-
-		Eventually(func() bool {
-			_ = nudgeGatewayPod(ctx, jwtNamespace)
-			status, body, err = jwtGateway.request(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, token, false)
-			return err == nil && status == http.StatusOK && headerValue(jwtEchoHeaders(body), "X-Scope-OrgID") == "team-b"
-		}).WithContext(ctx).WithTimeout(3*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
-			return fmt.Sprintf("ECDS mapping update did not change the output while preserving authorization: status=%d body=%s error=%v", status, body, err)
-		})
-		afterUpdatedMetric, err := requestMetricCount(ctx, adminAddress, updatedMetricLabels)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(afterUpdatedMetric).To(BeNumerically(">", beforeUpdatedMetric), "ECDS mapping update did not change the metric label")
-		newUID, err := env.PodUID(ctx, jwtNamespace, selector)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(newUID).To(Equal(oldUID), "an ECDS processing update must not replace the gateway Pod")
-
-	}, SpecTimeout(8*time.Minute))
 })

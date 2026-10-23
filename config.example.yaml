@@ -34,6 +34,8 @@ listener:
 #   heap_shrink_threshold: 0.90 # Default.
 #   request_reject_threshold: 0.95 # Default.
 
+# Attributes use source values directly. Supply an extra source attribute when
+# authorization and upstream headers need different values.
 authenticators:
   - name: internal-jwt
     jwt:
@@ -304,18 +306,6 @@ apis:
           request_headers:
             - name: X-Scope-OrgID
               from_attribute: tenant_id
-
-processing:
-  - name: upstream-tenants
-    type: attribute-mapper
-    attributes:
-      tenant_id:
-        mappings:
-          client-123: team-a
-          client-456: team-b
-          customer-456: team-a
-          customer-789: team-b
-          spiffe://partners.example.com/client-123: team-a
 
 servers:
   - hostname: write-internal.auth.example.com

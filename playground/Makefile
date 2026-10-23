@@ -57,7 +57,7 @@ generate:
 	  chmod 644 generated/mock-oauth2.crt; \
 	  chmod 755 generated; \
 	  umask 022; \
-	  rm -f generated/envoy.yaml generated/otel-collector.yaml generated/processing/processing.yaml generated/api-keys/api-keys.yaml generated/server-certificate-*.yaml generated/metrics.jwt generated/logs.jwt generated/metrics-token-response.json generated/logs-token-response.json; \
+	  rm -f generated/envoy.yaml generated/otel-collector.yaml generated/api-keys/api-keys.yaml generated/server-certificate-*.yaml generated/metrics.jwt generated/logs.jwt generated/metrics-token-response.json generated/logs-token-response.json; \
 	  go run ./cmd/generate -config config.yaml -output generated; \
 	  chmod 644 generated/envoy.yaml generated/otel-collector.yaml; \
 	  printf '%s\n' 'Generated Envoy and collector configs and local OAuth certificate'

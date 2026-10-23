@@ -38,7 +38,7 @@ func TestObservabilityDefaults(t *testing.T) {
 }
 
 func TestObservabilityDefaultsDoNotMutateInput(t *testing.T) {
-	c := loadConfigCase(t, "jwt-auth-with-mappings")
+	c := loadConfigCase(t, "jwt-auth-with-attributes")
 	c.Observability.Metrics.CustomMetricName = new("gateway_http_requests_total")
 	defaulted := c.withDefaults()
 	defaulted.APIs[0].Metrics.Labels["tenant"] = "writer_id"
@@ -126,7 +126,7 @@ func TestKubernetesObservabilityDefaultsPreserveExplicitResourceMaps(t *testing.
 }
 
 func TestAPIMetricsConfigurationAndValidation(t *testing.T) {
-	c := loadConfigCase(t, "jwt-auth-with-mappings")
+	c := loadConfigCase(t, "jwt-auth-with-attributes")
 	type apiMetricsDefaults struct {
 		Configured bool
 		Tenant     string
@@ -163,7 +163,7 @@ func TestAPIMetricsConfigurationAndValidation(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			config := loadConfigCase(t, "jwt-auth-with-mappings")
+			config := loadConfigCase(t, "jwt-auth-with-attributes")
 			test.edit(&config)
 			if err := config.Validate(); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Validate error = %v, want %q", err, test.want)
@@ -173,7 +173,7 @@ func TestAPIMetricsConfigurationAndValidation(t *testing.T) {
 }
 
 func TestRequestMetricNameConfigurationAndValidation(t *testing.T) {
-	c := loadConfigCase(t, "jwt-auth-with-mappings")
+	c := loadConfigCase(t, "jwt-auth-with-attributes")
 	c.Observability.Metrics.CustomMetricName = new("gateway_http_requests_total")
 	if err := c.Validate(); err != nil {
 		t.Fatalf("valid custom metric name was rejected: %v", err)
@@ -187,7 +187,7 @@ func TestRequestMetricNameConfigurationAndValidation(t *testing.T) {
 		{name: "reserved prefix", value: "__reserved"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			config := loadConfigCase(t, "jwt-auth-with-mappings")
+			config := loadConfigCase(t, "jwt-auth-with-attributes")
 			config.Observability.Metrics.CustomMetricName = new(test.value)
 			if err := config.Validate(); err == nil || !strings.Contains(err.Error(), "observability.metrics.custom_metric_name") {
 				t.Fatalf("Validate error = %v, want observability.metrics.custom_metric_name", err)
@@ -197,7 +197,7 @@ func TestRequestMetricNameConfigurationAndValidation(t *testing.T) {
 }
 
 func TestRequestMetricsGenerateTagsAndRouteMetadata(t *testing.T) {
-	c := loadConfigCase(t, "jwt-auth-with-mappings")
+	c := loadConfigCase(t, "jwt-auth-with-attributes")
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)
@@ -268,7 +268,7 @@ func TestRequestMetricsGenerateTagsAndRouteMetadata(t *testing.T) {
 }
 
 func TestRequestMetricsDefaultCounterName(t *testing.T) {
-	c := loadConfigCase(t, "jwt-auth-with-mappings")
+	c := loadConfigCase(t, "jwt-auth-with-attributes")
 	c.Observability.Metrics.CustomMetricName = nil
 	files, err := Generate(c)
 	if err != nil {
@@ -308,9 +308,6 @@ func TestRequestMetricsUseAttributesWithoutHeaderProcessing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if files.ProcessingConfig != nil {
-		t.Fatal("a label binding without mappings created an ECDS file")
-	}
 	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
 	want := []string{requestControlsFilterName, requestMetricsFilterName, jwtAuthnFilterName, attributeFilterName, authorizationFilterName, credentialCleanupFilterName, routerFilterName}
 	if got := httpFilterNames(manager); !slices.Equal(got, want) {
@@ -318,8 +315,8 @@ func TestRequestMetricsUseAttributesWithoutHeaderProcessing(t *testing.T) {
 	}
 }
 
-func TestRequestMetricsFilterPrecedesMappedJWTProcessing(t *testing.T) {
-	c := loadConfigCase(t, "jwt-auth-with-mappings")
+func TestRequestMetricsFilterPrecedesJWTAttributeInitialization(t *testing.T) {
+	c := loadConfigCase(t, "jwt-auth-with-attributes")
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)
@@ -367,7 +364,7 @@ func TestStatusOnlyRequestMetricsOnPublicAPI(t *testing.T) {
 }
 
 func TestRequestMetricsOnlyOnSelectedAPIs(t *testing.T) {
-	c := loadConfigCase(t, "jwt-auth-with-mappings")
+	c := loadConfigCase(t, "jwt-auth-with-attributes")
 	c.APIs[1].Metrics = nil
 	c.Servers[1].APIs = []string{"logs"}
 	files, err := Generate(c)
@@ -582,7 +579,7 @@ func TestGenerateKubernetesTracingWithoutMetrics(t *testing.T) {
 }
 
 func TestRequestMetricBindingChangesBootstrapOnly(t *testing.T) {
-	c := loadConfigCase(t, "jwt-auth-with-mappings")
+	c := loadConfigCase(t, "jwt-auth-with-attributes")
 	before, err := GenerateKubernetes(c)
 	if err != nil {
 		t.Fatal(err)
@@ -595,16 +592,13 @@ func TestRequestMetricBindingChangesBootstrapOnly(t *testing.T) {
 	if before.ConfigMap.Data[envoyConfigFilename] == after.ConfigMap.Data[envoyConfigFilename] {
 		t.Fatal("changing a metric label binding did not change the static Envoy bootstrap")
 	}
-	if !reflect.DeepEqual(before.ProcessingConfigMap.Data, after.ProcessingConfigMap.Data) {
-		t.Fatal("changing a metric label binding changed the ECDS processing resource")
-	}
 	if !reflect.DeepEqual(before.Deployment.Spec.Template, after.Deployment.Spec.Template) {
 		t.Fatal("changing a metric label binding changed the Deployment template")
 	}
 }
 
 func TestRequestMetricNameChangesBootstrapOnly(t *testing.T) {
-	c := loadConfigCase(t, "jwt-auth-with-mappings")
+	c := loadConfigCase(t, "jwt-auth-with-attributes")
 	before, err := GenerateKubernetes(c)
 	if err != nil {
 		t.Fatal(err)
@@ -616,9 +610,6 @@ func TestRequestMetricNameChangesBootstrapOnly(t *testing.T) {
 	}
 	if before.ConfigMap.Data[envoyConfigFilename] == after.ConfigMap.Data[envoyConfigFilename] {
 		t.Fatal("changing the request metric name did not change the static Envoy bootstrap")
-	}
-	if !reflect.DeepEqual(before.ProcessingConfigMap.Data, after.ProcessingConfigMap.Data) {
-		t.Fatal("changing the request metric name changed the ECDS processing resource")
 	}
 	if !reflect.DeepEqual(before.Deployment.Spec.Template, after.Deployment.Spec.Template) {
 		t.Fatal("changing the request metric name changed the Deployment template")

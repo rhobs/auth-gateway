@@ -49,14 +49,6 @@ apis:
             - name: X-Scope-OrgID
               from_attribute: requested_tenant
 
-processing:
-  - name: tenants
-    type: attribute-mapper
-    attributes:
-      requested_tenant:
-        mappings:
-          client-a: team-a
-
 servers:
   - hostname: either.header.gateway.test
     authentication:

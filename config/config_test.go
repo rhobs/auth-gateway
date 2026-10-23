@@ -120,6 +120,7 @@ func TestLoadRejectsInvalidYAML(t *testing.T) {
 		want  string
 	}{
 		{name: "unknown field", input: "version: 1\nunknown: true\n", want: "field unknown not found"},
+		{name: "top-level processing", input: "version: 1\nprocessing: []\n", want: "field processing not found"},
 		{name: "top-level admission control", input: "version: 1\nadmission_control: {}\n", want: "field admission_control not found"},
 		{name: "duplicate field", input: "version: 1\nversion: 1\n", want: "already defined"},
 		{name: "multiple documents", input: "version: 1\n---\nversion: 1\n", want: "expected exactly one YAML document"},
@@ -707,7 +708,6 @@ func TestDefaultsCloneInputs(t *testing.T) {
 		*keySource.Credential = false
 		headerSource := defaulted.Authenticators[2].Attributes["requested_tenant"]
 		*headerSource.Header = "changed"
-		defaulted.Processing[0].Attributes["tenant_id"].Mappings["client-123"] = "changed"
 		defaulted.AuthorizationPolicies[0].Grants[0].APIs[0] = "changed"
 		defaulted.AuthorizationPolicies[0].Grants[0].Attributes["tenant_id"][0] = "changed"
 		defaulted.Servers[0].Authentication.AnyOf[0] = "changed"
@@ -718,7 +718,6 @@ func TestDefaultsCloneInputs(t *testing.T) {
 			c.Authenticators[0].Attributes["tenant_id"].ClaimPath[0] == "changed" ||
 			!*c.Authenticators[2].Attributes["tenant_id"].Credential ||
 			*c.Authenticators[2].Attributes["requested_tenant"].Header == "changed" ||
-			c.Processing[0].Attributes["tenant_id"].Mappings["client-123"] == "changed" ||
 			c.AuthorizationPolicies[0].Grants[0].APIs[0] == "changed" ||
 			c.AuthorizationPolicies[0].Grants[0].Attributes["tenant_id"][0] == "changed" ||
 			c.Servers[0].Authentication.AnyOf[0] == "changed" ||

@@ -87,14 +87,6 @@ apis:
           exact: /health
         rewrite:
           path: /anything
-processing:
-  - name: tenants
-    type: attribute-mapper
-    attributes:
-      tenant_id:
-        mappings:
-          client-a: team-a
-          client-b: team-b
 servers:
   - hostname: public.api-key.auth-gateway.test
     apis: [public]

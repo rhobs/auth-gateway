@@ -74,9 +74,6 @@ func validatePinnedEnvoyFiles(t *testing.T, c Config, files GeneratedFiles, gold
 	args := []string{"run", "--rm", "--user", "101:101"}
 	configDir := runtimeDirectory(t)
 	externalFiles := make(map[string]map[string][]byte)
-	if err := os.Mkdir(filepath.Join(configDir, "processing"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	if _, exists := c.apiKeyAuthenticator(); exists {
 		if err := os.Mkdir(filepath.Join(configDir, "api-keys"), 0o755); err != nil {
 			t.Fatal(err)

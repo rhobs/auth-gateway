@@ -11,12 +11,11 @@ golden-file updates.
   generated output, and tests aligned.
 - Client-certificate mTLS is unsupported. Do not implement it unless the task
   changes scope.
-- Keep JWT verification, API-key authentication, authorization, and attribute
-  mapping in native Envoy filters. Lua is limited to per-API response counters.
-- Put mapped-attribute processing in `processing.yaml`, loaded through ECDS
-  from a separate `<name>-processing` ConfigMap. Mapping updates change only
-  that ConfigMap and do not change the bootstrap, Deployment template, or Pod
-  identity.
+- Keep JWT verification, API-key authentication, authorization, attribute
+  extraction, and request-header forwarding in native Envoy filters. Lua is
+  limited to per-API response counters.
+- Use attribute values directly from their declared sources. Supply a separate
+  source attribute when upstreams need a different value.
 - Static bootstrap changes require an explicit Deployment rollout. Generated
   Deployments have no checksum annotation.
 - Keep reusable Kubernetes lifecycle, port forwarding, readiness, and
