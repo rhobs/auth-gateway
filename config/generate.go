@@ -244,6 +244,9 @@ func serverVirtualHost(c Config, index int, server Server, apis map[string]API) 
 	if err := addAPIFaultRouteConfigs(routes, bound); err != nil {
 		return nil, fmt.Errorf("servers[%d] routes: %w", index, err)
 	}
+	if err := addAPIAdmissionRouteConfigs(routes, bound); err != nil {
+		return nil, fmt.Errorf("servers[%d] routes: %w", index, err)
+	}
 	host := &route.VirtualHost{Name: server.Hostname, Domains: []string{server.Hostname}, Routes: routes}
 	if server.Authentication == nil {
 		return host, nil
@@ -498,15 +501,12 @@ func (c Config) toHTTPFilters(hosts []indexedVirtualHost, protected bool) ([]*hc
 		}
 		filters = append(filters, cleanup)
 	}
-	if c.AdmissionControl != nil && c.AdmissionControl.Enabled {
-		config, err := packEnvoy(c.AdmissionControl.toEnvoy())
-		if err != nil {
-			return nil, fmt.Errorf("encode admission control filter: %w", err)
-		}
-		filters = append(filters, &hcm.HttpFilter{
-			Name:       admissionControlFilterName,
-			ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: config},
-		})
+	admission, err := c.admissionHTTPFilter(hosts)
+	if err != nil {
+		return nil, err
+	}
+	if admission != nil {
+		filters = append(filters, admission)
 	}
 	return filters, nil
 }
@@ -1201,7 +1201,7 @@ func apiMethodRoutes(apis []API, includeMetadata bool) ([]*route.Route, []method
 func apiMethodRoute(api API, apiIndex, routeIndex, methodIndex int, method string, apiRoute Route, includeMetadata bool) *route.Route {
 	name := apiRouteName(apiIndex, api.Name, routeIndex, methodIndex)
 	action := &route.RouteAction{
-		ClusterSpecifier:  &route.RouteAction_Cluster{Cluster: "api-" + api.Name},
+		ClusterSpecifier:  &route.RouteAction_Cluster{Cluster: apiClusterName(api.Name)},
 		Timeout:           apiRoute.Timeouts.ResponseTimeout.protobuf(),
 		IdleTimeout:       apiRoute.Timeouts.IdleTimeout.protobuf(),
 		MaxStreamDuration: &route.RouteAction_MaxStreamDuration{MaxStreamDuration: apiRoute.Timeouts.MaxStreamDuration.protobuf()},
@@ -1398,10 +1398,12 @@ func applyPathRewrite(action *route.RouteAction, rewrite *PathRewrite) {
 	}
 }
 
+func apiClusterName(apiName string) string { return "api-" + apiName }
+
 func apiClusters(apis []API) ([]*cluster.Cluster, error) {
 	clusters := make([]*cluster.Cluster, 0, len(apis))
 	for _, api := range apis {
-		name := "api-" + api.Name
+		name := apiClusterName(api.Name)
 		protocol := &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig{ProtocolConfig: &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig_HttpProtocolOptions{HttpProtocolOptions: &core.Http1ProtocolOptions{}}}
 		if api.Upstream.HTTPProtocol == http2Protocol {
 			var http2 *core.Http2ProtocolOptions

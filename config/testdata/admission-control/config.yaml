@@ -1,25 +1,48 @@
 version: 1
 
-admission_control:
-  enabled: true
-  sampling_window: 45s
-  sr_threshold: 91.5
-  rps_threshold: 25
-  max_rejection_probability: 65
-
 servers:
   - hostname: admission.test
-    apis: [protected, plain]
+    apis: [protected, other, plain, disabled]
+  - hostname: shared.admission.test
+    apis: [protected]
+  - hostname: secure.admission.test
+    tls_config:
+      secret: admission-tls
+    apis: [other]
+  - hostname: plain.admission.test
+    tls_config:
+      secret: admission-tls
+    apis: [plain, disabled]
 
 apis:
   - name: protected
+    admission_control:
+      enabled: true
+      sampling_window: 45s
+      sr_threshold: 91.5
+      rps_threshold: 25
+      max_rejection_probability: 65
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [GET, POST]
+        path:
+          prefix: /protected/
+      - methods: [GET]
+        path:
+          exact: /protected-status
+
+  - name: other
+    admission_control:
+      enabled: true
     upstream:
       address: httpbin
       port: 8080
     routes:
       - methods: [GET]
         path:
-          prefix: /protected/
+          prefix: /other/
 
   - name: plain
     upstream:
@@ -29,6 +52,18 @@ apis:
       - methods: [GET]
         path:
           prefix: /plain/
+
+  - name: disabled
+    admission_control:
+      sampling_window: 1m
+      sr_threshold: 90
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [GET]
+        path:
+          prefix: /disabled/
 
 kubernetes:
   name: auth-gateway

@@ -27,7 +27,8 @@ make e2e
 `make test` runs unit tests and golden comparisons. `make lint` checks formatting,
 tagged code, linters, and Markdown links. The tagged compile command does not
 start a cluster. `make test-runtime` uses Docker to validate checked-in Envoy
-goldens and exercise valid Envoy file reloads. `make e2e` runs the live Kind suite
+goldens and exercise valid Envoy file reloads and per-API admission isolation.
+`make e2e` runs the live Kind suite
 and needs Docker, Go, and network access. It creates or reuses the
 `auth-gateway-e2e` cluster and removes its test namespaces afterward. For
 JWT-only iteration, run
@@ -39,7 +40,7 @@ replace the full suite before handoff.
 | Location                           | Contract                                                                                          |
 |------------------------------------|---------------------------------------------------------------------------------------------------|
 | `config/*_test.go`                 | YAML loading, defaults, validation, Envoy and Kubernetes output, and generated references.        |
-| `config/runtime*_test.go`          | Generated-file validation and valid file-based Envoy reloads.                                     |
+| `config/runtime*_test.go`          | Generated-file validation, valid file-based Envoy reloads, and per-API admission isolation.         |
 | `e2e/internal/framework/*_test.go` | Reusable Kubernetes test infrastructure.                                                          |
 | `e2e/*_test.go`                    | Observable routing, authentication, authorization, processing, TLS, reload, and metrics behavior. |
 

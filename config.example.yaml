@@ -34,15 +34,6 @@ listener:
 #   heap_shrink_threshold: 0.90 # Default.
 #   request_reject_threshold: 0.95 # Default.
 
-# Optional gateway-wide admission control. Envoy applies it to every request
-# handled by the gateway.
-admission_control:
-  enabled: true
-  sampling_window: 30s
-  sr_threshold: 95
-  rps_threshold: 10
-  max_rejection_probability: 80
-
 authenticators:
   - name: internal-jwt
     jwt:
@@ -179,6 +170,13 @@ observability:
 
 apis:
   - name: metrics-write
+    # Optional admission control for this API. Changes require a gateway rollout.
+    admission_control:
+      enabled: true
+      sampling_window: 30s
+      sr_threshold: 95
+      rps_threshold: 10
+      max_rejection_probability: 80
     # Optional per-API request counter. `api` is this API's name and
     # `http_status_code` comes from the response. Additional label names map to
     # authenticator attributes declared under authenticators[].attributes.
@@ -235,6 +233,12 @@ apis:
         #   response_timeout: 20s
 
   - name: metrics-query
+    admission_control:
+      enabled: true
+      sampling_window: 30s
+      sr_threshold: 95
+      rps_threshold: 10
+      max_rejection_probability: 80
     upstream:
       address: thanos-query.observability.svc.cluster.local
       port: 9090
@@ -280,6 +284,12 @@ apis:
           max_stream_duration: 120s
 
   - name: logs
+    admission_control:
+      enabled: true
+      sampling_window: 30s
+      sr_threshold: 95
+      rps_threshold: 10
+      max_rejection_probability: 80
     metrics: {} # Count responses without attribute labels.
     upstream:
       address: loki
