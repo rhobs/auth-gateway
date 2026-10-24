@@ -61,13 +61,6 @@ apis:
         processing:
           request_headers:
             - {name: X-Scope-OrgID, from_attribute: tenant_id}
-processing:
-  - name: tenants
-    type: attribute-mapper
-    attributes:
-      tenant_id:
-        mappings:
-          spiffe://clients.example.test/client-a: team-a
 servers:
   - hostname: mtls.gateway.test
     tls_config: {secret: gateway-tls}

@@ -48,9 +48,11 @@ bound to the key in the Secret or an incoming header. mTLS attributes can
 read a verified URI SAN, DNS SAN, or incoming header. A grant checks the
 original value from the declared source. A header value comes from the caller,
 but the named authenticator must still succeed before its grant applies.
-Missing or empty headers leave the attribute unset. Mappings affect forwarding
-and metric labels, not grants. A source header normally reaches the backend;
-if it is also a managed output header, the gateway replaces or removes it.
+Missing or empty headers leave the attribute unset. Forwarded headers and
+metric labels use the source attribute values. Supply a separate source
+attribute when an upstream needs a different value. A source header normally
+reaches the backend; if it is also a managed output header, the gateway replaces
+or removes it.
 
 Changes to attribute sources, authenticators, or policies require regenerating
 the static configuration and explicitly rolling out the gateway Deployment.

@@ -20,10 +20,10 @@ type requestMetricSample struct {
 }
 
 func registerJWTRequestMetricSpecs() {
-	It("counts a successful request with mapped labels", func(ctx SpecContext) {
+	It("counts a successful request with source attribute labels", func(ctx SpecContext) {
 		gateway := jwtGateway
 		adminAddress := gateway.adminAddr
-		labels := requestMetricLabels("metrics", http.StatusOK, "team-a", "writer-17")
+		labels := requestMetricLabels("metrics", http.StatusOK, "customer-a", "writer-17")
 		before, err := requestMetricCount(ctx, adminAddress, labels)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -37,7 +37,7 @@ func registerJWTRequestMetricSpecs() {
 		Expect(echo.Method).To(Equal(http.MethodGet))
 		Expect(echo.URL).To(HaveSuffix("/anything"))
 		Expect(echo.Data).To(BeEmpty())
-		Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(Equal("team-a"))
+		Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(Equal("customer-a"))
 		Expect(headerValue(echo.Headers, "X-Writer-ID")).To(Equal("writer-17"))
 		Expect(headerValue(echo.Headers, "Authorization")).To(BeEmpty())
 
@@ -49,10 +49,10 @@ func registerJWTRequestMetricSpecs() {
 		}).WithContext(ctx).WithTimeout(15 * time.Second).WithPolling(250 * time.Millisecond).Should(Succeed())
 	}, Label("metrics"), NodeTimeout(60*time.Second))
 
-	It("counts an RBAC denial with a mapped tenant and missing writer", func(ctx SpecContext) {
+	It("counts an RBAC denial with a source tenant and missing writer", func(ctx SpecContext) {
 		gateway := jwtGateway
 		adminAddress := gateway.adminAddr
-		labels := requestMetricLabels("metrics", http.StatusForbidden, "team-a", "__unattributed__")
+		labels := requestMetricLabels("metrics", http.StatusForbidden, "customer-a", "__unattributed__")
 		before, err := requestMetricCount(ctx, adminAddress, labels)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -90,7 +90,7 @@ func registerJWTRequestMetricSpecs() {
 	It("keeps the upstream response code", func(ctx SpecContext) {
 		gateway := jwtGateway
 		adminAddress := gateway.adminAddr
-		labels := requestMetricLabels("metrics", http.StatusTeapot, "team-a", "writer-17")
+		labels := requestMetricLabels("metrics", http.StatusTeapot, "customer-a", "writer-17")
 		before, err := requestMetricCount(ctx, adminAddress, labels)
 		Expect(err).NotTo(HaveOccurred())
 

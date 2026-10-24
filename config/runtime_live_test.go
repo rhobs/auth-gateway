@@ -43,8 +43,8 @@ func TestEnvoyReloadsFileBasedResources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if initialFiles.ProcessingConfig == nil || len(initialFiles.ServerCertificateResources) != 1 {
-		t.Fatalf("generated runtime files = %#v, want processing and one server SDS resource", initialFiles)
+	if len(initialFiles.ServerCertificateResources) != 1 {
+		t.Fatalf("generated runtime files = %#v, want one server SDS resource", initialFiles)
 	}
 
 	configDir := runtimeDirectory(t)
@@ -64,7 +64,7 @@ func TestEnvoyReloadsFileBasedResources(t *testing.T) {
 		runtimeLiveWriteGeneratedFile(t, configDir, GeneratedFile{Path: keyPath, Contents: certificate.privateKeyPEM})
 	}
 
-	initialKeys := []APIKeyCredential{{Key: "runtime-key-a", Attributes: map[string]string{"tenant_id": "client-a"}}}
+	initialKeys := []APIKeyCredential{{Key: "runtime-key-a", Attributes: map[string]string{"tenant_id": "client-a", "upstream_tenant": "team-a"}}}
 	initialKeyFile, err := GenerateAPIKeyECDS(findAuthenticator(gatewayConfig, "partner-key"), initialKeys)
 	if err != nil {
 		t.Fatal(err)
@@ -78,23 +78,7 @@ func TestEnvoyReloadsFileBasedResources(t *testing.T) {
 		return runtimeLiveEchoMatches(initial, http.StatusOK, "team-a", http.MethodPost, "/anything", runtimeLiveBody), initial.describe()
 	})
 
-	updatedProcessing := gatewayConfig.clone()
-	updatedProcessing.Processing[0].Attributes["tenant_id"].Mappings["client-a"] = "team-b"
-	processingFiles, err := Generate(updatedProcessing)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if processingFiles.ProcessingConfig == nil {
-		t.Fatal("updated processing configuration has no generated ECDS resource")
-	}
-	updatedAt := runtimeLiveAtomicReplace(t, harness, ProcessingConfigPath, processingFiles.ProcessingConfig.Contents)
-	var mapped runtimeLiveResponse
-	runtimeLiveAwait(t, harness, "processing ECDS update to team-b", updatedAt, func() (bool, string) {
-		mapped = harness.request(false, runtimeLiveKeyHost, "runtime-key-a", http.MethodPost, "/ingest", runtimeLiveBody)
-		return runtimeLiveEchoMatches(mapped, http.StatusOK, "team-b", http.MethodPost, "/anything", runtimeLiveBody), mapped.describe()
-	})
-
-	rotatedKeys := []APIKeyCredential{{Key: "runtime-key-b", Attributes: map[string]string{"tenant_id": "client-a"}}}
+	rotatedKeys := []APIKeyCredential{{Key: "runtime-key-b", Attributes: map[string]string{"tenant_id": "client-a", "upstream_tenant": "team-b"}}}
 	rotatedKeyFile, err := GenerateAPIKeyECDS(findAuthenticator(gatewayConfig, "partner-key"), rotatedKeys)
 	if err != nil {
 		t.Fatal(err)
@@ -144,6 +128,7 @@ authenticators:
       header: %s
     attributes:
       tenant_id: {credential: true}
+      upstream_tenant: {credential: true}
 authorization_policies:
   - name: key-writers
     grants:
@@ -160,19 +145,13 @@ apis:
         rewrite: {path: /anything}
         processing:
           request_headers:
-            - {name: X-Scope-OrgID, from_attribute: tenant_id}
+            - {name: X-Scope-OrgID, from_attribute: upstream_tenant}
   - name: tls-probe
     upstream: {address: httpbin, port: 8080}
     routes:
       - methods: [GET]
         path: {exact: /tls}
         rewrite: {path: /anything}
-processing:
-  - name: tenant-map
-    type: attribute-mapper
-    attributes:
-      tenant_id:
-        mappings: {client-a: team-a}
 servers:
   - hostname: %s
     authentication: {any_of: [partner-key]}

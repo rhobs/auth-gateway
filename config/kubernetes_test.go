@@ -128,7 +128,6 @@ func TestKubernetesResourceRequirementsRejectsInvalidQuantity(t *testing.T) {
 func TestKubernetesResourcesObjectsReturnsApplyOrder(t *testing.T) {
 	resources := &KubernetesResources{
 		ConfigMap:              corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "gateway"}},
-		ProcessingConfigMap:    &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "processing"}},
 		OTelCollectorConfigMap: &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "collector"}},
 		ServiceAccount:         corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "service-account"}},
 		Deployment:             appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "deployment"}},
@@ -140,9 +139,8 @@ func TestKubernetesResourcesObjectsReturnsApplyOrder(t *testing.T) {
 		want []string
 		edit func(*KubernetesResources)
 	}{
-		{name: "all resources", want: []string{"gateway", "processing", "collector", "service-account", "deployment", "service"}},
+		{name: "all resources", want: []string{"gateway", "collector", "service-account", "deployment", "service"}},
 		{name: "without optional config maps", want: []string{"gateway", "service-account", "deployment", "service"}, edit: func(r *KubernetesResources) {
-			r.ProcessingConfigMap = nil
 			r.OTelCollectorConfigMap = nil
 		}},
 	} {
@@ -165,67 +163,6 @@ func TestKubernetesResourcesObjectsReturnsApplyOrder(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestGenerateKubernetesKeepsProcessingConfigOutsidePodTemplate(t *testing.T) {
-	config, err := Load(strings.NewReader(readFixture(t, "jwt-auth-with-mappings/config.yaml")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	resources, err := GenerateKubernetes(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resources.ConfigMap.Data["envoy.yaml"] == "" {
-		t.Fatal("Envoy bootstrap is missing from the gateway ConfigMap")
-	}
-	if resources.ProcessingConfigMap == nil {
-		t.Fatal("attribute mappings did not generate a processing ConfigMap")
-	}
-	if got := resources.ProcessingConfigMap.Name; got != "auth-gateway-processing" {
-		t.Fatalf("processing ConfigMap name = %q", got)
-	}
-	if resources.ProcessingConfigMap.Data[processingConfigFilename] == "" {
-		t.Fatal("processing ConfigMap is missing its ECDS resource")
-	}
-	if _, exists := resources.ConfigMap.Data[processingConfigFilename]; exists {
-		t.Fatal("processing ECDS resource was included in the main Envoy ConfigMap")
-	}
-	var processingVolume, processingMount bool
-	for _, volume := range resources.Deployment.Spec.Template.Spec.Volumes {
-		if volume.Name == "processing-config" {
-			processingVolume = volume.ConfigMap != nil && volume.ConfigMap.Name == resources.ProcessingConfigMap.Name
-			if !processingVolume || len(volume.ConfigMap.Items) != 1 || volume.ConfigMap.Items[0].Key != processingConfigFilename || volume.ConfigMap.Items[0].Path != processingConfigFilename {
-				t.Fatalf("processing config volume = %#v", volume)
-			}
-		}
-	}
-	for _, mount := range resources.Deployment.Spec.Template.Spec.Containers[0].VolumeMounts {
-		if mount.Name == "processing-config" {
-			processingMount = mount.MountPath == processingDirectory && mount.ReadOnly && mount.SubPath == "" && mount.SubPathExpr == ""
-		}
-	}
-	if !processingVolume || !processingMount {
-		t.Fatalf("processing config volume/mount = %t/%t", processingVolume, processingMount)
-	}
-	if len(resources.Deployment.Spec.Template.Annotations) != 0 {
-		t.Fatalf("Deployment template unexpectedly has rollout annotations: %#v", resources.Deployment.Spec.Template.Annotations)
-	}
-
-	config.Processing[0].Attributes["tenant_id"].Mappings["client-123"] = "team-c"
-	updated, err := GenerateKubernetes(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(resources.ConfigMap.Data, updated.ConfigMap.Data) {
-		t.Fatal("mapping update changed the main Envoy ConfigMap")
-	}
-	if updated.ProcessingConfigMap == nil || resources.ProcessingConfigMap.Data[processingConfigFilename] == updated.ProcessingConfigMap.Data[processingConfigFilename] {
-		t.Fatal("mapping update did not change the processing ECDS resource")
-	}
-	if !reflect.DeepEqual(resources.Deployment.Spec.Template, updated.Deployment.Spec.Template) {
-		t.Fatal("mapping update changed the Deployment template")
 	}
 }
 
@@ -267,43 +204,6 @@ func TestGenerateKubernetesMountsOneExternalAPIKeySecret(t *testing.T) {
 	}
 	if len(resources.Deployment.Spec.Template.Annotations) != 0 {
 		t.Fatalf("Secret updates must not require Pod checksum changes: %#v", resources.Deployment.Spec.Template.Annotations)
-	}
-}
-
-func TestAPIKeyMappingUpdateChangesOnlyProcessingConfigMap(t *testing.T) {
-	c := loadConfigCase(t, "api-key-auth")
-	before, err := GenerateKubernetes(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.Processing[0].Attributes["tenant_id"].Mappings["client-a"] = "team-c"
-	after, err := GenerateKubernetes(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(before.ConfigMap.Data, after.ConfigMap.Data) ||
-		!reflect.DeepEqual(before.Deployment.Spec.Template, after.Deployment.Spec.Template) {
-		t.Fatal("API-key mapping update changed static bootstrap or Pod template")
-	}
-	if before.ProcessingConfigMap == nil || after.ProcessingConfigMap == nil ||
-		reflect.DeepEqual(before.ProcessingConfigMap.Data, after.ProcessingConfigMap.Data) {
-		t.Fatal("API-key mapping update did not change the processing ECDS resource")
-	}
-}
-
-func TestGenerateKubernetesOmitsProcessingConfigWithoutMappings(t *testing.T) {
-	config := loadConfigCase(t, "jwt-auth-with-headers")
-	resources, err := GenerateKubernetes(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resources.ProcessingConfigMap != nil {
-		t.Fatal("direct header attributes generated an unnecessary processing ConfigMap")
-	}
-	for _, volume := range resources.Deployment.Spec.Template.Spec.Volumes {
-		if volume.Name == "processing-config" {
-			t.Fatal("direct header attributes generated an unnecessary processing volume")
-		}
 	}
 }
 
@@ -838,9 +738,6 @@ func TestKubernetesTrustedCAFilenameUsesContainerFileWithoutMount(t *testing.T) 
 	}
 
 	configMapNames := map[string]bool{resources.ConfigMap.Name: true}
-	if resources.ProcessingConfigMap != nil {
-		configMapNames[resources.ProcessingConfigMap.Name] = true
-	}
 	if resources.OTelCollectorConfigMap != nil {
 		configMapNames[resources.OTelCollectorConfigMap.Name] = true
 	}

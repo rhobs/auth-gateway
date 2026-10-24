@@ -43,9 +43,9 @@ selected credential. Shared attributes must be nonempty scalar strings with
 equal original values. Invalid credentials return `401`; authenticated
 requests without a matching grant return `403`.
 
-Authorization checks the original claim, key credential, or source-header
-value. Attribute mappings change values used for upstream headers and metric
-labels, not grant decisions. A missing value needed by a request-header mapping
+Authorization, upstream headers, and metric labels use values from the declared
+attribute sources. Supply separate source attributes when these uses need
+different values. A missing value needed by a request-header binding
 is denied before the upstream request. Envoy replaces caller values for
 managed output headers and removes bearer tokens, API keys, and internal
 identity headers before forwarding.
@@ -62,9 +62,9 @@ fill those values. For `all_of`, every required identity can contribute
 attributes after shared original values have been checked for equality.
 
 The filter uses CEL to copy source values into
-`auth_gateway.attributes.<name>` and apply optional exact mappings from the
-`processing.yaml` ECDS resource. RBAC evaluates grants against original source
-values; mapped filter state feeds managed upstream headers and metric labels.
+`auth_gateway.attributes.<name>`. Its configuration is part of the static
+bootstrap. RBAC evaluates grants against source metadata; filter state feeds
+managed upstream headers and metric labels with the same values.
 
 ## Files and reloads
 
@@ -73,7 +73,6 @@ File-based deployments must place generated resources at the paths Envoy reads:
 | Resource                                        | Path                                           |
 |-------------------------------------------------|------------------------------------------------|
 | Bootstrap                                       | `/etc/auth-gateway/envoy.yaml`                 |
-| Attribute mapping ECDS resource, when used      | `/etc/auth-gateway/processing/processing.yaml` |
 | Downstream TLS SDS resource for each HTTPS host | `/etc/auth-gateway/server-certificate-N.yaml`  |
 | Client CA SDS resource for each mTLS host       | `/etc/auth-gateway/client-ca-N.yaml`           |
 | API-key ECDS resource, when keys are used       | `/etc/auth-gateway/api-keys/api-keys.yaml`     |
@@ -89,18 +88,16 @@ the Secret format and the [mTLS guide](auth/mtls.md) for client CA setup.
 Kubernetes mounts TLS Secrets, API-key Secrets, and client CA ConfigMaps as
 projected directories without `subPath`, so Envoy can observe valid changes
 without replacing the Pod. SDS reloads downstream certificates and client CA
-validation for new connections. ECDS reloads the complete API-key set and
-mapping tables. Setting a valid empty API-key credential list revokes all keys.
+validation for new connections. ECDS reloads the complete API-key set.
+Setting a valid empty API-key credential list revokes all keys.
 Envoy keeps the last accepted resource after a failed update.
 
-Mapping updates change only the separate `<name>-processing` ConfigMap. The
-bootstrap, Deployment template, and Pod identity stay the same. Changes to
-routes, authentication, authorization, request-header bindings, metric
-bindings, or other bootstrap data require a Deployment rollout. Changes to
-upstream or JWKS CA bundles require a rollout. Client CA ConfigMap updates are
-watched and take effect on new TLS connections. Collector ConfigMap changes
-require restarting the collector so it reads the new settings. Generated
-Deployments have no checksum annotation.
+Changes to routes, authentication, authorization, attribute sources,
+request-header bindings, metric bindings, or other bootstrap data require a
+Deployment rollout. Changes to upstream or JWKS CA bundles require a rollout.
+Client CA ConfigMap updates are watched and take effect on new TLS connections.
+Collector ConfigMap changes require restarting the collector so it reads the
+new settings. Generated Deployments have no checksum annotation.
 
 Kubernetes gateway selectors use `kubernetes.name`, independently of
 `node.cluster`, so separately named gateways in one namespace select distinct
@@ -114,6 +111,19 @@ credentials rather than editing `api-keys.yaml` by hand.
 Envoy exports native update-failure counters for ECDS and SDS. The generated
 Collector exposes these counters at `/metrics`; production alerting is tracked
 in [resource update monitoring](resource-update-monitoring.md).
+
+### Upgrading after attribute mapping removal
+
+The former top-level `processing` block is no longer accepted. Supply any
+different upstream value as an additional JWT claim, API-key credential
+attribute, or permitted source header. Declare that source beside the
+authenticator and reference it in the route's `from_attribute` or the API's
+metric labels. Route-level `processing.request_headers` remains supported.
+
+Remove the top-level block, regenerate and apply the gateway resources, and
+explicitly roll out the Deployment. After the new Pods are ready, delete the
+obsolete `<name>-processing` ConfigMap. File-based deployments can delete the
+old `processing/processing.yaml` after restarting Envoy with the new bootstrap.
 
 ## Timeouts and overload protection
 
@@ -170,7 +180,7 @@ Envoy requires, and route-level settings select the enabled APIs. It uses a
 fixed status and percentage; clients cannot choose faults through request
 headers. Unconfigured APIs and fallback routes continue normally.
 
-An injected abort happens before authentication, attribute mapping, and
+An injected abort happens before authentication, attribute extraction, and
 upstream forwarding. The response still passes through the per-API response
 counter, so a configured counter records the injected status. Labels sourced
 from authenticated attributes are `__unattributed__` for these replies. Error

@@ -55,7 +55,6 @@ const (
 	attributeFilterName       = "envoy.filters.http.set_filter_state"
 	requiredHeaderFilterName  = "auth_gateway.required_headers"
 	managedAttributePrefix    = "auth_gateway.attributes."
-	processingConfigFilename  = "processing.yaml"
 	headerValuePattern        = `^[^\x00-\x1f\x7f]+$`
 	localResponseAPIName      = "__local"
 	apiMetadataName           = "api"
@@ -85,12 +84,6 @@ func Generate(c Config) (GeneratedFiles, error) {
 			Path:     EnvoyBootstrapPath,
 			Contents: contents[envoyConfigFilename],
 		},
-	}
-	if processing, ok := contents[processingConfigFilename]; ok {
-		files.ProcessingConfig = &GeneratedFile{
-			Path:     ProcessingConfigPath,
-			Contents: processing,
-		}
 	}
 	for index, server := range effective.Servers {
 		if server.TLSConfig == nil {
@@ -346,11 +339,6 @@ func generateFiles(c Config, bootstrapConfig *bootstrap.Bootstrap) (map[string][
 		return nil, fmt.Errorf("encode Envoy bootstrap: %w", err)
 	}
 	files := map[string][]byte{envoyConfigFilename: append([]byte(generatedFileHeader), data...)}
-	if c.hasAttributeMappings() {
-		if err := addProcessingConfigFile(c, files); err != nil {
-			return nil, err
-		}
-	}
 	if err := addServerCertificateFiles(c, files); err != nil {
 		return nil, err
 	}
@@ -358,19 +346,6 @@ func generateFiles(c Config, bootstrapConfig *bootstrap.Bootstrap) (map[string][
 		return nil, err
 	}
 	return files, nil
-}
-
-func addProcessingConfigFile(c Config, files map[string][]byte) error {
-	resource, err := c.toProcessingECDSResource()
-	if err != nil {
-		return fmt.Errorf("encode attribute processing ECDS resource: %w", err)
-	}
-	data, err := marshalEnvoyFileDiscoveryResponse(resource)
-	if err != nil {
-		return fmt.Errorf("encode attribute processing ECDS response: %w", err)
-	}
-	files[processingConfigFilename] = append([]byte(generatedFileHeader), data...)
-	return nil
 }
 
 func addServerCertificateFiles(c Config, files map[string][]byte) error {
@@ -644,29 +619,13 @@ func appendAuthenticationRBAC(filters []*hcm.HttpFilter) ([]*hcm.HttpFilter, err
 
 func (c Config) attributeHTTPFilters(filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
 	if c.usesAPIKeys() || c.usesMTLS() {
-		var err error
-		filters, err = c.apiKeyAttributeFilters(filters, hosts)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		if !c.hasAttributeMappings() {
-			attributeFilter := &hcm.HttpFilter{Name: attributeFilterName}
-			attributeConfig, err := packEnvoy(c.toAttributeInitializationConfig())
-			if err != nil {
-				return nil, fmt.Errorf("encode attribute initialization filter: %w", err)
-			}
-			attributeFilter.ConfigType = &hcm.HttpFilter_TypedConfig{TypedConfig: attributeConfig}
-			filters = append(filters, attributeFilter)
-		}
+		return c.apiKeyAttributeFilters(filters, hosts)
 	}
-	if c.hasAttributeMappings() {
-		filters = append(filters, &hcm.HttpFilter{Name: attributeFilterName, ConfigType: &hcm.HttpFilter_ConfigDiscovery{ConfigDiscovery: &core.ExtensionConfigSource{
-			ConfigSource: fileConfigSource(ProcessingConfigPath),
-			TypeUrls:     []string{string((&setfilterstate.Config{}).ProtoReflect().Descriptor().FullName())},
-		}}})
+	attributeConfig, err := packEnvoy(c.toAttributeInitializationConfig())
+	if err != nil {
+		return nil, fmt.Errorf("encode attribute initialization filter: %w", err)
 	}
-	return filters, nil
+	return append(filters, &hcm.HttpFilter{Name: attributeFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: attributeConfig}}), nil
 }
 
 func (c Config) apiKeyAttributeFilters(filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
@@ -981,7 +940,7 @@ func findAuthenticator(c Config, name string) Authenticator {
 }
 
 func needsWorkingAttributes(c Config) bool {
-	return c.hasAttributeMappings() || hasRequestHeaderProcessing(c.APIs) || hasRequestMetricLabels(c.APIs)
+	return hasRequestHeaderProcessing(c.APIs) || hasRequestMetricLabels(c.APIs)
 }
 
 func filterStateKey(attribute string) string {

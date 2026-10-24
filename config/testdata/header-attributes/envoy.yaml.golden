@@ -322,16 +322,6 @@ static_resources:
                                         inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.tenant_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] : "")%'
                                   object_key: auth_gateway.attributes.tenant_id
                                   skip_if_empty: true
-                        - config_discovery:
-                            config_source:
-                                path_config_source:
-                                    path: /etc/auth-gateway/processing/processing.yaml
-                                    watched_directory:
-                                        path: /etc/auth-gateway/processing
-                                resource_api_version: V3
-                            type_urls:
-                                - envoy.extensions.filters.http.set_filter_state.v3.Config
-                          name: envoy.filters.http.set_filter_state
                         - name: envoy.filters.http.rbac
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC

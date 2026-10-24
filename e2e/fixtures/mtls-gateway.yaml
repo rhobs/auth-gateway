@@ -64,14 +64,6 @@ apis:
       - methods: [GET]
         path: {exact: /trust}
         rewrite: {path: /anything}
-processing:
-  - name: tenants
-    type: attribute-mapper
-    attributes:
-      tenant_id:
-        mappings:
-          spiffe://clients.example.test/client-a: team-a
-          spiffe://clients.example.test/client-b: team-b
 servers:
   - hostname: cert.mtls.auth-gateway.test
     tls_config: {secret: mtls-gateway-tls}

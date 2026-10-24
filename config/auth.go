@@ -15,7 +15,6 @@ import (
 const (
 	invalidJWTTextCharacters           = "\r\n\t"
 	attributeNameValidationErrorFormat = "%s.attributes contains invalid attribute name %q"
-	attributeMapperType                = "attribute-mapper"
 	defaultAPIKeyHeader                = "X-API-Key"
 	authorizationHeaderName            = "authorization"
 )

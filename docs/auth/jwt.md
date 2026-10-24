@@ -19,6 +19,7 @@ authenticators:
       audiences: [observability-ingestion]
     attributes:
       tenant_id: {claim_path: [organization, id]}
+      upstream_tenant: {claim_path: [organization, upstream_tenant]}
       requested_tenant: {header: X-Tenant}
 ```
 
@@ -71,8 +72,22 @@ Every attribute listed in the grant must match; a missing or unlisted value
 is denied. The header is caller-supplied, and the grant checks its original
 value alongside the verified claim. A route can use `requested_tenant` in
 `processing.request_headers`, and an API can use it in `metrics.labels`.
-Top-level `processing` mappings change those outputs without changing the
-grant. The original `X-Tenant` header also reaches the backend unless it is
-a managed output header. Changing the issuer, JWKS settings, attribute
-sources, or grants requires regenerating the configuration and rolling out
-the Deployment.
+These outputs use source values directly. The original `X-Tenant` header also
+reaches the backend unless it is a managed output header.
+
+When an upstream needs a different tenant value, include it as an additional
+claim. For example, a token containing
+`{"organization": {"id": "client-123", "upstream_tenant": "team-a"}}` supplies
+both attributes declared above. Keep the grant on `tenant_id` and select
+`upstream_tenant` in the route's `processing.request_headers`:
+
+```yaml
+request_headers:
+  - name: X-Scope-OrgID
+    from_attribute: upstream_tenant
+```
+
+The gateway sends `X-Scope-OrgID: team-a` directly from the verified claim.
+An API can also bind a metric label to `upstream_tenant`. Changing the issuer,
+JWKS settings, attribute sources, header or metric bindings, or grants requires
+regenerating the configuration and rolling out the Deployment.

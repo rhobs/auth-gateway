@@ -146,9 +146,6 @@ func (c Config) validate() error {
 	if err := c.validateServers(apis); err != nil {
 		return err
 	}
-	if err := c.validateProcessing(); err != nil {
-		return err
-	}
 	if err := c.validateAuthentication(apis); err != nil {
 		return err
 	}
@@ -834,50 +831,6 @@ func (c Config) validateServerAuthentication(apis map[string]API, authenticators
 		}
 	}
 	return nil
-}
-
-func (c Config) validateProcessing() error {
-	seen := make(map[string]struct{}, len(c.Processing))
-	for i, processor := range c.Processing {
-		name := fmt.Sprintf("processing[%d]", i)
-		if err := validateGatewayName(name, processor.Name); err != nil {
-			return err
-		}
-		if _, exists := seen[processor.Name]; exists {
-			return fmt.Errorf("duplicate processing name %q", processor.Name)
-		}
-		seen[processor.Name] = struct{}{}
-		if processor.Type != attributeMapperType {
-			return fmt.Errorf("%s.type must be %q", name, attributeMapperType)
-		}
-		for _, attribute := range slices.Sorted(maps.Keys(processor.Attributes)) {
-			attributeName := name + ".attributes." + attribute
-			if !attributeNamePattern.MatchString(attribute) {
-				return fmt.Errorf("%s is not a valid attribute name", attributeName)
-			}
-			for _, source := range slices.Sorted(maps.Keys(processor.Attributes[attribute].Mappings)) {
-				target := processor.Attributes[attribute].Mappings[source]
-				if source == "" || strings.TrimSpace(source) != source || target == "" || strings.TrimSpace(target) != target {
-					return fmt.Errorf("%s.mappings keys and values must not be empty or have surrounding whitespace", attributeName)
-				}
-				if strings.ContainsAny(target, invalidControlCharacters) {
-					return fmt.Errorf("%s.mappings values must not contain line breaks or NUL", attributeName)
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func (c Config) hasAttributeMappings() bool {
-	for _, processor := range c.Processing {
-		for _, attribute := range processor.Attributes {
-			if len(attribute.Mappings) > 0 {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (c Config) hasAuthenticationConfig() bool {

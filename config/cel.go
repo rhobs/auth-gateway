@@ -93,39 +93,6 @@ func (c Config) toAttributeInitializationConfig() *setfilterstate.Config {
 	return config
 }
 
-func (c Config) toAttributeProcessingConfig() *setfilterstate.Config {
-	config := &setfilterstate.Config{}
-	if !c.usesAPIKeys() && !c.usesMTLS() {
-		config = c.toAttributeInitializationConfig()
-	}
-	if c.hasAttributeMappings() {
-		config.OnRequestHeaders = append(config.OnRequestHeaders, c.toProcessingMappingConfig().OnRequestHeaders...)
-	}
-	return config
-}
-
-func (c Config) toProcessingECDSResource() (*core.TypedExtensionConfig, error) {
-	filterConfig, err := packEnvoy(c.toAttributeProcessingConfig())
-	if err != nil {
-		return nil, fmt.Errorf("encode set_filter_state config: %w", err)
-	}
-	return &core.TypedExtensionConfig{Name: attributeFilterName, TypedConfig: filterConfig}, nil
-}
-
-func (c Config) toProcessingMappingConfig() *setfilterstate.Config {
-	config := &setfilterstate.Config{}
-	for _, processor := range c.Processing {
-		for _, attribute := range slices.Sorted(maps.Keys(processor.Attributes)) {
-			mappings := processor.Attributes[attribute].Mappings
-			if len(mappings) == 0 {
-				continue
-			}
-			config.OnRequestHeaders = append(config.OnRequestHeaders, filterStateValue(filterStateKey(attribute), attributeMappingExpression(attribute, mappings)))
-		}
-	}
-	return config
-}
-
 func filterStateValue(key, expression string) *setfilterstatecommon.FilterStateValue {
 	return &setfilterstatecommon.FilterStateValue{
 		Key:        &setfilterstatecommon.FilterStateValue_ObjectKey{ObjectKey: key},
@@ -194,17 +161,6 @@ func metadataStringPathExpression(namespace string, path []string) (string, stri
 	}
 	checks = append(checks, "type("+current+") == string")
 	return current, strings.Join(checks, celAndSeparator)
-}
-
-func attributeMappingExpression(attribute string, mappings map[string]string) string {
-	key := celStringLiteral(filterStateKey(attribute))
-	value := "filter_state[" + key + "]"
-	// An unmatched value returns empty so skip_if_empty preserves the current value.
-	result := `""`
-	for _, source := range slices.Sorted(maps.Keys(mappings)) {
-		result = "(" + value + " == " + celBytesLiteral(source) + " ? " + celStringLiteral(mappings[source]) + " : " + result + ")"
-	}
-	return "(" + key + " in filter_state && type(" + value + ") == bytes && " + value + " != b\"\") ? " + result + " : \"\""
 }
 
 func apiKeyAttributeExpression(attribute string) string {

@@ -23,7 +23,6 @@ be at least `1ms`.
 | `overload`               | object          | Disabled       | If present, both capacity limits are required.                           |
 | `authenticators`         | list of objects | Empty          | Names must be unique. Each entry sets exactly one of `jwt`, `api_key`, or `mtls`. |
 | `authorization_policies` | list of objects | Empty          | Policy names must be unique.                                             |
-| `processing`             | list of objects | Empty          | Processor names must be unique.                                          |
 | `servers`                | list of objects | None           | Required; at least one server.                                           |
 | `apis`                   | list of objects | None           | Required; at least one API.                                              |
 | `observability`          | object          | Defaults below | Optional metrics and tracing settings.                                   |
@@ -225,6 +224,12 @@ configuration, then explicitly roll out the Deployment to toggle them.
 | `apis[].routes[].processing.request_headers[].name`           | string          | None    | Required valid HTTP header name; cannot be a reserved identity, routing, connection, or framing header. Names must be unique ignoring case. |
 | `apis[].routes[].processing.request_headers[].from_attribute` | string          | None    | Required valid attribute name.                                                                                                              |
 
+Headers and metric labels use attribute values directly from their declared
+sources. When an upstream needs a different value from the one used in a grant,
+supply an additional source attribute and reference it in `from_attribute` or
+`apis[].metrics.labels`. See the [JWT](auth/jwt.md) and [API-key](auth/api-key.md)
+guides for examples.
+
 ## Servers, authentication, and authorization
 
 | Field                      | Type            | Default | Constraint                                                                                            |
@@ -311,15 +316,6 @@ framing headers.
 | `authorization_policies[].grants[].apis`                   | list of strings                          | None    | Required; at least one unique existing API name.                                                                                                            |
 | `authorization_policies[].grants[].attributes`             | map of attribute name to list of strings | None    | JWT and API-key grants require at least one attribute. mTLS grants may omit this map or set `{}` to trust the CA alone. Each allowlist must contain unique nonempty values without surrounding whitespace. |
 | `authorization_policies[].grants[].attributes.<attribute>` | list of strings                          | None    | Attribute name must be valid and provided by the selected authenticator; at least one unique nonempty allowed value without surrounding whitespace.         |
-
-## Attribute processing
-
-| Field                                          | Type                                  | Default | Constraint                                                                                                                                                                 |
-|------------------------------------------------|---------------------------------------|---------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `processing[].name`                            | string                                | None    | Required unique processor name using the format above.                                                                                                                     |
-| `processing[].type`                            | string                                | None    | Required; currently only `attribute-mapper` is supported.                                                                                                                  |
-| `processing[].attributes`                      | map of attribute name to object       | Empty   | Dynamic keys use the attribute name format above.                                                                                                                          |
-| `processing[].attributes.<attribute>.mappings` | map of source string to target string | Empty   | Keys and values must be nonempty and have no surrounding whitespace. Values cannot contain CR, LF, or NUL. Each mapping is an exact lookup; unmatched values pass through. |
 
 ## Trusted CA
 

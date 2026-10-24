@@ -91,7 +91,7 @@ var _ = Describe("Mixed identity isolation", Label("gateway", "identity-isolatio
 		})
 	}, NodeTimeout(60*time.Second))
 
-	It("forwards the selected JWT's mapped tenant when credentials conflict", func(ctx SpecContext) {
+	It("forwards the selected JWT's tenant when credentials conflict", func(ctx SpecContext) {
 		claims := map[string]any{
 			"sub": "writer-a", "organization": map[string]any{"id": mtlsSecondURI},
 			"aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix(),
@@ -102,7 +102,7 @@ var _ = Describe("Mixed identity isolation", Label("gateway", "identity-isolatio
 				http.MethodPost, "/ingest", mtlsPayload, mtlsRequestHeaders())
 		})
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectMTLSEcho(body, "team-b")
+		expectMTLSEcho(body, mtlsSecondURI)
 	}, NodeTimeout(60*time.Second))
 
 	It("uses only the selected JWT's request-header attribute", func(ctx SpecContext) {
@@ -133,7 +133,7 @@ var _ = Describe("Mixed identity isolation", Label("gateway", "identity-isolatio
 			if status != http.StatusOK {
 				continue
 			}
-			expectMTLSEcho(body, "team-b")
+			expectMTLSEcho(body, mtlsSecondURI)
 			Expect(headerValue(jwtEchoHeaders(body), "X-Requested-Tenant")).To(Equal("jwt-tenant"))
 		}
 	}, NodeTimeout(60*time.Second))
@@ -144,7 +144,7 @@ var _ = Describe("Mixed identity isolation", Label("gateway", "identity-isolatio
 			return gateway.request(ctx, host, nil, "", mtlsAllowedKey, http.MethodPost, "/ingest", mtlsPayload, mtlsRequestHeaders())
 		})
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectMTLSEcho(body, "team-a")
+		expectMTLSEcho(body, mtlsAllowedURI)
 		for _, key := range []string{"", mtlsAllowedKey} {
 			expectMTLSDenied(ctx, gateway, "SAN-less certificate", host, &gateway.noSAN, "", key, mtlsRequestHeaders(), http.StatusForbidden)
 		}

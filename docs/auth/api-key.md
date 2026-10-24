@@ -14,6 +14,7 @@ authenticators:
       header: X-Partner-Key
     attributes:
       tenant_id: {credential: true}
+      upstream_tenant: {credential: true}
       writer_id: {credential: true}
       requested_tenant: {header: X-Tenant}
 ```
@@ -23,9 +24,9 @@ authenticators:
 the `X-Partner-Key` credential header. For example, one Secret binding could
 contain these values:
 
-| Issued key | `tenant_id` | `writer_id` |
-| --- | --- | --- |
-| `example-partner-key` | `client-123` | `writer-17` |
+| Issued key | `tenant_id` | `upstream_tenant` | `writer_id` |
+| --- | --- | --- | --- |
+| `example-partner-key` | `client-123` | `team-a` | `writer-17` |
 
 Create the `auth-gateway-api-keys` Secret in the gateway Deployment's
 `kubernetes.namespace` before deploying. See [API-key Secret format](#api-key-secret-format)
@@ -44,6 +45,7 @@ credentials:
   - key: example-partner-key
     attributes:
       tenant_id: client-123
+      upstream_tenant: team-a
       writer_id: writer-17
 ```
 
@@ -72,7 +74,7 @@ stringData:
             typed_config:
               '@type': type.googleapis.com/envoy.extensions.filters.http.api_key_auth.v3.ApiKeyAuth
               credentials:
-                - client: tenant_id=client-123;writer_id=writer-17
+                - client: tenant_id=client-123;upstream_tenant=team-a;writer_id=writer-17
                   key: example-partner-key
               forwarding:
                 header: x-auth-gateway-api-key-client
@@ -142,25 +144,18 @@ a credential-bound condition when access must also be tied to the issued
 key. A missing or unlisted value is denied before the backend receives the
 request.
 
-The full [gateway example](../../config.example.yaml) maps
-`tenant_id: client-123` to `team-a` for upstream use. A route can also map
-`requested_tenant` to an output header, and `metrics.labels` can use its
-processed value:
+When the upstream needs a different tenant value, supply an additional
+credential attribute. The credential document above includes
+`upstream_tenant: team-a` alongside `tenant_id: client-123`. Keep the grant on
+`tenant_id` and select `upstream_tenant` for the upstream header and metric
+label:
 
 ```yaml
-processing:
-  - name: upstream-tenants
-    type: attribute-mapper
-    attributes:
-      requested_tenant:
-        mappings:
-          client-123: team-a
-
 apis:
   - name: metrics-write
     metrics:
       labels:
-        requested_tenant: requested_tenant
+        tenant: upstream_tenant
     upstream:
       address: thanos-receive
       port: 19291
@@ -169,13 +164,14 @@ apis:
         path: {exact: /metrics/api/v1/receive}
         processing:
           request_headers:
-            - name: X-Requested-Tenant
-              from_attribute: requested_tenant
+            - name: X-Scope-OrgID
+              from_attribute: upstream_tenant
 ```
 
-For the request above, the grant checks `client-123`, while the route sends
-`X-Requested-Tenant: team-a` and the metric label uses `team-a`. The original
-`X-Tenant: client-123` also reaches the backend unless it is configured as a
-managed output header. Changing a mapping updates only the processing
-ConfigMap. Changing the credential header, attribute sources, or grants
-requires regenerating the static configuration and rolling out the Deployment.
+The grant checks `client-123`, while the route sends `X-Scope-OrgID: team-a`
+and the metric label uses `team-a`, directly from the key's credential
+attribute. The original `X-Tenant: client-123` also reaches the backend unless
+it is configured as a managed output header. Updating credential values uses
+the same Secret rotation described above. Changing the credential header,
+attribute sources, header or metric bindings, or grants requires regenerating
+the static configuration and rolling out the Deployment.

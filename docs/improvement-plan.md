@@ -2,11 +2,13 @@
 
 Review baseline: `934f4e0`, reviewed on 2026-10-23.
 
-Status: in progress. D1 is merged in
-[PR #17](https://github.com/rhobs/auth-gateway/pull/17). D2's implementation
-and acceptance checks are done in
-[PR #18](https://github.com/rhobs/auth-gateway/pull/18), awaiting review and
-merge. All other items remain planned.
+Status: in progress. D1 and D2 are merged in
+[PR #17](https://github.com/rhobs/auth-gateway/pull/17) and
+[PR #18](https://github.com/rhobs/auth-gateway/pull/18). D3's implementation and
+acceptance checks are done in
+[PR #19](https://github.com/rhobs/auth-gateway/pull/19), awaiting review and
+merge. It removes built-in attribute-value mapping following the maintainer's
+scope decision below. All other items remain planned.
 
 This plan covers six confirmed defects (D1-D6), two gaps (G1-G2), and three
 simplification opportunities (S1-S3). The findings apply to the generator and
@@ -22,8 +24,8 @@ its generated Envoy and Kubernetes configuration at the review baseline.
 | Phase | Outcome | Items |
 | --- | --- | --- |
 | 0 | Resolve conflicting authentication scope guidance | G1 |
-| 1 | Isolate authenticated identities and gateway workloads | D1 (merged), D2 (implementation done) |
-| 2 | Generate configuration that Envoy accepts at realistic sizes | D3, D4 |
+| 1 | Isolate authenticated identities and gateway workloads | D1, D2 (merged) |
+| 2 | Generate configuration that Envoy accepts at realistic sizes | D3 (implementation done), D4 (planned) |
 | 3 | Make termination, restricted admission, and metrics predictable | D5, D6, G2 |
 | 4 | Reduce duplication and dependency overhead | S1, S2, S3 |
 | 5 | Complete documentation, rollout guidance, and verification | All |
@@ -34,13 +36,11 @@ the identity and generator fixes before refactoring their shared code.
 
 ## Constraints for every phase
 
-- Preserve the checked-in version 1 schema. Record any proposed scope change
-  separately; do not introduce aliases or migration code as part of a fix.
-- Keep authentication, authorization, and attribute mapping in native Envoy
-  filters. Lua remains limited to per-API response counters.
-- Keep mapping data in `processing.yaml` and the separate `<name>-processing`
-  ConfigMap. Mapping-only updates must preserve the bootstrap, Deployment
-  template, and Pod identity.
+- Preserve the checked-in version 1 schema except for the explicitly authorized
+  removal under D3. Do not introduce aliases or migration code as part of a fix.
+- Keep authentication, authorization, attribute extraction, and request-header
+  forwarding in native Envoy filters. Lua remains limited to per-API response
+  counters.
 - Document explicit Deployment rollouts for static bootstrap changes.
   Generated Deployments continue without checksum annotations.
 - Follow [CONTRIBUTING.md](../CONTRIBUTING.md) for test ownership and golden
@@ -105,7 +105,7 @@ Keep `all_of` requirements explicit and separate.
   combinations, including missing, empty, and conflicting attributes.
 - [x] Focused gateway e2e tests assert the selected identity's forwarded headers
   and demonstrate that denied requests never reach httpbin.
-- [x] Authorization continues to use original values before attribute mapping.
+- [x] Authorization continues to use values from the declared attribute sources.
 
 **Dependency:** Resolve G1 before changing mTLS-specific support or semantics.
 D1 enforces the existing documented authenticator priority. The supported
@@ -128,8 +128,8 @@ Deployments to apply the fix.
 
 ### D2. Give each Kubernetes gateway stable, distinct selectors (P1, confirmed)
 
-**Status: Done (implementation and acceptance checks, 2026-10-23).**
-[PR #18](https://github.com/rhobs/auth-gateway/pull/18) awaits review and merge.
+**Status: Done (merged, 2026-10-23).**
+[PR #18](https://github.com/rhobs/auth-gateway/pull/18) is merged.
 
 **Evidence at the review baseline:** [Kubernetes labels](../config/kubernetes.go)
 used the fixed name `auth-gateway` and `node.cluster` as the instance. Two differently named
@@ -169,35 +169,54 @@ when existing instance labels differ from `kubernetes.name`.
 
 ## Phase 2: Remove generated-expression limits
 
-### D3. Replace deeply nested mapping conditionals (P1, confirmed)
+### D3. Remove built-in attribute-value mapping (P1, confirmed)
 
-**Evidence:** [Mapping expressions](../config/cel.go) add a nested conditional
-for each entry. Go validation and generation succeeded with 25 mappings, but
-Envoy rejected the processing ECDS resource with:
+**Status: Done (implementation and acceptance checks, 2026-10-23).**
+[PR #19](https://github.com/rhobs/auth-gateway/pull/19) awaits review and merge.
 
-```text
-Not able to parse expression: CANCELLED:
-Expression recursion limit exceeded. limit: 32
-```
+**Evidence at the review baseline:** Mapping expressions nested one CEL
+conditional per entry. A 25-entry table passed Go generation but exceeded
+Envoy's parser recursion limit, leaving authenticated requests returning 500.
 
-Authenticated requests returned 500. A four-entry baseline returned 200 with
-the expected mapped value.
+**Maintainer decision (2026-10-23):** Remove the feature instead of increasing
+lookup capacity. Sources should supply an additional attribute when upstreams
+need a different value. Custom transformations could be considered separately
+through external processing; this change adds no `ext_proc` integration.
+The decision authorizes removing top-level `processing` from version 1.
+Route-level `processing.request_headers` remains supported.
 
-**Work:** Generate a shallow native CEL lookup. Preserve deterministic
-output, literal escaping, unmatched values, processor order, and authorization
-against original values. Establish a tested capacity with the pinned Envoy
-image rather than relying on Go generation succeeding.
+**Work:** Remove processor types, validation, CEL lookups, generated processing
+resources, Kubernetes mounts, fixtures, and reload scenarios. Keep native
+attribute extraction, identity isolation, authorization, header forwarding,
+metrics, and API-key/TLS resource reloads. Align all examples and guidance.
 
 **Acceptance and validation:**
 
-- Unit tests cover generated lookups, absent and unmatched values, escaping,
-  and ordered processors.
-- Runtime fixtures with 25 and 100 entries load successfully and produce the
-  expected mappings. Document and validate any remaining hard limit.
-- A valid file-based ECDS update changes observed mappings without restarting
-  Envoy. Keep malformed-update rejection and retention outside this suite.
-- Generated-output tests confirm that changing only mapping data changes
-  only the processing resource and its ConfigMap.
+- [x] The loader rejects the removed top-level field, and generation no longer
+  produces a processing ECDS file, ConfigMap, or volume.
+- [x] Existing unit, runtime, and gateway tests verify source values in headers
+  and metric labels while preserving identity isolation and authorization.
+- [x] Mapper-only tests, fixtures, and unused helpers are removed; generated
+  references are reviewed.
+- [x] Documentation shows separate source attributes and explains regeneration,
+  rollout, and removal of the obsolete ConfigMap.
+
+**Delivered:** Attributes are copied directly from their declared sources.
+JWT attribute initialization is static bootstrap configuration. Processing
+ECDS generation, public processor types and resource fields, Kubernetes
+ConfigMaps and mounts, and mapping-specific tests and helpers are removed.
+The existing runtime reload scenario uses separate authorization and upstream
+credential attributes, and the gateway suite checks source values in headers
+and metric labels.
+
+**Validation:** `make test`, `make lint`, tagged e2e/runtime compilation,
+framework tests, `make test-runtime`, and `make e2e` passed on 2026-10-23
+(77/77 Kind specs). Generated references were regenerated and reviewed, and
+Markdown links and whitespace checks passed.
+
+**Upgrade:** Follow the
+[removal upgrade steps](envoy.md#upgrading-after-attribute-mapping-removal)
+to replace the old configuration and remove its obsolete resources.
 
 ### D4. Reduce API-key extraction regex complexity (P1, confirmed)
 

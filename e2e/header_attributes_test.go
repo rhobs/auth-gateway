@@ -5,7 +5,6 @@ package e2e
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -38,7 +37,7 @@ var _ = Describe("Header-sourced attributes", Label("gateway", "authentication",
 		Expect(err).NotTo(HaveOccurred())
 	}, NodeTimeout(12*time.Minute))
 
-	It("uses header-only JWT and key grants while forwarding mapped and original values", func(ctx SpecContext) {
+	It("uses header-only JWT and key grants and source values for headers and metrics", func(ctx SpecContext) {
 		for _, test := range []struct {
 			name   string
 			host   string
@@ -49,11 +48,17 @@ var _ = Describe("Header-sourced attributes", Label("gateway", "authentication",
 			{name: "JWT", host: headerJWTOnlyHost, token: gateway.token("client-a", "writer-a"), header: "X-JWT-Tenant"},
 			{name: "API key", host: headerKeyOnlyHost, key: "header-key", header: "X-Key-Tenant"},
 		} {
+			labels := map[string]string{"api": "header-ingest", "http_status_code": strconv.Itoa(http.StatusOK), "tenant": "client-a"}
+			before, err := requestMetricCount(ctx, gateway.adminAddr, labels)
+			Expect(err).NotTo(HaveOccurred())
 			headers := http.Header{test.header: []string{"client-a"}}
 			status, body, err := gateway.request(ctx, test.host, false, http.MethodPost, "/header-ingest", headerAttributeBody, test.token, test.key, headers)
 			Expect(err).NotTo(HaveOccurred(), test.name)
 			Expect(status).To(Equal(http.StatusOK), test.name+": "+string(body))
-			expectHeaderAttributeEcho(body, "team-a", map[string]string{test.header: "client-a"})
+			expectHeaderAttributeEcho(body, "client-a", map[string]string{test.header: "client-a"})
+			after, err := requestMetricCount(ctx, gateway.adminAddr, labels)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(after).To(BeNumerically(">", before))
 		}
 	}, NodeTimeout(90*time.Second))
 
@@ -88,7 +93,7 @@ var _ = Describe("Header-sourced attributes", Label("gateway", "authentication",
 			gateway.token("client-a", "writer-a"), "header-key", headers)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectHeaderAttributeEcho(body, "team-a", map[string]string{"X-JWT-Tenant": "client-a", "X-Key-Tenant": "client-b"})
+		expectHeaderAttributeEcho(body, "client-a", map[string]string{"X-JWT-Tenant": "client-a", "X-Key-Tenant": "client-b"})
 
 		expectHeaderAttributeDenied(ctx, gateway, "valid but unprivileged JWT wins", headerAnyHost,
 			gateway.token("client-a", "writer-a"), "header-key",
@@ -98,7 +103,7 @@ var _ = Describe("Header-sourced attributes", Label("gateway", "authentication",
 			"invalid.jwt", "header-key", http.Header{"X-JWT-Tenant": []string{"client-b"}, "X-Key-Tenant": []string{"client-a"}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectHeaderAttributeEcho(body, "team-a", map[string]string{"X-JWT-Tenant": "client-b", "X-Key-Tenant": "client-a"})
+		expectHeaderAttributeEcho(body, "client-a", map[string]string{"X-JWT-Tenant": "client-b", "X-Key-Tenant": "client-a"})
 	}, NodeTimeout(90*time.Second))
 
 	It("requires matching nonempty raw values across headers, claims, and key credentials on all_of", func(ctx SpecContext) {
@@ -107,7 +112,7 @@ var _ = Describe("Header-sourced attributes", Label("gateway", "authentication",
 		status, body, err := gateway.request(ctx, headerAllHost, false, http.MethodPost, "/header-ingest", headerAttributeBody, jwt, "header-key", matching)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectHeaderAttributeEcho(body, "team-a", map[string]string{"X-JWT-Tenant": "client-a", "X-Key-Tenant": "client-a"})
+		expectHeaderAttributeEcho(body, "client-a", map[string]string{"X-JWT-Tenant": "client-a", "X-Key-Tenant": "client-a"})
 
 		for _, test := range []struct {
 			name    string
@@ -125,45 +130,6 @@ var _ = Describe("Header-sourced attributes", Label("gateway", "authentication",
 			expectHeaderAttributeDenied(ctx, gateway, test.name, headerAllHost, test.token, test.key, test.headers, test.status)
 		}
 	}, NodeTimeout(90*time.Second))
-
-	It("reloads header mappings without changing the Pod or raw grant", func(ctx SpecContext) {
-		oldUID, err := gatewayPodUID(ctx, headerAttributesNamespace)
-		Expect(err).NotTo(HaveOccurred())
-		updatedConfig, err := apiKeyConfig(headerAttributesNamespace, false)
-		Expect(err).NotTo(HaveOccurred())
-		shapeHeaderAttributeGateway(&updatedConfig)
-		updatedConfig.Processing[0].Attributes["requested_tenant"].Mappings["client-a"] = "team-c"
-		updated, err := config.GenerateKubernetes(updatedConfig)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(updated.ConfigMap.Data).To(Equal(gateway.resources.ConfigMap.Data))
-		Expect(updated.Deployment.Spec.Template).To(Equal(gateway.resources.Deployment.Spec.Template))
-		Expect(updated.ProcessingConfigMap.Data).NotTo(Equal(gateway.resources.ProcessingConfigMap.Data))
-		manifest, err := yamlDocuments(updated.ProcessingConfigMap)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(env.Apply(ctx, headerAttributesNamespace, manifest)).To(Succeed())
-
-		labels := map[string]string{"api": "header-ingest", "http_status_code": strconv.Itoa(http.StatusOK), "tenant": "team-c"}
-		before, err := requestMetricCount(ctx, gateway.adminAddr, labels)
-		Expect(err).NotTo(HaveOccurred())
-		headers := http.Header{"X-JWT-Tenant": []string{"client-a"}}
-		var status int
-		var body []byte
-		Eventually(func() bool {
-			_ = nudgeGatewayPod(ctx, headerAttributesNamespace)
-			status, body, err = gateway.request(ctx, headerJWTOnlyHost, false, http.MethodPost, "/header-ingest", headerAttributeBody,
-				gateway.token("client-a", "writer-a"), "", headers)
-			return err == nil && status == http.StatusOK && headerValue(jwtEchoHeaders(body), "X-Processed-Tenant") == "team-c"
-		}).WithContext(ctx).WithTimeout(3*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
-			return fmt.Sprintf("header mapping did not reload: HTTP %d: %s (error: %v)", status, body, err)
-		})
-		expectHeaderAttributeEcho(body, "team-c", map[string]string{"X-JWT-Tenant": "client-a"})
-		after, err := requestMetricCount(ctx, gateway.adminAddr, labels)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(after).To(BeNumerically(">", before))
-		newUID, err := gatewayPodUID(ctx, headerAttributesNamespace)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(newUID).To(Equal(oldUID))
-	}, SpecTimeout(4*time.Minute))
 })
 
 func shapeHeaderAttributeGateway(c *config.Config) {
@@ -186,7 +152,7 @@ func shapeHeaderAttributeGateway(c *config.Config) {
 			Methods:    []string{http.MethodPost},
 			Path:       config.PathMatch{Exact: "/header-ingest"},
 			Rewrite:    &config.PathRewrite{Path: "/anything"},
-			Processing: &config.RouteProcessing{RequestHeaders: []config.RequestHeaderMapping{{Name: "X-Processed-Tenant", FromAttribute: "requested_tenant"}}},
+			Processing: &config.RouteProcessing{RequestHeaders: []config.RequestHeaderMapping{{Name: "X-Forwarded-Tenant", FromAttribute: "requested_tenant"}}},
 		}},
 	})
 	c.Servers = append(c.Servers, []config.Server{
@@ -195,20 +161,19 @@ func shapeHeaderAttributeGateway(c *config.Config) {
 		{Hostname: headerAnyHost, Authentication: &config.Authentication{AnyOf: []string{"issuer-one", "partner-key"}}, Authorization: &config.Authorization{AnyOf: []string{"header-writers"}}, APIs: []string{"header-ingest"}},
 		{Hostname: headerAllHost, Authentication: &config.Authentication{AllOf: []string{"issuer-one", "partner-key"}}, Authorization: &config.Authorization{AllOf: []string{"header-writers"}}, APIs: []string{"header-ingest"}},
 	}...)
-	c.Processing[0].Attributes["requested_tenant"] = config.AttributeMappings{Mappings: map[string]string{"client-a": "team-a", "client-b": "team-b"}}
 }
 
 func headerAttributeSource(header string) config.AttributeSource {
 	return config.AttributeSource{Header: &header}
 }
 
-func expectHeaderAttributeEcho(body []byte, mapped string, sourceHeaders map[string]string) {
+func expectHeaderAttributeEcho(body []byte, tenant string, sourceHeaders map[string]string) {
 	echo, err := decodeHTTPBinEcho(body)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(echo.Method).To(Equal(http.MethodPost))
 	Expect(echo.URL).To(HaveSuffix("/anything"))
 	Expect(echo.Data).To(Equal("data:application/octet-stream;base64," + base64.StdEncoding.EncodeToString([]byte(headerAttributeBody))))
-	Expect(headerValue(echo.Headers, "X-Processed-Tenant")).To(Equal(mapped))
+	Expect(headerValue(echo.Headers, "X-Forwarded-Tenant")).To(Equal(tenant))
 	for name, value := range sourceHeaders {
 		Expect(headerValue(echo.Headers, name)).To(Equal(value), name)
 	}

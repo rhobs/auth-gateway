@@ -70,16 +70,6 @@ func TestGeneratedReferenceFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			checkReference(t, filepath.Join(caseDir, "envoy.yaml.golden"), envoyFiles.EnvoyBootstrap.Contents)
-			processingPath := filepath.Join(caseDir, "processing.yaml.golden")
-			if envoyFiles.ProcessingConfig != nil {
-				checkReference(t, processingPath, envoyFiles.ProcessingConfig.Contents)
-			} else if *updateGoldens {
-				if err := os.Remove(processingPath); err != nil && !os.IsNotExist(err) {
-					t.Fatal(err)
-				}
-			} else if _, err := os.Stat(processingPath); !os.IsNotExist(err) {
-				t.Errorf("unexpected processing reference %s", processingPath)
-			}
 			for _, file := range envoyFiles.ClientCAResources {
 				checkReference(t, filepath.Join(caseDir, filepath.Base(file.Path)+".golden"), file.Contents)
 			}
@@ -469,16 +459,12 @@ func TestGenerateRejectsInvalidConfiguration(t *testing.T) {
 }
 
 func TestGenerateReturnsNamedFilesWithRequiredPaths(t *testing.T) {
-	files, err := Generate(loadConfigCase(t, "jwt-auth-with-mappings"))
+	files, err := Generate(loadConfigCase(t, "jwt-auth-with-attributes"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if files.ProcessingConfig == nil {
-		t.Fatal("mapped configuration has no processing file")
-	}
 	wantPaths := []string{
 		EnvoyBootstrapPath,
-		ProcessingConfigPath,
 		path.Join(EnvoyConfigDirectory, "server-certificate-1.yaml"),
 	}
 	generated := files.All()
@@ -591,27 +577,18 @@ func TestGenerateScopesAPIExposureToServers(t *testing.T) {
 }
 
 func TestGenerationIsDeterministic(t *testing.T) {
-	buildMapped := func(t *testing.T, reverse bool) Config {
+	buildAttributes := func(t *testing.T, reverse bool) Config {
 		t.Helper()
-		c := loadConfigCase(t, "jwt-auth-with-mappings")
-		entries := []struct{ source, target string }{
-			{source: "client-123", target: "team-a"},
-			{source: "client-456", target: "team-b"},
-			{source: "customer-456", target: "team-a"},
-			{source: "customer-789", target: "team-b"},
+		c := loadConfigCase(t, "jwt-auth-with-attributes")
+		sources := c.Authenticators[0].Attributes
+		names := []string{"tenant_id", "writer_id"}
+		if reverse {
+			slices.Reverse(names)
 		}
-		mappings := make(map[string]string, len(entries))
-		for i := range entries {
-			index := i
-			if reverse {
-				index = len(entries) - i - 1
-			}
-			mappings[entries[index].source] = entries[index].target
+		c.Authenticators[0].Attributes = make(map[string]AttributeSource, len(names))
+		for _, name := range names {
+			c.Authenticators[0].Attributes[name] = sources[name]
 		}
-		attributes := c.Processing[0].Attributes
-		attribute := attributes["tenant_id"]
-		attribute.Mappings = mappings
-		attributes["tenant_id"] = attribute
 		return c
 	}
 	buildMultipleCAs := func(t *testing.T, reverse bool) Config {
@@ -634,7 +611,7 @@ func TestGenerationIsDeterministic(t *testing.T) {
 		build func(*testing.T, bool) Config
 	}{
 		{name: "public routing", build: func(t *testing.T, _ bool) Config { return loadConfigCase(t, "public-routing") }},
-		{name: "mapping insertion order", build: buildMapped},
+		{name: "attribute insertion order", build: buildAttributes},
 		{name: "multiple CA mounts", build: buildMultipleCAs},
 	}
 	for _, test := range tests {
@@ -946,7 +923,7 @@ func TestJWTAuthorizationMatchesAnyAllowedListClaimValue(t *testing.T) {
 
 func TestConditionalJWTFilterOrder(t *testing.T) {
 	plainJWT := []string{requestControlsFilterName, jwtAuthnFilterName, authorizationFilterName, credentialCleanupFilterName, routerFilterName}
-	processedJWT := []string{
+	attributesJWT := []string{
 		requestControlsFilterName, jwtAuthnFilterName, attributeFilterName, authorizationFilterName,
 		requiredHeaderFilterName, credentialCleanupFilterName, headerMutationFilterName, routerFilterName,
 	}
@@ -959,8 +936,8 @@ func TestConditionalJWTFilterOrder(t *testing.T) {
 	}{
 		{name: "public", fixture: "public-routing", wantOrder: []string{requestControlsFilterName, routerFilterName}, wantFiles: []string{envoyConfigFilename}},
 		{name: "plain JWT", fixture: "jwt-auth", wantOrder: plainJWT, wantFiles: []string{envoyConfigFilename}},
-		{name: "direct headers", fixture: "jwt-auth-with-headers", wantOrder: processedJWT, wantFiles: []string{envoyConfigFilename}},
-		{name: "mapped headers", fixture: "jwt-auth-with-mappings", wantOrder: processedJWT, wantFiles: []string{envoyConfigFilename, processingConfigFilename, "server-certificate-1.yaml"}, withoutRequestMetrics: true},
+		{name: "direct headers", fixture: "jwt-auth-with-headers", wantOrder: attributesJWT, wantFiles: []string{envoyConfigFilename}},
+		{name: "claim attributes", fixture: "jwt-auth-with-attributes", wantOrder: attributesJWT, wantFiles: []string{envoyConfigFilename, "server-certificate-1.yaml"}, withoutRequestMetrics: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1105,7 +1082,7 @@ func TestJWTRequiredHeadersAreRouteScopedAndManaged(t *testing.T) {
 }
 
 func TestJWTAuthorizationPolicyCombinationsAreAPIScoped(t *testing.T) {
-	c := loadConfigCase(t, "jwt-auth-with-mappings")
+	c := loadConfigCase(t, "jwt-auth-with-attributes")
 	rules := c.toServerRBACRules(c.Servers[0])
 	if rules.Policies["api-metrics-write"] == nil || rules.Policies["api-logs"] == nil {
 		t.Fatalf("any_of policies did not generate both granted API rules: %#v", rules.Policies)
