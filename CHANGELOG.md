@@ -16,6 +16,10 @@ Notable changes to RHOBS Auth Gateway are recorded here.
 
 ### Fixed
 
+- Drain Envoy explicitly during Kubernetes termination, with readiness failure,
+  endpoint propagation, and a bounded wait for active requests. Regenerate and
+  apply Deployments to use the new hook and 40-second grace period. See
+  [termination behavior](docs/envoy.md#kubernetes-termination).
 - Keep API-key extraction regexes small as credential attributes are added,
   and reject attribute values larger than Envoy's 8191-byte metadata limit.
   Regenerate the bootstrap and explicitly roll out gateway Deployments.

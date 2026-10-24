@@ -379,6 +379,13 @@ resource metadata unchanged; Kubernetes enforces their naming rules when the
 manifest is applied. Resource map defaults apply only when the entire map is
 omitted or null. Supplying a partial map does not fill its missing entries.
 
+Generated Pods use a 40-second termination grace period, with five seconds for
+endpoint propagation and a 20-second Envoy drain before SIGTERM. Readiness
+checks Envoy's loopback `/ready` endpoint. Image overrides must provide Bash
+with `/dev/tcp`, `timeout`, and `sleep`. See
+[Kubernetes termination](envoy.md#kubernetes-termination) for connection and
+stream behavior and rollout requirements.
+
 ### Gateway identity and selector upgrades
 
 Deployment selectors, Pod labels, and Service selectors use

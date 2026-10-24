@@ -24,8 +24,10 @@ const (
 	kubernetesConfigMapKind             = "ConfigMap"
 	kubernetesResourcesFieldPath        = "kubernetes.resources"
 	kubernetesMetricsResourcesFieldPath = "kubernetes.metrics.resources"
-	terminationGracePeriodSeconds       = int64(30)
-	preStopDrainDelaySeconds            = 5
+	terminationGracePeriodSeconds       = int64(40)
+	endpointPropagationDelaySeconds     = 5
+	envoyDrainTimeSeconds               = 20
+	envoyAdminRequestTimeoutSeconds     = 2
 )
 
 const (
@@ -125,7 +127,6 @@ func newGatewayServiceAccount(c Config) corev1.ServiceAccount {
 
 func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, metricsName string) (appsv1.Deployment, error) {
 	k := c.Kubernetes
-	preStopDrainCommand := fmt.Sprintf("sleep %d", preStopDrainDelaySeconds)
 	gatewayResources, err := kubernetesResourceRequirements(kubernetesResourcesFieldPath, k.Resources)
 	if err != nil {
 		return appsv1.Deployment{}, err
@@ -134,7 +135,8 @@ func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, m
 	if err != nil {
 		return appsv1.Deployment{}, err
 	}
-	envoyArgs := []string{"-c", EnvoyBootstrapPath, "--log-level", "info"}
+	envoyArgs := []string{"-c", EnvoyBootstrapPath, "--log-level", "info",
+		"--drain-time-s", strconv.Itoa(envoyDrainTimeSeconds), "--drain-strategy", "immediate"}
 	if k.EnvoyConcurrency != nil {
 		envoyArgs = append(envoyArgs, "--concurrency", strconv.FormatUint(uint64(*k.EnvoyConcurrency), 10))
 	}
@@ -164,13 +166,16 @@ func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, m
 							{Name: "admin", ContainerPort: envoyAdminPort, Protocol: corev1.ProtocolTCP},
 						},
 						ReadinessProbe: &corev1.Probe{
-							ProbeHandler:     corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString(httpPortName)}},
-							PeriodSeconds:    5,
-							FailureThreshold: 12,
+							ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{
+								"timeout", strconv.Itoa(envoyAdminRequestTimeoutSeconds), "/bin/bash", "-ec", envoyAdminRequestScript(), "--", "GET", "/ready",
+							}}},
+							TimeoutSeconds:   envoyAdminRequestTimeoutSeconds + 1,
+							PeriodSeconds:    1,
+							FailureThreshold: 1,
 						},
 						Lifecycle: &corev1.Lifecycle{
 							PreStop: &corev1.LifecycleHandler{
-								Exec: &corev1.ExecAction{Command: []string{"/bin/sh", "-c", preStopDrainCommand}},
+								Exec: &corev1.ExecAction{Command: []string{"/bin/bash", "-c", envoyPreStopScript()}},
 							},
 						},
 						Resources: gatewayResources,
@@ -204,6 +209,23 @@ func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, m
 	addServerTLSVolumes(&deployment, c)
 	addTrustedCAVolumes(&deployment, c)
 	return deployment, nil
+}
+
+func envoyAdminRequestScript() string {
+	return fmt.Sprintf(`exec 3<>/dev/tcp/%s/%d
+printf "%%s %%s HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" "$1" "$2" >&3
+read -r protocol status message <&3
+test "$status" = 200`, envoyAdminAddress, envoyAdminPort)
+}
+
+func envoyPreStopScript() string {
+	return fmt.Sprintf(`admin() {
+  timeout %d /bin/bash -ec '%s' -- "$@"
+}
+admin POST /healthcheck/fail || echo "Envoy readiness failure request failed" >&2
+sleep %d
+admin POST '/drain_listeners?graceful' || echo "Envoy drain request failed" >&2
+sleep %d`, envoyAdminRequestTimeoutSeconds, envoyAdminRequestScript(), endpointPropagationDelaySeconds, envoyDrainTimeSeconds)
 }
 
 func addCollectorContainer(deployment *appsv1.Deployment, c Config, metricsName string, resources corev1.ResourceRequirements) {

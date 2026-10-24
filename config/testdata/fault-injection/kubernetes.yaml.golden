@@ -376,15 +376,29 @@ spec:
         - /etc/auth-gateway/envoy.yaml
         - --log-level
         - info
+        - --drain-time-s
+        - "20"
+        - --drain-strategy
+        - immediate
         image: envoyproxy/envoy:v1.39.1
         imagePullPolicy: IfNotPresent
         lifecycle:
           preStop:
             exec:
               command:
-              - /bin/sh
+              - /bin/bash
               - -c
-              - sleep 5
+              - |-
+                admin() {
+                  timeout 2 /bin/bash -ec 'exec 3<>/dev/tcp/127.0.0.1/9901
+                printf "%s %s HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" "$1" "$2" >&3
+                read -r protocol status message <&3
+                test "$status" = 200' -- "$@"
+                }
+                admin POST /healthcheck/fail || echo "Envoy readiness failure request failed" >&2
+                sleep 5
+                admin POST '/drain_listeners?graceful' || echo "Envoy drain request failed" >&2
+                sleep 20
         name: envoy
         ports:
         - containerPort: 8080
@@ -394,10 +408,23 @@ spec:
           name: admin
           protocol: TCP
         readinessProbe:
-          failureThreshold: 12
-          periodSeconds: 5
-          tcpSocket:
-            port: http
+          exec:
+            command:
+            - timeout
+            - "2"
+            - /bin/bash
+            - -ec
+            - |-
+              exec 3<>/dev/tcp/127.0.0.1/9901
+              printf "%s %s HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" "$1" "$2" >&3
+              read -r protocol status message <&3
+              test "$status" = 200
+            - --
+            - GET
+            - /ready
+          failureThreshold: 1
+          periodSeconds: 1
+          timeoutSeconds: 3
         resources:
           limits:
             cpu: "1"
@@ -438,7 +465,7 @@ spec:
           name: metrics-config
           readOnly: true
       serviceAccountName: auth-gateway
-      terminationGracePeriodSeconds: 30
+      terminationGracePeriodSeconds: 40
       volumes:
       - configMap:
           items:

@@ -1,6 +1,6 @@
 # Envoy behavior and deployment
 
-This page describes request handling and configuration reloads. See the
+This page describes request handling, configuration reloads, and shutdown. See the
 [README](../README.md) for library usage and the
 [configuration reference](configuration-reference.md) for supported YAML
 fields.
@@ -137,6 +137,45 @@ Remove the top-level block, regenerate and apply the gateway resources, and
 explicitly roll out the Deployment. After the new Pods are ready, delete the
 obsolete `<name>-processing` ConfigMap. File-based deployments can delete the
 old `processing/processing.yaml` after restarting Envoy with the new bootstrap.
+
+## Kubernetes termination
+
+Generated Pods reserve a 40-second termination grace period. The Envoy
+pre-stop hook runs this sequence before Kubernetes sends SIGTERM:
+
+1. Mark Envoy unhealthy through its loopback admin API. `/ready` returns `503`;
+   the exec readiness probe checks every second and fails on the first error.
+2. Wait five seconds for endpoint removal to propagate while the listener
+   continues serving requests.
+3. Start a 20-second graceful drain with the `immediate` drain strategy, then
+   wait for that period to finish.
+
+During the drain, Envoy continues accepting new connections. HTTP/1 responses
+include `Connection: close`, and HTTP/2 connections receive GOAWAY so clients
+can move to another Pod. Active requests can finish during the drain; requests
+arriving late have only the remaining time. Listeners stop accepting at the
+end of the drain, and Kubernetes then sends SIGTERM when the hook returns.
+
+Normal termination takes about 25 seconds. Each admin call has a two-second
+timeout, so the hook has a 29-second budget including both calls, propagation,
+and draining. The 40-second Pod grace period leaves time for SIGTERM and
+process exit. A failed admin call is reported by the hook; it still performs
+both waits before returning.
+
+Requests or streams still active at SIGTERM are cut off, even if their
+configured timeouts are longer. HTTP/1 clients can see an incomplete response
+or EOF; HTTP/2 streams can be interrupted by connection closure. Configured
+request or stream timeouts may end them earlier. Kubernetes can force-kill
+containers that remain after the Pod grace period.
+
+The pinned Envoy image supplies Bash with `/dev/tcp`, `timeout`, and `sleep`.
+Custom images must provide these commands for readiness and termination. The
+admin endpoint stays on `127.0.0.1:9901`; it is not exposed through the Service.
+
+Regenerate and apply the Deployment, then wait for its rollout to apply this
+sequence. Existing Pods retain their previous hook during that first rollout.
+File-based deployments must arrange their own readiness, admin drain, wait,
+and termination sequence.
 
 ## Timeouts and overload protection
 

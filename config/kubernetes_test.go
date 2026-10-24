@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"math"
 	"reflect"
 	"slices"
@@ -595,17 +594,65 @@ func TestKubernetesDeploymentDrainsBeforeTerminating(t *testing.T) {
 		t.Fatal(err)
 	}
 	podSpec := resources.Deployment.Spec.Template.Spec
-	if podSpec.TerminationGracePeriodSeconds == nil || *podSpec.TerminationGracePeriodSeconds != terminationGracePeriodSeconds {
-		t.Fatalf("termination grace period = %v, want %d seconds", podSpec.TerminationGracePeriodSeconds, terminationGracePeriodSeconds)
+	if podSpec.TerminationGracePeriodSeconds == nil || *podSpec.TerminationGracePeriodSeconds != 40 {
+		t.Fatalf("termination grace period = %v, want 40 seconds", podSpec.TerminationGracePeriodSeconds)
 	}
 
 	envoy := podSpec.Containers[0]
 	if envoy.Lifecycle == nil || envoy.Lifecycle.PreStop == nil || envoy.Lifecycle.PreStop.Exec == nil {
-		t.Fatalf("Envoy lifecycle = %#v, want a pre-stop drain delay", envoy.Lifecycle)
+		t.Fatalf("Envoy lifecycle = %#v, want an explicit pre-stop drain", envoy.Lifecycle)
 	}
-	wantCommand := []string{"/bin/sh", "-c", fmt.Sprintf("sleep %d", preStopDrainDelaySeconds)}
-	if !slices.Equal(envoy.Lifecycle.PreStop.Exec.Command, wantCommand) {
-		t.Fatalf("Envoy pre-stop command = %v, want %v", envoy.Lifecycle.PreStop.Exec.Command, wantCommand)
+	command := envoy.Lifecycle.PreStop.Exec.Command
+	if len(command) != 3 || command[0] != "/bin/bash" || command[1] != "-c" {
+		t.Fatalf("Envoy pre-stop command = %v, want a Bash drain sequence", command)
+	}
+	script := command[2]
+	for _, operation := range []string{
+		"timeout 2 /bin/bash -ec",
+		"exec 3<>/dev/tcp/127.0.0.1/9901",
+		`test "$status" = 200`,
+		"admin POST /healthcheck/fail",
+		"sleep 5",
+		"admin POST '/drain_listeners?graceful'",
+		"sleep 20",
+	} {
+		_, after, found := strings.Cut(script, operation)
+		if !found {
+			t.Fatalf("Envoy pre-stop sequence missing or misordered operation %q: %s", operation, command[2])
+		}
+		script = after
+	}
+	for flag, want := range map[string]string{"--drain-time-s": "20", "--drain-strategy": "immediate"} {
+		index := slices.Index(envoy.Args, flag)
+		if index < 0 || index+1 >= len(envoy.Args) || envoy.Args[index+1] != want {
+			t.Fatalf("Envoy args = %v, want %s %s", envoy.Args, flag, want)
+		}
+	}
+	// Two bounded admin calls, propagation, draining, and time for SIGTERM.
+	if minimum := int64(2*2 + 5 + 20 + 5); *podSpec.TerminationGracePeriodSeconds < minimum {
+		t.Fatalf("termination budget = %d seconds, need at least %d", *podSpec.TerminationGracePeriodSeconds, minimum)
+	}
+}
+
+func TestKubernetesReadinessUsesEnvoyHealth(t *testing.T) {
+	c := loadConfigCase(t, "server-tls")
+	resources, err := GenerateKubernetes(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := resources.Deployment.Spec.Template.Spec.Containers[0].ReadinessProbe
+	if probe == nil || probe.Exec == nil {
+		t.Fatalf("Envoy readiness = %#v, want an exec probe to loopback admin", probe)
+	}
+	wantCommand := []string{"timeout", "2", "/bin/bash", "-ec", `exec 3<>/dev/tcp/127.0.0.1/9901
+printf "%s %s HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" "$1" "$2" >&3
+read -r protocol status message <&3
+test "$status" = 200`, "--", "GET", "/ready"}
+	if !slices.Equal(probe.Exec.Command, wantCommand) {
+		t.Fatalf("Envoy readiness command = %v, want %v", probe.Exec.Command, wantCommand)
+	}
+	if probe.PeriodSeconds != 1 || probe.FailureThreshold != 1 || probe.TimeoutSeconds != 3 {
+		t.Fatalf("Envoy readiness = %#v, want a one-second period, one failure, and three-second timeout", probe)
 	}
 }
 

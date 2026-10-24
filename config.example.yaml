@@ -379,6 +379,7 @@ servers:
 kubernetes:
   name: auth-gateway # Also identifies this gateway in Pod and Service selectors.
   namespace: observability
+  # Image overrides need Bash with /dev/tcp, timeout, and sleep for readiness and draining.
   image: "" # Empty or omitted uses config.DefaultEnvoyImage.
   otel_collector_image: "" # Empty or omitted uses config.DefaultOTelCollectorImage.
   replicas: 2 # Default.

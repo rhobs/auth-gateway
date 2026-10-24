@@ -27,7 +27,8 @@ make e2e
 `make test` runs unit tests and golden comparisons. `make lint` checks formatting,
 tagged code, linters, and Markdown links. The tagged compile command does not
 start a cluster. `make test-runtime` uses Docker to validate checked-in Envoy
-goldens and exercise valid Envoy file reloads and per-API admission isolation.
+goldens and exercise valid Envoy file reloads, per-API admission isolation, and
+bounded termination.
 `make e2e` runs the live Kind suite
 and needs Docker, Go, and network access. It creates or reuses the
 `auth-gateway-e2e` cluster and removes its test namespaces afterward. For
@@ -40,7 +41,7 @@ replace the full suite before handoff.
 | Location                           | Contract                                                                                          |
 |------------------------------------|---------------------------------------------------------------------------------------------------|
 | `config/*_test.go`                 | YAML loading, defaults, validation, Envoy and Kubernetes output, and generated references.        |
-| `config/runtime*_test.go`          | Generated-file validation, valid file-based Envoy reloads, and per-API admission isolation.         |
+| `config/runtime*_test.go`          | Generated-file validation, valid file-based Envoy reloads, per-API admission isolation, and draining. |
 | `e2e/internal/framework/*_test.go` | Reusable Kubernetes test infrastructure.                                                          |
 | `e2e/*_test.go`                    | Observable routing, authentication, authorization, processing, TLS, reload, and metrics behavior. |
 
@@ -53,7 +54,7 @@ baselines.
 E2E cases should assert the method, path, headers, and body received by
 httpbin. Denied requests must not reach the backend. Keep scenarios isolated
 and preserve cleanup and failure diagnostics. Keep Envoy-only behavior such as
-timeouts, retries, overload, and flow control out of gateway e2e tests.
+timeouts, retries, overload, flow control, and draining out of gateway e2e tests.
 
 ## Golden files
 

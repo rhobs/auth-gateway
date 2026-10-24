@@ -197,6 +197,12 @@ func runtimeLiveStart(t *testing.T, configDir string, roots *x509.CertPool) *run
 
 func runtimeLiveStartEnvoy(t *testing.T, configDir string, dockerArgs, envoyArgs []string) (string, string) {
 	t.Helper()
+	args := []string{"--log-level", "info", "-c", EnvoyBootstrapPath}
+	return runtimeLiveStartEnvoyWithArgs(t, configDir, dockerArgs, append(args, envoyArgs...))
+}
+
+func runtimeLiveStartEnvoyWithArgs(t *testing.T, configDir string, dockerArgs, envoyArgs []string) (string, string) {
+	t.Helper()
 	envoyName := fmt.Sprintf("auth-gateway-envoy-%d-%d", os.Getpid(), time.Now().UnixNano())
 	image := os.Getenv("AUTH_GATEWAY_RUNTIME_IMAGE")
 	if image == "" {
@@ -205,7 +211,7 @@ func runtimeLiveStartEnvoy(t *testing.T, configDir string, dockerArgs, envoyArgs
 	args := []string{"run", "--detach", "--user", "101:101", "--name", envoyName,
 		"--publish", "127.0.0.1::8080/tcp", "--volume", configDir + ":" + EnvoyConfigDirectory}
 	args = append(args, dockerArgs...)
-	args = append(args, image, "--log-level", "info", "-c", EnvoyBootstrapPath)
+	args = append(args, image)
 	args = append(args, envoyArgs...)
 	runtimeLiveDocker(t, args...)
 	t.Cleanup(func() {

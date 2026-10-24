@@ -116,6 +116,11 @@ ConfigMap changes reload through SDS for new connections. Static Envoy
 configuration changes require an explicit Deployment rollout; the generated
 Deployment has no checksum annotation.
 
+Generated Kubernetes Pods mark Envoy unready, wait for endpoint propagation,
+and drain active requests before termination within a 40-second grace period.
+See [Kubernetes termination](docs/envoy.md#kubernetes-termination) for connection
+behavior and limits on long requests or streams.
+
 ## Local playground
 
 The Docker Compose demo exercises public, JWT, API-key, and mixed-auth servers

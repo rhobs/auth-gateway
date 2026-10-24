@@ -25,8 +25,8 @@ its generated Envoy and Kubernetes configuration at the review baseline.
 | --- | --- | --- |
 | 0 | Resolve conflicting authentication scope guidance | G1 |
 | 1 | Isolate authenticated identities and gateway workloads | D1, D2 (merged) |
-| 2 | Generate configuration that Envoy accepts at realistic sizes | D3 (merged), D4 (implementation done) |
-| 3 | Make termination, restricted admission, and metrics predictable | D5, D6, G2 |
+| 2 | Generate configuration that Envoy accepts at realistic sizes | D3, D4 (merged) |
+| 3 | Make termination, restricted admission, and metrics predictable | D5 (implementation done), D6, G2 |
 | 4 | Reduce duplication and dependency overhead | S1, S2, S3 |
 | 5 | Complete documentation, rollout guidance, and verification | All |
 
@@ -221,7 +221,7 @@ to replace the old configuration and remove its obsolete resources.
 ### D4. Reduce API-key extraction regex complexity (P1, confirmed)
 
 **Status: Done (implementation and acceptance checks, 2026-10-24).**
-[PR #20](https://github.com/rhobs/auth-gateway/pull/20) awaits review and merge.
+[PR #20](https://github.com/rhobs/auth-gateway/pull/20) merged on 2026-10-24.
 
 **Evidence:** [API-key attribute extraction](../config/api_keys.go) repeats
 the complete credential attribute layout in each extraction and identity
@@ -277,12 +277,15 @@ compatible. See [attribute flow](envoy.md#attribute-flow).
 
 ### D5. Drain Envoy explicitly during termination (P1, confirmed)
 
-**Evidence:** The [generated lifecycle hook](../config/kubernetes.go) sleeps
-for five seconds within a 30-second termination grace period. It does not
-initiate draining. In a runtime probe, an eight-second backend request was
+**Status: Done (implementation and acceptance checks, 2026-10-24).**
+
+**Evidence:** At the review baseline, the
+[generated lifecycle hook](../config/kubernetes.go) slept for five seconds
+within a 30-second termination grace period without initiating draining.
+In a runtime probe, an eight-second backend request was
 active when SIGTERM followed the five-second delay; the client received EOF
-about 121 ms after SIGTERM. The existing drain-oriented unit test checks the
-sleep command rather than successful draining.
+about 121 ms after SIGTERM. The drain-oriented unit test checked the sleep
+command rather than successful draining.
 
 **Work:** Generate an explicit Envoy drain sequence. Coordinate readiness,
 endpoint propagation, drain duration, and the overall termination budget.
@@ -291,14 +294,40 @@ requests or streams that exceed the grace period.
 
 **Acceptance and validation:**
 
-- Unit tests verify the generated lifecycle operation and sufficient grace
+- [x] Unit tests verify the generated lifecycle operation and sufficient grace
   budget for the complete sequence.
-- Runtime tests demonstrate that an active eight-second request completes
+- [x] Runtime tests demonstrate that an active eight-second request completes
   during orderly termination within the selected budget.
-- Runtime coverage checks bounded shutdown and the chosen behavior for new
+- [x] Runtime coverage checks bounded shutdown and the chosen behavior for new
   connections during draining. These Envoy semantics belong in the runtime
   suite.
-- Operational documentation explains the drain and maximum termination time.
+- [x] Operational documentation explains the drain and maximum termination time.
+
+**Delivered:** Readiness checks Envoy's loopback `/ready` endpoint. The hook
+marks Envoy unhealthy, waits five seconds for endpoint propagation, starts a
+20-second graceful drain with the immediate strategy, and waits before
+SIGTERM. Both admin calls have two-second timeouts and use commands available
+in the pinned image. The Pod reserves 40 seconds for the complete sequence
+and process exit. New connections remain accepted during draining, with
+HTTP/1 connection-close and HTTP/2 GOAWAY signals. Over-budget requests or
+streams are cut off at termination.
+
+**Validation:** A focused regression reproduced the old hook aborting the
+eight-second request. The three
+[termination runtime tests](../config/runtime_termination_test.go) run the
+generated arguments, readiness probe, and hook in a non-root, read-only pinned
+image. The request now completes, readiness fails before the propagation
+delay ends, fresh HTTP/1 connections receive `Connection: close`, and an active
+stream is truncated after the full drain. Envoy exits in about 25.5 seconds,
+within its 40-second budget. `make test`, `make lint`, tagged e2e/runtime
+compilation, framework tests, `make test-runtime`, and `make e2e` passed on
+2026-10-24 (79/79 Kind specs). All 13 changed Kubernetes references were
+regenerated and reviewed.
+
+**Rollout:** Regenerate and apply the Deployment, then wait for its rollout.
+Existing Pods still use their previous hook during the first rollout. See
+[Kubernetes termination](envoy.md#kubernetes-termination) for the sequence,
+image requirements, and request limits.
 
 ### D6. Make the default Pod pass restricted admission (P1, confirmed)
 
