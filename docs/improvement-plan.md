@@ -278,6 +278,7 @@ compatible. See [attribute flow](envoy.md#attribute-flow).
 ### D5. Drain Envoy explicitly during termination (P1, confirmed)
 
 **Status: Done (implementation and acceptance checks, 2026-10-24).**
+[PR #21](https://github.com/rhobs/auth-gateway/pull/21) awaits review and merge.
 
 **Evidence:** At the review baseline, the
 [generated lifecycle hook](../config/kubernetes.go) slept for five seconds
