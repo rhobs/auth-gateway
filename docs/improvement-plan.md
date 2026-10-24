@@ -6,8 +6,9 @@ Status: in progress. D1, D2, and D3 are merged in
 [PR #17](https://github.com/rhobs/auth-gateway/pull/17),
 [PR #18](https://github.com/rhobs/auth-gateway/pull/18), and
 [PR #19](https://github.com/rhobs/auth-gateway/pull/19). D4's implementation and
-acceptance checks are done, awaiting review and merge. All other items remain
-planned.
+acceptance checks are done in
+[PR #20](https://github.com/rhobs/auth-gateway/pull/20), awaiting review and
+merge. All other items remain planned.
 
 This plan covers six confirmed defects (D1-D6), two gaps (G1-G2), and three
 simplification opportunities (S1-S3). The findings apply to the generator and
@@ -220,7 +221,7 @@ to replace the old configuration and remove its obsolete resources.
 ### D4. Reduce API-key extraction regex complexity (P1, confirmed)
 
 **Status: Done (implementation and acceptance checks, 2026-10-24).**
-Awaiting review and merge.
+[PR #20](https://github.com/rhobs/auth-gateway/pull/20) awaits review and merge.
 
 **Evidence:** [API-key attribute extraction](../config/api_keys.go) repeats
 the complete credential attribute layout in each extraction and identity
