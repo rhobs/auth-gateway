@@ -71,10 +71,11 @@ func TestPinnedImagesValidateGoldenFiles(t *testing.T) {
 
 func validatePinnedEnvoyFiles(t *testing.T, c Config, files GeneratedFiles, goldenDirectory string, certificate, key []byte) {
 	t.Helper()
+	effective := resolveTestConfig(t, c)
 	args := []string{"run", "--rm", "--user", "101:101"}
 	configDir := runtimeDirectory(t)
 	externalFiles := make(map[string]map[string][]byte)
-	if _, exists := c.apiKeyAuthenticator(); exists {
+	if _, exists := effective.apiKeyAuthenticator(); exists {
 		if err := os.Mkdir(filepath.Join(configDir, "api-keys"), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -102,7 +103,7 @@ func validatePinnedEnvoyFiles(t *testing.T, c Config, files GeneratedFiles, gold
 		}
 		runtimeWrite(t, outputPath, contents)
 	}
-	if authenticator, exists := c.apiKeyAuthenticator(); exists {
+	if authenticator, exists := effective.apiKeyAuthenticator(); exists {
 		data, err := GenerateAPIKeyECDS(authenticator, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -113,12 +114,12 @@ func validatePinnedEnvoyFiles(t *testing.T, c Config, files GeneratedFiles, gold
 		writeRuntimeMountedFile(t, configDir, externalFiles, mount.config.Certificate, certificate)
 		writeRuntimeMountedFile(t, configDir, externalFiles, mount.config.PrivateKey, key)
 	}
-	for _, ca := range c.caMounts() {
+	for _, ca := range effective.caMounts() {
 		dir := runtimeDirectory(t)
 		runtimeWrite(t, filepath.Join(dir, "ca.crt"), certificate)
 		args = append(args, "-v", dir+":"+filepath.Join(caDirectory, ca.id())+":ro")
 	}
-	for _, filename := range runtimeTrustedCAFiles(c) {
+	for _, filename := range runtimeTrustedCAFiles(effective) {
 		writeRuntimeMountedFile(t, configDir, externalFiles, filename, certificate)
 	}
 	args = append(args, "-v", configDir+":"+configDirectory+":ro")
@@ -163,7 +164,7 @@ func writeRuntimeMountedFile(t *testing.T, configDir string, externalFiles map[s
 	externalFiles[directory][filepath.Base(filename)] = contents
 }
 
-func runtimeTrustedCAFiles(c Config) []string {
+func runtimeTrustedCAFiles(c effectiveConfig) []string {
 	var filenames []string
 	seen := make(map[string]struct{})
 	add := func(ca *TrustedCA) {
@@ -177,7 +178,7 @@ func runtimeTrustedCAFiles(c Config) []string {
 		filenames = append(filenames, ca.Filename)
 	}
 	for _, authenticator := range c.Authenticators {
-		if !authenticatorUsed(c.Servers, authenticator.Name) {
+		if !c.authenticatorUsed(authenticator.Name) {
 			continue
 		}
 		if authenticator.JWT != nil {

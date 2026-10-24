@@ -121,7 +121,7 @@ func Load(r io.Reader) (Config, error) {
 	}
 
 	c = c.withDefaults()
-	if err := validateDefaultedConfig(c, false); err != nil {
+	if _, err := validateDefaultedConfig(c, false); err != nil {
 		return Config{}, err
 	}
 	return c, nil
@@ -130,34 +130,8 @@ func Load(r io.Reader) (Config, error) {
 // Validate checks whether c follows the public configuration contract.
 // Use it when building a Config in Go instead of loading YAML with Load.
 func (c Config) Validate() error {
-	return validateDefaultedConfig(c.withDefaults(), false)
-}
-
-func (c Config) validate() error {
-	metricsEnabled := c.Kubernetes != nil && c.Observability.Metrics.enabled()
-	tracingEnabled := c.Observability.Tracing.enabled()
-	if err := c.validateBaseSettings(metricsEnabled, tracingEnabled); err != nil {
-		return err
-	}
-	apis, err := c.validateAPIs()
-	if err != nil {
-		return err
-	}
-	if err := c.validateServers(apis); err != nil {
-		return err
-	}
-	if err := c.validateAuthentication(apis); err != nil {
-		return err
-	}
-	if c.Kubernetes != nil {
-		if err := c.validateKubernetes(metricsEnabled, tracingEnabled); err != nil {
-			return err
-		}
-	}
-	if c.Overload != nil {
-		return c.Overload.validate(c.Kubernetes)
-	}
-	return nil
+	_, err := validateDefaultedConfig(c.withDefaults(), false)
+	return err
 }
 
 func (c Config) validateBaseSettings(metricsEnabled, tracingEnabled bool) error {
@@ -504,49 +478,43 @@ func (s ServerTLS) withDefaults() ServerTLS {
 	return s
 }
 
-func (c Config) apisByName() map[string]API {
-	apis := make(map[string]API, len(c.APIs))
-	for _, api := range c.APIs {
-		apis[api.Name] = api
-	}
-	return apis
-}
-
-func (c Config) validateServers(apis map[string]API) error {
+func (c Config) validateServers(apis map[string]API) ([]resolvedServer, error) {
 	if len(c.Servers) == 0 {
-		return fmt.Errorf("servers must contain at least one server")
+		return nil, fmt.Errorf("servers must contain at least one server")
 	}
+	servers := make([]resolvedServer, len(c.Servers))
 	hosts := make(map[string]int, len(c.Servers))
 	for i, server := range c.Servers {
 		name := fmt.Sprintf(serverFieldPathFormat, i)
 		if !validDNSHost(server.Hostname) {
-			return fmt.Errorf("%s.hostname must be an exact DNS hostname", name)
+			return nil, fmt.Errorf("%s.hostname must be an exact DNS hostname", name)
 		}
 		if previous, exists := hosts[server.Hostname]; exists {
-			return fmt.Errorf("%s.hostname %q is already used by servers[%d]", name, server.Hostname, previous)
+			return nil, fmt.Errorf("%s.hostname %q is already used by servers[%d]", name, server.Hostname, previous)
 		}
 		hosts[server.Hostname] = i
 		if server.TLSConfig != nil {
 			if err := validateServerTLS(name+".tls_config", *server.TLSConfig); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		bound, err := server.boundAPIs(apis)
 		if err != nil {
-			return fmt.Errorf("%s.apis: %w", name, err)
+			return nil, fmt.Errorf("%s.apis: %w", name, err)
 		}
 		routes := make(map[string]struct{})
 		for _, api := range bound {
 			for _, route := range api.Routes {
 				for _, method := range route.Methods {
 					if err := addRouteKey(routes, route.Path, method); err != nil {
-						return fmt.Errorf("%s.apis: %w", name, err)
+						return nil, fmt.Errorf("%s.apis: %w", name, err)
 					}
 				}
 			}
 		}
+		servers[i] = resolvedServer{Server: &c.Servers[i], apis: bound}
 	}
-	return nil
+	return servers, nil
 }
 
 func (c Config) tlsMounts() []serverTLSMount {
@@ -604,35 +572,6 @@ func (c Config) hasHTTPS() bool {
 		}
 	}
 	return false
-}
-
-func (c Config) validateAuthentication(apis map[string]API) error {
-	authenticators, apiKeyHeader, err := c.validateAuthenticators()
-	if err != nil {
-		return err
-	}
-	if err := c.validateAuthenticatorAttributes(apiKeyHeader); err != nil {
-		return err
-	}
-	if apiKeyHeader != "" {
-		if err := c.validateAPIKeyHeaderUse(apiKeyHeader); err != nil {
-			return err
-		}
-	}
-	if err := validateMetricAttributeReferences(c.APIs, authenticators); err != nil {
-		return err
-	}
-	policies, err := c.validateAuthorizationPolicies()
-	if err != nil {
-		return err
-	}
-	if err := c.validateAuthorizationPolicyGrants(apis, authenticators); err != nil {
-		return err
-	}
-	if err := c.validateServerAuthentication(apis, authenticators, policies); err != nil {
-		return err
-	}
-	return validatePermissiveJWTIssuerBindings(c.Servers, authenticators)
 }
 
 func (c Config) validateAuthenticators() (map[string]Authenticator, string, error) {
@@ -726,14 +665,10 @@ func (c Config) validateAuthorizationPolicies() (map[string]AuthorizationPolicy,
 }
 
 func (c Config) validateAuthorizationPolicyGrants(apis map[string]API, authenticators map[string]Authenticator) error {
-	apiNames := make(map[string]struct{}, len(apis))
-	for name := range apis {
-		apiNames[name] = struct{}{}
-	}
 	for i, policy := range c.AuthorizationPolicies {
 		for j, grant := range policy.Grants {
 			name := fmt.Sprintf("authorization_policies[%d].grants[%d]", i, j)
-			if err := validateAuthorizationGrant(name, grant, apiNames, authenticators); err != nil {
+			if err := validateAuthorizationGrant(name, grant, apis, authenticators); err != nil {
 				return err
 			}
 		}
@@ -741,7 +676,7 @@ func (c Config) validateAuthorizationPolicyGrants(apis map[string]API, authentic
 	return nil
 }
 
-func validateAuthorizationGrant(name string, grant AuthorizationGrant, apiNames map[string]struct{}, authenticators map[string]Authenticator) error {
+func validateAuthorizationGrant(name string, grant AuthorizationGrant, apis map[string]API, authenticators map[string]Authenticator) error {
 	authenticator, exists := authenticators[grant.Authenticator]
 	if !exists {
 		return fmt.Errorf("%s.authenticator references unknown authenticator %q", name, grant.Authenticator)
@@ -749,7 +684,7 @@ func validateAuthorizationGrant(name string, grant AuthorizationGrant, apiNames 
 	if len(grant.APIs) == 0 {
 		return fmt.Errorf("%s.apis must contain at least one API", name)
 	}
-	if err := validateUniqueReferences(name+".apis", grant.APIs, apiNames); err != nil {
+	if err := validateUniqueReferences(name+".apis", grant.APIs, apis); err != nil {
 		return err
 	}
 	if len(grant.Attributes) == 0 && authenticator.MTLS == nil {
@@ -786,53 +721,6 @@ func validateGrantAttribute(name, authenticatorName, attribute string, values []
 	return nil
 }
 
-func (c Config) validateServerAuthentication(apis map[string]API, authenticators map[string]Authenticator, policies map[string]AuthorizationPolicy) error {
-	for i, server := range c.Servers {
-		name := fmt.Sprintf(serverFieldPathFormat, i)
-		if server.Authentication != nil {
-			selected, err := validateSelection(name+".authentication", server.Authentication.AnyOf, server.Authentication.AllOf, authenticatorNames(authenticators))
-			if err != nil {
-				return err
-			}
-			jwtCount, mtlsCount := 0, 0
-			for _, selectedName := range selected {
-				if authenticators[selectedName].MTLS != nil {
-					mtlsCount++
-				}
-			}
-			if mtlsCount > 1 {
-				return fmt.Errorf("%s.authentication cannot contain more than one mTLS authenticator", name)
-			}
-			if mtlsCount > 0 && server.TLSConfig == nil {
-				return fmt.Errorf("%s.authentication requires tls_config for mTLS", name)
-			}
-			for _, selectedName := range server.Authentication.AllOf {
-				if authenticators[selectedName].JWT != nil {
-					jwtCount++
-				}
-			}
-			if jwtCount > 1 {
-				return fmt.Errorf("%s.authentication.all_of cannot contain more than one JWT authenticator", name)
-			}
-			if err := validateUniqueIssuerBindings(name+".authentication", selected, authenticators); err != nil {
-				return err
-			}
-		}
-		if server.Authorization != nil {
-			if server.Authentication == nil {
-				return fmt.Errorf("%s.authorization requires authentication", name)
-			}
-			if _, err := validateSelection(name+".authorization", server.Authorization.AnyOf, server.Authorization.AllOf, policyNames(policies)); err != nil {
-				return err
-			}
-		}
-		if err := validateRouteAttributeSources(name, server, apis, authenticators); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (c Config) hasAuthenticationConfig() bool {
 	if len(c.Authenticators) != 0 || len(c.AuthorizationPolicies) != 0 {
 		return true
@@ -850,63 +738,6 @@ func (c Config) hasAuthenticationConfig() bool {
 		}
 	}
 	return false
-}
-
-func (c Config) apiKeyAuthenticator() (Authenticator, bool) {
-	for _, authenticator := range c.Authenticators {
-		if authenticator.APIKey != nil {
-			return authenticator, true
-		}
-	}
-	return Authenticator{}, false
-}
-
-func (c Config) usesAPIKeys() bool {
-	authenticator, exists := c.apiKeyAuthenticator()
-	return exists && authenticatorUsed(c.Servers, authenticator.Name)
-}
-
-func (c Config) usesJWT() bool {
-	for _, authenticator := range c.Authenticators {
-		if authenticator.JWT != nil && authenticatorUsed(c.Servers, authenticator.Name) {
-			return true
-		}
-	}
-	return false
-}
-
-func (c Config) usesMTLS() bool {
-	for _, authenticator := range c.Authenticators {
-		if authenticator.MTLS != nil && authenticatorUsed(c.Servers, authenticator.Name) {
-			return true
-		}
-	}
-	return false
-}
-
-func (c Config) caMounts() []CAConfigMap {
-	var mounts []CAConfigMap
-	seen := map[CAConfigMap]bool{}
-	add := func(ca *TrustedCA) {
-		if ca != nil && ca.ConfigMap != nil && !seen[*ca.ConfigMap] {
-			mounts = append(mounts, *ca.ConfigMap)
-			seen[*ca.ConfigMap] = true
-		}
-	}
-	for _, authenticator := range c.Authenticators {
-		if authenticator.JWT != nil && authenticatorUsed(c.Servers, authenticator.Name) {
-			add(authenticator.JWT.JWKS.TrustedCA)
-		}
-		if authenticator.MTLS != nil && authenticatorUsed(c.Servers, authenticator.Name) {
-			add(authenticator.MTLS.TrustedCA)
-		}
-	}
-	for _, api := range c.APIs {
-		if api.Upstream.TLSConfig != nil {
-			add(api.Upstream.TLSConfig.TrustedCA)
-		}
-	}
-	return mounts
 }
 
 func copyResourcesOrDefault(values, defaults map[string]string) map[string]string {
@@ -1068,39 +899,6 @@ func validHost(value string) bool {
 
 func validDNSHost(value string) bool {
 	return net.ParseIP(value) == nil && len(validation.IsDNS1123Subdomain(value)) == 0
-}
-
-type effectiveConfig struct {
-	Config
-}
-
-func resolveConfig(input Config) (effectiveConfig, error) {
-	c := input.withDefaults()
-	if err := validateDefaultedConfig(c, true); err != nil {
-		return effectiveConfig{}, err
-	}
-	return effectiveConfig{Config: c}, nil
-}
-
-// validateDefaultedConfig expects defaults to have already been applied.
-func validateDefaultedConfig(c Config, resolveTimeouts bool) error {
-	if err := c.validate(); err != nil {
-		return err
-	}
-	for i := range c.APIs {
-		api := &c.APIs[i]
-		for j := range api.Routes {
-			timers := resolveRouteTimeouts(c.Listener, api.Timeouts, api.Routes[j].Timeouts)
-			if *timers.ResponseTimeout > *timers.MaxStreamDuration {
-				field := fmt.Sprintf("apis[%d].routes[%d].timeouts", i, j)
-				return fmt.Errorf("%s.response_timeout (%s) must not exceed effective %s.max_stream_duration (%s)", field, timers.ResponseTimeout, field, timers.MaxStreamDuration)
-			}
-			if resolveTimeouts {
-				api.Routes[j].Timeouts = timers
-			}
-		}
-	}
-	return nil
 }
 
 func validateRouteTimeouts(name string, t *RouteTimeouts) error {

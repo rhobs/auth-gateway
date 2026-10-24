@@ -64,17 +64,17 @@ func TestJWTExpressionsUseEnvoyCELVariablesAndGuardMissingAttributes(t *testing.
 
 func TestAPIKeyRawAuthorizationAndSharedAttributeEquality(t *testing.T) {
 	c := loadConfigCase(t, "api-key-auth")
-	keyOnly := testServerAuthenticationRules(t, c, c.Servers[1]).Policies["authenticated"].Principals[0]
+	keyOnly := testServerAuthenticationRules(t, c, 1).Policies["authenticated"].Principals[0]
 	if matcher := keyOnly.GetSourcedMetadata().GetMetadataMatcher(); matcher == nil || matcher.Filter != apiKeyMetadataNamespace ||
 		!slices.Equal(metadataMatcherPath(matcher.GetPath()), []string{"identity"}) ||
 		matcher.GetValue().GetStringMatch().GetExact() != "verified" {
 		t.Fatalf("key-only authentication principal = %#v", keyOnly)
 	}
-	mixed := testServerAuthenticationRules(t, c, c.Servers[2]).Policies["authenticated"].Principals[0].GetOrIds().GetIds()
+	mixed := testServerAuthenticationRules(t, c, 2).Policies["authenticated"].Principals[0].GetOrIds().GetIds()
 	if len(mixed) != 2 || mixed[0].GetSourcedMetadata() == nil || mixed[1].GetHeader().GetName() != jwtVerifiedHeaderName("issuer-one") {
 		t.Fatalf("mixed any_of authentication principal = %#v", mixed)
 	}
-	dualPolicy := testServerAuthenticationRules(t, c, c.Servers[3]).Policies["authenticated"]
+	dualPolicy := testServerAuthenticationRules(t, c, 3).Policies["authenticated"]
 	principals := dualPolicy.Principals[0].GetAndIds().GetIds()
 	if len(principals) != 5 || dualPolicy.Condition.GetCallExpr().GetFunction() != "_&&_" {
 		t.Fatalf("all_of authentication policy = %#v", dualPolicy)
@@ -90,14 +90,15 @@ func TestAPIKeyRawAuthorizationAndSharedAttributeEquality(t *testing.T) {
 			t.Fatalf("shared attribute was not restricted to a nonempty scalar: %#v", principal)
 		}
 	}
-	grant := c.toGrantPrincipal(c.AuthorizationPolicies[1].Grants[0])
+	grant := resolveTestConfig(t, c).toGrantPrincipal(c.AuthorizationPolicies[1].Grants[0])
 	parts := grant.GetAndIds().GetIds()
 	if len(parts) != 2 || parts[1].GetSourcedMetadata().GetMetadataMatcher().GetFilter() != apiKeyMetadataNamespace ||
 		!slices.Equal(metadataMatcherPath(parts[1].GetSourcedMetadata().GetMetadataMatcher().GetPath()), []string{"attribute.tenant_id"}) {
 		t.Fatalf("API-key grant reads unprocessed Secret attributes: %#v", grant)
 	}
 	c.Servers[1].Authorization.AnyOf = []string{"jwt-writers", "key-writers"}
-	grants := c.toServerRBACRules(c.Servers[1]).Policies["api-ingest"].Principals[0].GetOrIds().GetIds()
+	effective := resolveTestConfig(t, c)
+	grants := effective.toServerRBACRules(effective.servers[1]).Policies["api-ingest"].Principals[0].GetOrIds().GetIds()
 	if len(grants) != 1 || grants[0].GetAndIds() == nil {
 		t.Fatalf("key-only host used an unselected JWT grant: %#v", grants)
 	}
@@ -171,7 +172,7 @@ func TestMixedAllOfComparesHeaderAndVerifiedAttributeSources(t *testing.T) {
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	policy := testServerAuthenticationRules(t, c, c.Servers[3]).Policies["authenticated"]
+	policy := testServerAuthenticationRules(t, c, 3).Policies["authenticated"]
 	if len(policy.Principals[0].GetAndIds().GetIds()) != 5 {
 		t.Fatalf("all_of shared-attribute principals = %#v", policy.Principals)
 	}
@@ -192,9 +193,10 @@ func TestMixedAllOfComparesHeaderAndVerifiedAttributeSources(t *testing.T) {
 	}
 }
 
-func testServerAuthenticationRules(t *testing.T, c Config, server Server) *rbac.RBAC {
+func testServerAuthenticationRules(t *testing.T, c Config, serverIndex int) *rbac.RBAC {
 	t.Helper()
-	rules, err := c.toServerAuthenticationRBACRules(server)
+	effective := resolveTestConfig(t, c)
+	rules, err := effective.toServerAuthenticationRBACRules(effective.servers[serverIndex])
 	if err != nil {
 		t.Fatal(err)
 	}
