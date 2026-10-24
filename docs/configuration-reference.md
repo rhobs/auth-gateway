@@ -379,6 +379,35 @@ resource metadata unchanged; Kubernetes enforces their naming rules when the
 manifest is applied. Resource map defaults apply only when the entire map is
 omitted or null. Supplying a partial map does not fill its missing entries.
 
+### Pod security
+
+Generated Pods use the `RuntimeDefault` seccomp profile. Envoy and the optional
+collector require a non-root user, disable privilege escalation, drop all
+Linux capabilities, and use a read-only root filesystem. These settings meet
+Kubernetes restricted Pod Security Admission requirements.
+
+Envoy runs as UID/GID `101`. The pinned collector image declares non-root
+UID/GID `10001`; the Deployment leaves these fields unset for the collector.
+Collector image overrides must declare a numeric non-root user, or supply one
+in the generated Deployment, and work without a writable root filesystem.
+
+Regenerate and apply the Kubernetes manifest to update existing Pod security
+settings. The changed Pod template starts a Deployment rollout.
+
+### OpenShift
+
+OpenShift's
+[`restricted-v2` SCC](https://github.com/openshift/cluster-kube-apiserver-operator/blob/main/bindata/bootkube/scc-manifests/0000_20_kube-apiserver-operator_00_scc-restricted-v2.yaml)
+assigns a user ID from the namespace's allocated range. Before applying each
+generated manifest, remove `runAsUser` and `runAsGroup` from the Envoy container's
+`securityContext` in the Deployment. Keep `runAsNonRoot: true` and the other
+security settings so the SCC can supply the namespace's user ID.
+
+Keep the fixed Envoy UID/GID on plain Kubernetes: the pinned Envoy image's
+metadata defaults to root. The collector needs no UID adjustment. OpenShift
+SCC admission has not been verified against a live OpenShift cluster; the Kind
+suite verifies Kubernetes restricted Pod Security Admission.
+
 ### Gateway identity and selector upgrades
 
 Deployment selectors, Pod labels, and Service selectors use

@@ -154,6 +154,9 @@ func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, m
 					ServiceAccountName:            k.Name,
 					AutomountServiceAccountToken:  new(false),
 					TerminationGracePeriodSeconds: new(terminationGracePeriodSeconds),
+					SecurityContext: &corev1.PodSecurityContext{
+						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+					},
 					Containers: []corev1.Container{{
 						Name:            "envoy",
 						Image:           k.Image,
@@ -231,6 +234,12 @@ func addCollectorContainer(deployment *appsv1.Deployment, c Config, metricsName 
 		Args:            []string{"--config=" + path.Join(collectorConfigDirectory, collectorConfigFilename)},
 		Ports:           collectorPorts,
 		Resources:       resources,
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: new(false),
+			ReadOnlyRootFilesystem:   new(true),
+			RunAsNonRoot:             new(true),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		},
 		VolumeMounts: []corev1.VolumeMount{{
 			Name:      metricsConfigVolumeName,
 			MountPath: collectorConfigDirectory,

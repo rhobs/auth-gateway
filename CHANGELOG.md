@@ -16,6 +16,10 @@ Notable changes to RHOBS Auth Gateway are recorded here.
 
 ### Fixed
 
+- Add the missing collector security context and Pod seccomp profile so
+  generated Pods pass restricted admission. Apply regenerated manifests to
+  roll out the settings; OpenShift needs the documented
+  [UID adjustment](docs/configuration-reference.md#openshift).
 - Keep API-key extraction regexes small as credential attributes are added,
   and reject attribute values larger than Envoy's 8191-byte metadata limit.
   Regenerate the bootstrap and explicitly roll out gateway Deployments.
