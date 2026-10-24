@@ -250,13 +250,14 @@ static_resources:
                                   on_header_present:
                                     key: identity
                                     metadata_namespace: auth_gateway.api_key
+                                    value: verified
                                 - header: x-auth-gateway-api-key-client
                                   on_header_present:
                                     key: attribute.tenant_id
                                     metadata_namespace: auth_gateway.api_key
                                     regex_value_rewrite:
                                         pattern:
-                                            regex: ^tenant_id=([^;]*);writer_id=[^;]*$
+                                            regex: ^(?:(?:[^;]*;)*tenant_id=([^;]*)(?:;[^;]*)*|.*)$
                                         substitution: \1
                                 - header: x-auth-gateway-api-key-client
                                   on_header_present:
@@ -264,7 +265,7 @@ static_resources:
                                     metadata_namespace: auth_gateway.api_key
                                     regex_value_rewrite:
                                         pattern:
-                                            regex: ^tenant_id=[^;]*;writer_id=([^;]*)$
+                                            regex: ^(?:(?:[^;]*;)*writer_id=([^;]*)(?:;[^;]*)*|.*)$
                                         substitution: \1
                                   remove: true
                         - name: auth_gateway.authentication
@@ -524,8 +525,7 @@ static_resources:
                                                                     - key: identity
                                                                 value:
                                                                     string_match:
-                                                                        safe_regex:
-                                                                            regex: ^tenant_id=[^;]*;writer_id=[^;]*$
+                                                                        exact: verified
                                 envoy.filters.http.api_key_auth:
                                     '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
                                     config:
@@ -558,8 +558,7 @@ static_resources:
                                                                                     - key: identity
                                                                                 value:
                                                                                     string_match:
-                                                                                        safe_regex:
-                                                                                            regex: ^tenant_id=[^;]*;writer_id=[^;]*$
+                                                                                        exact: verified
                                                                         - sourced_metadata:
                                                                             metadata_matcher:
                                                                                 filter: auth_gateway.api_key
@@ -691,8 +690,7 @@ static_resources:
                                                                             - key: identity
                                                                         value:
                                                                             string_match:
-                                                                                safe_regex:
-                                                                                    regex: ^tenant_id=[^;]*;writer_id=[^;]*$
+                                                                                exact: verified
                                                                 - header:
                                                                     name: x-auth-gateway-jwt-verified-issuer-one
                                                                     string_match:
@@ -771,8 +769,7 @@ static_resources:
                                                                                     - key: identity
                                                                                 value:
                                                                                     string_match:
-                                                                                        safe_regex:
-                                                                                            regex: ^tenant_id=[^;]*;writer_id=[^;]*$
+                                                                                        exact: verified
                                                                         - sourced_metadata:
                                                                             metadata_matcher:
                                                                                 filter: auth_gateway.api_key
@@ -948,13 +945,14 @@ static_resources:
                                   on_header_present:
                                     key: identity
                                     metadata_namespace: auth_gateway.api_key
+                                    value: verified
                                 - header: x-auth-gateway-api-key-client
                                   on_header_present:
                                     key: attribute.tenant_id
                                     metadata_namespace: auth_gateway.api_key
                                     regex_value_rewrite:
                                         pattern:
-                                            regex: ^tenant_id=([^;]*);writer_id=[^;]*$
+                                            regex: ^(?:(?:[^;]*;)*tenant_id=([^;]*)(?:;[^;]*)*|.*)$
                                         substitution: \1
                                 - header: x-auth-gateway-api-key-client
                                   on_header_present:
@@ -962,7 +960,7 @@ static_resources:
                                     metadata_namespace: auth_gateway.api_key
                                     regex_value_rewrite:
                                         pattern:
-                                            regex: ^tenant_id=[^;]*;writer_id=([^;]*)$
+                                            regex: ^(?:(?:[^;]*;)*writer_id=([^;]*)(?:;[^;]*)*|.*)$
                                         substitution: \1
                                   remove: true
                         - name: auth_gateway.authentication
@@ -1263,8 +1261,7 @@ static_resources:
                                                                             - key: identity
                                                                         value:
                                                                             string_match:
-                                                                                safe_regex:
-                                                                                    regex: ^tenant_id=[^;]*;writer_id=[^;]*$
+                                                                                exact: verified
                                                                 - sourced_metadata:
                                                                     metadata_matcher:
                                                                         filter: envoy.filters.http.jwt_authn
@@ -1359,8 +1356,7 @@ static_resources:
                                                                                             - key: identity
                                                                                         value:
                                                                                             string_match:
-                                                                                                safe_regex:
-                                                                                                    regex: ^tenant_id=[^;]*;writer_id=[^;]*$
+                                                                                                exact: verified
                                                                                 - sourced_metadata:
                                                                                     metadata_matcher:
                                                                                         filter: auth_gateway.api_key

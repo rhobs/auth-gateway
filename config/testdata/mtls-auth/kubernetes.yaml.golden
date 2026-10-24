@@ -754,13 +754,14 @@ data:
                                       on_header_present:
                                         key: identity
                                         metadata_namespace: auth_gateway.api_key
+                                        value: verified
                                     - header: x-auth-gateway-api-key-client
                                       on_header_present:
                                         key: attribute.tenant_id
                                         metadata_namespace: auth_gateway.api_key
                                         regex_value_rewrite:
                                             pattern:
-                                                regex: ^tenant_id=([^;]*)$
+                                                regex: ^(?:(?:[^;]*;)*tenant_id=([^;]*)(?:;[^;]*)*|.*)$
                                             substitution: \1
                                       remove: true
                                     - header: x-auth-gateway-mtls-fingerprint
@@ -1039,8 +1040,7 @@ data:
                                                                                 - key: identity
                                                                             value:
                                                                                 string_match:
-                                                                                    safe_regex:
-                                                                                        regex: ^tenant_id=[^;]*$
+                                                                                    exact: verified
                                                                     - custom:
                                                                         name: envoy.rbac.principals.mtls_authenticated
                                                                         typed_config:
@@ -1174,8 +1174,7 @@ data:
                                                                                                         - key: identity
                                                                                                     value:
                                                                                                         string_match:
-                                                                                                            safe_regex:
-                                                                                                                regex: ^tenant_id=[^;]*$
+                                                                                                            exact: verified
                                                                                             - sourced_metadata:
                                                                                                 metadata_matcher:
                                                                                                     filter: auth_gateway.api_key
@@ -1422,13 +1421,14 @@ data:
                                       on_header_present:
                                         key: identity
                                         metadata_namespace: auth_gateway.api_key
+                                        value: verified
                                     - header: x-auth-gateway-api-key-client
                                       on_header_present:
                                         key: attribute.tenant_id
                                         metadata_namespace: auth_gateway.api_key
                                         regex_value_rewrite:
                                             pattern:
-                                                regex: ^tenant_id=([^;]*)$
+                                                regex: ^(?:(?:[^;]*;)*tenant_id=([^;]*)(?:;[^;]*)*|.*)$
                                             substitution: \1
                                       remove: true
                                     - header: x-auth-gateway-mtls-fingerprint
@@ -1686,8 +1686,7 @@ data:
                                                                                 - key: identity
                                                                             value:
                                                                                 string_match:
-                                                                                    safe_regex:
-                                                                                        regex: ^tenant_id=[^;]*$
+                                                                                    exact: verified
                                                                     - custom:
                                                                         name: envoy.rbac.principals.mtls_authenticated
                                                                         typed_config:
@@ -2219,8 +2218,7 @@ data:
                                                                                                 - key: identity
                                                                                             value:
                                                                                                 string_match:
-                                                                                                    safe_regex:
-                                                                                                        regex: ^tenant_id=[^;]*$
+                                                                                                    exact: verified
                                                                                     - sourced_metadata:
                                                                                         metadata_matcher:
                                                                                             filter: auth_gateway.api_key

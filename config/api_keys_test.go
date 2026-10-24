@@ -3,6 +3,8 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -424,6 +426,7 @@ func TestAPIKeyPipelineUsesFileECDSAndHostScopedFilters(t *testing.T) {
 	if len(rules) != 3 || rules[0].Header != apiKeyClientHeader || rules[0].Remove ||
 		rules[0].GetOnHeaderPresent().GetMetadataNamespace() != apiKeyMetadataNamespace ||
 		rules[0].GetOnHeaderPresent().GetKey() != apiKeyMetadataKey ||
+		rules[0].GetOnHeaderPresent().GetValue() != "verified" ||
 		rules[0].GetOnHeaderPresent().GetType() != headertometadata.Config_STRING ||
 		rules[0].GetOnHeaderPresent().GetEncode() != headertometadata.Config_NONE {
 		t.Fatalf("API-key identity extraction = %#v", rules)
@@ -434,7 +437,7 @@ func TestAPIKeyPipelineUsesFileECDSAndHostScopedFilters(t *testing.T) {
 		if rule.Header != apiKeyClientHeader || rule.Remove != (index == 1) ||
 			value.GetMetadataNamespace() != apiKeyMetadataNamespace ||
 			value.GetKey() != apiKeyAttributeMetadataKey(attribute) ||
-			value.GetRegexValueRewrite().GetPattern().GetRegex() != apiKeyClientPattern(c.Authenticators[1].credentialAttributeNames(), attribute) ||
+			value.GetRegexValueRewrite().GetPattern().GetRegex() != `^(?:(?:[^;]*;)*`+attribute+`=([^;]*)(?:;[^;]*)*|.*)$` ||
 			value.GetRegexValueRewrite().GetSubstitution() != `\1` {
 			t.Fatalf("API-key attribute %q extraction = %#v", attribute, rule)
 		}
@@ -577,4 +580,136 @@ func metadataMatcherPath(segments []*matcher.MetadataMatcher_PathSegment) []stri
 		keys = append(keys, segment.GetKey())
 	}
 	return keys
+}
+
+func TestAPIKeyAttributeExtractionPreservesCredentialValues(t *testing.T) {
+	authenticator := Authenticator{
+		Name: "partner-key", APIKey: &APIKeyAuthenticator{},
+		Attributes: map[string]AttributeSource{
+			"a":                     {Credential: new(true)},
+			"attribute0":            {Credential: new(true)},
+			"attribute00":           {Credential: new(true)},
+			"hyphen-name":           {Credential: new(true)},
+			"missing":               {Credential: new(true)},
+			"under_score":           {Credential: new(true)},
+			strings.Repeat("z", 64): {Credential: new(true)},
+		},
+	}
+	values := map[string]string{
+		"a":                     "attribute0=not-a-binding",
+		"attribute0":            `equals=percent%3B+slash/quote"backslash\`,
+		"attribute00":           "prefix names stay separate",
+		"hyphen-name":           `literal\1$1`,
+		"under_score":           "caf\u00e9",
+		strings.Repeat("z", 64): "last-value",
+	}
+	data, err := GenerateAPIKeyECDS(authenticator, []APIKeyCredential{{Key: "key", Attributes: values}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := decodeAPIKeySecret(t, data).Credentials[0].Client
+	filter, err := authenticator.toRequestMetadataFilter(nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata headertometadata.Config
+	if err := filter.GetTypedConfig().UnmarshalTo(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range metadata.RequestRules[1:] {
+		attribute := strings.TrimPrefix(rule.OnHeaderPresent.Key, "attribute.")
+		rewrite := rule.OnHeaderPresent.RegexValueRewrite
+		pattern, err := regexp.Compile(rewrite.Pattern.Regex)
+		if err != nil {
+			t.Fatal(err)
+		}
+		matches := pattern.FindStringSubmatch(identity)
+		if len(matches) != 2 || matches[1] != values[attribute] {
+			t.Errorf("attribute %s: extraction = %q, want %q", attribute, matches, values[attribute])
+		}
+		for _, withoutAttribute := range []string{"api-key", "other=value", "other=" + attribute + "=not-a-binding"} {
+			matches := pattern.FindStringSubmatch(withoutAttribute)
+			if len(matches) != 2 || matches[1] != "" {
+				t.Errorf("attribute %s: extraction from %q = %q, want an empty value", attribute, withoutAttribute, matches)
+			}
+		}
+		if rule.OnHeaderMissing != nil {
+			t.Errorf("attribute %s supplies a value without a verified identity", attribute)
+		}
+	}
+}
+
+func TestAPIKeyCredentialAttributeByteLimit(t *testing.T) {
+	c := loadConfigCase(t, "api-key-auth")
+	for _, test := range []struct {
+		name  string
+		value string
+		valid bool
+	}{
+		{name: "maximum bytes", value: strings.Repeat("v", 8191), valid: true},
+		{name: "too many bytes", value: strings.Repeat("v", 8192)},
+		{name: "UTF-8 byte count", value: strings.Repeat("\u00e9", 4096)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := GenerateAPIKeyECDS(c.Authenticators[1], []APIKeyCredential{{Key: "key", Attributes: map[string]string{"tenant_id": test.value}}})
+			if test.valid {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "credentials[0].attributes.tenant_id must be at most 8191 bytes") {
+				t.Fatalf("credential validation = %v, want the attribute byte limit", err)
+			}
+		})
+	}
+}
+
+func TestAPIKeyAttributeGenerationIsDeterministic(t *testing.T) {
+	c := apiKeyAttributesConfig(t, 20)
+	values := make(map[string]string)
+	for index := range 20 {
+		values[fmt.Sprintf("attribute%02d", index)] = fmt.Sprintf("value%02d", index)
+	}
+	first, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstECDS, err := GenerateAPIKeyECDS(c.Authenticators[0], []APIKeyCredential{{Key: "key", Attributes: values}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources := c.Authenticators[0].Attributes
+	c.Authenticators[0].Attributes = map[string]AttributeSource{"requested_tenant": sources["requested_tenant"]}
+	reversedValues := make(map[string]string)
+	for index := 19; index >= 0; index-- {
+		name := fmt.Sprintf("attribute%02d", index)
+		c.Authenticators[0].Attributes[name] = sources[name]
+		reversedValues[name] = values[name]
+	}
+	second, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertGeneratedFilesEqual(t, first, second)
+	secondECDS, err := GenerateAPIKeyECDS(c.Authenticators[0], []APIKeyCredential{{Key: "key", Attributes: reversedValues}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(firstECDS, secondECDS) {
+		t.Fatal("credential attribute insertion order changed the ECDS resource")
+	}
+}
+
+func apiKeyAttributesConfig(t *testing.T, count int) Config {
+	t.Helper()
+	const filename = "testdata/api-key-attributes.yaml"
+	c := loadTestConfig(t, readTestFile(t, filename), filename)
+	for index := count; index < 20; index++ {
+		delete(c.Authenticators[0].Attributes, fmt.Sprintf("attribute%02d", index))
+	}
+	if count == 0 {
+		c.APIs[0].Routes[0].Processing = nil
+	} else {
+		c.APIs[0].Routes[0].Processing.RequestHeaders = c.APIs[0].Routes[0].Processing.RequestHeaders[:count]
+	}
+	return c
 }

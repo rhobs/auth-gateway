@@ -2,13 +2,13 @@
 
 Review baseline: `934f4e0`, reviewed on 2026-10-23.
 
-Status: in progress. D1 and D2 are merged in
-[PR #17](https://github.com/rhobs/auth-gateway/pull/17) and
-[PR #18](https://github.com/rhobs/auth-gateway/pull/18). D3's implementation and
+Status: in progress. D1, D2, and D3 are merged in
+[PR #17](https://github.com/rhobs/auth-gateway/pull/17),
+[PR #18](https://github.com/rhobs/auth-gateway/pull/18), and
+[PR #19](https://github.com/rhobs/auth-gateway/pull/19). D4's implementation and
 acceptance checks are done in
-[PR #19](https://github.com/rhobs/auth-gateway/pull/19), awaiting review and
-merge. It removes built-in attribute-value mapping following the maintainer's
-scope decision below. All other items remain planned.
+[PR #20](https://github.com/rhobs/auth-gateway/pull/20), awaiting review and
+merge. All other items remain planned.
 
 This plan covers six confirmed defects (D1-D6), two gaps (G1-G2), and three
 simplification opportunities (S1-S3). The findings apply to the generator and
@@ -25,7 +25,7 @@ its generated Envoy and Kubernetes configuration at the review baseline.
 | --- | --- | --- |
 | 0 | Resolve conflicting authentication scope guidance | G1 |
 | 1 | Isolate authenticated identities and gateway workloads | D1, D2 (merged) |
-| 2 | Generate configuration that Envoy accepts at realistic sizes | D3 (implementation done), D4 (planned) |
+| 2 | Generate configuration that Envoy accepts at realistic sizes | D3 (merged), D4 (implementation done) |
 | 3 | Make termination, restricted admission, and metrics predictable | D5, D6, G2 |
 | 4 | Reduce duplication and dependency overhead | S1, S2, S3 |
 | 5 | Complete documentation, rollout guidance, and verification | All |
@@ -171,8 +171,8 @@ when existing instance labels differ from `kubernetes.name`.
 
 ### D3. Remove built-in attribute-value mapping (P1, confirmed)
 
-**Status: Done (implementation and acceptance checks, 2026-10-23).**
-[PR #19](https://github.com/rhobs/auth-gateway/pull/19) awaits review and merge.
+**Status: Done (merged, 2026-10-24).**
+[PR #19](https://github.com/rhobs/auth-gateway/pull/19) is merged.
 
 **Evidence at the review baseline:** Mapping expressions nested one CEL
 conditional per entry. A 25-entry table passed Go generation but exceeded
@@ -220,6 +220,9 @@ to replace the old configuration and remove its obsolete resources.
 
 ### D4. Reduce API-key extraction regex complexity (P1, confirmed)
 
+**Status: Done (implementation and acceptance checks, 2026-10-24).**
+[PR #20](https://github.com/rhobs/auth-gateway/pull/20) awaits review and merge.
+
 **Evidence:** [API-key attribute extraction](../config/api_keys.go) repeats
 the complete credential attribute layout in each extraction and identity
 check. Configurations with two and six attributes validated in Envoy. Ten
@@ -239,14 +242,36 @@ decisions, and removal of credentials and internal identity headers.
 
 **Acceptance and validation:**
 
-- The previously failing ten- and twenty-attribute fixtures validate and start
+- [x] The previously failing ten- and twenty-attribute fixtures validate and start
   against the pinned Envoy image, with correct attribute extraction.
-- Unit coverage includes representative attribute names, encoded values,
+- [x] Unit coverage includes representative attribute names, encoded values,
   absent attributes, and deterministic generated output.
-- Any remaining limit produces an actionable Go validation error before
+- [x] Any remaining limit produces an actionable Go validation error before
   generating an unusable deployment.
-- Gateway e2e coverage verifies forwarding and credential removal. Denied
+- [x] Gateway e2e coverage verifies forwarding and credential removal. Denied
   requests never reach the backend; request-decision tests remain read-only.
+
+**Delivered:** Native metadata extraction records a fixed verified identity
+marker and uses one bounded regex per credential attribute. Missing fields
+rewrite to empty, including when an older valid credential resource lacks a
+newly declared attribute. The credential format stays unchanged. Credential
+generation rejects values above 8191 bytes with a field-specific error before
+Envoy's metadata extraction limit can leave them unset.
+
+**Validation:** The focused probes reproduced RE2 program sizes of 141 and 291
+before the fix. All seven [runtime layout cases](../config/runtime_api_keys_test.go)
+now pass, covering ten and twenty attributes, 64-character names, a combined
+client header above 8 KiB, the maximum value size, and absent fields.
+[Unit regressions](../config/api_keys_test.go) and
+[gateway regressions](../e2e/api_key_attributes_test.go) cover values,
+determinism, credential removal, and denials before the backend. `make test`,
+`make lint`, tagged e2e/runtime compilation, framework tests,
+`make test-runtime`, and `make e2e` passed on 2026-10-24 (79/79 Kind specs).
+Generated references were regenerated and reviewed.
+
+**Rollout:** Regenerate the static bootstrap and explicitly roll out gateway
+Deployments. Existing generated API-key credential resources remain
+compatible. See [attribute flow](envoy.md#attribute-flow).
 
 ## Phase 3: Close operational gaps
 

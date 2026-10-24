@@ -61,10 +61,23 @@ missing, empty, and undeclared values unset. Lower-priority credentials cannot
 fill those values. For `all_of`, every required identity can contribute
 attributes after shared original values have been checked for equality.
 
+For API keys, `header_to_metadata` records a fixed verified identity marker
+from the native authentication filter's client header. Each credential
+attribute uses a separate extraction regex containing only its own name, so
+adding attributes does not increase the size of existing regexes. Credential
+values must be shorter than Envoy's 8 KiB metadata value limit; the combined
+client header may exceed that size because it is not stored as one metadata
+value. Missing bindings remain unset, and credentials and the internal
+client header are removed before forwarding.
+
 The filter uses CEL to copy source values into
 `auth_gateway.attributes.<name>`. Its configuration is part of the static
 bootstrap. RBAC evaluates grants against source metadata; filter state feeds
 managed upstream headers and metric labels with the same values.
+
+To apply the API-key extraction fix, regenerate the static bootstrap and
+explicitly roll out gateway Deployments. Existing generated `api-keys.yaml`
+credential resources remain compatible.
 
 ## Files and reloads
 
