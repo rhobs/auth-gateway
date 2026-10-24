@@ -7,8 +7,11 @@ Status: in progress. D1, D2, D3, and D4 are merged in
 [PR #18](https://github.com/rhobs/auth-gateway/pull/18),
 [PR #19](https://github.com/rhobs/auth-gateway/pull/19), and
 [PR #20](https://github.com/rhobs/auth-gateway/pull/20).
-D5 is won't do. D6's implementation and acceptance checks are complete in
-[PR #22](https://github.com/rhobs/auth-gateway/pull/22), awaiting review and merge.
+D5 is won't do. D6 is merged in
+[PR #22](https://github.com/rhobs/auth-gateway/pull/22).
+G2's cardinality guidance is complete in
+[PR #23](https://github.com/rhobs/auth-gateway/pull/23), awaiting review and
+merge. Enforcement is won't do.
 All other items remain planned.
 
 This plan covers six confirmed defects (D1-D6), two gaps (G1-G2), and three
@@ -27,7 +30,7 @@ its generated Envoy and Kubernetes configuration at the review baseline.
 | 0 | Resolve conflicting authentication scope guidance | G1 |
 | 1 | Isolate authenticated identities and gateway workloads | D1, D2 (merged) |
 | 2 | Generate configuration that Envoy accepts at realistic sizes | D3, D4 (merged) |
-| 3 | Make termination, restricted admission, and metrics predictable | D5 (won't do), D6 (implementation done), G2 |
+| 3 | Resolve termination, restricted admission, and metric cardinality policy | D5 (won't do), D6 (merged), G2 (documentation done) |
 | 4 | Reduce duplication and dependency overhead | S1, S2, S3 |
 | 5 | Complete documentation, rollout guidance, and verification | All |
 
@@ -294,8 +297,8 @@ sleep command rather than successful draining.
 
 ### D6. Make the default Pod pass restricted admission (P1, confirmed)
 
-**Status: Done (implementation and acceptance checks, 2026-10-24).**
-[PR #22](https://github.com/rhobs/auth-gateway/pull/22) awaits review and merge.
+**Status: Done (merged, 2026-10-24).**
+[PR #22](https://github.com/rhobs/auth-gateway/pull/22) is merged.
 
 **Evidence at the review baseline:** A server-side dry-run of the generated Pod in a restricted
 namespace was rejected. The [collector container](../config/kubernetes.go)
@@ -339,30 +342,38 @@ before deploying each regenerated manifest to OpenShift.
 
 ### G2. Bound request metric cardinality (P1, operational gap)
 
+**Status: Won't do (enforced limit; maintainer decision, 2026-10-24).**
+Cardinality guidance is complete in
+[PR #23](https://github.com/rhobs/auth-gateway/pull/23), awaiting review and merge.
+
+**Decision:** Leave metric label cardinality to configuration authors. Document
+the risk of cardinality explosion and recommend bounded label values. Do not
+add a cardinality limit, overflow bucket, or schema settings.
+
 **Evidence:** [Response counters](../config/observability.go) include dynamic
 attribute values in counter names. Length and character checks do not bound
 the number of distinct combinations. Each combination creates a counter
 retained until Envoy restarts. Caller-controlled header attributes can create
 unbounded combinations, including on denied requests.
 
-**Work:** Record a cardinality policy before implementation. Choose bounded
-values, a fixed overflow bucket, or an enforced cardinality ceiling. Enforce
-the bound where Envoy counters are created; dropping exported series later
-does not bound Envoy's counter allocation. Work within version 1 unless a
-schema change is separately agreed.
-
 **Acceptance and validation:**
 
-- Document the bound, its scope, overflow behavior, and counting semantics
-  for allowed and denied requests.
-- A runtime test sends many distinct attribute values and verifies that
-  counter allocation stops growing at the documented bound.
-- Observable metrics coverage checks totals and overflow behavior, including
-  denied requests, without changing authorization decisions.
-- Update the reference and example if the agreed design changes their
-  configuration contract.
+- [x] Explain counter retention, memory growth, and the risk from denied
+  requests. Clarify that filtering exported series does not bound Envoy's
+  counter allocation.
+- [x] Document configuration authors' responsibility for bounded label values,
+  the growth from label combinations, and `metrics: {}` for API and status
+  counts without attribute labels.
+- [x] Align the reference, Envoy guide, and full example without changing the
+  schema, runtime behavior, or generated output.
 
-**Dependency:** Complete the policy decision before implementing a limit.
+**Delivered:** The
+[metric cardinality guidance](configuration-reference.md#metric-cardinality)
+explains the risk and gives advice on choosing labels. The Envoy guide links to
+it, and the full example warns about unbounded combinations beside its metric
+labels.
+
+**Validation:** Markdown link and whitespace checks passed on 2026-10-24.
 
 ## Phase 4: Simplify after behavior is protected
 

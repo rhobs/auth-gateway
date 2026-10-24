@@ -185,14 +185,33 @@ object is omitted.
 
 ### API metrics
 
-Each configured API emits one request counter. The automatic `api` label is
-the API name, and `http_status_code` comes from the response. Additional labels
-use values from authenticator attributes declared under
+Each API with `metrics` configured emits a request counter. The automatic `api`
+label is the API name, and `http_status_code` comes from the response.
+Additional labels use values from authenticator attributes declared under
 `authenticators[].attributes`.
 
 | Field                   | Type                                | Default | Constraint                                                                                                                                                                                                                  |
 |-------------------------|-------------------------------------|---------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `apis[].metrics.labels` | map of label name to attribute name | Empty   | Label names must be valid Prometheus names, must not start with `__`, and cannot be `api`, `http_status_code`, or `envoy_http_conn_manager_prefix`. Each value must be a valid attribute name declared by an authenticator. |
+
+#### Metric cardinality
+
+Configuration authors are responsible for choosing metric labels with bounded
+values. The gateway does not enforce a cardinality limit. Each distinct
+combination of API, HTTP status, and attribute values creates an Envoy
+counter retained until Envoy restarts. Too many combinations can cause a
+cardinality explosion and exhaust gateway memory. Label length and character
+checks do not bound the number of distinct values.
+
+Use labels drawn from a small, known set of values. Avoid request IDs, raw
+URLs, arbitrary header values, and unrestricted user identifiers. Consider
+combinations as well as individual labels: 100 tenant values and 100 writer
+values can produce 10,000 combinations for each API and status.
+
+Denied requests can also create distinct counters when source attributes are
+available. Dropping exported series or disabling collector scraping does not
+prevent Envoy from allocating counters. Set `metrics: {}` to count by API and
+status without attribute labels.
 
 ### Fault injection
 

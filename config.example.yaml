@@ -182,6 +182,8 @@ apis:
     # Optional per-API request counter. `api` is this API's name and
     # `http_status_code` comes from the response. Additional label names map to
     # authenticator attributes declared under authenticators[].attributes.
+    # Choose bounded values; each label combination stays in Envoy until restart.
+    # There is no cardinality limit. Use metrics: {} for API and status counts only.
     metrics:
       labels:
         tenant: tenant_id

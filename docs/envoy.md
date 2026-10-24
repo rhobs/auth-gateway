@@ -229,8 +229,12 @@ downstream status. `metrics: {}` enables the counter without attribute labels.
 The counter includes authentication and authorization denials, but excludes
 gateway `404` and `405` fallback routes. Missing or unsafe label values become
 `__unattributed__`. Envoy adds the `envoy_http_lua_` prefix; the Collector
-removes it before exposing the configured metric name. Label combinations
-remain in memory until Envoy restarts, so use bounded values.
+removes it before exposing the configured metric name. Each distinct label
+combination remains in memory until Envoy restarts, including combinations
+from denied requests. The gateway does not enforce a cardinality limit;
+configuration authors must choose bounded label values. See
+[metric cardinality](configuration-reference.md#metric-cardinality) for
+guidance on label selection and counter allocation.
 
 Tracing is disabled by default. When enabled, Envoy sends sampled OTLP/gRPC
 spans to the local Collector on `127.0.0.1:4317`. The Collector exports to the
