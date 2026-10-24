@@ -117,6 +117,12 @@ Kubernetes gateway selectors use `kubernetes.name`, independently of
 Pods. See [selector upgrades](configuration-reference.md#gateway-identity-and-selector-upgrades)
 before replacing resources generated with the earlier cluster-based labels.
 
+Generated Pods meet Kubernetes restricted Pod Security Admission requirements.
+Both containers run without root, privilege escalation, Linux capabilities,
+or a writable root filesystem, and use the runtime's default seccomp profile.
+See [Pod security and OpenShift](configuration-reference.md#pod-security)
+for image requirements and the OpenShift UID adjustment.
+
 Envoy's validation mode checks the bootstrap, but does not validate the
 file-backed API-key ECDS resource. Generate API-key Secrets from validated
 credentials rather than editing `api-keys.yaml` by hand.

@@ -609,34 +609,69 @@ func TestKubernetesDeploymentDrainsBeforeTerminating(t *testing.T) {
 	}
 }
 
-func TestEnvoyContainerRunsHardened(t *testing.T) {
-	c := loadConfigCase(t, "server-tls")
-	resources, err := GenerateKubernetes(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	envoy := resources.Deployment.Spec.Template.Spec.Containers[0]
-	security := envoy.SecurityContext
-	if security == nil {
-		t.Fatal("Envoy SecurityContext = nil, want a hardened SecurityContext")
-	}
-	if security.AllowPrivilegeEscalation == nil || *security.AllowPrivilegeEscalation {
-		t.Errorf("AllowPrivilegeEscalation = %v, want false", security.AllowPrivilegeEscalation)
-	}
-	if security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem {
-		t.Errorf("ReadOnlyRootFilesystem = %v, want true", security.ReadOnlyRootFilesystem)
-	}
-	if security.RunAsNonRoot == nil || !*security.RunAsNonRoot {
-		t.Errorf("RunAsNonRoot = %v, want true", security.RunAsNonRoot)
-	}
-	if security.RunAsUser == nil || *security.RunAsUser != 101 {
-		t.Errorf("RunAsUser = %v, want 101", security.RunAsUser)
-	}
-	if security.RunAsGroup == nil || *security.RunAsGroup != 101 {
-		t.Errorf("RunAsGroup = %v, want 101", security.RunAsGroup)
-	}
-	if security.Capabilities == nil || !slices.Equal(security.Capabilities.Drop, []corev1.Capability{"ALL"}) {
-		t.Errorf("Capabilities = %#v, want Drop: [ALL]", security.Capabilities)
+func TestKubernetesPodRunsHardened(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		metrics    bool
+		tracing    bool
+		containers []string
+	}{
+		{name: "without collector", containers: []string{"envoy"}},
+		{name: "metrics", metrics: true, containers: []string{"envoy", "metrics"}},
+		{name: "tracing", tracing: true, containers: []string{"envoy", "metrics"}},
+		{name: "metrics and tracing", metrics: true, tracing: true, containers: []string{"envoy", "metrics"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c := loadConfigCase(t, "public-routing")
+			c.Observability.Metrics.Enabled = new(test.metrics)
+			c.Observability.Tracing.Enabled = new(test.tracing)
+			if test.tracing {
+				c.Observability.Tracing.Endpoint = "trace-sink:4317"
+			}
+			resources, err := GenerateKubernetes(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pod := resources.Deployment.Spec.Template.Spec
+			if pod.SecurityContext == nil || pod.SecurityContext.SeccompProfile == nil {
+				t.Error("Pod SeccompProfile = nil, want RuntimeDefault")
+			} else if got := pod.SecurityContext.SeccompProfile.Type; got != corev1.SeccompProfileTypeRuntimeDefault {
+				t.Errorf("Pod SeccompProfile.Type = %q, want RuntimeDefault", got)
+			}
+			var containerNames []string
+			for _, container := range pod.Containers {
+				containerNames = append(containerNames, container.Name)
+				t.Run(container.Name, func(t *testing.T) {
+					security := container.SecurityContext
+					if security == nil {
+						t.Fatal("SecurityContext = nil, want a hardened SecurityContext")
+					}
+					if security.AllowPrivilegeEscalation == nil || *security.AllowPrivilegeEscalation {
+						t.Errorf("AllowPrivilegeEscalation = %v, want false", security.AllowPrivilegeEscalation)
+					}
+					if security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem {
+						t.Errorf("ReadOnlyRootFilesystem = %v, want true", security.ReadOnlyRootFilesystem)
+					}
+					if security.RunAsNonRoot == nil || !*security.RunAsNonRoot {
+						t.Errorf("RunAsNonRoot = %v, want true", security.RunAsNonRoot)
+					}
+					if security.Capabilities == nil || !slices.Equal(security.Capabilities.Drop, []corev1.Capability{"ALL"}) {
+						t.Errorf("Capabilities = %#v, want Drop: [ALL]", security.Capabilities)
+					}
+					if container.Name == "envoy" {
+						if security.RunAsUser == nil || *security.RunAsUser != 101 {
+							t.Errorf("RunAsUser = %v, want 101", security.RunAsUser)
+						}
+						if security.RunAsGroup == nil || *security.RunAsGroup != 101 {
+							t.Errorf("RunAsGroup = %v, want 101", security.RunAsGroup)
+						}
+					} else if security.RunAsUser != nil || security.RunAsGroup != nil {
+						t.Errorf("collector UID/GID = %v/%v, want the image's non-root user", security.RunAsUser, security.RunAsGroup)
+					}
+				})
+			}
+			assertConfigDiff(t, "container names", test.containers, containerNames)
+		})
 	}
 }
 

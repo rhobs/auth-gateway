@@ -2,13 +2,13 @@
 
 Review baseline: `934f4e0`, reviewed on 2026-10-23.
 
-Status: in progress. D1, D2, and D3 are merged in
+Status: in progress. D1, D2, D3, and D4 are merged in
 [PR #17](https://github.com/rhobs/auth-gateway/pull/17),
-[PR #18](https://github.com/rhobs/auth-gateway/pull/18), and
-[PR #19](https://github.com/rhobs/auth-gateway/pull/19). D4's implementation and
-acceptance checks are done in
-[PR #20](https://github.com/rhobs/auth-gateway/pull/20), awaiting review and
-merge. All other items remain planned.
+[PR #18](https://github.com/rhobs/auth-gateway/pull/18),
+[PR #19](https://github.com/rhobs/auth-gateway/pull/19), and
+[PR #20](https://github.com/rhobs/auth-gateway/pull/20).
+D5 is won't do. D6's implementation and acceptance checks are complete,
+awaiting review and merge. All other items remain planned.
 
 This plan covers six confirmed defects (D1-D6), two gaps (G1-G2), and three
 simplification opportunities (S1-S3). The findings apply to the generator and
@@ -25,8 +25,8 @@ its generated Envoy and Kubernetes configuration at the review baseline.
 | --- | --- | --- |
 | 0 | Resolve conflicting authentication scope guidance | G1 |
 | 1 | Isolate authenticated identities and gateway workloads | D1, D2 (merged) |
-| 2 | Generate configuration that Envoy accepts at realistic sizes | D3 (merged), D4 (implementation done) |
-| 3 | Make termination, restricted admission, and metrics predictable | D5, D6, G2 |
+| 2 | Generate configuration that Envoy accepts at realistic sizes | D3, D4 (merged) |
+| 3 | Make termination, restricted admission, and metrics predictable | D5 (won't do), D6 (implementation done), G2 |
 | 4 | Reduce duplication and dependency overhead | S1, S2, S3 |
 | 5 | Complete documentation, rollout guidance, and verification | All |
 
@@ -220,8 +220,8 @@ to replace the old configuration and remove its obsolete resources.
 
 ### D4. Reduce API-key extraction regex complexity (P1, confirmed)
 
-**Status: Done (implementation and acceptance checks, 2026-10-24).**
-[PR #20](https://github.com/rhobs/auth-gateway/pull/20) awaits review and merge.
+**Status: Done (merged, 2026-10-24).**
+[PR #20](https://github.com/rhobs/auth-gateway/pull/20) merged on 2026-10-24.
 
 **Evidence:** [API-key attribute extraction](../config/api_keys.go) repeats
 the complete credential attribute layout in each extraction and identity
@@ -277,6 +277,13 @@ compatible. See [attribute flow](envoy.md#attribute-flow).
 
 ### D5. Drain Envoy explicitly during termination (P1, confirmed)
 
+**Status: Won't do (maintainer decision, 2026-10-24).**
+[PR #21](https://github.com/rhobs/auth-gateway/pull/21) was closed without merging.
+
+**Decision:** Keep the existing five-second pre-stop sleep and 30-second Pod
+grace period. The explicit drain sequence and readiness changes add more
+complexity than the maintainer wants for this gateway.
+
 **Evidence:** The [generated lifecycle hook](../config/kubernetes.go) sleeps
 for five seconds within a 30-second termination grace period. It does not
 initiate draining. In a runtime probe, an eight-second backend request was
@@ -284,28 +291,15 @@ active when SIGTERM followed the five-second delay; the client received EOF
 about 121 ms after SIGTERM. The existing drain-oriented unit test checks the
 sleep command rather than successful draining.
 
-**Work:** Generate an explicit Envoy drain sequence. Coordinate readiness,
-endpoint propagation, drain duration, and the overall termination budget.
-Use commands available in the pinned image. Define the bounded behavior for
-requests or streams that exceed the grace period.
-
-**Acceptance and validation:**
-
-- Unit tests verify the generated lifecycle operation and sufficient grace
-  budget for the complete sequence.
-- Runtime tests demonstrate that an active eight-second request completes
-  during orderly termination within the selected budget.
-- Runtime coverage checks bounded shutdown and the chosen behavior for new
-  connections during draining. These Envoy semantics belong in the runtime
-  suite.
-- Operational documentation explains the drain and maximum termination time.
-
 ### D6. Make the default Pod pass restricted admission (P1, confirmed)
 
-**Evidence:** A server-side dry-run of the generated Pod in a restricted
+**Status: Done (implementation and acceptance checks, 2026-10-24).**
+Awaiting review and merge.
+
+**Evidence at the review baseline:** A server-side dry-run of the generated Pod in a restricted
 namespace was rejected. The [collector container](../config/kubernetes.go)
-lacks `allowPrivilegeEscalation: false`, a drop of `ALL` capabilities, and
-`runAsNonRoot`. Envoy and the collector also lack seccomp configuration.
+lacked `allowPrivilegeEscalation: false`, a drop of `ALL` capabilities, and
+`runAsNonRoot`. Envoy and the collector also lacked seccomp configuration.
 
 **Work:** Apply consistent container hardening and Pod-level
 `seccompProfile: RuntimeDefault`. Verify the collector image's user and
@@ -313,13 +307,34 @@ filesystem needs before choosing its security context.
 
 **Acceptance and validation:**
 
-- Unit tests assert the required Pod and container security settings for
+- [x] Unit tests assert the required Pod and container security settings for
   configurations with and without the collector.
-- Server-side admission succeeds in a restricted namespace.
-- Both containers start and become usable with the generated settings;
+- [x] Server-side admission succeeds in a restricted namespace.
+- [x] Both containers start and become usable with the generated settings;
   gateway requests, metrics, and configured trace export still work.
-- Admission and startup checks use an isolated Kind namespace and the
+- [x] Admission and startup checks use an isolated Kind namespace and the
   existing framework's lifecycle and cleanup support.
+
+**Delivered:** Pods use `RuntimeDefault` seccomp. The collector joins Envoy in
+requiring a non-root user, a read-only root filesystem, disabled privilege
+escalation, and a drop of all capabilities. The collector uses its image's
+numeric non-root user. [Unit regressions](../config/kubernetes_test.go) cover
+metrics-only, tracing-only, combined, and collector-disabled configurations.
+The [tracing scenario](../e2e/tracing_test.go) runs the gateway under enforced
+restricted admission, with its backend and trace sink in a support namespace.
+
+**Validation:** `make test`, `make lint`, tagged e2e/runtime compilation,
+framework tests, `make test-runtime`, and `make e2e` passed on 2026-10-24
+(79/79 Kind specs). The focused restricted scenario also passed. All changed
+Kubernetes goldens were reviewed. Both pinned images started as UID
+`1000680000` with the hardened settings in an isolated Docker probe; Envoy
+served an unmatched-route response and the collector exposed `/metrics`.
+OpenShift SCC admission has not been tested on a live cluster. See the
+[OpenShift UID adjustment](configuration-reference.md#openshift).
+
+**Rollout:** Regenerate and apply the Kubernetes manifest. The changed Pod
+template starts a Deployment rollout. Apply the documented UID adjustment
+before deploying each regenerated manifest to OpenShift.
 
 ### G2. Bound request metric cardinality (P1, operational gap)
 

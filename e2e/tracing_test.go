@@ -22,7 +22,10 @@ const (
 	tracingAPIKey = "tracing-e2e-key"
 )
 
-var tracingNamespace = e2eNamespace("auth-gateway-tracing-e2e")
+var (
+	tracingNamespace        = e2eNamespace("auth-gateway-tracing-e2e")
+	tracingSupportNamespace = e2eNamespace("auth-gateway-tracing-support")
+)
 
 type tracingE2E struct {
 	httpAddress    string
@@ -31,14 +34,14 @@ type tracingE2E struct {
 	serviceName    string
 }
 
-var _ = Describe("Tracing", Label("gateway", "tracing", "metrics", "namespace-"+tracingNamespace), Ordered, func() {
+var _ = Describe("Tracing", Label("gateway", "tracing", "metrics", "restricted", "namespace-"+tracingNamespace, "namespace-"+tracingSupportNamespace), Ordered, func() {
 	var gateway *tracingE2E
 
 	BeforeAll(func(ctx SpecContext) {
 		gateway = setupTracingGateway(ctx)
 	}, NodeTimeout(10*time.Minute))
 
-	It("exports a sampled span and keeps gateway metrics available", func(ctx SpecContext) {
+	It("serves requests and exports spans and metrics under restricted Pod admission", func(ctx SpecContext) {
 		podName, containers, err := env.PodContainerNames(ctx, tracingNamespace, "app.kubernetes.io/name=auth-gateway")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(podName).NotTo(BeEmpty())
@@ -58,10 +61,11 @@ var _ = Describe("Tracing", Label("gateway", "tracing", "metrics", "namespace-"+
 		Expect(err).NotTo(HaveOccurred())
 		Expect(echo.Method).To(Equal(http.MethodGet))
 		Expect(echo.URL).To(HaveSuffix("/anything/trace"))
+		Expect(echo.Data).To(BeEmpty())
 		Expect(headerValue(echo.Headers, "X-Trace-Key")).To(BeEmpty(), "the API key must not reach the upstream")
 
 		Eventually(func() error {
-			logs, err := env.ContainerLogs(ctx, tracingNamespace, gateway.sinkPodName, "collector", 200)
+			logs, err := env.ContainerLogs(ctx, tracingSupportNamespace, gateway.sinkPodName, "collector", 200)
 			if err != nil {
 				return err
 			}
@@ -86,23 +90,38 @@ var _ = Describe("Tracing", Label("gateway", "tracing", "metrics", "namespace-"+
 func setupTracingGateway(ctx SpecContext) *tracingE2E {
 	Expect(resetE2ENamespace(ctx, tracingNamespace)).To(Succeed())
 	DeferCleanup(func() { deleteNamespaceInBackground(tracingNamespace) })
-
-	sinkManifest, err := tracingSinkManifest(tracingNamespace)
+	namespaceManifest, err := yamlDocuments(&corev1.Namespace{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Namespace"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: tracingNamespace,
+			Labels: map[string]string{
+				"pod-security.kubernetes.io/enforce":         "restricted",
+				"pod-security.kubernetes.io/enforce-version": "latest",
+			},
+		},
+	})
 	Expect(err).NotTo(HaveOccurred())
-	Expect(env.Apply(ctx, tracingNamespace, sinkManifest)).To(Succeed())
-	Expect(env.WaitForDeployment(ctx, tracingNamespace, "trace-sink", 4*time.Minute)).To(Succeed())
+	Expect(env.Apply(ctx, tracingNamespace, namespaceManifest)).To(Succeed())
+	Expect(resetE2ENamespace(ctx, tracingSupportNamespace)).To(Succeed())
+	DeferCleanup(func() { deleteNamespaceInBackground(tracingSupportNamespace) })
+
+	sinkManifest, err := tracingSinkManifest(tracingSupportNamespace)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(env.Apply(ctx, tracingSupportNamespace, sinkManifest)).To(Succeed())
+	Expect(env.WaitForDeployment(ctx, tracingSupportNamespace, "trace-sink", 4*time.Minute)).To(Succeed())
 
 	backend, err := env.Fixture("httpbin.yaml")
 	Expect(err).NotTo(HaveOccurred())
-	Expect(env.Apply(ctx, tracingNamespace, backend)).To(Succeed())
-	Expect(env.WaitForDeployment(ctx, tracingNamespace, "httpbin", 4*time.Minute)).To(Succeed())
+	Expect(env.Apply(ctx, tracingSupportNamespace, backend)).To(Succeed())
+	Expect(env.WaitForDeployment(ctx, tracingSupportNamespace, "httpbin", 4*time.Minute)).To(Succeed())
 
 	fixture, err := env.Fixture("tracing.yaml")
 	Expect(err).NotTo(HaveOccurred())
 	gatewayConfig, err := config.Load(bytes.NewReader(fixture))
 	Expect(err).NotTo(HaveOccurred())
 	gatewayConfig.Kubernetes.Namespace = tracingNamespace
-	gatewayConfig.Observability.Tracing.Endpoint = "trace-sink." + tracingNamespace + ".svc.cluster.local:4317"
+	gatewayConfig.APIs[0].Upstream.Address = "httpbin." + tracingSupportNamespace + ".svc.cluster.local"
+	gatewayConfig.Observability.Tracing.Endpoint = "trace-sink." + tracingSupportNamespace + ".svc.cluster.local:4317"
 	secret, err := config.APIKeySecret(tracingNamespace, gatewayConfig.Authenticators[0], []config.APIKeyCredential{{
 		Key: tracingAPIKey, Attributes: map[string]string{"tenant_id": "trace-client"},
 	}})
@@ -118,7 +137,7 @@ func setupTracingGateway(ctx SpecContext) *tracingE2E {
 	Expect(env.Apply(ctx, tracingNamespace, manifest)).To(Succeed())
 	Expect(env.WaitForDeployment(ctx, tracingNamespace, "auth-gateway", 4*time.Minute)).To(Succeed())
 
-	sinkPodName, sinkContainers, err := env.PodContainerNames(ctx, tracingNamespace, "app.kubernetes.io/name=tracing-sink")
+	sinkPodName, sinkContainers, err := env.PodContainerNames(ctx, tracingSupportNamespace, "app.kubernetes.io/name=tracing-sink")
 	Expect(err).NotTo(HaveOccurred())
 	Expect(sinkContainers).To(ConsistOf("collector"))
 
