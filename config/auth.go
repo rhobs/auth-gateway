@@ -45,10 +45,7 @@ func validatePermissiveJWTIssuerBindings(servers []Server, authenticators map[st
 		if server.TLSConfig != nil || server.Authentication == nil {
 			continue
 		}
-		names := server.Authentication.AnyOf
-		if names == nil {
-			names = server.Authentication.AllOf
-		}
+		names := selectedAuthenticatorNames(server)
 		hasOther, hasJWT := false, false
 		for _, name := range names {
 			if authenticators[name].JWT != nil {
@@ -196,7 +193,7 @@ func validateRouteProcessing(name string, processing *RouteProcessing) error {
 	return nil
 }
 
-func validateSelection(name string, anyOf, allOf []string, known map[string]struct{}) ([]string, error) {
+func validateSelection[V any](name string, anyOf, allOf []string, known map[string]V) ([]string, error) {
 	if (anyOf == nil) == (allOf == nil) {
 		return nil, fmt.Errorf("%s must set exactly one of any_of or all_of", name)
 	}
@@ -215,7 +212,7 @@ func validateSelection(name string, anyOf, allOf []string, known map[string]stru
 	return values, nil
 }
 
-func validateUniqueReferences(name string, values []string, known map[string]struct{}) error {
+func validateUniqueReferences[V any](name string, values []string, known map[string]V) error {
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
 		if value == "" || strings.TrimSpace(value) != value {
@@ -232,11 +229,7 @@ func validateUniqueReferences(name string, values []string, known map[string]str
 	return nil
 }
 
-func validateRouteAttributeSources(serverName string, server Server, apis map[string]API, authenticators map[string]Authenticator) error {
-	bound, err := server.boundAPIs(apis)
-	if err != nil {
-		return nil // validateServers reports the API binding error with its indexed path.
-	}
+func validateRouteAttributeSources(serverName string, server Server, bound []API, authenticators map[string]Authenticator) error {
 	for _, api := range bound {
 		for routeIndex, route := range api.Routes {
 			if route.Processing == nil {
@@ -245,10 +238,7 @@ func validateRouteAttributeSources(serverName string, server Server, apis map[st
 			if server.Authentication == nil {
 				return fmt.Errorf("%s processing on API %q route %d requires authentication", serverName, api.Name, routeIndex)
 			}
-			selected := server.Authentication.AnyOf
-			if server.Authentication.AllOf != nil {
-				selected = server.Authentication.AllOf
-			}
+			selected := selectedAuthenticatorNames(server)
 			for _, header := range route.Processing.RequestHeaders {
 				provided := false
 				for _, name := range selected {
@@ -298,20 +288,4 @@ func forbiddenIdentityHeader(name string) bool {
 	default:
 		return strings.HasPrefix(name, "proxy-") || strings.HasPrefix(name, "x-auth-gateway-")
 	}
-}
-
-func authenticatorNames(values map[string]Authenticator) map[string]struct{} {
-	return mapKeys(values)
-}
-
-func policyNames(values map[string]AuthorizationPolicy) map[string]struct{} {
-	return mapKeys(values)
-}
-
-func mapKeys[V any](values map[string]V) map[string]struct{} {
-	keys := make(map[string]struct{}, len(values))
-	for key := range values {
-		keys[key] = struct{}{}
-	}
-	return keys
 }

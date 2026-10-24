@@ -87,13 +87,11 @@ func admissionChainName(apiName string) string {
 	return "admission-" + apiName
 }
 
-func (c Config) admissionHTTPFilter(hosts []indexedVirtualHost) (*hcm.HttpFilter, error) {
+func (c effectiveConfig) admissionHTTPFilter(hosts []indexedVirtualHost) (*hcm.HttpFilter, error) {
 	// Named factories share one API's history across its routes and host bindings.
 	chains := make(map[string]*composite.FilterChainConfiguration)
-	apis := c.apisByName()
 	for _, host := range hosts {
-		for _, apiName := range c.Servers[host.serverIndex].APIs {
-			api := apis[apiName]
+		for _, api := range c.servers[host.serverIndex].apis {
 			if api.AdmissionControl == nil || !api.AdmissionControl.Enabled {
 				continue
 			}

@@ -354,7 +354,7 @@ func TestAPIKeyDefaultsDoNotMutateInput(t *testing.T) {
 }
 
 func TestHTTPManagerPreservesServerHostPairing(t *testing.T) {
-	c := loadConfigCase(t, "api-key-auth")
+	c := resolveTestConfig(t, loadConfigCase(t, "api-key-auth"))
 	publicHost := &route.VirtualHost{Name: "unmatched.public.gateway.test"}
 	keyHost := &route.VirtualHost{
 		Name: "key.gateway.test",
@@ -378,7 +378,7 @@ func TestHTTPManagerPreservesServerHostPairing(t *testing.T) {
 }
 
 func TestAPIKeyAttributeFilterInitializesMissingHostConfigMap(t *testing.T) {
-	c := loadConfigCase(t, "api-key-auth")
+	c := resolveTestConfig(t, loadConfigCase(t, "api-key-auth"))
 	host := &route.VirtualHost{Name: "key.gateway.test"}
 	if _, err := c.apiKeyAttributeFilters(nil, []indexedVirtualHost{{serverIndex: 1, host: host}}); err != nil {
 		t.Fatal(err)

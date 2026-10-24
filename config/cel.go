@@ -19,46 +19,48 @@ const (
 	celAndSeparator             = " && "
 )
 
-func (c Config) toServerAttributeInitializationConfig(server Server) *setfilterstate.Config {
+func (c effectiveConfig) toServerAttributeInitializationConfig(server resolvedServer) *setfilterstate.Config {
 	config := &setfilterstate.Config{}
-	selectIdentity := mixedAnyOf(c, server)
-	names := slices.Clone(selectedAuthenticatorNames(server))
-	if selectIdentity || serverUsesMTLS(c, server) {
-		slices.SortStableFunc(names, func(a, b string) int {
-			return authenticatorPriority(findAuthenticator(c, a)) - authenticatorPriority(findAuthenticator(c, b))
+	selectIdentity := server.mixedAnyOf()
+	authenticators := slices.Clone(server.authenticators)
+	if selectIdentity || server.usesMTLS() {
+		slices.SortStableFunc(authenticators, func(a, b Authenticator) int {
+			return authenticatorPriority(a) - authenticatorPriority(b)
 		})
 	}
 	if selectIdentity {
 		// Finish identity selection before any identity can supply attributes.
-		for _, name := range names {
-			authenticator := findAuthenticator(c, name)
-			expression := "((" + authenticatorVerifiedExpression(authenticator) + ") ? " + celStringLiteral(name) + " : \"\")"
+		for _, authenticator := range authenticators {
+			expression := "((" + authenticatorVerifiedExpression(authenticator) + ") ? " + celStringLiteral(authenticator.Name) + " : \"\")"
 			config.OnRequestHeaders = append(config.OnRequestHeaders, filterStateValue(selectedAuthenticatorKey, expression))
 		}
 	}
-	for _, name := range names {
-		authenticator := findAuthenticator(c, name)
-		for _, attribute := range slices.Sorted(maps.Keys(authenticator.Attributes)) {
-			source := authenticator.Attributes[attribute]
-			var expression string
-			switch {
-			case source.Header != nil:
-				expression = headerAttributeExpression(authenticator, *source.Header)
-			case authenticator.JWT != nil:
-				expression = jwtClaimExpression(append([]string{name}, source.ClaimPath...))
-			case authenticator.MTLS != nil:
-				expression = mtlsSANAttributeExpression(source)
-			default:
-				expression = apiKeyAttributeExpression(attribute)
-			}
-			if selectIdentity {
-				key := celStringLiteral(selectedAuthenticatorKey)
-				expression = "(" + key + " in filter_state && filter_state[" + key + "] == " + celBytesLiteral(name) + ") ? (" + expression + ") : \"\""
-			}
-			config.OnRequestHeaders = append(config.OnRequestHeaders, filterStateValue(filterStateKey(attribute), expression))
-		}
+	for _, authenticator := range authenticators {
+		appendAttributeInitialization(config, authenticator, selectIdentity)
 	}
 	return config
+}
+
+func appendAttributeInitialization(config *setfilterstate.Config, authenticator Authenticator, selectIdentity bool) {
+	for _, attribute := range slices.Sorted(maps.Keys(authenticator.Attributes)) {
+		source := authenticator.Attributes[attribute]
+		var expression string
+		switch {
+		case source.Header != nil:
+			expression = headerAttributeExpression(authenticator, *source.Header)
+		case authenticator.JWT != nil:
+			expression = jwtClaimExpression(append([]string{authenticator.Name}, source.ClaimPath...))
+		case authenticator.MTLS != nil:
+			expression = mtlsSANAttributeExpression(source)
+		default:
+			expression = apiKeyAttributeExpression(attribute)
+		}
+		if selectIdentity {
+			key := celStringLiteral(selectedAuthenticatorKey)
+			expression = "(" + key + " in filter_state && filter_state[" + key + "] == " + celBytesLiteral(authenticator.Name) + ") ? (" + expression + ") : \"\""
+		}
+		config.OnRequestHeaders = append(config.OnRequestHeaders, filterStateValue(filterStateKey(attribute), expression))
+	}
 }
 
 func authenticatorPriority(authenticator Authenticator) int {
@@ -72,23 +74,13 @@ func authenticatorPriority(authenticator Authenticator) int {
 	}
 }
 
-func (c Config) toAttributeInitializationConfig() *setfilterstate.Config {
+func (c effectiveConfig) toAttributeInitializationConfig() *setfilterstate.Config {
 	config := &setfilterstate.Config{}
 	for _, authenticator := range c.Authenticators {
-		if !authenticatorUsed(c.Servers, authenticator.Name) || authenticator.JWT == nil {
+		if !c.authenticatorUsed(authenticator.Name) || authenticator.JWT == nil {
 			continue
 		}
-		for _, attribute := range slices.Sorted(maps.Keys(authenticator.Attributes)) {
-			source := authenticator.Attributes[attribute]
-			var expression string
-			if source.Header != nil {
-				expression = headerAttributeExpression(authenticator, *source.Header)
-			} else {
-				claimPath := append([]string{authenticator.Name}, source.ClaimPath...)
-				expression = jwtClaimExpression(claimPath)
-			}
-			config.OnRequestHeaders = append(config.OnRequestHeaders, filterStateValue(filterStateKey(attribute), expression))
-		}
+		appendAttributeInitialization(config, authenticator, false)
 	}
 	return config
 }

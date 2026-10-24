@@ -74,7 +74,7 @@ func GenerateKubernetes(c Config) (*KubernetesResources, error) {
 	if err != nil {
 		return nil, err
 	}
-	deployment, err := newGatewayDeployment(c, files, configName, metricsName)
+	deployment, err := newGatewayDeployment(effective, files, configName, metricsName)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +123,7 @@ func newGatewayServiceAccount(c Config) corev1.ServiceAccount {
 	}
 }
 
-func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, metricsName string) (appsv1.Deployment, error) {
+func newGatewayDeployment(c effectiveConfig, configFiles map[string][]byte, configName, metricsName string) (appsv1.Deployment, error) {
 	k := c.Kubernetes
 	preStopDrainCommand := fmt.Sprintf("sleep %d", preStopDrainDelaySeconds)
 	gatewayResources, err := kubernetesResourceRequirements(kubernetesResourcesFieldPath, k.Resources)
@@ -143,13 +143,13 @@ func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, m
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      k.Name,
 			Namespace: k.Namespace,
-			Labels:    kubernetesLabels(c),
+			Labels:    kubernetesLabels(c.Config),
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: k.Replicas,
-			Selector: &metav1.LabelSelector{MatchLabels: kubernetesLabels(c)},
+			Selector: &metav1.LabelSelector{MatchLabels: kubernetesLabels(c.Config)},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: kubernetesLabels(c)},
+				ObjectMeta: metav1.ObjectMeta{Labels: kubernetesLabels(c.Config)},
 				Spec: corev1.PodSpec{
 					ServiceAccountName:            k.Name,
 					AutomountServiceAccountToken:  new(false),
@@ -202,9 +202,9 @@ func newGatewayDeployment(c Config, configFiles map[string][]byte, configName, m
 			},
 		},
 	}
-	addCollectorContainer(&deployment, c, metricsName, collectorResources)
+	addCollectorContainer(&deployment, c.Config, metricsName, collectorResources)
 	addAPIKeySecretVolume(&deployment, c)
-	addServerTLSVolumes(&deployment, c)
+	addServerTLSVolumes(&deployment, c.Config)
 	addTrustedCAVolumes(&deployment, c)
 	return deployment, nil
 }
@@ -254,7 +254,7 @@ func addCollectorContainer(deployment *appsv1.Deployment, c Config, metricsName 
 	})
 }
 
-func addAPIKeySecretVolume(deployment *appsv1.Deployment, c Config) {
+func addAPIKeySecretVolume(deployment *appsv1.Deployment, c effectiveConfig) {
 	authenticator, exists := c.apiKeyAuthenticator()
 	if !exists || !c.usesAPIKeys() {
 		return
@@ -297,7 +297,7 @@ func addServerTLSVolumes(deployment *appsv1.Deployment, c Config) {
 	}
 }
 
-func addTrustedCAVolumes(deployment *appsv1.Deployment, c Config) {
+func addTrustedCAVolumes(deployment *appsv1.Deployment, c effectiveConfig) {
 	for _, ref := range c.caMounts() {
 		volumeName := "ca-" + ref.id()
 		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{

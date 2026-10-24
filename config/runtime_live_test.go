@@ -39,6 +39,7 @@ const (
 
 func TestEnvoyReloadsFileBasedResources(t *testing.T) {
 	gatewayConfig := runtimeLiveConfig(t)
+	authenticator := resolveTestConfig(t, gatewayConfig).authenticatorIndex["partner-key"]
 	initialFiles, err := Generate(gatewayConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +66,7 @@ func TestEnvoyReloadsFileBasedResources(t *testing.T) {
 	}
 
 	initialKeys := []APIKeyCredential{{Key: "runtime-key-a", Attributes: map[string]string{"tenant_id": "client-a", "upstream_tenant": "team-a"}}}
-	initialKeyFile, err := GenerateAPIKeyECDS(findAuthenticator(gatewayConfig, "partner-key"), initialKeys)
+	initialKeyFile, err := GenerateAPIKeyECDS(authenticator, initialKeys)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +80,7 @@ func TestEnvoyReloadsFileBasedResources(t *testing.T) {
 	})
 
 	rotatedKeys := []APIKeyCredential{{Key: "runtime-key-b", Attributes: map[string]string{"tenant_id": "client-a", "upstream_tenant": "team-b"}}}
-	rotatedKeyFile, err := GenerateAPIKeyECDS(findAuthenticator(gatewayConfig, "partner-key"), rotatedKeys)
+	rotatedKeyFile, err := GenerateAPIKeyECDS(authenticator, rotatedKeys)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +93,7 @@ func TestEnvoyReloadsFileBasedResources(t *testing.T) {
 		return acceptedOK && staleDenied, fmt.Sprintf("new key: %s; old key: %s", accepted.describe(), stale.describe())
 	})
 
-	emptyKeyFile, err := GenerateAPIKeyECDS(findAuthenticator(gatewayConfig, "partner-key"), nil)
+	emptyKeyFile, err := GenerateAPIKeyECDS(authenticator, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
