@@ -399,6 +399,7 @@ preserving method-level native statistics.
 ### S2. Resolve references once and reuse indexes (P2, opportunity)
 
 **Status: Implemented, awaiting review and merge.**
+See [PR #25](https://github.com/rhobs/auth-gateway/pull/25).
 
 **Evidence:** Generation repeatedly searches authenticators, policies, and
 APIs and contains separate JWT-only and mixed-auth paths.
