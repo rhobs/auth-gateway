@@ -7,8 +7,9 @@ Status: in progress. D1, D2, D3, and D4 are merged in
 [PR #18](https://github.com/rhobs/auth-gateway/pull/18),
 [PR #19](https://github.com/rhobs/auth-gateway/pull/19), and
 [PR #20](https://github.com/rhobs/auth-gateway/pull/20).
-D5 is won't do. D6's implementation and acceptance checks are complete,
-awaiting review and merge. All other items remain planned.
+D5 is won't do. D6's implementation and acceptance checks are complete in
+[PR #22](https://github.com/rhobs/auth-gateway/pull/22), awaiting review and merge.
+All other items remain planned.
 
 This plan covers six confirmed defects (D1-D6), two gaps (G1-G2), and three
 simplification opportunities (S1-S3). The findings apply to the generator and
@@ -294,7 +295,7 @@ sleep command rather than successful draining.
 ### D6. Make the default Pod pass restricted admission (P1, confirmed)
 
 **Status: Done (implementation and acceptance checks, 2026-10-24).**
-Awaiting review and merge.
+[PR #22](https://github.com/rhobs/auth-gateway/pull/22) awaits review and merge.
 
 **Evidence at the review baseline:** A server-side dry-run of the generated Pod in a restricted
 namespace was rejected. The [collector container](../config/kubernetes.go)
