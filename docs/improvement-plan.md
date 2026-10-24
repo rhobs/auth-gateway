@@ -380,6 +380,7 @@ labels.
 ### S1. Combine allowed methods in one generated route (P2, opportunity)
 
 **Status: Won't do (maintainer decision, 2026-10-24).**
+See [PR #24](https://github.com/rhobs/auth-gateway/pull/24).
 
 **Decision:** Keep separate generated Envoy routes and native statistics for
 each allowed method. Operations such as `GET /alerts` (read) and
