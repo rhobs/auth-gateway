@@ -86,8 +86,11 @@ stringData:
 ```
 
 The example `key_sources.header` matches `api_key.header: X-Partner-Key`.
-Credential values cannot contain semicolons. Replace the example key with a
-unique value for each client.
+Credential values cannot contain semicolons and must be at most 8191 bytes
+each, matching Envoy's metadata extraction limit. Other allowed characters,
+including equals signs and percent-encoded text, keep their original values.
+Missing bindings leave the corresponding attributes unset. Replace the
+example key with a unique value for each client.
 
 Kubernetes stores `api-keys.yaml` as opaque Secret data and does not validate
 the Envoy resource inside it. Hand-editing that data or changing it through

@@ -229,13 +229,14 @@ data:
                                       on_header_present:
                                         key: identity
                                         metadata_namespace: auth_gateway.api_key
+                                        value: verified
                                     - header: x-auth-gateway-api-key-client
                                       on_header_present:
                                         key: attribute.tenant_id
                                         metadata_namespace: auth_gateway.api_key
                                         regex_value_rewrite:
                                             pattern:
-                                                regex: ^tenant_id=([^;]*)$
+                                                regex: ^(?:(?:[^;]*;)*tenant_id=([^;]*)(?:;[^;]*)*|.*)$
                                             substitution: \1
                                       remove: true
                                     - header: x-tenant
@@ -455,8 +456,7 @@ data:
                                                                                 - key: identity
                                                                             value:
                                                                                 string_match:
-                                                                                    safe_regex:
-                                                                                        regex: ^tenant_id=[^;]*$
+                                                                                    exact: verified
                                                                     - header:
                                                                         name: x-auth-gateway-jwt-verified-issuer-one
                                                                         string_match:
@@ -538,8 +538,7 @@ data:
                                                                                         - key: identity
                                                                                     value:
                                                                                         string_match:
-                                                                                            safe_regex:
-                                                                                                regex: ^tenant_id=[^;]*$
+                                                                                            exact: verified
                                                                             - sourced_metadata:
                                                                                 metadata_matcher:
                                                                                     filter: auth_gateway.request_headers
@@ -769,8 +768,7 @@ data:
                                                                                 - key: identity
                                                                             value:
                                                                                 string_match:
-                                                                                    safe_regex:
-                                                                                        regex: ^tenant_id=[^;]*$
+                                                                                    exact: verified
                                                                     - sourced_metadata:
                                                                         metadata_matcher:
                                                                             filter: auth_gateway.request_headers
@@ -865,8 +863,7 @@ data:
                                                                                                 - key: identity
                                                                                             value:
                                                                                                 string_match:
-                                                                                                    safe_regex:
-                                                                                                        regex: ^tenant_id=[^;]*$
+                                                                                                    exact: verified
                                                                                     - sourced_metadata:
                                                                                         metadata_matcher:
                                                                                             filter: auth_gateway.request_headers

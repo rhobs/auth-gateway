@@ -402,13 +402,14 @@ static_resources:
                                   on_header_present:
                                     key: identity
                                     metadata_namespace: auth_gateway.api_key
+                                    value: verified
                                 - header: x-auth-gateway-api-key-client
                                   on_header_present:
                                     key: attribute.user_id
                                     metadata_namespace: auth_gateway.api_key
                                     regex_value_rewrite:
                                         pattern:
-                                            regex: ^user_id=([^;]*)$
+                                            regex: ^(?:(?:[^;]*;)*user_id=([^;]*)(?:;[^;]*)*|.*)$
                                         substitution: \1
                                   remove: true
                         - name: auth_gateway.authentication
@@ -727,8 +728,7 @@ static_resources:
                                                                     - key: identity
                                                                 value:
                                                                     string_match:
-                                                                        safe_regex:
-                                                                            regex: ^user_id=[^;]*$
+                                                                        exact: verified
                                 envoy.filters.http.api_key_auth:
                                     '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
                                     config:
@@ -761,8 +761,7 @@ static_resources:
                                                                                     - key: identity
                                                                                 value:
                                                                                     string_match:
-                                                                                        safe_regex:
-                                                                                            regex: ^user_id=[^;]*$
+                                                                                        exact: verified
                                                                         - sourced_metadata:
                                                                             metadata_matcher:
                                                                                 filter: auth_gateway.api_key
@@ -794,8 +793,7 @@ static_resources:
                                                                                     - key: identity
                                                                                 value:
                                                                                     string_match:
-                                                                                        safe_regex:
-                                                                                            regex: ^user_id=[^;]*$
+                                                                                        exact: verified
                                                                         - sourced_metadata:
                                                                             metadata_matcher:
                                                                                 filter: auth_gateway.api_key
@@ -1194,8 +1192,7 @@ static_resources:
                                                                             - key: identity
                                                                         value:
                                                                             string_match:
-                                                                                safe_regex:
-                                                                                    regex: ^user_id=[^;]*$
+                                                                                exact: verified
                                                                 - header:
                                                                     name: x-auth-gateway-jwt-verified-playground-metrics-jwt
                                                                     string_match:
@@ -1270,8 +1267,7 @@ static_resources:
                                                                                     - key: identity
                                                                                 value:
                                                                                     string_match:
-                                                                                        safe_regex:
-                                                                                            regex: ^user_id=[^;]*$
+                                                                                        exact: verified
                                                                         - sourced_metadata:
                                                                             metadata_matcher:
                                                                                 filter: auth_gateway.api_key
@@ -1324,8 +1320,7 @@ static_resources:
                                                                                     - key: identity
                                                                                 value:
                                                                                     string_match:
-                                                                                        safe_regex:
-                                                                                            regex: ^user_id=[^;]*$
+                                                                                        exact: verified
                                                                         - sourced_metadata:
                                                                             metadata_matcher:
                                                                                 filter: auth_gateway.api_key

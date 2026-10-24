@@ -16,6 +16,9 @@ Notable changes to RHOBS Auth Gateway are recorded here.
 
 ### Fixed
 
+- Keep API-key extraction regexes small as credential attributes are added,
+  and reject attribute values larger than Envoy's 8191-byte metadata limit.
+  Regenerate the bootstrap and explicitly roll out gateway Deployments.
 - Use `kubernetes.name` for gateway selectors so gateways in one namespace
   stay isolated and `node.cluster` changes preserve Deployment selectors.
   Existing Deployments with different instance labels need

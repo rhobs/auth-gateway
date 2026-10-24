@@ -417,7 +417,7 @@ contain exactly one document and use only the fields below. An empty
 |----------------------------|---------------------------------|---------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `credentials`              | list of objects                 | None    | Required; `[]` is valid.                                                                                                                                                                           |
 | `credentials[].key`        | string                          | None    | Required; unique nonempty HTTP header value without surrounding whitespace or control characters.                                                                                                  |
-| `credentials[].attributes` | map of attribute name to string | Empty   | Attribute names must be declared as `credential: true` by the API-key authenticator. Values must be nonempty HTTP header values without surrounding whitespace, control characters, or semicolons. |
+| `credentials[].attributes` | map of attribute name to string | Empty   | Attribute names must be declared as `credential: true` by the API-key authenticator. Values must be nonempty HTTP header values of at most 8191 bytes without surrounding whitespace, control characters, or semicolons. |
 
 See the [API-key guide](auth/api-key.md) for the Secret layout and client
 requests, and [config.example.yaml](../config.example.yaml) for a full gateway

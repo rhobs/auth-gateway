@@ -67,7 +67,7 @@ func TestAPIKeyRawAuthorizationAndSharedAttributeEquality(t *testing.T) {
 	keyOnly := testServerAuthenticationRules(t, c, c.Servers[1]).Policies["authenticated"].Principals[0]
 	if matcher := keyOnly.GetSourcedMetadata().GetMetadataMatcher(); matcher == nil || matcher.Filter != apiKeyMetadataNamespace ||
 		!slices.Equal(metadataMatcherPath(matcher.GetPath()), []string{"identity"}) ||
-		matcher.GetValue().GetStringMatch().GetSafeRegex().GetRegex() != apiKeyClientPattern(c.Authenticators[1].credentialAttributeNames(), "") {
+		matcher.GetValue().GetStringMatch().GetExact() != "verified" {
 		t.Fatalf("key-only authentication principal = %#v", keyOnly)
 	}
 	mixed := testServerAuthenticationRules(t, c, c.Servers[2]).Policies["authenticated"].Principals[0].GetOrIds().GetIds()

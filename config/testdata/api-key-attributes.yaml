@@ -1,0 +1,68 @@
+version: 1
+authenticators:
+  - name: partner-key
+    api_key:
+      header: X-Partner-Key
+    attributes:
+      attribute00: {credential: true}
+      attribute01: {credential: true}
+      attribute02: {credential: true}
+      attribute03: {credential: true}
+      attribute04: {credential: true}
+      attribute05: {credential: true}
+      attribute06: {credential: true}
+      attribute07: {credential: true}
+      attribute08: {credential: true}
+      attribute09: {credential: true}
+      attribute10: {credential: true}
+      attribute11: {credential: true}
+      attribute12: {credential: true}
+      attribute13: {credential: true}
+      attribute14: {credential: true}
+      attribute15: {credential: true}
+      attribute16: {credential: true}
+      attribute17: {credential: true}
+      attribute18: {credential: true}
+      attribute19: {credential: true}
+      requested_tenant: {header: X-Scope-OrgID}
+authorization_policies:
+  - name: key-writers
+    grants:
+      - authenticator: partner-key
+        apis: [ingest]
+        attributes:
+          requested_tenant: [caller-controlled]
+apis:
+  - name: ingest
+    upstream: {address: httpbin, port: 8080}
+    routes:
+      - methods: [POST]
+        path: {exact: /ingest}
+        rewrite: {path: /anything}
+        processing:
+          request_headers:
+            - {name: X-Attribute00, from_attribute: attribute00}
+            - {name: X-Attribute01, from_attribute: attribute01}
+            - {name: X-Attribute02, from_attribute: attribute02}
+            - {name: X-Attribute03, from_attribute: attribute03}
+            - {name: X-Attribute04, from_attribute: attribute04}
+            - {name: X-Attribute05, from_attribute: attribute05}
+            - {name: X-Attribute06, from_attribute: attribute06}
+            - {name: X-Attribute07, from_attribute: attribute07}
+            - {name: X-Attribute08, from_attribute: attribute08}
+            - {name: X-Attribute09, from_attribute: attribute09}
+            - {name: X-Attribute10, from_attribute: attribute10}
+            - {name: X-Attribute11, from_attribute: attribute11}
+            - {name: X-Attribute12, from_attribute: attribute12}
+            - {name: X-Attribute13, from_attribute: attribute13}
+            - {name: X-Attribute14, from_attribute: attribute14}
+            - {name: X-Attribute15, from_attribute: attribute15}
+            - {name: X-Attribute16, from_attribute: attribute16}
+            - {name: X-Attribute17, from_attribute: attribute17}
+            - {name: X-Attribute18, from_attribute: attribute18}
+            - {name: X-Attribute19, from_attribute: attribute19}
+servers:
+  - hostname: key.runtime.test
+    authentication: {any_of: [partner-key]}
+    authorization: {any_of: [key-writers]}
+    apis: [ingest]
