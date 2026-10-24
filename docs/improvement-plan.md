@@ -9,9 +9,9 @@ Status: in progress. D1, D2, D3, and D4 are merged in
 [PR #20](https://github.com/rhobs/auth-gateway/pull/20).
 D5 is won't do. D6 is merged in
 [PR #22](https://github.com/rhobs/auth-gateway/pull/22).
-G2's cardinality guidance is complete in
-[PR #23](https://github.com/rhobs/auth-gateway/pull/23), awaiting review and
-merge. Enforcement is won't do.
+G2's cardinality guidance is merged in
+[PR #23](https://github.com/rhobs/auth-gateway/pull/23). Enforcement is won't do.
+S1 is won't do; method-level route statistics must be preserved.
 All other items remain planned.
 
 This plan covers six confirmed defects (D1-D6), two gaps (G1-G2), and three
@@ -31,7 +31,7 @@ its generated Envoy and Kubernetes configuration at the review baseline.
 | 1 | Isolate authenticated identities and gateway workloads | D1, D2 (merged) |
 | 2 | Generate configuration that Envoy accepts at realistic sizes | D3, D4 (merged) |
 | 3 | Resolve termination, restricted admission, and metric cardinality policy | D5 (won't do), D6 (merged), G2 (documentation done) |
-| 4 | Reduce duplication and dependency overhead | S1, S2, S3 |
+| 4 | Reduce duplication and dependency overhead | S1 (won't do), S2, S3 |
 | 5 | Complete documentation, rollout guidance, and verification | All |
 
 Phases order the work by risk. Independent fixes can proceed separately.
@@ -343,8 +343,8 @@ before deploying each regenerated manifest to OpenShift.
 ### G2. Bound request metric cardinality (P1, operational gap)
 
 **Status: Won't do (enforced limit; maintainer decision, 2026-10-24).**
-Cardinality guidance is complete in
-[PR #23](https://github.com/rhobs/auth-gateway/pull/23), awaiting review and merge.
+Cardinality guidance is merged in
+[PR #23](https://github.com/rhobs/auth-gateway/pull/23).
 
 **Decision:** Leave metric label cardinality to configuration authors. Document
 the risk of cardinality explosion and recommend bounded label values. Do not
@@ -379,26 +379,21 @@ labels.
 
 ### S1. Combine allowed methods in one generated route (P2, opportunity)
 
+**Status: Won't do (maintainer decision, 2026-10-24).**
+See [PR #24](https://github.com/rhobs/auth-gateway/pull/24).
+
+**Decision:** Keep separate generated Envoy routes and native statistics for
+each allowed method. Operations such as `GET /alerts` (read) and
+`POST /alerts` (create) must remain distinguishable in request counts, error
+rates, and latency distributions. The small reduction in route objects does
+not justify extra statistics matching or changes to metric identities.
+
 **Evidence:** [Route generation](../config/generate.go) emits a separate
 route for each allowed method, duplicating actions, metadata, and filter
-configuration.
+configuration. Each generated route has its own name and stat prefix,
+preserving method-level native statistics.
 
-**Work:** Evaluate one route per configured path with a combined, anchored
-method matcher. First decide how to preserve or intentionally change existing
-per-method route statistics, names, and stat prefixes.
-
-**Acceptance and validation:**
-
-- Generated output contains fewer repeated route objects for a multi-method
-  fixture, with the reduction recorded in the change.
-- Unit tests preserve route order, exact method matching, 404/405 behavior,
-  and the `Allow` header, including overlapping paths and method sets.
-- Observable behavior preserves rewrites, authentication, authorization,
-  forwarded requests, metrics, and fault/admission selection. Keep Envoy
-  admission semantics in the runtime suite.
-- Document any accepted statistics change before updating goldens.
-
-**Dependency:** Settle the statistics contract before changing route shape.
+**Validation:** Markdown link and whitespace checks passed on 2026-10-24.
 
 ### S2. Resolve references once and reuse indexes (P2, opportunity)
 
