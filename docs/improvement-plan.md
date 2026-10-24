@@ -9,7 +9,9 @@ Status: in progress. D1, D2, D3, and D4 are merged in
 [PR #20](https://github.com/rhobs/auth-gateway/pull/20).
 D5 is won't do. D6 is merged in
 [PR #22](https://github.com/rhobs/auth-gateway/pull/22).
-G2's cardinality guidance is documented; enforcement is won't do.
+G2's cardinality guidance is complete in
+[PR #23](https://github.com/rhobs/auth-gateway/pull/23), awaiting review and
+merge. Enforcement is won't do.
 All other items remain planned.
 
 This plan covers six confirmed defects (D1-D6), two gaps (G1-G2), and three
@@ -28,7 +30,7 @@ its generated Envoy and Kubernetes configuration at the review baseline.
 | 0 | Resolve conflicting authentication scope guidance | G1 |
 | 1 | Isolate authenticated identities and gateway workloads | D1, D2 (merged) |
 | 2 | Generate configuration that Envoy accepts at realistic sizes | D3, D4 (merged) |
-| 3 | Resolve termination, restricted admission, and metric cardinality policy | D5 (won't do), D6 (merged), G2 (documented) |
+| 3 | Resolve termination, restricted admission, and metric cardinality policy | D5 (won't do), D6 (merged), G2 (documentation done) |
 | 4 | Reduce duplication and dependency overhead | S1, S2, S3 |
 | 5 | Complete documentation, rollout guidance, and verification | All |
 
@@ -341,7 +343,8 @@ before deploying each regenerated manifest to OpenShift.
 ### G2. Bound request metric cardinality (P1, operational gap)
 
 **Status: Won't do (enforced limit; maintainer decision, 2026-10-24).**
-Cardinality guidance is documented.
+Cardinality guidance is complete in
+[PR #23](https://github.com/rhobs/auth-gateway/pull/23), awaiting review and merge.
 
 **Decision:** Leave metric label cardinality to configuration authors. Document
 the risk of cardinality explosion and recommend bounded label values. Do not
