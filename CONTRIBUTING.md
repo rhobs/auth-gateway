@@ -1,7 +1,14 @@
 # Contributing
 
-Use Go 1.26 or later. The module targets Go 1.26 and pins golangci-lint
-v2.14.0. `make tools` installs the pinned Ginkgo, lint, Kind, and cmctl tools.
+Use Go 1.26 or later. `make tools` prepares the pinned Ginkgo, lint, Kind,
+and cmctl tools through Go's tool cache. Ginkgo is pinned in the application
+module, golangci-lint v2.14.0 in [tools/go.mod](tools/go.mod), and Kind and
+cmctl in [e2e/tools/go.mod](e2e/tools/go.mod).
+
+`make lint` selects the lint module with `go tool -modfile=tools/go.mod`,
+keeping the repository root as the working directory for configuration and
+package discovery. Manage lint dependencies in the tooling module and run
+`go -C tools mod tidy` after updating them.
 
 ## Pull requests
 
