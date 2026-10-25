@@ -12,6 +12,7 @@ D5 is won't do. D6 is merged in
 G2's cardinality guidance is merged in
 [PR #23](https://github.com/rhobs/auth-gateway/pull/23). Enforcement is won't do.
 S1 is won't do; method-level route statistics must be preserved.
+S2 is implemented, awaiting review and merge.
 All other items remain planned.
 
 This plan covers six confirmed defects (D1-D6), two gaps (G1-G2), and three
@@ -31,7 +32,7 @@ its generated Envoy and Kubernetes configuration at the review baseline.
 | 1 | Isolate authenticated identities and gateway workloads | D1, D2 (merged) |
 | 2 | Generate configuration that Envoy accepts at realistic sizes | D3, D4 (merged) |
 | 3 | Resolve termination, restricted admission, and metric cardinality policy | D5 (won't do), D6 (merged), G2 (documentation done) |
-| 4 | Reduce duplication and dependency overhead | S1 (won't do), S2, S3 |
+| 4 | Reduce duplication and dependency overhead | S1 (won't do), S2 (implemented), S3 |
 | 5 | Complete documentation, rollout guidance, and verification | All |
 
 Phases order the work by risk. Independent fixes can proceed separately.
@@ -397,6 +398,9 @@ preserving method-level native statistics.
 
 ### S2. Resolve references once and reuse indexes (P2, opportunity)
 
+**Status: Implemented, awaiting review and merge.**
+See [PR #25](https://github.com/rhobs/auth-gateway/pull/25).
+
 **Evidence:** Generation repeatedly searches authenticators, policies, and
 APIs and contains separate JWT-only and mixed-auth paths.
 
@@ -406,16 +410,27 @@ the same behavior. Keep intentional authentication differences explicit.
 
 **Acceptance and validation:**
 
-- Unknown references retain useful validation errors and deterministic
+- [x] Unknown references retain useful validation errors and deterministic
   ordering.
-- Resolution and generation preserve input immutability.
-- Existing goldens and observable behavior remain unchanged for this
+- [x] Resolution and generation preserve input immutability.
+- [x] Existing goldens and observable behavior remain unchanged for this
   refactor; focused tests cover any newly shared resolution behavior.
-- Repeated reference scans are reduced without adding a public schema or
+- [x] Repeated reference scans are reduced without adding a public schema or
   another independently maintained representation of configuration.
 
-**Dependency:** Land D1, D3, and D4 first so the refactor preserves corrected
-behavior rather than embedding their defects in shared code.
+**Delivered:** Validation retains its API, authenticator, and policy indexes
+and ordered server bindings for generation. Authentication selection and use
+checks reuse those bindings, including JWKS, header extraction, authorization,
+and admission setup. JWT-only and mixed-auth paths share attribute construction
+while preserving their filter scopes and identity precedence. Routes and
+per-method native statistics are unchanged. See the
+[resolution regressions](../config/resolution_test.go).
+
+**Validation:** `make test`, `make lint`, tagged e2e/runtime compilation,
+framework tests, `make test-runtime`, and the full `make e2e` suite passed on
+2026-10-24 (79/79 Kind specs). Existing goldens are unchanged.
+
+**Dependencies:** D1, D3, and D4 are merged.
 
 ### S3. Isolate lint tooling dependencies (P2, opportunity)
 

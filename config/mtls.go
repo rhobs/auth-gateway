@@ -38,20 +38,6 @@ const (
 	mtlsFingerprintPattern = "^[0-9A-Fa-f:]+$"
 )
 
-func (c Config) serverMTLSAuthenticator(server Server) (Authenticator, bool) {
-	for _, name := range selectedAuthenticatorNames(server) {
-		if authenticator := findAuthenticator(c, name); authenticator.MTLS != nil {
-			return authenticator, true
-		}
-	}
-	return Authenticator{}, false
-}
-
-func serverUsesMTLS(c Config, server Server) bool {
-	_, selected := c.serverMTLSAuthenticator(server)
-	return selected
-}
-
 func requiresClientCertificate(server Server) bool {
 	return server.Authentication.AllOf != nil || len(server.Authentication.AnyOf) == 1
 }

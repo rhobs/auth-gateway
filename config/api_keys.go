@@ -211,41 +211,6 @@ func selectedAuthenticatorNames(server Server) []string {
 	return server.Authentication.AllOf
 }
 
-func serverUsesAPIKey(c Config, server Server) bool {
-	for _, name := range selectedAuthenticatorNames(server) {
-		if findAuthenticator(c, name).APIKey != nil {
-			return true
-		}
-	}
-	return false
-}
-
-func serverUsesJWT(c Config, server Server) bool {
-	for _, name := range selectedAuthenticatorNames(server) {
-		if findAuthenticator(c, name).JWT != nil {
-			return true
-		}
-	}
-	return false
-}
-
-func serverSelectsAuthenticator(server Server, name string) bool {
-	return slices.Contains(selectedAuthenticatorNames(server), name)
-}
-
-func mixedAnyOf(c Config, server Server) bool {
-	if server.Authentication == nil || server.Authentication.AnyOf == nil {
-		return false
-	}
-	types := 0
-	for _, used := range []bool{serverUsesJWT(c, server), serverUsesMTLS(c, server), serverUsesAPIKey(c, server)} {
-		if used {
-			types++
-		}
-	}
-	return types > 1
-}
-
 func jwtVerifiedHeaderName(name string) string { return jwtVerifiedHeaderPrefix + name }
 
 func apiKeyFilter() *hcm.HttpFilter {
@@ -258,9 +223,9 @@ func apiKeyFilter() *hcm.HttpFilter {
 	}
 }
 
-func (c Config) toAPIKeyPerRouteConfig(server Server) (*anypb.Any, error) {
+func (c effectiveConfig) toAPIKeyPerRouteConfig(server resolvedServer) (*anypb.Any, error) {
 	config := &matching.ExtensionWithMatcherPerRoute{}
-	if mixedAnyOf(c, server) {
+	if server.mixedAnyOf() {
 		matcher, err := c.toAPIKeySkipMatcher(server)
 		if err != nil {
 			return nil, err
@@ -274,19 +239,18 @@ func (c Config) toAPIKeyPerRouteConfig(server Server) (*anypb.Any, error) {
 	return packEnvoy(&route.FilterConfig{Config: perRoute})
 }
 
-func (c Config) toAPIKeySkipMatcher(server Server) (*xdsmatcher.Matcher, error) {
+func (c effectiveConfig) toAPIKeySkipMatcher(server resolvedServer) (*xdsmatcher.Matcher, error) {
 	packedSkip, err := packEnvoy(&skip.SkipFilter{})
 	if err != nil {
 		return nil, fmt.Errorf("encode API-key skip action: %w", err)
 	}
 	action := &xdsmatcher.Matcher_OnMatch{OnMatch: &xdsmatcher.Matcher_OnMatch_Action{Action: &xdscore.TypedExtensionConfig{Name: "skip", TypedConfig: packedSkip}}}
 	var fields []*xdsmatcher.Matcher_MatcherList_FieldMatcher
-	for _, name := range selectedAuthenticatorNames(server) {
-		authenticator := findAuthenticator(c, name)
+	for _, authenticator := range server.authenticators {
 		if authenticator.JWT == nil {
 			continue
 		}
-		input, err := packEnvoy(&matcher.HttpRequestHeaderMatchInput{HeaderName: jwtVerifiedHeaderName(name)})
+		input, err := packEnvoy(&matcher.HttpRequestHeaderMatchInput{HeaderName: jwtVerifiedHeaderName(authenticator.Name)})
 		if err != nil {
 			return nil, fmt.Errorf("encode JWT marker input: %w", err)
 		}
@@ -298,7 +262,7 @@ func (c Config) toAPIKeySkipMatcher(server Server) (*xdsmatcher.Matcher, error) 
 			OnMatch: action,
 		})
 	}
-	if serverUsesMTLS(c, server) {
+	if server.usesMTLS() {
 		input, err := packEnvoy(&matcher.HttpRequestHeaderMatchInput{HeaderName: mtlsFingerprintHeaderName})
 		if err != nil {
 			return nil, fmt.Errorf("encode mTLS marker input: %w", err)
@@ -319,11 +283,11 @@ func (c Config) toAPIKeySkipMatcher(server Server) (*xdsmatcher.Matcher, error) 
 	return &xdsmatcher.Matcher{MatcherType: &xdsmatcher.Matcher_MatcherList_{MatcherList: &xdsmatcher.Matcher_MatcherList{Matchers: fields}}}, nil
 }
 
-func requestHeaderSources(c Config, serverIndexes []int) []string {
+func requestHeaderSources(c effectiveConfig, serverIndexes []int) []string {
 	headers := make(map[string]struct{})
 	for _, index := range serverIndexes {
-		for _, name := range selectedAuthenticatorNames(c.Servers[index]) {
-			for _, source := range findAuthenticator(c, name).Attributes {
+		for _, authenticator := range c.servers[index].authenticators {
+			for _, source := range authenticator.Attributes {
 				if source.Header != nil {
 					headers[strings.ToLower(*source.Header)] = struct{}{}
 				}
@@ -397,24 +361,24 @@ func (authenticator Authenticator) toJWTMarkerPrincipal() *rbac.Principal {
 	}}}
 }
 
-func (c Config) toGrantPrincipalForServer(server Server, grant AuthorizationGrant) *rbac.Principal {
+func (c effectiveConfig) toGrantPrincipalForServer(server resolvedServer, grant AuthorizationGrant) *rbac.Principal {
 	principal := c.toGrantPrincipal(grant)
-	if !mixedAnyOf(c, server) {
+	if !server.mixedAnyOf() {
 		return principal
 	}
-	authenticator := findAuthenticator(c, grant.Authenticator)
+	authenticator := c.authenticatorIndex[grant.Authenticator]
 	if authenticator.JWT != nil {
 		return andPrincipals(principal, authenticator.toJWTMarkerPrincipal())
 	}
-	if !serverUsesMTLS(c, server) {
+	if !server.usesMTLS() {
 		return principal
 	}
-	for _, name := range selectedAuthenticatorNames(server) {
-		if higher := findAuthenticator(c, name); higher.JWT != nil {
+	for _, higher := range server.authenticators {
+		if higher.JWT != nil {
 			principal = andPrincipals(principal, &rbac.Principal{Identifier: &rbac.Principal_NotId{NotId: higher.toJWTMarkerPrincipal()}})
 		}
 	}
-	if authenticator.APIKey != nil && serverUsesMTLS(c, server) {
+	if authenticator.APIKey != nil && server.usesMTLS() {
 		principal = andPrincipals(principal, &rbac.Principal{Identifier: &rbac.Principal_NotId{NotId: mtlsPresentPrincipal()}})
 	}
 	return principal
@@ -427,17 +391,17 @@ func andPrincipals(values ...*rbac.Principal) *rbac.Principal {
 	return &rbac.Principal{Identifier: &rbac.Principal_AndIds{AndIds: &rbac.Principal_Set{Ids: values}}}
 }
 
-func (c Config) toServerAuthenticationRBACRules(server Server) (*rbac.RBAC, error) {
+func (c effectiveConfig) toServerAuthenticationRBACRules(server resolvedServer) (*rbac.RBAC, error) {
 	var principal *rbac.Principal
-	if serverUsesAPIKey(c, server) {
+	if server.hasAPIKey {
 		principal = apiKeyIdentityPrincipal()
 	}
-	if serverUsesMTLS(c, server) {
+	if server.usesMTLS() {
 		mtlsPrincipal, err := mtlsValidatedPrincipal()
 		if err != nil {
 			return nil, err
 		}
-		if server.Authentication.AnyOf != nil && mixedAnyOf(c, server) {
+		if server.Authentication.AnyOf != nil && server.mixedAnyOf() {
 			if principal == nil {
 				principal = mtlsPrincipal
 			} else {
@@ -450,7 +414,7 @@ func (c Config) toServerAuthenticationRBACRules(server Server) (*rbac.RBAC, erro
 		}
 	}
 	policy := &rbac.Policy{Permissions: []*rbac.Permission{{Rule: &rbac.Permission_Any{Any: true}}}}
-	if mixedAnyOf(c, server) {
+	if server.mixedAnyOf() {
 		var alternatives []*rbac.Principal
 		if principal != nil {
 			if ids := principal.GetOrIds(); ids != nil {
@@ -459,18 +423,15 @@ func (c Config) toServerAuthenticationRBACRules(server Server) (*rbac.RBAC, erro
 				alternatives = append(alternatives, principal)
 			}
 		}
-		for _, name := range selectedAuthenticatorNames(server) {
-			if authenticator := findAuthenticator(c, name); authenticator.JWT != nil {
+		for _, authenticator := range server.authenticators {
+			if authenticator.JWT != nil {
 				alternatives = append(alternatives, authenticator.toJWTMarkerPrincipal())
 			}
 		}
 		principal = &rbac.Principal{Identifier: &rbac.Principal_OrIds{OrIds: &rbac.Principal_Set{Ids: alternatives}}}
 	} else if server.Authentication != nil && len(server.Authentication.AllOf) > 1 {
-		selected := make([]Authenticator, 0, len(server.Authentication.AllOf))
-		for _, name := range selectedAuthenticatorNames(server) {
-			selected = append(selected, findAuthenticator(c, name))
-		}
-		if !serverUsesMTLS(c, server) {
+		selected := server.authenticators
+		if !server.usesMTLS() {
 			principals := []*rbac.Principal{principal}
 			sharedPrincipals, condition := sharedAttributeConditions(selected...)
 			principals = append(principals, sharedPrincipals...)
@@ -484,14 +445,11 @@ func (c Config) toServerAuthenticationRBACRules(server Server) (*rbac.RBAC, erro
 	return &rbac.RBAC{Action: rbac.RBAC_ALLOW, Policies: map[string]*rbac.Policy{"authenticated": policy}}, nil
 }
 
-func (c Config) toServerMTLSSharedAttributeRBACRules(server Server) *rbac.RBAC {
-	if !serverUsesMTLS(c, server) || server.Authentication == nil || len(server.Authentication.AllOf) < 2 {
+func (c effectiveConfig) toServerMTLSSharedAttributeRBACRules(server resolvedServer) *rbac.RBAC {
+	if !server.usesMTLS() || server.Authentication == nil || len(server.Authentication.AllOf) < 2 {
 		return nil
 	}
-	selected := make([]Authenticator, 0, len(server.Authentication.AllOf))
-	for _, name := range selectedAuthenticatorNames(server) {
-		selected = append(selected, findAuthenticator(c, name))
-	}
+	selected := server.authenticators
 	principals, condition := sharedAttributeConditions(selected...)
 	if condition == nil {
 		return nil
@@ -519,7 +477,7 @@ func (authenticator Authenticator) toKeyGrantPrincipal(grant AuthorizationGrant)
 	return andPrincipals(conditions...)
 }
 
-func (c Config) toCredentialCleanupConfig() *headermutation.HeaderMutation {
+func (c effectiveConfig) toCredentialCleanupConfig() *headermutation.HeaderMutation {
 	removed := map[string]struct{}{authorizationHeaderName: {}, apiKeyClientHeader: {}}
 	if c.usesMTLS() {
 		for _, name := range []string{mtlsPendingHeaderName, mtlsFingerprintHeaderName, mtlsURIHeaderName, mtlsDNSHeaderName} {
@@ -542,7 +500,7 @@ func (c Config) toCredentialCleanupConfig() *headermutation.HeaderMutation {
 }
 
 // toCredentialCleanupFilter builds the Envoy filter that removes gateway credentials and JWT verification markers before requests reach upstreams.
-func (c Config) toCredentialCleanupFilter() (*hcm.HttpFilter, error) {
+func (c effectiveConfig) toCredentialCleanupFilter() (*hcm.HttpFilter, error) {
 	cleanup, err := packEnvoy(c.toCredentialCleanupConfig())
 	if err != nil {
 		return nil, fmt.Errorf("encode credential cleanup filter: %w", err)

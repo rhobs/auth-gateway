@@ -29,9 +29,9 @@ func TestGenerateMTLSClientCAAndCertificateRequirements(t *testing.T) {
 		"all.gateway.test":   true,
 		"trust.gateway.test": true,
 	}
-	for serverIndex, server := range c.Servers {
-		authenticator, selected := c.serverMTLSAuthenticator(server)
-		if !selected {
+	effective := resolveTestConfig(t, c)
+	for serverIndex, server := range effective.servers {
+		if !server.usesMTLS() {
 			continue
 		}
 		caPath := path.Join(EnvoyConfigDirectory, clientCAResourceFilename(serverIndex))
@@ -44,7 +44,7 @@ func TestGenerateMTLSClientCAAndCertificateRequirements(t *testing.T) {
 		if got, want := secret.GetName(), clientCASecretName(serverIndex); got != want {
 			t.Errorf("client CA secret name = %q, want %q", got, want)
 		}
-		caFilename := authenticator.MTLS.TrustedCA.filename()
+		caFilename := server.mtls.MTLS.TrustedCA.filename()
 		if got := validation.GetTrustedCa().GetFilename(); got != caFilename {
 			t.Errorf("trusted CA filename = %q, want %q", got, caFilename)
 		}

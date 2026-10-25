@@ -85,7 +85,7 @@ func Generate(c Config) (GeneratedFiles, error) {
 			Contents: contents[envoyConfigFilename],
 		},
 	}
-	for index, server := range effective.Servers {
+	for index, server := range effective.servers {
 		if server.TLSConfig == nil {
 			continue
 		}
@@ -94,7 +94,7 @@ func Generate(c Config) (GeneratedFiles, error) {
 			Path:     path.Join(EnvoyConfigDirectory, filename),
 			Contents: contents[filename],
 		})
-		if _, selected := effective.serverMTLSAuthenticator(server); selected {
+		if server.usesMTLS() {
 			caFilename := clientCAResourceFilename(index)
 			files.ClientCAResources = append(files.ClientCAResources, GeneratedFile{
 				Path:     path.Join(EnvoyConfigDirectory, caFilename),
@@ -106,14 +106,14 @@ func Generate(c Config) (GeneratedFiles, error) {
 }
 
 func generate(effective effectiveConfig) (map[string][]byte, error) {
-	bootstrapConfig, err := generateBootstrap(effective.Config)
+	bootstrapConfig, err := generateBootstrap(effective)
 	if err != nil {
 		return nil, err
 	}
-	return generateFiles(effective.Config, bootstrapConfig)
+	return generateFiles(effective, bootstrapConfig)
 }
 
-func generateBootstrap(c Config) (*bootstrap.Bootstrap, error) {
+func generateBootstrap(c effectiveConfig) (*bootstrap.Bootstrap, error) {
 	clusters, err := generateClusters(c)
 	if err != nil {
 		return nil, err
@@ -152,12 +152,12 @@ func generateBootstrap(c Config) (*bootstrap.Bootstrap, error) {
 	return bootstrapConfig, nil
 }
 
-func generateClusters(c Config) ([]*cluster.Cluster, error) {
+func generateClusters(c effectiveConfig) ([]*cluster.Cluster, error) {
 	clusters, err := apiClusters(c.APIs)
 	if err != nil {
 		return nil, err
 	}
-	jwks, err := jwksClusters(c.Authenticators, c.Servers)
+	jwks, err := jwksClusters(c)
 	if err != nil {
 		return nil, err
 	}
@@ -185,12 +185,11 @@ func routeVirtualHosts(hosts []indexedVirtualHost) []*route.VirtualHost {
 	return virtualHosts
 }
 
-func generateFilterChains(c Config) ([]*listener.FilterChain, error) {
-	apis := c.apisByName()
+func generateFilterChains(c effectiveConfig) ([]*listener.FilterChain, error) {
 	var filterChains []*listener.FilterChain
 	var httpHosts []indexedVirtualHost
-	for i, server := range c.Servers {
-		host, err := serverVirtualHost(c, i, server, apis)
+	for i, server := range c.servers {
+		host, err := serverVirtualHost(c, i, server)
 		if err != nil {
 			return nil, err
 		}
@@ -204,8 +203,7 @@ func generateFilterChains(c Config) ([]*listener.FilterChain, error) {
 			return nil, fmt.Errorf("servers[%d]: %w", i, err)
 		}
 		chain.FilterChainMatch = &listener.FilterChainMatch{TransportProtocol: "tls", ServerNames: []string{server.Hostname}}
-		mtlsAuthenticator, selected := c.serverMTLSAuthenticator(server)
-		chain.TransportSocket, err = serverTLSTransportSocket(i, mtlsAuthenticator.MTLS, selected && requiresClientCertificate(server))
+		chain.TransportSocket, err = serverTLSTransportSocket(i, server.mtls.MTLS, server.usesMTLS() && requiresClientCertificate(*server.Server))
 		if err != nil {
 			return nil, fmt.Errorf("servers[%d] downstream TLS context: %w", i, err)
 		}
@@ -225,11 +223,8 @@ func generateFilterChains(c Config) ([]*listener.FilterChain, error) {
 	return filterChains, nil
 }
 
-func serverVirtualHost(c Config, index int, server Server, apis map[string]API) (*route.VirtualHost, error) {
-	bound, err := server.boundAPIs(apis)
-	if err != nil {
-		return nil, fmt.Errorf("servers[%d].apis: %w", index, err)
-	}
+func serverVirtualHost(c effectiveConfig, index int, server resolvedServer) (*route.VirtualHost, error) {
+	bound := server.apis
 	routes, err := apiRoutesWithRequestHeaderMutations(bound, c.hasAuthenticationConfig())
 	if err != nil {
 		return nil, fmt.Errorf("servers[%d] routes: %w", index, err)
@@ -265,8 +260,8 @@ func serverVirtualHost(c Config, index int, server Server, apis map[string]API) 
 	return host, nil
 }
 
-func addServerJWTRequirement(c Config, host *route.VirtualHost, index int, server Server) error {
-	if !serverUsesJWT(c, server) {
+func addServerJWTRequirement(c effectiveConfig, host *route.VirtualHost, index int, server resolvedServer) error {
+	if !server.hasJWT {
 		return nil
 	}
 	requirementName := serverJWTRequirementName(index)
@@ -278,8 +273,8 @@ func addServerJWTRequirement(c Config, host *route.VirtualHost, index int, serve
 	return nil
 }
 
-func addServerAPIKeyConfig(c Config, host *route.VirtualHost, index int, server Server) error {
-	if !serverUsesAPIKey(c, server) {
+func addServerAPIKeyConfig(c effectiveConfig, host *route.VirtualHost, index int, server resolvedServer) error {
+	if !server.hasAPIKey {
 		return nil
 	}
 	perRoute, err := c.toAPIKeyPerRouteConfig(server)
@@ -290,8 +285,8 @@ func addServerAPIKeyConfig(c Config, host *route.VirtualHost, index int, server 
 	return nil
 }
 
-func addServerAuthenticationConfig(c Config, host *route.VirtualHost, index int, server Server) error {
-	if !serverUsesAPIKey(c, server) && !serverUsesMTLS(c, server) {
+func addServerAuthenticationConfig(c effectiveConfig, host *route.VirtualHost, index int, server resolvedServer) error {
+	if !server.hasAPIKey && !server.usesMTLS() {
 		return nil
 	}
 	rules, err := c.toServerAuthenticationRBACRules(server)
@@ -306,7 +301,7 @@ func addServerAuthenticationConfig(c Config, host *route.VirtualHost, index int,
 	return nil
 }
 
-func addServerMTLSSharedAttributeConfig(c Config, host *route.VirtualHost, index int, server Server) error {
+func addServerMTLSSharedAttributeConfig(c effectiveConfig, host *route.VirtualHost, index int, server resolvedServer) error {
 	rules := c.toServerMTLSSharedAttributeRBACRules(server)
 	if rules == nil {
 		return nil
@@ -319,7 +314,7 @@ func addServerMTLSSharedAttributeConfig(c Config, host *route.VirtualHost, index
 	return nil
 }
 
-func generateListenerFilters(c Config) ([]*listener.ListenerFilter, error) {
+func generateListenerFilters(c effectiveConfig) ([]*listener.ListenerFilter, error) {
 	if !c.hasHTTPS() {
 		return nil, nil
 	}
@@ -333,7 +328,7 @@ func generateListenerFilters(c Config) ([]*listener.ListenerFilter, error) {
 	}}, nil
 }
 
-func generateFiles(c Config, bootstrapConfig *bootstrap.Bootstrap) (map[string][]byte, error) {
+func generateFiles(c effectiveConfig, bootstrapConfig *bootstrap.Bootstrap) (map[string][]byte, error) {
 	data, err := marshalEnvoyYAML(bootstrapConfig)
 	if err != nil {
 		return nil, fmt.Errorf("encode Envoy bootstrap: %w", err)
@@ -348,8 +343,8 @@ func generateFiles(c Config, bootstrapConfig *bootstrap.Bootstrap) (map[string][
 	return files, nil
 }
 
-func addServerCertificateFiles(c Config, files map[string][]byte) error {
-	for i, server := range c.Servers {
+func addServerCertificateFiles(c effectiveConfig, files map[string][]byte) error {
+	for i, server := range c.servers {
 		if server.TLSConfig == nil {
 			continue
 		}
@@ -362,13 +357,12 @@ func addServerCertificateFiles(c Config, files map[string][]byte) error {
 	return nil
 }
 
-func addClientCAFiles(c Config, files map[string][]byte) error {
-	for index, server := range c.Servers {
-		authenticator, selected := c.serverMTLSAuthenticator(server)
-		if !selected {
+func addClientCAFiles(c effectiveConfig, files map[string][]byte) error {
+	for index, server := range c.servers {
+		if !server.usesMTLS() {
 			continue
 		}
-		data, err := marshalEnvoyFileDiscoveryResponse(authenticator.MTLS.toEnvoySecret(index))
+		data, err := marshalEnvoyFileDiscoveryResponse(server.mtls.MTLS.toEnvoySecret(index))
 		if err != nil {
 			return fmt.Errorf("servers[%d] client CA SDS resource: %w", index, err)
 		}
@@ -377,7 +371,7 @@ func addClientCAFiles(c Config, files map[string][]byte) error {
 	return nil
 }
 
-func (c Config) toHTTPFilterChain(hosts []indexedVirtualHost) (*listener.FilterChain, error) {
+func (c effectiveConfig) toHTTPFilterChain(hosts []indexedVirtualHost) (*listener.FilterChain, error) {
 	manager, err := c.toHTTPManager(hosts)
 	if err != nil {
 		return nil, err
@@ -392,7 +386,7 @@ func (c Config) toHTTPFilterChain(hosts []indexedVirtualHost) (*listener.FilterC
 	}}}, nil
 }
 
-func (c Config) toHTTPManager(hosts []indexedVirtualHost) (*hcm.HttpConnectionManager, error) {
+func (c effectiveConfig) toHTTPManager(hosts []indexedVirtualHost) (*hcm.HttpConnectionManager, error) {
 	routerConfig, err := packEnvoy(&router.Router{})
 	if err != nil {
 		return nil, err
@@ -443,7 +437,7 @@ func (c Config) toHTTPManager(hosts []indexedVirtualHost) (*hcm.HttpConnectionMa
 		HttpFilters: filters,
 	}
 	for _, host := range hosts {
-		if serverUsesMTLS(c, c.Servers[host.serverIndex]) {
+		if c.servers[host.serverIndex].usesMTLS() {
 			manager.LocalReplyConfig = mtlsMissingCredentialReply()
 			break
 		}
@@ -451,7 +445,7 @@ func (c Config) toHTTPManager(hosts []indexedVirtualHost) (*hcm.HttpConnectionMa
 	return manager, nil
 }
 
-func (c Config) toHTTPFilters(hosts []indexedVirtualHost, protected bool) ([]*hcm.HttpFilter, error) {
+func (c effectiveConfig) toHTTPFilters(hosts []indexedVirtualHost, protected bool) ([]*hcm.HttpFilter, error) {
 	filters, err := c.requestControlFilters(routeVirtualHosts(hosts))
 	if err != nil {
 		return nil, err
@@ -486,13 +480,13 @@ func (c Config) toHTTPFilters(hosts []indexedVirtualHost, protected bool) ([]*hc
 	return filters, nil
 }
 
-func (c Config) requestControlFilters(hosts []*route.VirtualHost) ([]*hcm.HttpFilter, error) {
+func (c effectiveConfig) requestControlFilters(hosts []*route.VirtualHost) ([]*hcm.HttpFilter, error) {
 	var identityHeaders []string
 	if c.usesAPIKeys() {
 		identityHeaders = append(identityHeaders, apiKeyClientHeader)
 	}
 	for _, authenticator := range c.Authenticators {
-		if authenticator.JWT != nil && authenticatorUsed(c.Servers, authenticator.Name) {
+		if authenticator.JWT != nil && c.authenticatorUsed(authenticator.Name) {
 			identityHeaders = append(identityHeaders, jwtVerifiedHeaderName(authenticator.Name))
 		}
 	}
@@ -517,14 +511,14 @@ func (c Config) requestControlFilters(hosts []*route.VirtualHost) ([]*hcm.HttpFi
 	return filters, nil
 }
 
-func (c Config) protectedHTTPFilters(filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
+func (c effectiveConfig) protectedHTTPFilters(filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
 	usesJWT, usesKey, usesMTLS := false, false, false
 	serverIndexes := make([]int, 0, len(hosts))
 	for _, host := range hosts {
 		serverIndexes = append(serverIndexes, host.serverIndex)
-		usesJWT = usesJWT || serverUsesJWT(c, c.Servers[host.serverIndex])
-		usesKey = usesKey || serverUsesAPIKey(c, c.Servers[host.serverIndex])
-		usesMTLS = usesMTLS || serverUsesMTLS(c, c.Servers[host.serverIndex])
+		usesJWT = usesJWT || c.servers[host.serverIndex].hasJWT
+		usesKey = usesKey || c.servers[host.serverIndex].hasAPIKey
+		usesMTLS = usesMTLS || c.servers[host.serverIndex].usesMTLS()
 	}
 	var err error
 	filters, err = c.authenticationHTTPFilters(filters, serverIndexes, usesJWT, usesKey, usesMTLS)
@@ -540,7 +534,7 @@ func (c Config) protectedHTTPFilters(filters []*hcm.HttpFilter, hosts []indexedV
 	return c.authorizationHTTPFilters(filters)
 }
 
-func (c Config) authenticationHTTPFilters(filters []*hcm.HttpFilter, serverIndexes []int, usesJWT, usesKey, usesMTLS bool) ([]*hcm.HttpFilter, error) {
+func (c effectiveConfig) authenticationHTTPFilters(filters []*hcm.HttpFilter, serverIndexes []int, usesJWT, usesKey, usesMTLS bool) ([]*hcm.HttpFilter, error) {
 	if usesMTLS {
 		peer, err := mtlsPeerHeadersFilter()
 		if err != nil {
@@ -617,7 +611,7 @@ func appendAuthenticationRBAC(filters []*hcm.HttpFilter) ([]*hcm.HttpFilter, err
 	return append(filters, &hcm.HttpFilter{Name: authenticationFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: authentication}}), nil
 }
 
-func (c Config) attributeHTTPFilters(filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
+func (c effectiveConfig) attributeHTTPFilters(filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
 	if c.usesAPIKeys() || c.usesMTLS() {
 		return c.apiKeyAttributeFilters(filters, hosts)
 	}
@@ -628,10 +622,10 @@ func (c Config) attributeHTTPFilters(filters []*hcm.HttpFilter, hosts []indexedV
 	return append(filters, &hcm.HttpFilter{Name: attributeFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: attributeConfig}}), nil
 }
 
-func (c Config) apiKeyAttributeFilters(filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
+func (c effectiveConfig) apiKeyAttributeFilters(filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
 	for _, indexedHost := range hosts {
 		serverIndex := indexedHost.serverIndex
-		attributes := c.toServerAttributeInitializationConfig(c.Servers[serverIndex])
+		attributes := c.toServerAttributeInitializationConfig(c.servers[serverIndex])
 		if len(attributes.OnRequestHeaders) == 0 {
 			continue
 		}
@@ -660,7 +654,7 @@ func (c Config) apiKeyAttributeFilters(filters []*hcm.HttpFilter, hosts []indexe
 	return filters, nil
 }
 
-func (c Config) authorizationHTTPFilters(filters []*hcm.HttpFilter) ([]*hcm.HttpFilter, error) {
+func (c effectiveConfig) authorizationHTTPFilters(filters []*hcm.HttpFilter) ([]*hcm.HttpFilter, error) {
 	rbacConfig, err := packEnvoy(&httpRBAC.RBAC{})
 	if err != nil {
 		return nil, fmt.Errorf("encode RBAC filter: %w", err)
@@ -708,20 +702,20 @@ func hasProtectedHosts(hosts []indexedVirtualHost) bool {
 
 func serverJWTRequirementName(index int) string { return "server-" + strconv.Itoa(index) }
 
-func (c Config) toJWTFilterConfig(serverIndexes ...int) (*jwt.JwtAuthentication, error) {
+func (c effectiveConfig) toJWTFilterConfig(serverIndexes ...int) (*jwt.JwtAuthentication, error) {
 	config := &jwt.JwtAuthentication{Providers: map[string]*jwt.JwtProvider{}, RequirementMap: map[string]*jwt.JwtRequirement{}, StripFailureResponse: true}
 	if len(serverIndexes) == 0 {
-		for index := range c.Servers {
+		for index := range c.servers {
 			serverIndexes = append(serverIndexes, index)
 		}
 	}
 	used := make(map[string]struct{})
 	permissive := false
 	for _, index := range serverIndexes {
-		server := c.Servers[index]
-		permissive = permissive || mixedAnyOf(c, server)
-		for _, name := range selectedAuthenticatorNames(server) {
-			used[name] = struct{}{}
+		server := c.servers[index]
+		permissive = permissive || server.mixedAnyOf()
+		for _, authenticator := range server.authenticators {
+			used[authenticator.Name] = struct{}{}
 		}
 	}
 	for _, authenticator := range c.Authenticators {
@@ -748,19 +742,18 @@ func (c Config) toJWTFilterConfig(serverIndexes ...int) (*jwt.JwtAuthentication,
 		config.Providers[authenticator.Name] = provider
 	}
 	for _, index := range serverIndexes {
-		server := c.Servers[index]
-		if server.Authentication == nil || !serverUsesJWT(c, server) {
+		server := c.servers[index]
+		if server.Authentication == nil || !server.hasJWT {
 			continue
 		}
-		names := selectedAuthenticatorNames(server)
-		requirements := make([]*jwt.JwtRequirement, 0, len(names))
-		for _, name := range names {
-			if findAuthenticator(c, name).JWT != nil {
-				requirements = append(requirements, &jwt.JwtRequirement{RequiresType: &jwt.JwtRequirement_ProviderName{ProviderName: name}})
+		requirements := make([]*jwt.JwtRequirement, 0, len(server.authenticators))
+		for _, authenticator := range server.authenticators {
+			if authenticator.JWT != nil {
+				requirements = append(requirements, &jwt.JwtRequirement{RequiresType: &jwt.JwtRequirement_ProviderName{ProviderName: authenticator.Name}})
 			}
 		}
 		var requirement *jwt.JwtRequirement
-		if mixedAnyOf(c, server) {
+		if server.mixedAnyOf() {
 			requirement = &jwt.JwtRequirement{RequiresType: &jwt.JwtRequirement_AllowMissingOrFailed{AllowMissingOrFailed: &emptypb.Empty{}}}
 		} else if len(requirements) == 1 {
 			requirement = requirements[0]
@@ -774,7 +767,7 @@ func (c Config) toJWTFilterConfig(serverIndexes ...int) (*jwt.JwtAuthentication,
 	return config, nil
 }
 
-func (c Config) toServerRBACRules(server Server) *rbac.RBAC {
+func (c effectiveConfig) toServerRBACRules(server resolvedServer) *rbac.RBAC {
 	policies := map[string]*rbac.Policy{
 		localResponsePolicyName: {
 			Permissions: []*rbac.Permission{apiPermission(localResponseAPIName)},
@@ -786,8 +779,8 @@ func (c Config) toServerRBACRules(server Server) *rbac.RBAC {
 			var principal *rbac.Principal
 			if len(server.Authorization.AnyOf) > 0 {
 				var grants []*rbac.Principal
-				for _, policyName := range server.Authorization.AnyOf {
-					grants = append(grants, c.grantPrincipalsForAPI(server, apiName, policyName)...)
+				for _, policy := range server.policies {
+					grants = append(grants, c.grantPrincipalsForAPI(server, apiName, policy)...)
 				}
 				if len(grants) > 0 {
 					principal = &rbac.Principal{Identifier: &rbac.Principal_OrIds{OrIds: &rbac.Principal_Set{Ids: grants}}}
@@ -795,8 +788,8 @@ func (c Config) toServerRBACRules(server Server) *rbac.RBAC {
 			} else {
 				var policyPrincipals []*rbac.Principal
 				allowed := true
-				for _, policyName := range server.Authorization.AllOf {
-					grants := c.grantPrincipalsForAPI(server, apiName, policyName)
+				for _, policy := range server.policies {
+					grants := c.grantPrincipalsForAPI(server, apiName, policy)
 					if len(grants) == 0 {
 						allowed = false
 						break
@@ -815,23 +808,14 @@ func (c Config) toServerRBACRules(server Server) *rbac.RBAC {
 	return &rbac.RBAC{Action: rbac.RBAC_ALLOW, Policies: policies}
 }
 
-func (c Config) grantPrincipalsForAPI(server Server, apiName, policyName string) []*rbac.Principal {
+func (c effectiveConfig) grantPrincipalsForAPI(server resolvedServer, apiName string, policy AuthorizationPolicy) []*rbac.Principal {
 	var grants []*rbac.Principal
-	for _, grant := range authorizationPolicy(c, policyName).Grants {
-		if slices.Contains(grant.APIs, apiName) && (!c.usesAPIKeys() && !c.usesMTLS() || serverSelectsAuthenticator(server, grant.Authenticator)) {
+	for _, grant := range policy.Grants {
+		if slices.Contains(grant.APIs, apiName) && (!c.usesAPIKeys() && !c.usesMTLS() || server.selectsAuthenticator(grant.Authenticator)) {
 			grants = append(grants, c.toGrantPrincipalForServer(server, grant))
 		}
 	}
 	return grants
-}
-
-func authorizationPolicy(c Config, name string) AuthorizationPolicy {
-	for _, policy := range c.AuthorizationPolicies {
-		if policy.Name == name {
-			return policy
-		}
-	}
-	return AuthorizationPolicy{}
 }
 
 func apiPermission(api string) *rbac.Permission {
@@ -841,8 +825,8 @@ func apiPermission(api string) *rbac.Permission {
 	}}}}
 }
 
-func (c Config) toGrantPrincipal(grant AuthorizationGrant) *rbac.Principal {
-	authenticator := findAuthenticator(c, grant.Authenticator)
+func (c effectiveConfig) toGrantPrincipal(grant AuthorizationGrant) *rbac.Principal {
+	authenticator := c.authenticatorIndex[grant.Authenticator]
 	if authenticator.APIKey != nil {
 		return authenticator.toKeyGrantPrincipal(grant)
 	}
@@ -930,16 +914,7 @@ func metadataPathSegment(key string) *matcher.MetadataMatcher_PathSegment {
 	return &matcher.MetadataMatcher_PathSegment{Segment: &matcher.MetadataMatcher_PathSegment_Key{Key: key}}
 }
 
-func findAuthenticator(c Config, name string) Authenticator {
-	for _, authenticator := range c.Authenticators {
-		if authenticator.Name == name {
-			return authenticator
-		}
-	}
-	return Authenticator{}
-}
-
-func needsWorkingAttributes(c Config) bool {
+func needsWorkingAttributes(c effectiveConfig) bool {
 	return hasRequestHeaderProcessing(c.APIs) || hasRequestMetricLabels(c.APIs)
 }
 
@@ -1060,23 +1035,12 @@ func requestHeaderMutations(mappings []RequestHeaderMapping) []*mutationrules.He
 	return mutations
 }
 
-func authenticatorUsed(servers []Server, name string) bool {
-	for _, server := range servers {
-		if server.Authentication != nil {
-			if slices.Contains(append(append([]string{}, server.Authentication.AnyOf...), server.Authentication.AllOf...), name) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func jwksClusterName(name string) string { return "jwks-" + name }
 
-func jwksClusters(authenticators []Authenticator, servers []Server) ([]*cluster.Cluster, error) {
+func jwksClusters(c effectiveConfig) ([]*cluster.Cluster, error) {
 	var clusters []*cluster.Cluster
-	for _, authenticator := range authenticators {
-		if authenticator.JWT == nil || !authenticatorUsed(servers, authenticator.Name) {
+	for _, authenticator := range c.Authenticators {
+		if authenticator.JWT == nil || !c.authenticatorUsed(authenticator.Name) {
 			continue
 		}
 		parsed, err := url.Parse(authenticator.JWT.JWKS.URI)
