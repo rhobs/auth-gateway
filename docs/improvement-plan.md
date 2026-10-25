@@ -13,7 +13,8 @@ G2's cardinality guidance is merged in
 [PR #23](https://github.com/rhobs/auth-gateway/pull/23). Enforcement is won't do.
 S1 is won't do; method-level route statistics must be preserved.
 S2 is merged in [PR #25](https://github.com/rhobs/auth-gateway/pull/25).
-S3 is implemented, awaiting review and merge.
+S3 is implemented in [PR #26](https://github.com/rhobs/auth-gateway/pull/26)
+and awaits review and merge.
 All other items remain planned.
 
 This plan covers six confirmed defects (D1-D6), two gaps (G1-G2), and three
@@ -436,6 +437,7 @@ framework tests, `make test-runtime`, and the full `make e2e` suite passed on
 ### S3. Isolate lint tooling dependencies (P2, opportunity)
 
 **Status: Implemented, awaiting review and merge.**
+See [PR #26](https://github.com/rhobs/auth-gateway/pull/26).
 
 **Evidence:** The [main Go module](../go.mod) carried golangci-lint and its
 large dependency graph. [e2e/tools](../e2e/tools/go.mod) already demonstrates
