@@ -8,11 +8,11 @@ lint:
 	@unformatted=$$(gofmt -l config e2e playground); \
 	if [ -n "$$unformatted" ]; then printf '%s\n' "$$unformatted"; exit 1; fi
 	sh scripts/check-markdown-links.sh
-	go tool golangci-lint run
+	go tool -modfile=tools/go.mod golangci-lint run
 
 tools:
 	go tool ginkgo version
-	go tool golangci-lint version
+	go tool -modfile=tools/go.mod golangci-lint version
 	$(MAKE) -C e2e cmctl kind-tool
 
 test-runtime:

@@ -12,7 +12,9 @@ D5 is won't do. D6 is merged in
 G2's cardinality guidance is merged in
 [PR #23](https://github.com/rhobs/auth-gateway/pull/23). Enforcement is won't do.
 S1 is won't do; method-level route statistics must be preserved.
-S2 is implemented, awaiting review and merge.
+S2 is merged in [PR #25](https://github.com/rhobs/auth-gateway/pull/25).
+S3 is implemented in [PR #26](https://github.com/rhobs/auth-gateway/pull/26)
+and awaits review and merge.
 All other items remain planned.
 
 This plan covers six confirmed defects (D1-D6), two gaps (G1-G2), and three
@@ -32,7 +34,7 @@ its generated Envoy and Kubernetes configuration at the review baseline.
 | 1 | Isolate authenticated identities and gateway workloads | D1, D2 (merged) |
 | 2 | Generate configuration that Envoy accepts at realistic sizes | D3, D4 (merged) |
 | 3 | Resolve termination, restricted admission, and metric cardinality policy | D5 (won't do), D6 (merged), G2 (documentation done) |
-| 4 | Reduce duplication and dependency overhead | S1 (won't do), S2 (implemented), S3 |
+| 4 | Reduce duplication and dependency overhead | S1 (won't do), S2 (merged), S3 (implemented) |
 | 5 | Complete documentation, rollout guidance, and verification | All |
 
 Phases order the work by risk. Independent fixes can proceed separately.
@@ -398,7 +400,7 @@ preserving method-level native statistics.
 
 ### S2. Resolve references once and reuse indexes (P2, opportunity)
 
-**Status: Implemented, awaiting review and merge.**
+**Status: Merged (2026-10-25).**
 See [PR #25](https://github.com/rhobs/auth-gateway/pull/25).
 
 **Evidence:** Generation repeatedly searches authenticators, policies, and
@@ -434,7 +436,10 @@ framework tests, `make test-runtime`, and the full `make e2e` suite passed on
 
 ### S3. Isolate lint tooling dependencies (P2, opportunity)
 
-**Evidence:** The [main Go module](../go.mod) carries golangci-lint and its
+**Status: Implemented, awaiting review and merge.**
+See [PR #26](https://github.com/rhobs/auth-gateway/pull/26).
+
+**Evidence:** The [main Go module](../go.mod) carried golangci-lint and its
 large dependency graph. [e2e/tools](../e2e/tools/go.mod) already demonstrates
 a separate tooling module.
 
@@ -444,12 +449,25 @@ the correct module while preserving pinned versions.
 
 **Acceptance and validation:**
 
-- The application module no longer requires dependencies solely for lint
+- [x] The application module no longer requires dependencies solely for lint
   tooling; the tooling module retains the pinned linter version.
-- `make tools`, `make lint`, and existing CI entry points work from a clean
+- [x] `make tools`, `make lint`, and existing CI entry points work from a clean
   checkout without a globally installed linter.
-- Unit tests and tagged compilation still pass, and the application
+- [x] Unit tests and tagged compilation still pass, and the application
   dependency changes are reviewed separately from tool dependencies.
+
+**Delivered:** golangci-lint v2.14.0 is pinned in [tools/go.mod](../tools/go.mod).
+The Make targets select that module with `-modfile` while keeping the repository
+root as the working directory for lint configuration and package discovery.
+CI caches the tool module, and contributor instructions explain the split.
+Application requirements drop from 260 to 64. The versions used to build
+application packages, tagged tests, and the linter are unchanged.
+
+**Validation:** `make tools` and `make lint` passed from a clean source snapshot
+with global tool directories removed from `PATH`. Unit/golden tests, tagged
+e2e/runtime compilation, framework tests, tidy checks for both modules, and the
+full `make e2e` suite passed on 2026-10-25 (79/79 Kind specs). Existing goldens
+are unchanged. Markdown link and whitespace checks passed.
 
 ## Phase 5: Verify and document each delivered change
 
