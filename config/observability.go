@@ -49,6 +49,7 @@ const (
 	defaultRequestMetricCounterName = "auth_gateway_http_requests_total"
 	requestMetricsFilterName        = "envoy.filters.http.lua"
 	requestMetricStatusLabelName    = "http_status_code"
+	requestMetricFaultLabelName     = "fault_injected"
 )
 
 // ObservabilityConfig groups gateway-wide telemetry settings.
@@ -424,7 +425,7 @@ func validateAPIMetrics(name string, value *APIMetrics) error {
 	}
 	for _, label := range slices.Sorted(maps.Keys(value.Labels)) {
 		if !prometheusNamePattern.MatchString(label) || strings.HasPrefix(label, "__") ||
-			label == apiMetadataName || label == requestMetricStatusLabelName || label == "envoy_http_conn_manager_prefix" {
+			label == apiMetadataName || label == requestMetricStatusLabelName || label == requestMetricFaultLabelName || label == "envoy_http_conn_manager_prefix" {
 			return fmt.Errorf("%s.labels contains invalid or reserved Prometheus label name %q", name, label)
 		}
 		if !attributeNamePattern.MatchString(value.Labels[label]) {
@@ -489,7 +490,7 @@ func (api API) toRequestMetricsRouteMetadata() *structpb.Struct {
 }
 
 func requestMetricsStatsConfig(apis []API, counterName string) *metrics.StatsConfig {
-	fields := append([]string{apiMetadataName, requestMetricStatusLabelName}, requestMetricLabelNames(apis)...)
+	fields := append([]string{apiMetadataName, requestMetricStatusLabelName, requestMetricFaultLabelName}, requestMetricLabelNames(apis)...)
 	prefix := `^http\.` + regexp.QuoteMeta(httpManagerStatPrefix) + `\.lua\.` + regexp.QuoteMeta(counterName)
 	tags := make([]*metrics.TagSpecifier, 0, len(fields))
 	for _, field := range fields {
@@ -510,7 +511,8 @@ func requestMetricsLuaScript(apis []API, counterName string) string {
 		quoted[i] = strconv.Quote(label)
 	}
 	return "local labels = {" + strings.Join(quoted, ", ") + "}\n" +
-		"local counter_name = " + strconv.Quote(counterName) + "\n\n" + requestMetricsLuaBody
+		"local counter_name = " + strconv.Quote(counterName) + "\n" +
+		"local fault_filter_name = " + strconv.Quote(faultCompositeFilterName) + "\n\n" + requestMetricsLuaBody
 }
 
 const requestMetricsLuaBody = `local function safe_label(value)
@@ -542,7 +544,9 @@ function envoy_on_response(response_handle)
 
   local bindings = metadata:get("labels") or {}
   local filter_state = response_handle:streamInfo():filterState()
-  local name = counter_name .. "|api=" .. api .. "|http_status_code=" .. status
+  local fault = response_handle:streamInfo():dynamicMetadata():get(fault_filter_name)
+  local injected = fault ~= nil and fault["fault_injected"] == true
+  local name = counter_name .. "|api=" .. api .. "|http_status_code=" .. status .. "|fault_injected=" .. tostring(injected)
   for _, label in ipairs(labels) do
     local attribute = bindings[label]
     local value = nil

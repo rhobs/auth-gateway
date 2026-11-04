@@ -1,0 +1,57 @@
+version: 1
+authenticators:
+  - name: issuer-one
+    jwt:
+      issuer: https://issuer-one.jwt.test
+      jwks:
+        uri: https://jwks.jwt.test/issuer-one
+      audiences: [gateway-test]
+    attributes:
+      tenant_id: {claim_path: [organization, id]}
+authorization_policies:
+  - name: writers
+    grants:
+      - authenticator: issuer-one
+        apis: [injected, healthy]
+        attributes:
+          tenant_id: [customer-a, customer-b]
+servers:
+  - hostname: fault.jwt.auth-gateway.test
+    authentication: {any_of: [issuer-one]}
+    authorization: {any_of: [writers]}
+    apis: [injected, healthy]
+observability:
+  metrics:
+    custom_metric_name: gateway_http_requests_total
+apis:
+  - name: injected
+    metrics:
+      labels:
+        tenant: tenant_id
+    fault_injection:
+      enabled: true
+      match:
+        attributes:
+          tenant_id: [customer-a, customer-denied]
+      abort:
+        http_status: 503
+        percentage: 100
+    upstream: {address: httpbin, port: 8080}
+    routes:
+      - methods: [GET]
+        path: {prefix: /injected/}
+        rewrite: {prefix: /anything/injected/}
+        processing:
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: tenant_id
+  - name: healthy
+    upstream: {address: httpbin, port: 8080}
+    routes:
+      - methods: [GET]
+        path: {exact: /protected}
+        rewrite: {path: /anything}
+kubernetes:
+  name: auth-gateway
+  namespace: default
+  replicas: 1

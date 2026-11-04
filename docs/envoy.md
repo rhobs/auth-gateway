@@ -194,17 +194,31 @@ that need it; the schema stays at version `1`. See the
 ## Fault injection
 
 Per-API `fault_injection` can abort a whole-number percentage of requests with
-an HTTP error status. The fault filter runs first in each HTTP filter chain, as
-Envoy requires, and route-level settings select the enabled APIs. It uses a
-fixed status and percentage; clients cannot choose faults through request
-headers. Unconfigured APIs and fallback routes continue normally.
+an HTTP error status. A Composite filter selects one API's native fault filter
+after authentication, attribute extraction, authorization, and request-header
+processing. It runs before admission control and the router.
 
-An injected abort happens before authentication, attribute extraction, and
-upstream forwarding. The response still passes through the per-API response
-counter, so a configured counter records the injected status. Labels sourced
-from authenticated attributes are `__unattributed__` for these replies. Error
-access logs identify them with `fault_filter_abort` in
-`response_code_details`.
+Optional exact header matches gate injection. Attribute selectors read the
+same filter state as header forwarding and metrics, populated from verified
+claims, API-key credentials, or certificate SANs. All configured selectors
+must match, with alternative allowed values within each attribute. Header
+sources cannot supply attribute selectors. Status and percentage remain
+configured by the operator; Envoy's client-controlled abort headers are not
+enabled. Unconfigured APIs and fallback routes have no fault selector.
+
+Injected aborts do not reach the upstream. The per-API response counter records
+their status, authenticated attribute labels, and `fault_injected="true"`.
+Other replies carry `fault_injected="false"`, including real backend errors and
+authentication denials. The native fault filter sets the metadata used for
+this label only when it executes an abort. Error access logs identify aborts
+with `fault_filter_abort` in `response_code_details`.
+
+Upstream response counters do not include local aborts. SLO accounting must
+combine upstream responses with only the injected subset of the gateway
+counter, adding it to the total and the appropriate error classes. The
+[fault injection guide](fault-injection.md#slo-accounting) gives the recording
+rule pattern and avoids counting authentication denials or backend responses
+twice.
 
 Fault settings live in the bootstrap ConfigMap. Enabling, changing, or
 disabling them requires regenerating and applying the gateway resources and
@@ -225,7 +239,8 @@ Service. Metrics collection is enabled by default; disabling it does not
 disable per-API counters.
 
 Each API with `metrics` configured counts responses by API and exact
-downstream status. `metrics: {}` enables the counter without attribute labels.
+downstream status, with a `fault_injected` boolean label. `metrics: {}` enables
+the counter without attribute labels.
 The counter includes authentication and authorization denials, but excludes
 gateway `404` and `405` fallback routes. Missing or unsafe label values become
 `__unattributed__`. Envoy adds the `envoy_http_lua_` prefix; the Collector

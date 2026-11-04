@@ -3,9 +3,11 @@ package config
 import (
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
+	composite "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/composite/v3"
 	fault "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/fault/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	envoytype "github.com/envoyproxy/go-control-plane/envoy/type/v3"
@@ -39,11 +41,11 @@ func TestFaultInjectionDefaultsOff(t *testing.T) {
 				t.Fatal(err)
 			}
 			manager := firstGeneratedHTTPManager(t, files.EnvoyBootstrap.Contents)
-			if hasHTTPFilter(manager, faultFilterName) {
+			if hasHTTPFilter(manager, faultCompositeFilterName) {
 				t.Fatal("fault filter was generated while disabled")
 			}
 			for _, generatedRoute := range manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes() {
-				if generatedRoute.GetTypedPerFilterConfig()[faultFilterName] != nil {
+				if generatedRoute.GetTypedPerFilterConfig()[faultCompositeFilterName] != nil {
 					t.Fatalf("route %q gained disabled fault config", generatedRoute.Name)
 				}
 			}
@@ -86,7 +88,7 @@ func TestFaultInjectionDefaultsCloneInput(t *testing.T) {
 	}
 }
 
-func TestGeneratedFaultInjectionIsFirstAndScopedToAPI(t *testing.T) {
+func TestGeneratedFaultInjectionIsScopedToAPI(t *testing.T) {
 	c := loadConfigCase(t, "fault-injection")
 	files, err := Generate(c)
 	if err != nil {
@@ -94,20 +96,33 @@ func TestGeneratedFaultInjectionIsFirstAndScopedToAPI(t *testing.T) {
 	}
 	manager := firstGeneratedHTTPManager(t, files.EnvoyBootstrap.Contents)
 	filters := manager.GetHttpFilters()
-	if len(filters) == 0 || filters[0].Name != faultFilterName {
-		t.Fatalf("first HTTP filter = %v, want %s", httpFilterNames(manager), faultFilterName)
+	if len(filters) < 2 || filters[len(filters)-2].Name != faultCompositeFilterName {
+		t.Fatalf("HTTP filters = %v, want fault injection before router", httpFilterNames(manager))
 	}
 	if filters[len(filters)-1].Name != routerFilterName {
 		t.Fatalf("last HTTP filter = %q, want router", filters[len(filters)-1].Name)
 	}
-	var global fault.HTTPFault
-	if err := filters[0].GetTypedConfig().UnmarshalTo(&global); err != nil {
+	var global composite.Composite
+	if err := filters[len(filters)-2].GetTypedConfig().UnmarshalTo(&global); err != nil {
 		t.Fatal(err)
 	}
-	if global.GetAbort().GetHttpStatus() != http.StatusServiceUnavailable ||
-		global.GetAbort().GetPercentage().GetNumerator() != 0 ||
-		!global.GetDisableDownstreamClusterStats() {
-		t.Fatalf("global fault policy = %v, want a zero-percent fallback", &global)
+	if global.GetMatcher() != nil || len(global.GetNamedFilterChains()) != 1 {
+		t.Fatalf("global fault policy = %v, want one API chain and no default selector", &global)
+	}
+	chain := global.GetNamedFilterChains()["injected"].GetTypedConfig()
+	if len(chain) != 1 || chain[0].Name != faultFilterName {
+		t.Fatalf("fault chain = %v, want one native fault filter", chain)
+	}
+	var policy fault.HTTPFault
+	if err := chain[0].GetTypedConfig().UnmarshalTo(&policy); err != nil {
+		t.Fatal(err)
+	}
+	if policy.GetAbort().GetHttpStatus() != http.StatusServiceUnavailable ||
+		policy.GetAbort().GetPercentage().GetNumerator() != 25 ||
+		policy.GetAbort().GetPercentage().GetDenominator() != envoytype.FractionalPercent_HUNDRED ||
+		!policy.GetDisableDownstreamClusterStats() ||
+		!policy.GetFilterMetadata().GetFields()["fault_injected"].GetBoolValue() {
+		t.Fatalf("fault policy = %v", &policy)
 	}
 
 	routes := manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()
@@ -116,26 +131,27 @@ func TestGeneratedFaultInjectionIsFirstAndScopedToAPI(t *testing.T) {
 		if generatedRoute == nil {
 			t.Fatalf("route %q is missing", name)
 		}
-		perRouteConfig := generatedRoute.GetTypedPerFilterConfig()[faultFilterName]
+		perRouteConfig := generatedRoute.GetTypedPerFilterConfig()[faultCompositeFilterName]
 		if perRouteConfig == nil {
 			t.Fatalf("route %q has no fault policy", name)
 		}
-		var perRoute fault.HTTPFault
+		var perRoute composite.CompositePerRoute
 		if err := perRouteConfig.UnmarshalTo(&perRoute); err != nil {
 			t.Fatal(err)
 		}
-		if perRoute.GetAbort().GetHttpStatus() != http.StatusServiceUnavailable ||
-			perRoute.GetAbort().GetPercentage().GetNumerator() != 25 ||
-			perRoute.GetAbort().GetPercentage().GetDenominator() != envoytype.FractionalPercent_HUNDRED ||
-			!perRoute.GetDisableDownstreamClusterStats() {
-			t.Fatalf("route %q fault policy = %v", name, &perRoute)
+		var action composite.ExecuteFilterAction
+		if err := perRoute.GetMatcher().GetOnNoMatch().GetAction().GetTypedConfig().UnmarshalTo(&action); err != nil {
+			t.Fatal(err)
+		}
+		if action.GetFilterChainName() != "injected" {
+			t.Fatalf("route %q selects fault chain %q, want injected", name, action.GetFilterChainName())
 		}
 	}
 	for _, generatedRoute := range routes {
 		if strings.HasPrefix(generatedRoute.Name, "api-0-injected-") {
 			continue
 		}
-		if generatedRoute.GetTypedPerFilterConfig()[faultFilterName] != nil {
+		if generatedRoute.GetTypedPerFilterConfig()[faultCompositeFilterName] != nil {
 			t.Fatalf("unconfigured or fallback route %q has fault injection", generatedRoute.Name)
 		}
 	}
@@ -158,14 +174,14 @@ func TestFaultInjectionOnlyUsesManagersWithTargetAPI(t *testing.T) {
 		host := manager.GetRouteConfig().GetVirtualHosts()[0]
 		if host.Name == "query.example.com" {
 			unconfigured++
-			if hasHTTPFilter(manager, faultFilterName) {
+			if hasHTTPFilter(manager, faultCompositeFilterName) {
 				t.Fatal("fault filter was added to the unrelated HTTPS manager")
 			}
 			continue
 		}
 		configured++
-		if manager.GetHttpFilters()[0].Name != faultFilterName {
-			t.Fatalf("manager for %q does not start with fault filter", host.Name)
+		if !hasHTTPFilter(manager, faultCompositeFilterName) {
+			t.Fatalf("manager for %q has no fault filter", host.Name)
 		}
 	}
 	if configured != 2 || unconfigured != 1 {
@@ -184,14 +200,18 @@ func TestFaultInjectionPreservesRouteHeaderProcessing(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
-	if manager.GetHttpFilters()[0].Name != faultFilterName {
-		t.Fatal("fault filter must precede authentication")
+	names := httpFilterNames(manager)
+	faultIndex := slices.Index(names, faultCompositeFilterName)
+	for _, name := range []string{jwtAuthnFilterName, attributeFilterName, authorizationFilterName, requiredHeaderFilterName, headerMutationFilterName} {
+		if index := slices.Index(names, name); index < 0 || index >= faultIndex {
+			t.Fatalf("filter %q must precede fault injection: %v", name, names)
+		}
 	}
 	route := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes(), "api-0-metrics-route-0-method-0")
 	if route == nil {
 		t.Fatal("processed route is missing")
 	}
-	for _, name := range []string{faultFilterName, headerMutationFilterName, requiredHeaderFilterName} {
+	for _, name := range []string{faultCompositeFilterName, headerMutationFilterName, requiredHeaderFilterName} {
 		if route.GetTypedPerFilterConfig()[name] == nil {
 			t.Fatalf("processed route lost %q configuration", name)
 		}

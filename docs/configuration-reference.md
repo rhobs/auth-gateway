@@ -186,19 +186,20 @@ object is omitted.
 ### API metrics
 
 Each API with `metrics` configured emits a request counter. The automatic `api`
-label is the API name, and `http_status_code` comes from the response.
+label is the API name, `http_status_code` comes from the response, and
+`fault_injected` is `"true"` only for an injected abort (`"false"` otherwise).
 Additional labels use values from authenticator attributes declared under
 `authenticators[].attributes`.
 
 | Field                   | Type                                | Default | Constraint                                                                                                                                                                                                                  |
 |-------------------------|-------------------------------------|---------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `apis[].metrics.labels` | map of label name to attribute name | Empty   | Label names must be valid Prometheus names, must not start with `__`, and cannot be `api`, `http_status_code`, or `envoy_http_conn_manager_prefix`. Each value must be a valid attribute name declared by an authenticator. |
+| `apis[].metrics.labels` | map of label name to attribute name | Empty   | Label names must be valid Prometheus names, must not start with `__`, and cannot be `api`, `http_status_code`, `fault_injected`, or `envoy_http_conn_manager_prefix`. Each value must be a valid attribute name declared by an authenticator. |
 
 #### Metric cardinality
 
 Configuration authors are responsible for choosing metric labels with bounded
 values. The gateway does not enforce a cardinality limit. Each distinct
-combination of API, HTTP status, and attribute values creates an Envoy
+combination of API, HTTP status, fault marker, and attribute values creates an Envoy
 counter retained until Envoy restarts. Too many combinations can cause a
 cardinality explosion and exhaust gateway memory. Label length and character
 checks do not bound the number of distinct values.
@@ -216,7 +217,8 @@ status without attribute labels.
 ### Fault injection
 
 Set `apis[].fault_injection.enabled: true` to abort a percentage of matching
-requests with a configured HTTP error. Every method route of that API is
+requests with a configured HTTP error after authentication, authorization,
+and required-header checks. Every method route of that API is
 eligible; other APIs and gateway `404`/`405` fallback routes are not. Omit the
 block or set `enabled: false` to disable injection. A disabled block may keep
 its abort settings for the next test.
@@ -224,16 +226,29 @@ its abort settings for the next test.
 | Field                                      | Type    | Default | Constraint                                                        |
 |--------------------------------------------|---------|---------|-------------------------------------------------------------------|
 | `apis[].fault_injection.enabled`           | boolean | `false` | Requires `abort` when enabled.                                    |
+| `apis[].fault_injection.match`             | object  | None    | Optional; if supplied, must contain headers or attributes. Omit to select all requests that pass authentication, authorization, and required-header checks. |
+| `apis[].fault_injection.match.headers`     | map of header name to string | Empty | All headers must match exact values. Names are case-insensitive and cannot contain underscores, duplicate another name ignoring case, or use reserved identity, routing, connection, framing, or credential headers. Route processing cannot overwrite these headers. Values must be nonempty and contain no control characters. |
+| `apis[].fault_injection.match.attributes`  | map of attribute name to list of strings | Empty | All attributes must match at least one listed exact value. Each list must contain distinct nonempty values without control characters. Every bound server must authenticate with a provider for each attribute. Sources must be verified claims, credentials, or certificate SANs; header sources are rejected. |
 | `apis[].fault_injection.abort`             | object  | None    | Required when enabled; HTTP errors only.                          |
 | `apis[].fault_injection.abort.http_status` | uint32  | None    | Required error status from `400` to `599`.                         |
 | `apis[].fault_injection.abort.percentage`  | uint32  | None    | Required whole-number percentage from `1` to `100`.               |
 
-The Envoy fault filter runs before authentication. Injected requests do not
-reach the upstream, and their API and HTTP status appear in the per-API
-response counter when `apis[].metrics` is configured. Labels that depend on
-authenticated attributes use `__unattributed__` for these replies. Fault
-settings are part of the static bootstrap: regenerate and apply the gateway
-configuration, then explicitly roll out the Deployment to toggle them.
+All header and attribute selectors must match. Missing attributes or headers
+do not match, and values are case-sensitive. On a mixed `any_of` server, only
+the selected authenticated identity supplies attributes. The configured
+percentage applies after selection. Clients cannot change the configured
+status or percentage through Envoy fault-control headers.
+
+Injected requests do not reach the upstream. With `apis[].metrics` configured,
+their API, status, authenticated attribute labels, and `fault_injected="true"`
+appear in the per-API response counter. Other responses use
+`fault_injected="false"`. Upstream counters remain unchanged. To exercise an
+SLO based on upstream counters, add only the injected subset to both total
+responses and the appropriate error classes; see
+[SLO accounting](fault-injection.md#slo-accounting).
+
+Fault settings are part of the static bootstrap: regenerate and apply the
+gateway configuration, then explicitly roll out the Deployment to toggle them.
 
 ### Route processing
 

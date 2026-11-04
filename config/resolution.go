@@ -109,6 +109,9 @@ func resolveAuthentication(c *effectiveConfig) error {
 			return err
 		}
 	}
+	if err := validateFaultHeaderReferences(c.APIs, apiKeyHeader); err != nil {
+		return err
+	}
 	if err := validateMetricAttributeReferences(c.APIs, authenticators); err != nil {
 		return err
 	}
@@ -180,6 +183,9 @@ func resolveServerAuthentication(c *effectiveConfig) error {
 			}
 		}
 		if err := validateRouteAttributeSources(name, *server.Server, server.apis, c.authenticatorIndex); err != nil {
+			return err
+		}
+		if err := validateFaultAttributeSources(name, *server); err != nil {
 			return err
 		}
 	}

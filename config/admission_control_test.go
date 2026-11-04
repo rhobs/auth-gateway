@@ -290,7 +290,7 @@ func TestAdmissionControlPreservesRouteProcessing(t *testing.T) {
 	if route == nil {
 		t.Fatal("processed route is missing")
 	}
-	for _, name := range []string{"envoy.filters.http.composite", "envoy.filters.http.fault", "envoy.filters.http.header_mutation", "auth_gateway.required_headers"} {
+	for _, name := range []string{"envoy.filters.http.composite", "auth_gateway.fault_injection", "envoy.filters.http.header_mutation", "auth_gateway.required_headers"} {
 		if route.GetTypedPerFilterConfig()[name] == nil {
 			t.Fatalf("processed route lost %q configuration", name)
 		}
