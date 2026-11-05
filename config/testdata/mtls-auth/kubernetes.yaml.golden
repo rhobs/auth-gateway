@@ -189,7 +189,6 @@ data:
                                     inline_string: |
                                         local labels = {"tenant"}
                                         local counter_name = "auth_gateway_http_requests_total"
-                                        local fault_filter_name = "auth_gateway.fault_injection"
 
                                         local function safe_label(value)
                                           if type(value) ~= "string" or #value == 0 or #value > 128 then
@@ -220,9 +219,7 @@ data:
 
                                           local bindings = metadata:get("labels") or {}
                                           local filter_state = response_handle:streamInfo():filterState()
-                                          local fault = response_handle:streamInfo():dynamicMetadata():get(fault_filter_name)
-                                          local injected = fault ~= nil and fault["fault_injected"] == true
-                                          local name = counter_name .. "|api=" .. api .. "|http_status_code=" .. status .. "|fault_injected=" .. tostring(injected)
+                                          local name = counter_name .. "|api=" .. api .. "|http_status_code=" .. status
                                           for _, label in ipairs(labels) do
                                             local attribute = bindings[label]
                                             local value = nil
@@ -646,7 +643,6 @@ data:
                                     inline_string: |
                                         local labels = {"tenant"}
                                         local counter_name = "auth_gateway_http_requests_total"
-                                        local fault_filter_name = "auth_gateway.fault_injection"
 
                                         local function safe_label(value)
                                           if type(value) ~= "string" or #value == 0 or #value > 128 then
@@ -677,9 +673,7 @@ data:
 
                                           local bindings = metadata:get("labels") or {}
                                           local filter_state = response_handle:streamInfo():filterState()
-                                          local fault = response_handle:streamInfo():dynamicMetadata():get(fault_filter_name)
-                                          local injected = fault ~= nil and fault["fault_injected"] == true
-                                          local name = counter_name .. "|api=" .. api .. "|http_status_code=" .. status .. "|fault_injected=" .. tostring(injected)
+                                          local name = counter_name .. "|api=" .. api .. "|http_status_code=" .. status
                                           for _, label in ipairs(labels) do
                                             local attribute = bindings[label]
                                             local value = nil
@@ -1319,7 +1313,6 @@ data:
                                     inline_string: |
                                         local labels = {"tenant"}
                                         local counter_name = "auth_gateway_http_requests_total"
-                                        local fault_filter_name = "auth_gateway.fault_injection"
 
                                         local function safe_label(value)
                                           if type(value) ~= "string" or #value == 0 or #value > 128 then
@@ -1350,9 +1343,7 @@ data:
 
                                           local bindings = metadata:get("labels") or {}
                                           local filter_state = response_handle:streamInfo():filterState()
-                                          local fault = response_handle:streamInfo():dynamicMetadata():get(fault_filter_name)
-                                          local injected = fault ~= nil and fault["fault_injected"] == true
-                                          local name = counter_name .. "|api=" .. api .. "|http_status_code=" .. status .. "|fault_injected=" .. tostring(injected)
+                                          local name = counter_name .. "|api=" .. api .. "|http_status_code=" .. status
                                           for _, label in ipairs(labels) do
                                             local attribute = bindings[label]
                                             local value = nil
@@ -2355,7 +2346,6 @@ data:
                                     inline_string: |
                                         local labels = {"tenant"}
                                         local counter_name = "auth_gateway_http_requests_total"
-                                        local fault_filter_name = "auth_gateway.fault_injection"
 
                                         local function safe_label(value)
                                           if type(value) ~= "string" or #value == 0 or #value > 128 then
@@ -2386,9 +2376,7 @@ data:
 
                                           local bindings = metadata:get("labels") or {}
                                           local filter_state = response_handle:streamInfo():filterState()
-                                          local fault = response_handle:streamInfo():dynamicMetadata():get(fault_filter_name)
-                                          local injected = fault ~= nil and fault["fault_injected"] == true
-                                          local name = counter_name .. "|api=" .. api .. "|http_status_code=" .. status .. "|fault_injected=" .. tostring(injected)
+                                          local name = counter_name .. "|api=" .. api .. "|http_status_code=" .. status
                                           for _, label in ipairs(labels) do
                                             local attribute = bindings[label]
                                             local value = nil
@@ -2734,9 +2722,7 @@ data:
               tag_name: api
             - regex: ^http\.ingress\.lua\.auth_gateway_http_requests_total\|api=[^|]+(\|http_status_code=([^|]+))
               tag_name: http_status_code
-            - regex: ^http\.ingress\.lua\.auth_gateway_http_requests_total\|api=[^|]+\|http_status_code=[^|]+(\|fault_injected=([^|]+))
-              tag_name: fault_injected
-            - regex: ^http\.ingress\.lua\.auth_gateway_http_requests_total\|api=[^|]+\|http_status_code=[^|]+\|fault_injected=[^|]+(\|tenant=([^|]+))
+            - regex: ^http\.ingress\.lua\.auth_gateway_http_requests_total\|api=[^|]+\|http_status_code=[^|]+(\|tenant=([^|]+))
               tag_name: tenant
   server-certificate-0.yaml: |
     # Generated by github.com/rhobs/auth-gateway.

@@ -59,7 +59,6 @@ var _ = Describe("Fault injection", Label("gateway", "fault-injection", "namespa
 
 	It("aborts selected methods and counts the injected failures with their authenticated tenant", func(ctx SpecContext) {
 		labels := requestMetricLabels("injected", http.StatusServiceUnavailable, "tenant-a", "writer-a")
-		labels["fault_injected"] = "true"
 		before, err := requestMetricCount(ctx, adminAddress, labels)
 		Expect(err).NotTo(HaveOccurred())
 		for _, method := range []string{http.MethodGet, http.MethodPost} {
@@ -133,7 +132,6 @@ var _ = Describe("Fault injection", Label("gateway", "fault-injection", "namespa
 			{key: "key-denied", tenant: "tenant-denied", writer: "writer-a", status: http.StatusForbidden},
 		} {
 			labels := requestMetricLabels("injected", test.status, test.tenant, test.writer)
-			labels["fault_injected"] = "false"
 			before, err := requestMetricCount(ctx, adminAddress, labels)
 			Expect(err).NotTo(HaveOccurred())
 			expectDeniedBeforeUpstream(ctx, adminAddress, "api-injected", "denied credentials", test.status, func() (int, []byte, error) {
@@ -145,18 +143,32 @@ var _ = Describe("Fault injection", Label("gateway", "fault-injection", "namespa
 		}
 	}, NodeTimeout(60*time.Second))
 
-	It("keeps backend 503 responses separate from injected 503 responses", func(ctx SpecContext) {
+	It("counts backend and injected 503 replies in the same request counter", func(ctx SpecContext) {
 		labels := requestMetricLabels("injected", http.StatusServiceUnavailable, "tenant-a", "writer-a")
-		labels["fault_injected"] = "false"
 		before, err := requestMetricCount(ctx, adminAddress, labels)
 		Expect(err).NotTo(HaveOccurred())
-		status, body := expectUpstreamRequestDelta(ctx, adminAddress, "api-injected", "backend error", 1, func() (int, []byte, error) {
-			return requestFaultInjection(ctx, gatewayAddress, http.MethodGet, "/injected/backend-error", nil, faultInjectionHeaders("key-a", ""))
-		})
-		Expect(status).To(Equal(http.StatusServiceUnavailable), string(body))
-		after, err := requestMetricCount(ctx, adminAddress, labels)
+		beforeTotal, err := requestMetricTotal(ctx, adminAddress)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(after).To(Equal(before + 1))
+		for i, test := range []struct {
+			name          string
+			path          string
+			trigger       string
+			upstreamDelta uint64
+		}{
+			{name: "backend error", path: "/injected/backend-error", upstreamDelta: 1},
+			{name: "injected error", path: "/injected/probe", trigger: "true"},
+		} {
+			status, body := expectUpstreamRequestDelta(ctx, adminAddress, "api-injected", test.name, test.upstreamDelta, func() (int, []byte, error) {
+				return requestFaultInjection(ctx, gatewayAddress, http.MethodGet, test.path, nil, faultInjectionHeaders("key-a", test.trigger))
+			})
+			Expect(status).To(Equal(http.StatusServiceUnavailable), string(body))
+			after, err := requestMetricCount(ctx, adminAddress, labels)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(after).To(Equal(before+uint64(i)+1), test.name)
+		}
+		afterTotal, err := requestMetricTotal(ctx, adminAddress)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(afterTotal).To(Equal(beforeTotal + 2))
 	}, NodeTimeout(60*time.Second))
 
 	It("does not inject or meter gateway fallback routes", func(ctx SpecContext) {

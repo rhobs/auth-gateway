@@ -206,19 +206,12 @@ sources cannot supply attribute selectors. Status and percentage remain
 configured by the operator; Envoy's client-controlled abort headers are not
 enabled. Unconfigured APIs and fallback routes have no fault selector.
 
-Injected aborts do not reach the upstream. The per-API response counter records
-their status, authenticated attribute labels, and `fault_injected="true"`.
-Other replies carry `fault_injected="false"`, including real backend errors and
-authentication denials. The native fault filter sets the metadata used for
-this label only when it executes an abort. Error access logs identify aborts
-with `fault_filter_abort` in `response_code_details`.
-
-Upstream response counters do not include local aborts. SLO accounting must
-combine upstream responses with only the injected subset of the gateway
-counter, adding it to the total and the appropriate error classes. The
-[fault injection guide](fault-injection.md#slo-accounting) gives the recording
-rule pattern and avoids counting authentication denials or backend responses
-twice.
+Injected aborts do not reach the upstream. The standard per-API response
+counter records each reply once using its status and authenticated attribute
+labels, just as it records a backend reply. SLOs using this counter need no
+special handling for injected failures. Error access logs identify aborts
+with `fault_filter_abort` in `response_code_details`. See
+[SLO accounting](fault-injection.md#slo-accounting).
 
 Fault settings live in the bootstrap ConfigMap. Enabling, changing, or
 disabling them requires regenerating and applying the gateway resources and
@@ -239,8 +232,7 @@ Service. Metrics collection is enabled by default; disabling it does not
 disable per-API counters.
 
 Each API with `metrics` configured counts responses by API and exact
-downstream status, with a `fault_injected` boolean label. `metrics: {}` enables
-the counter without attribute labels.
+downstream status. `metrics: {}` enables the counter without attribute labels.
 The counter includes authentication and authorization denials, but excludes
 gateway `404` and `405` fallback routes. Missing or unsafe label values become
 `__unattributed__`. Envoy adds the `envoy_http_lua_` prefix; the Collector

@@ -109,9 +109,9 @@ needs a different value. See the [JWT guide](docs/auth/jwt.md),
 For SLO tests, an API can inject HTTP errors after authentication and
 authorization, optionally matching a request header and authenticated tenant.
 The policy is off by default and requires an explicit gateway rollout.
-Injected replies carry `fault_injected="true"` in the per-API counter. SLOs
-based on upstream responses must add those failures to their accounting; see
-the [fault injection guide](docs/fault-injection.md).
+Injected replies count as standard requests in the per-API counter, using the
+same status and attribute labels as backend replies. See the
+[fault injection guide](docs/fault-injection.md).
 
 API-key changes update the Secret. Downstream certificate and client CA
 ConfigMap changes reload through SDS for new connections. Static Envoy

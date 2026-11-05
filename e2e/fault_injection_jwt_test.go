@@ -27,7 +27,7 @@ var _ = Describe("JWT tenant fault injection", Label("gateway", "jwt", "fault-in
 	}, NodeTimeout(10*time.Minute))
 
 	It("injects faults using the verified JWT tenant without a header trigger", func(ctx SpecContext) {
-		labels := map[string]string{"api": "injected", "http_status_code": "503", "fault_injected": "true", "tenant": "customer-a"}
+		labels := map[string]string{"api": "injected", "http_status_code": "503", "tenant": "customer-a"}
 		before, err := requestMetricCount(ctx, adminAddress, labels)
 		Expect(err).NotTo(HaveOccurred())
 		token := gateway.token("issuer-one", jwtTestClaims("customer-a"), nil)

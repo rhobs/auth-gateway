@@ -186,20 +186,19 @@ object is omitted.
 ### API metrics
 
 Each API with `metrics` configured emits a request counter. The automatic `api`
-label is the API name, `http_status_code` comes from the response, and
-`fault_injected` is `"true"` only for an injected abort (`"false"` otherwise).
+label is the API name and `http_status_code` comes from the response.
 Additional labels use values from authenticator attributes declared under
 `authenticators[].attributes`.
 
 | Field                   | Type                                | Default | Constraint                                                                                                                                                                                                                  |
 |-------------------------|-------------------------------------|---------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `apis[].metrics.labels` | map of label name to attribute name | Empty   | Label names must be valid Prometheus names, must not start with `__`, and cannot be `api`, `http_status_code`, `fault_injected`, or `envoy_http_conn_manager_prefix`. Each value must be a valid attribute name declared by an authenticator. |
+| `apis[].metrics.labels` | map of label name to attribute name | Empty   | Label names must be valid Prometheus names, must not start with `__`, and cannot be `api`, `http_status_code`, or `envoy_http_conn_manager_prefix`. Each value must be a valid attribute name declared by an authenticator. |
 
 #### Metric cardinality
 
 Configuration authors are responsible for choosing metric labels with bounded
 values. The gateway does not enforce a cardinality limit. Each distinct
-combination of API, HTTP status, fault marker, and attribute values creates an Envoy
+combination of API, HTTP status, and attribute values creates an Envoy
 counter retained until Envoy restarts. Too many combinations can cause a
 cardinality explosion and exhaust gateway memory. Label length and character
 checks do not bound the number of distinct values.
@@ -240,11 +239,10 @@ percentage applies after selection. Clients cannot change the configured
 status or percentage through Envoy fault-control headers.
 
 Injected requests do not reach the upstream. With `apis[].metrics` configured,
-their API, status, authenticated attribute labels, and `fault_injected="true"`
-appear in the per-API response counter. Other responses use
-`fault_injected="false"`. Upstream counters remain unchanged. To exercise an
-SLO based on upstream counters, add only the injected subset to both total
-responses and the appropriate error classes; see
+each injected reply increments the standard per-API counter once, using its
+configured status and authenticated attribute labels. Backend and injected
+replies with the same labels share the same series, so SLOs using this counter
+apply the same status-based calculation with injection enabled or disabled. See
 [SLO accounting](fault-injection.md#slo-accounting).
 
 Fault settings are part of the static bootstrap: regenerate and apply the

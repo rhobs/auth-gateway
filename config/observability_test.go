@@ -156,7 +156,6 @@ func TestAPIMetricsConfigurationAndValidation(t *testing.T) {
 		{name: "invalid label name", want: "apis[0].metrics.labels", edit: func(c *Config) { c.APIs[0].Metrics.Labels["bad-name"] = "tenant_id" }},
 		{name: "reserved API label", want: "apis[0].metrics.labels", edit: func(c *Config) { c.APIs[0].Metrics.Labels["api"] = "tenant_id" }},
 		{name: "reserved status label", want: "apis[0].metrics.labels", edit: func(c *Config) { c.APIs[0].Metrics.Labels["http_status_code"] = "tenant_id" }},
-		{name: "reserved fault label", want: "apis[0].metrics.labels", edit: func(c *Config) { c.APIs[0].Metrics.Labels["fault_injected"] = "tenant_id" }},
 		{name: "reserved Prometheus prefix", want: "apis[0].metrics.labels", edit: func(c *Config) { c.APIs[0].Metrics.Labels["__internal"] = "tenant_id" }},
 		{name: "reserved Envoy label", want: "apis[0].metrics.labels", edit: func(c *Config) { c.APIs[0].Metrics.Labels["envoy_http_conn_manager_prefix"] = "tenant_id" }},
 		{name: "invalid attribute name", want: "apis[0].metrics.labels.tenant", edit: func(c *Config) { c.APIs[0].Metrics.Labels["tenant"] = "TenantID" }},
@@ -205,11 +204,11 @@ func TestRequestMetricsGenerateTagsAndRouteMetadata(t *testing.T) {
 	}
 	bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	tags := bootstrap.GetStatsConfig().GetStatsTags()
-	if len(tags) != 4 {
-		t.Fatalf("stats tags = %#v, want API, status, fault marker, and tenant", tags)
+	if len(tags) != 3 {
+		t.Fatalf("stats tags = %#v, want API, status, and tenant", tags)
 	}
-	raw := "http.ingress.lua.gateway_http_requests_total|api=metrics-write|http_status_code=403|fault_injected=false|tenant=team-a"
-	for i, want := range []struct{ label, value string }{{"api", "metrics-write"}, {"http_status_code", "403"}, {"fault_injected", "false"}, {"tenant", "team-a"}} {
+	raw := "http.ingress.lua.gateway_http_requests_total|api=metrics-write|http_status_code=403|tenant=team-a"
+	for i, want := range []struct{ label, value string }{{"api", "metrics-write"}, {"http_status_code", "403"}, {"tenant", "team-a"}} {
 		if tags[i].GetTagName() != want.label {
 			t.Fatalf("tag %d name = %q, want %q", i, tags[i].GetTagName(), want.label)
 		}
@@ -236,8 +235,6 @@ func TestRequestMetricsGenerateTagsAndRouteMetadata(t *testing.T) {
 	if !strings.Contains(script, `local counter_name = "gateway_http_requests_total"`) ||
 		!strings.Contains(script, "function envoy_on_response(response_handle)") ||
 		!strings.Contains(script, `filter_state:get("auth_gateway.attributes." .. attribute)`) ||
-		!strings.Contains(script, `local fault_filter_name = "auth_gateway.fault_injection"`) ||
-		!strings.Contains(script, `fault["fault_injected"] == true`) ||
 		strings.Contains(script, "function envoy_on_request") {
 		t.Fatalf("generated Lua is missing response-only metric collection: %s", script)
 	}
@@ -356,8 +353,8 @@ func TestStatusOnlyRequestMetricsOnPublicAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
-	if got := len(bootstrap.GetStatsConfig().GetStatsTags()); got != 3 {
-		t.Fatalf("status-only stats tags = %d, want API, status, and fault marker", got)
+	if got := len(bootstrap.GetStatsConfig().GetStatsTags()); got != 2 {
+		t.Fatalf("status-only stats tags = %d, want API and status", got)
 	}
 	manager := decodeHTTPManager(t, bootstrap.StaticResources.Listeners[0].FilterChains[0])
 	want := []string{requestControlsFilterName, requestMetricsFilterName, routerFilterName}

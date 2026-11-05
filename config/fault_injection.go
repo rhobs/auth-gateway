@@ -18,7 +18,6 @@ import (
 	matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	envoytype "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	"google.golang.org/protobuf/types/known/anypb"
-	"google.golang.org/protobuf/types/known/structpb"
 )
 
 const (
@@ -92,9 +91,6 @@ func (c FaultInjectionConfig) toEnvoy() *fault.HTTPFault {
 			Percentage: &envoytype.FractionalPercent{Numerator: c.Abort.Percentage, Denominator: envoytype.FractionalPercent_HUNDRED},
 		},
 		DisableDownstreamClusterStats: true,
-		FilterMetadata: &structpb.Struct{Fields: map[string]*structpb.Value{
-			"fault_injected": structpb.NewBoolValue(true),
-		}},
 	}
 	if c.Match != nil {
 		for _, header := range slices.Sorted(maps.Keys(c.Match.Headers)) {

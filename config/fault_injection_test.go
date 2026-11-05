@@ -120,8 +120,7 @@ func TestGeneratedFaultInjectionIsScopedToAPI(t *testing.T) {
 	if policy.GetAbort().GetHttpStatus() != http.StatusServiceUnavailable ||
 		policy.GetAbort().GetPercentage().GetNumerator() != 25 ||
 		policy.GetAbort().GetPercentage().GetDenominator() != envoytype.FractionalPercent_HUNDRED ||
-		!policy.GetDisableDownstreamClusterStats() ||
-		!policy.GetFilterMetadata().GetFields()["fault_injected"].GetBoolValue() {
+		!policy.GetDisableDownstreamClusterStats() {
 		t.Fatalf("fault policy = %v", &policy)
 	}
 

@@ -182,8 +182,7 @@ apis:
     # Optional per-API request counter. `api` is this API's name and
     # `http_status_code` comes from the response. Additional label names map to
     # authenticator attributes declared under authenticators[].attributes.
-    # `fault_injected` is true only for injected replies; use it when adding
-    # gateway faults to an SLO based on upstream response counters.
+    # Injected errors count as standard requests with the same labels.
     # Choose bounded values; each label combination stays in Envoy until restart.
     # There is no cardinality limit. Use metrics: {} for API and status counts only.
     metrics:
