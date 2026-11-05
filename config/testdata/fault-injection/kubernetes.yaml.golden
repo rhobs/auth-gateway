@@ -103,13 +103,6 @@ data:
                             max_headers_count: 100
                             max_stream_duration: 30s
                         http_filters:
-                            - name: envoy.filters.http.fault
-                              typed_config:
-                                '@type': type.googleapis.com/envoy.extensions.filters.http.fault.v3.HTTPFault
-                                abort:
-                                    http_status: 503
-                                    percentage: {}
-                                disable_downstream_cluster_stats: true
                             - name: auth_gateway.request_controls
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
@@ -176,6 +169,20 @@ data:
                                           end
                                           response_handle:stats():counter(name):inc()
                                         end
+                            - name: auth_gateway.fault_injection
+                              typed_config:
+                                '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.Composite
+                                named_filter_chains:
+                                    injected:
+                                        typed_config:
+                                            - name: envoy.filters.http.fault
+                                              typed_config:
+                                                '@type': type.googleapis.com/envoy.extensions.filters.http.fault.v3.HTTPFault
+                                                abort:
+                                                    http_status: 503
+                                                    percentage:
+                                                        numerator: 25
+                                                disable_downstream_cluster_stats: true
                             - name: envoy.filters.http.router
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -212,13 +219,15 @@ data:
                                         timeout: 30s
                                       stat_prefix: api-0-injected-route-0-method-0
                                       typed_per_filter_config:
-                                        envoy.filters.http.fault:
-                                            '@type': type.googleapis.com/envoy.extensions.filters.http.fault.v3.HTTPFault
-                                            abort:
-                                                http_status: 503
-                                                percentage:
-                                                    numerator: 25
-                                            disable_downstream_cluster_stats: true
+                                        auth_gateway.fault_injection:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.CompositePerRoute
+                                            matcher:
+                                                on_no_match:
+                                                    action:
+                                                        name: envoy.filters.http.composite.execute_filter_action
+                                                        typed_config:
+                                                            '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.ExecuteFilterAction
+                                                            filter_chain_name: injected
                                     - match:
                                         headers:
                                             - name: :method
@@ -239,13 +248,15 @@ data:
                                         timeout: 30s
                                       stat_prefix: api-0-injected-route-0-method-1
                                       typed_per_filter_config:
-                                        envoy.filters.http.fault:
-                                            '@type': type.googleapis.com/envoy.extensions.filters.http.fault.v3.HTTPFault
-                                            abort:
-                                                http_status: 503
-                                                percentage:
-                                                    numerator: 25
-                                            disable_downstream_cluster_stats: true
+                                        auth_gateway.fault_injection:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.CompositePerRoute
+                                            matcher:
+                                                on_no_match:
+                                                    action:
+                                                        name: envoy.filters.http.composite.execute_filter_action
+                                                        typed_config:
+                                                            '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.ExecuteFilterAction
+                                                            filter_chain_name: injected
                                     - match:
                                         headers:
                                             - name: :method

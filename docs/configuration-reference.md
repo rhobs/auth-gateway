@@ -186,7 +186,7 @@ object is omitted.
 ### API metrics
 
 Each API with `metrics` configured emits a request counter. The automatic `api`
-label is the API name, and `http_status_code` comes from the response.
+label is the API name and `http_status_code` comes from the response.
 Additional labels use values from authenticator attributes declared under
 `authenticators[].attributes`.
 
@@ -216,7 +216,8 @@ status without attribute labels.
 ### Fault injection
 
 Set `apis[].fault_injection.enabled: true` to abort a percentage of matching
-requests with a configured HTTP error. Every method route of that API is
+requests with a configured HTTP error after authentication, authorization,
+and required-header checks. Every method route of that API is
 eligible; other APIs and gateway `404`/`405` fallback routes are not. Omit the
 block or set `enabled: false` to disable injection. A disabled block may keep
 its abort settings for the next test.
@@ -224,16 +225,28 @@ its abort settings for the next test.
 | Field                                      | Type    | Default | Constraint                                                        |
 |--------------------------------------------|---------|---------|-------------------------------------------------------------------|
 | `apis[].fault_injection.enabled`           | boolean | `false` | Requires `abort` when enabled.                                    |
+| `apis[].fault_injection.match`             | object  | None    | Optional; if supplied, must contain headers or attributes. Omit to select all requests that pass authentication, authorization, and required-header checks. |
+| `apis[].fault_injection.match.headers`     | map of header name to string | Empty | All headers must match exact values. Names are case-insensitive and cannot contain underscores, duplicate another name ignoring case, or use reserved identity, routing, connection, framing, or credential headers. Route processing cannot overwrite these headers. Values must be nonempty and contain no control characters. |
+| `apis[].fault_injection.match.attributes`  | map of attribute name to list of strings | Empty | All attributes must match at least one listed exact value. Each list must contain distinct nonempty values without control characters. Every bound server must authenticate with a provider for each attribute. Sources must be verified claims, credentials, or certificate SANs; header sources are rejected. |
 | `apis[].fault_injection.abort`             | object  | None    | Required when enabled; HTTP errors only.                          |
 | `apis[].fault_injection.abort.http_status` | uint32  | None    | Required error status from `400` to `599`.                         |
 | `apis[].fault_injection.abort.percentage`  | uint32  | None    | Required whole-number percentage from `1` to `100`.               |
 
-The Envoy fault filter runs before authentication. Injected requests do not
-reach the upstream, and their API and HTTP status appear in the per-API
-response counter when `apis[].metrics` is configured. Labels that depend on
-authenticated attributes use `__unattributed__` for these replies. Fault
-settings are part of the static bootstrap: regenerate and apply the gateway
-configuration, then explicitly roll out the Deployment to toggle them.
+All header and attribute selectors must match. Missing attributes or headers
+do not match, and values are case-sensitive. On a mixed `any_of` server, only
+the selected authenticated identity supplies attributes. The configured
+percentage applies after selection. Clients cannot change the configured
+status or percentage through Envoy fault-control headers.
+
+Injected requests do not reach the upstream. With `apis[].metrics` configured,
+each injected reply increments the standard per-API counter once, using its
+configured status and authenticated attribute labels. Backend and injected
+replies with the same labels share the same series, so SLOs using this counter
+apply the same status-based calculation with injection enabled or disabled. See
+[SLO accounting](fault-injection.md#slo-accounting).
+
+Fault settings are part of the static bootstrap: regenerate and apply the
+gateway configuration, then explicitly roll out the Deployment to toggle them.
 
 ### Route processing
 

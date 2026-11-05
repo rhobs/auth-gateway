@@ -194,17 +194,24 @@ that need it; the schema stays at version `1`. See the
 ## Fault injection
 
 Per-API `fault_injection` can abort a whole-number percentage of requests with
-an HTTP error status. The fault filter runs first in each HTTP filter chain, as
-Envoy requires, and route-level settings select the enabled APIs. It uses a
-fixed status and percentage; clients cannot choose faults through request
-headers. Unconfigured APIs and fallback routes continue normally.
+an HTTP error status. A Composite filter selects one API's native fault filter
+after authentication, attribute extraction, authorization, and request-header
+processing. It runs before admission control and the router.
 
-An injected abort happens before authentication, attribute extraction, and
-upstream forwarding. The response still passes through the per-API response
-counter, so a configured counter records the injected status. Labels sourced
-from authenticated attributes are `__unattributed__` for these replies. Error
-access logs identify them with `fault_filter_abort` in
-`response_code_details`.
+Optional exact header matches gate injection. Attribute selectors read the
+same filter state as header forwarding and metrics, populated from verified
+claims, API-key credentials, or certificate SANs. All configured selectors
+must match, with alternative allowed values within each attribute. Header
+sources cannot supply attribute selectors. Status and percentage remain
+configured by the operator; Envoy's client-controlled abort headers are not
+enabled. Unconfigured APIs and fallback routes have no fault selector.
+
+Injected aborts do not reach the upstream. The standard per-API response
+counter records each reply once using its status and authenticated attribute
+labels, just as it records a backend reply. SLOs using this counter need no
+special handling for injected failures. Error access logs identify aborts
+with `fault_filter_abort` in `response_code_details`. See
+[SLO accounting](fault-injection.md#slo-accounting).
 
 Fault settings live in the bootstrap ConfigMap. Enabling, changing, or
 disabling them requires regenerating and applying the gateway resources and

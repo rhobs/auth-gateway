@@ -106,10 +106,12 @@ needs a different value. See the [JWT guide](docs/auth/jwt.md),
 [API-key guide](docs/auth/api-key.md), [mTLS guide](docs/auth/mtls.md), and
 [Envoy behavior guide](docs/envoy.md) for request and update behavior.
 
-For SLO tests, an API can inject HTTP errors at a configured percentage.
-The policy is off by default and changes take effect after an explicit gateway
-rollout. See [fault injection](docs/configuration-reference.md#fault-injection)
-for the configuration and metric behavior.
+For SLO tests, an API can inject HTTP errors after authentication and
+authorization, optionally matching a request header and authenticated tenant.
+The policy is off by default and requires an explicit gateway rollout.
+Injected replies count as standard requests in the per-API counter, using the
+same status and attribute labels as backend replies. See the
+[fault injection guide](docs/fault-injection.md).
 
 API-key changes update the Secret. Downstream certificate and client CA
 ConfigMap changes reload through SDS for new connections. Static Envoy

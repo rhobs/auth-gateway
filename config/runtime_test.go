@@ -51,6 +51,15 @@ func TestPinnedImagesValidateGoldenFiles(t *testing.T) {
 		}
 		validatePinnedEnvoyFiles(t, c, files, filepath.Join("..", "playground"), certificate, key)
 	})
+	t.Run("fault-selectors", func(t *testing.T) {
+		c := faultSelectorConfig(t)
+		c.APIs[0].AdmissionControl = &AdmissionControlConfig{Enabled: true}
+		files, err := Generate(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		validatePinnedEnvoyFiles(t, c, files, "", certificate, key)
+	})
 	t.Run("tracing", func(t *testing.T) {
 		c := loadConfigCase(t, "public-routing")
 		c.Observability.Tracing = ObservabilityTracing{

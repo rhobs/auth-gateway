@@ -450,13 +450,6 @@ func (c effectiveConfig) toHTTPFilters(hosts []indexedVirtualHost, protected boo
 	if err != nil {
 		return nil, err
 	}
-	if hasFaultRouteConfigs(hosts) {
-		filter, err := faultHTTPFilter()
-		if err != nil {
-			return nil, err
-		}
-		filters = append([]*hcm.HttpFilter{filter}, filters...)
-	}
 	if protected {
 		filters, err = c.protectedHTTPFilters(filters, hosts)
 		if err != nil {
@@ -469,6 +462,13 @@ func (c effectiveConfig) toHTTPFilters(hosts []indexedVirtualHost, protected boo
 			return nil, err
 		}
 		filters = append(filters, cleanup)
+	}
+	fault, err := c.faultHTTPFilter(hosts)
+	if err != nil {
+		return nil, err
+	}
+	if fault != nil {
+		filters = append(filters, fault)
 	}
 	admission, err := c.admissionHTTPFilter(hosts)
 	if err != nil {
@@ -915,7 +915,7 @@ func metadataPathSegment(key string) *matcher.MetadataMatcher_PathSegment {
 }
 
 func needsWorkingAttributes(c effectiveConfig) bool {
-	return hasRequestHeaderProcessing(c.APIs) || hasRequestMetricLabels(c.APIs)
+	return hasRequestHeaderProcessing(c.APIs) || hasRequestMetricLabels(c.APIs) || hasFaultMatchAttributes(c.APIs)
 }
 
 func filterStateKey(attribute string) string {
