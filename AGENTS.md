@@ -1,66 +1,34 @@
 # Repository agent guidance
 
-Follow [CONTRIBUTING.md](CONTRIBUTING.md) for checks, test ownership, and
-golden-file updates.
+Follow [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow, checks,
+test ownership, and golden-file updates.
 
-## Scope and architecture
+## Design
 
-- Treat the checked-in version 1 configuration schema as the supported
-  contract. Do not add aliases or migration code unless the task asks for it.
-- Keep configuration, the single full `config.example.yaml`, documentation,
-  generated output, and tests aligned.
-- Client-certificate mTLS is unsupported. Do not implement it unless the task
-  changes scope.
-- Keep JWT verification, API-key authentication, authorization, attribute
-  extraction, and request-header forwarding in native Envoy filters. Lua is
-  limited to per-API response counters.
-- Use attribute values directly from their declared sources. Supply a separate
-  source attribute when upstreams need a different value.
-- Static bootstrap changes require an explicit Deployment rollout. Generated
-  Deployments have no checksum annotation.
-- Keep reusable Kubernetes lifecycle, port forwarding, readiness, and
-  diagnostics in `e2e/internal/framework`. Keep fixtures, protocol clients, and
-  scenario assertions in the e2e package.
+- This is a greenfield project. Backward compatibility and future versions
+  are not current design constraints. Treat the checked-in schema as the
+  current contract.
+- Keep the schema, `config.example.yaml`, configuration documentation
+  including `docs/configuration-reference.md`, generated output, and tests
+  aligned.
+- Prefer native Envoy filters. Write custom Lua only when no suitable native
+  option exists or when Lua reduces overall complexity.
+- Use attribute values unchanged from their declared sources. Declare a
+  separate source attribute when a different value is needed.
+- Static bootstrap changes require an explicit Deployment rollout.
 
-## Go style
+## Development
 
-- Use one receiver style for all methods on a type. If a method needs a pointer
-  receiver, use pointer receivers for every method on that type.
-
-## Tests
-
-- Keep each test focused on one behavior. Use valid baselines and assert the
-  expected error field or cause for invalid configuration.
-- Use explicit YAML or checked-in fixtures for loader tests. Do not construct
-  test YAML with string replacement. For semantic validation, load a valid
-  baseline and mutate one typed field.
-- Keep tests independent of documentation examples. Use test-owned fixtures
-  instead of loading `config.example.yaml`.
-- Unit tests cover schema, defaults, validation, and generated output. Gateway
-  e2e tests cover observable behavior. Do not use gateway e2e tests for Envoy
-  semantics such as flow control, timeouts, retries, overload, or draining.
-- Test JWKS cache settings in generated configuration. Keep cache lifecycle
-  behavior out of gateway e2e tests.
-- Keep API-key request decisions read-only on a fresh shared gateway. Use Kind
-  for one projected Secret rotation and the runtime suite for valid file-based
-  ECDS/SDS reloads and empty-key revocation. Do not test native Envoy rejection
-  or retention of malformed updates.
-- Isolate e2e scenarios by use case and clean up their namespaces. Verify
-  forwarding through httpbin, including method, path, headers, and body. Show
-  that denied requests do not reach the backend.
-- Run relevant checks and the full e2e suite before handoff. Runtime-image
-  checks are optional when the change does not require them.
-- Run authorized Docker-backed e2e and runtime checks with escalated sandbox
-  permissions on the initial call. If a sandbox denial occurs, retry with
-  escalation without asking the user to repeat authorization.
-
-## Documentation and workflow
-
-- Keep [docs/configuration-reference.md](docs/configuration-reference.md)
-  aligned with the schema and example.
-- Keep user guides focused on configuration, client requests, observable
-  behavior, and required external resources. Technical docs should explain
-  Envoy behavior, not Go function names or code structure.
-- Work on a feature branch and submit feature changes through an upstream PR
-  or MR for review. Never push directly to `main`.
+- Keep reusable Kubernetes test infrastructure in `e2e/internal/framework`.
+  Keep scenario fixtures, protocol clients, and assertions in the e2e package.
+- Use a consistent receiver style per type, choosing pointer receivers if
+  any method requires one.
+- Use sandbox escalation from the first attempt for authorized Docker-backed
+  checks. Retry sandbox denials with escalation without requesting
+  authorization again.
+- Write user guides around configuration, client requests, observable
+  behavior, and required external resources. Keep technical documentation
+  focused on Envoy behavior.
+- Work on a feature branch and submit changes through an upstream PR or MR.
+  Never push directly to `main`.
 - Use concise, natural-language commit messages without emojis.
