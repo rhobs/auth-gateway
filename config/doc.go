@@ -10,5 +10,5 @@
 // on it or relying on errors.Is or errors.As to classify failures.
 //
 // Configuration types, defaults, and validation live in domain-named files.
-// Envoy extensions live in envoy_*.go; envoy_http_filters.go defines their order.
+// Envoy extensions live in files named for each extension; http_filters.go defines their order.
 package config
