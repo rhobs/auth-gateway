@@ -12,7 +12,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/rhobs/auth-gateway/config"
+	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
 )
 
 const (
@@ -31,7 +31,7 @@ var _ = Describe("Header-sourced attributes", Label("gateway", "authentication",
 	BeforeAll(func(ctx SpecContext) {
 		DeferCleanup(func() { deleteNamespaceInBackground(headerAttributesNamespace) })
 		var err error
-		gateway, err = setupAPIKeyGatewayWithShape(ctx, headerAttributesNamespace, false, []config.APIKeyCredential{{
+		gateway, err = setupAPIKeyGatewayWithShape(ctx, headerAttributesNamespace, false, []gatewayapi.APIKeyCredential{{
 			Key: "header-key", Attributes: map[string]string{"tenant_id": "client-a", "writer_id": "writer-a"},
 		}}, "header-key", shapeHeaderAttributeGateway)
 		Expect(err).NotTo(HaveOccurred())
@@ -132,39 +132,39 @@ var _ = Describe("Header-sourced attributes", Label("gateway", "authentication",
 	}, NodeTimeout(90*time.Second))
 })
 
-func shapeHeaderAttributeGateway(c *config.Config) {
+func shapeHeaderAttributeGateway(c *gatewayapi.Config) {
 	c.Authenticators[0].Attributes["requested_tenant"] = headerAttributeSource("X-JWT-Tenant")
-	c.Authenticators[0].Attributes["tenant_check"] = config.AttributeSource{ClaimPath: []string{"organization", "id"}}
+	c.Authenticators[0].Attributes["tenant_check"] = gatewayapi.AttributeSource{ClaimPath: []string{"organization", "id"}}
 	c.Authenticators[1].Attributes["requested_tenant"] = headerAttributeSource("X-Key-Tenant")
 	c.Authenticators[1].Attributes["tenant_check"] = headerAttributeSource("X-Key-Tenant")
-	c.AuthorizationPolicies = append(c.AuthorizationPolicies, config.AuthorizationPolicy{
+	c.AuthorizationPolicies = append(c.AuthorizationPolicies, gatewayapi.AuthorizationPolicy{
 		Name: "header-writers",
-		Grants: []config.AuthorizationGrant{
+		Grants: []gatewayapi.AuthorizationGrant{
 			{Authenticator: "issuer-one", APIs: []string{"header-ingest"}, Attributes: map[string][]string{"requested_tenant": {"client-a", "client-b"}}},
 			{Authenticator: "partner-key", APIs: []string{"header-ingest"}, Attributes: map[string][]string{"requested_tenant": {"client-a", "client-b"}}},
 		},
 	})
-	c.APIs = append(c.APIs, config.API{
+	c.APIs = append(c.APIs, gatewayapi.API{
 		Name:     "header-ingest",
-		Metrics:  &config.APIMetrics{Labels: map[string]string{"tenant": "requested_tenant"}},
-		Upstream: config.Upstream{Address: "httpbin", Port: 8080},
-		Routes: []config.Route{{
+		Metrics:  &gatewayapi.APIMetrics{Labels: map[string]string{"tenant": "requested_tenant"}},
+		Upstream: gatewayapi.Upstream{Address: "httpbin", Port: 8080},
+		Routes: []gatewayapi.Route{{
 			Methods:    []string{http.MethodPost},
-			Path:       config.PathMatch{Exact: "/header-ingest"},
-			Rewrite:    &config.PathRewrite{Path: "/anything"},
-			Processing: &config.RouteProcessing{RequestHeaders: []config.RequestHeaderMapping{{Name: "X-Forwarded-Tenant", FromAttribute: "requested_tenant"}}},
+			Path:       gatewayapi.PathMatch{Exact: "/header-ingest"},
+			Rewrite:    &gatewayapi.PathRewrite{Path: "/anything"},
+			Processing: &gatewayapi.RouteProcessing{RequestHeaders: []gatewayapi.RequestHeaderMapping{{Name: "X-Forwarded-Tenant", FromAttribute: "requested_tenant"}}},
 		}},
 	})
-	c.Servers = append(c.Servers, []config.Server{
-		{Hostname: headerJWTOnlyHost, Authentication: &config.Authentication{AnyOf: []string{"issuer-one"}}, Authorization: &config.Authorization{AnyOf: []string{"header-writers"}}, APIs: []string{"header-ingest"}},
-		{Hostname: headerKeyOnlyHost, Authentication: &config.Authentication{AnyOf: []string{"partner-key"}}, Authorization: &config.Authorization{AnyOf: []string{"header-writers"}}, APIs: []string{"header-ingest"}},
-		{Hostname: headerAnyHost, Authentication: &config.Authentication{AnyOf: []string{"issuer-one", "partner-key"}}, Authorization: &config.Authorization{AnyOf: []string{"header-writers"}}, APIs: []string{"header-ingest"}},
-		{Hostname: headerAllHost, Authentication: &config.Authentication{AllOf: []string{"issuer-one", "partner-key"}}, Authorization: &config.Authorization{AllOf: []string{"header-writers"}}, APIs: []string{"header-ingest"}},
+	c.Servers = append(c.Servers, []gatewayapi.Server{
+		{Hostname: headerJWTOnlyHost, Authentication: &gatewayapi.Authentication{AnyOf: []string{"issuer-one"}}, Authorization: &gatewayapi.Authorization{AnyOf: []string{"header-writers"}}, APIs: []string{"header-ingest"}},
+		{Hostname: headerKeyOnlyHost, Authentication: &gatewayapi.Authentication{AnyOf: []string{"partner-key"}}, Authorization: &gatewayapi.Authorization{AnyOf: []string{"header-writers"}}, APIs: []string{"header-ingest"}},
+		{Hostname: headerAnyHost, Authentication: &gatewayapi.Authentication{AnyOf: []string{"issuer-one", "partner-key"}}, Authorization: &gatewayapi.Authorization{AnyOf: []string{"header-writers"}}, APIs: []string{"header-ingest"}},
+		{Hostname: headerAllHost, Authentication: &gatewayapi.Authentication{AllOf: []string{"issuer-one", "partner-key"}}, Authorization: &gatewayapi.Authorization{AllOf: []string{"header-writers"}}, APIs: []string{"header-ingest"}},
 	}...)
 }
 
-func headerAttributeSource(header string) config.AttributeSource {
-	return config.AttributeSource{Header: &header}
+func headerAttributeSource(header string) gatewayapi.AttributeSource {
+	return gatewayapi.AttributeSource{Header: &header}
 }
 
 func expectHeaderAttributeEcho(body []byte, tenant string, sourceHeaders map[string]string) {

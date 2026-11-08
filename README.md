@@ -25,6 +25,12 @@ Install the module:
 go get github.com/rhobs/auth-gateway
 ```
 
+The public configuration structs live in `pkg/api/types.go`. `pkg/gateway`
+loads and validates the API and generates Envoy files, Kubernetes resources,
+and collector configuration. Feature code and unit tests share matching file
+names, with one fixture tree under `pkg/gateway/testdata`. The old `config`
+import path remains a temporary facade until its callers are migrated.
+
 Load and generate files or a Kubernetes manifest from Go:
 
 ```go
@@ -35,11 +41,11 @@ import (
 	"log"
 	"strings"
 
-	"github.com/rhobs/auth-gateway/config"
+	"github.com/rhobs/auth-gateway/pkg/gateway"
 )
 
 func main() {
-	gateway, err := config.Load(strings.NewReader(`version: 1
+	cfg, err := gateway.Load(strings.NewReader(`version: 1
 servers:
   - hostname: status.example.com
     apis: [status]
@@ -57,11 +63,11 @@ kubernetes:
 		log.Fatal(err)
 	}
 
-	files, err := config.Generate(gateway)
+	files, err := gateway.Generate(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
-	resources, err := config.GenerateKubernetes(gateway)
+	resources, err := gateway.GenerateKubernetes(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -74,8 +80,8 @@ kubernetes:
 }
 ```
 
-`config.Generate` returns Envoy files with their required paths. It does not
-need Kubernetes settings. `config.GenerateKubernetes` requires a `kubernetes`
+`gateway.Generate` returns Envoy files with their required paths. It does not
+need Kubernetes settings. `gateway.GenerateKubernetes` requires a `kubernetes`
 section and returns typed resources. Neither call contacts a cluster or creates
 the referenced namespace, TLS Secrets, API-key Secret, or CA ConfigMaps. Create
 those resources first, then apply the manifest.

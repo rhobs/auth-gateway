@@ -15,7 +15,8 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/rhobs/auth-gateway/config"
+	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
+	gatewayconfig "github.com/rhobs/auth-gateway/pkg/gateway"
 )
 
 const (
@@ -100,12 +101,12 @@ func generatedGatewayManifest(namespace string, useTLS bool) []byte {
 func generatedGatewayManifestWithMetrics(namespace string, useTLS, metricsEnabled bool) []byte {
 	gatewayFixture, err := env.Fixture("gateway.yaml")
 	Expect(err).NotTo(HaveOccurred())
-	gatewayConfig, err := config.Load(bytes.NewReader(gatewayFixture))
+	gatewayConfig, err := gatewayconfig.Load(bytes.NewReader(gatewayFixture))
 	Expect(err).NotTo(HaveOccurred())
 	gatewayConfig.Kubernetes.Namespace = namespace
 	gatewayConfig.Observability.Metrics.Enabled = new(metricsEnabled)
 	if !useTLS {
-		var servers []config.Server
+		var servers []gatewayapi.Server
 		for _, server := range gatewayConfig.Servers {
 			if server.TLSConfig == nil {
 				servers = append(servers, server)
@@ -114,7 +115,7 @@ func generatedGatewayManifestWithMetrics(namespace string, useTLS, metricsEnable
 		gatewayConfig.Servers = servers
 		gatewayConfig.Kubernetes.HTTPSServicePort = nil
 	}
-	resources, err := config.GenerateKubernetes(gatewayConfig)
+	resources, err := gatewayconfig.GenerateKubernetes(gatewayConfig)
 	Expect(err).NotTo(HaveOccurred())
 	manifest, err := resources.YAML()
 	Expect(err).NotTo(HaveOccurred())

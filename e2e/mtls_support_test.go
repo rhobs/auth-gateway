@@ -23,7 +23,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/rhobs/auth-gateway/config"
+	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
+	gatewayconfig "github.com/rhobs/auth-gateway/pkg/gateway"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
@@ -129,7 +130,7 @@ func setupMTLSGateway(ctx SpecContext, namespace string) (*mtlsE2E, error) {
 	return setupMTLSGatewayWithShape(ctx, namespace, nil)
 }
 
-func setupMTLSGatewayWithShape(ctx SpecContext, namespace string, shape func(*config.Config)) (*mtlsE2E, error) {
+func setupMTLSGatewayWithShape(ctx SpecContext, namespace string, shape func(*gatewayapi.Config)) (*mtlsE2E, error) {
 	if err := resetE2ENamespace(ctx, namespace); err != nil {
 		return nil, err
 	}
@@ -137,7 +138,7 @@ func setupMTLSGatewayWithShape(ctx SpecContext, namespace string, shape func(*co
 	if err != nil {
 		return nil, err
 	}
-	c, err := config.Load(bytes.NewReader(fixture))
+	c, err := gatewayconfig.Load(bytes.NewReader(fixture))
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +240,7 @@ func setupMTLSGatewayWithShape(ctx SpecContext, namespace string, shape func(*co
 	if !found {
 		return nil, fmt.Errorf("mTLS fixture has no API-key authenticator")
 	}
-	keySecret, err := config.APIKeySecret(namespace, keyAuthenticator, []config.APIKeyCredential{
+	keySecret, err := gatewayconfig.APIKeySecret(namespace, keyAuthenticator, []gatewayapi.APIKeyCredential{
 		{Key: mtlsAllowedKey, Attributes: map[string]string{"tenant_id": mtlsAllowedURI}},
 		{Key: mtlsDeniedKey, Attributes: map[string]string{"tenant_id": mtlsDeniedURI}},
 	})
@@ -253,7 +254,7 @@ func setupMTLSGatewayWithShape(ctx SpecContext, namespace string, shape func(*co
 	if err := env.Apply(ctx, namespace, keyManifest); err != nil {
 		return nil, err
 	}
-	resources, err := config.GenerateKubernetes(c)
+	resources, err := gatewayconfig.GenerateKubernetes(c)
 	if err != nil {
 		return nil, err
 	}
