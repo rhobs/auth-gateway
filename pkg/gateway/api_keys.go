@@ -13,6 +13,7 @@ import (
 	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
 	yaml "go.yaml.in/yaml/v3"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/anypb"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -148,7 +149,7 @@ func generateAPIKeyECDS(authenticator gatewayapi.Authenticator, credentials []ga
 	seenKeys := make(map[string]struct{}, len(credentials))
 	entries := make([]*apikey.Credential, 0, len(credentials))
 	for index, credential := range credentials {
-		if !validCredentialText(credential.Key) {
+		if !validCredentialText(credential.Key) || strings.Contains(credential.Key, ",") {
 			return nil, fmt.Errorf("credentials[%d].key must be a nonempty HTTP header value without controls", index)
 		}
 		if _, exists := seenKeys[credential.Key]; exists {
@@ -177,11 +178,7 @@ func generateAPIKeyECDS(authenticator gatewayapi.Authenticator, credentials []ga
 	if err != nil {
 		return nil, fmt.Errorf("encode API-key filter: %w", err)
 	}
-	wrapped, err := extensionWithMatcherConfig(&core.TypedExtensionConfig{Name: apiKeyFilterName, TypedConfig: native})
-	if err != nil {
-		return nil, fmt.Errorf("encode API-key matcher: %w", err)
-	}
-	resource, err := packEnvoy(&core.TypedExtensionConfig{Name: apiKeyFilterName, TypedConfig: wrapped})
+	resource, err := packEnvoy(&core.TypedExtensionConfig{Name: apiKeyFilterName, TypedConfig: native})
 	if err != nil {
 		return nil, fmt.Errorf("encode API-key ECDS resource: %w", err)
 	}
@@ -205,21 +202,19 @@ func apiKeyFilter() *hcm.HttpFilter {
 		Name: apiKeyFilterName, Disabled: true,
 		ConfigType: &hcm.HttpFilter_ConfigDiscovery{ConfigDiscovery: &core.ExtensionConfigSource{
 			ConfigSource: fileConfigSource(APIKeyECDSPath),
-			TypeUrls:     []string{extensionWithMatcherTypeName()},
+			TypeUrls:     []string{string((&apikey.ApiKeyAuth{}).ProtoReflect().Descriptor().FullName())},
 		}},
 	}
 }
 
-func addServerAPIKeyConfig(c resolvedConfig, host *route.VirtualHost, index int, server resolvedServer) error {
-	if !server.hasAPIKey {
-		return nil
-	}
-	perRoute, err := apiKeyPerRouteConfig(c, server)
+func apiKeyPerRouteConfig() (*anypb.Any, error) {
+	config, err := packEnvoy(&apikey.ApiKeyAuthPerRoute{Forwarding: &apikey.Forwarding{
+		Header: apiKeyClientHeader, HideCredentials: true,
+	}})
 	if err != nil {
-		return fmt.Errorf("servers[%d] API-key matcher: %w", index, err)
+		return nil, err
 	}
-	host.TypedPerFilterConfig[apiKeyFilterName] = perRoute
-	return nil
+	return packEnvoy(&route.FilterConfig{Config: config})
 }
 
 // GenerateAPIKeyECDS builds the file Envoy watches for API-key updates.

@@ -168,6 +168,19 @@ static_resources:
                                     - remove: x-envoy-upstream-rq-timeout-alt-response
                                     - remove: x-envoy-retriable-status-codes
                                     - remove: x-envoy-retriable-header-names
+                                    - remove: x-auth-gateway-request-validation-pending
+                                    - remove: x-auth-gateway-api-key-client
+                                    - remove: x-auth-gateway-mtls-fingerprint
+                                    - remove: x-auth-gateway-mtls-uri-san
+                                    - remove: x-auth-gateway-mtls-dns-san
+                        - name: auth_gateway.credentials
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
+                            mutations:
+                                request_mutations:
+                                    - remove: authorization
+                                    - remove: x-auth-gateway-api-key-client
+                                    - remove: x-auth-gateway-request-validation-pending
                         - name: envoy.filters.http.composite
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.Composite
@@ -200,6 +213,21 @@ static_resources:
                         - name: envoy.filters.http.router
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                    local_reply_config:
+                        mappers:
+                            - filter:
+                                and_filter:
+                                    filters:
+                                        - status_code_filter:
+                                            comparison:
+                                                value:
+                                                    default_value: 403
+                                        - header_filter:
+                                            header:
+                                                name: x-auth-gateway-request-validation-pending
+                                                string_match:
+                                                    exact: "true"
+                              status_code: 400
                     max_request_headers_kb: 32
                     normalize_path: true
                     path_with_escaped_slashes_action: UNESCAPE_AND_FORWARD
@@ -219,6 +247,10 @@ static_resources:
                                           string_match:
                                             exact: GET
                                     prefix: /protected/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: protected
                                   name: api-0-protected-route-0-method-0
                                   route:
                                     cluster: api-protected
@@ -237,12 +269,18 @@ static_resources:
                                                     typed_config:
                                                         '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.ExecuteFilterAction
                                                         filter_chain_name: admission-protected
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - match:
                                     headers:
                                         - name: :method
                                           string_match:
                                             exact: POST
                                     prefix: /protected/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: protected
                                   name: api-0-protected-route-0-method-1
                                   route:
                                     cluster: api-protected
@@ -261,12 +299,18 @@ static_resources:
                                                     typed_config:
                                                         '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.ExecuteFilterAction
                                                         filter_chain_name: admission-protected
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - match:
                                     headers:
                                         - name: :method
                                           string_match:
                                             exact: GET
                                     path: /protected-status
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: protected
                                   name: api-0-protected-route-1-method-0
                                   route:
                                     cluster: api-protected
@@ -285,12 +329,18 @@ static_resources:
                                                     typed_config:
                                                         '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.ExecuteFilterAction
                                                         filter_chain_name: admission-protected
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - match:
                                     headers:
                                         - name: :method
                                           string_match:
                                             exact: GET
                                     prefix: /other/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: other
                                   name: api-1-other-route-0-method-0
                                   route:
                                     cluster: api-other
@@ -309,12 +359,18 @@ static_resources:
                                                     typed_config:
                                                         '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.ExecuteFilterAction
                                                         filter_chain_name: admission-other
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - match:
                                     headers:
                                         - name: :method
                                           string_match:
                                             exact: GET
                                     prefix: /plain/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: plain
                                   name: api-2-plain-route-0-method-0
                                   route:
                                     cluster: api-plain
@@ -323,12 +379,19 @@ static_resources:
                                         max_stream_duration: 30s
                                     timeout: 30s
                                   stat_prefix: api-2-plain-route-0-method-0
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - match:
                                     headers:
                                         - name: :method
                                           string_match:
                                             exact: GET
                                     prefix: /disabled/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: disabled
                                   name: api-3-disabled-route-0-method-0
                                   route:
                                     cluster: api-disabled
@@ -337,61 +400,109 @@ static_resources:
                                         max_stream_duration: 30s
                                     timeout: 30s
                                   stat_prefix: api-3-disabled-route-0-method-0
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
                                     prefix: /protected/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: __local
                                   name: method-not-allowed-0
                                   response_headers_to_add:
                                     - append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                       header:
                                         key: allow
                                         value: GET, POST
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
                                     path: /protected-status
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: __local
                                   name: method-not-allowed-1
                                   response_headers_to_add:
                                     - append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                       header:
                                         key: allow
                                         value: GET
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
                                     prefix: /other/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: __local
                                   name: method-not-allowed-2
                                   response_headers_to_add:
                                     - append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                       header:
                                         key: allow
                                         value: GET
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
                                     prefix: /plain/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: __local
                                   name: method-not-allowed-3
                                   response_headers_to_add:
                                     - append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                       header:
                                         key: allow
                                         value: GET
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
                                     prefix: /disabled/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: __local
                                   name: method-not-allowed-4
                                   response_headers_to_add:
                                     - append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                       header:
                                         key: allow
                                         value: GET
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 404
                                   match:
                                     prefix: /
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: __local
                                   name: not-found
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                              typed_per_filter_config:
+                                envoy.filters.http.rbac:
+                                    '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                             - domains:
                                 - shared.admission.test
                               name: shared.admission.test
@@ -402,6 +513,10 @@ static_resources:
                                           string_match:
                                             exact: GET
                                     prefix: /protected/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: protected
                                   name: api-0-protected-route-0-method-0
                                   route:
                                     cluster: api-protected
@@ -420,12 +535,18 @@ static_resources:
                                                     typed_config:
                                                         '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.ExecuteFilterAction
                                                         filter_chain_name: admission-protected
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - match:
                                     headers:
                                         - name: :method
                                           string_match:
                                             exact: POST
                                     prefix: /protected/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: protected
                                   name: api-0-protected-route-0-method-1
                                   route:
                                     cluster: api-protected
@@ -444,12 +565,18 @@ static_resources:
                                                     typed_config:
                                                         '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.ExecuteFilterAction
                                                         filter_chain_name: admission-protected
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - match:
                                     headers:
                                         - name: :method
                                           string_match:
                                             exact: GET
                                     path: /protected-status
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: protected
                                   name: api-0-protected-route-1-method-0
                                   route:
                                     cluster: api-protected
@@ -468,31 +595,57 @@ static_resources:
                                                     typed_config:
                                                         '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.ExecuteFilterAction
                                                         filter_chain_name: admission-protected
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
                                     prefix: /protected/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: __local
                                   name: method-not-allowed-0
                                   response_headers_to_add:
                                     - append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                       header:
                                         key: allow
                                         value: GET, POST
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
                                     path: /protected-status
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: __local
                                   name: method-not-allowed-1
                                   response_headers_to_add:
                                     - append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                       header:
                                         key: allow
                                         value: GET
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 404
                                   match:
                                     prefix: /
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: __local
                                   name: not-found
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                              typed_per_filter_config:
+                                envoy.filters.http.rbac:
+                                    '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                     stat_prefix: ingress
                     stream_flush_timeout: 5s
                     stream_idle_timeout: 60s
@@ -555,6 +708,19 @@ static_resources:
                                     - remove: x-envoy-upstream-rq-timeout-alt-response
                                     - remove: x-envoy-retriable-status-codes
                                     - remove: x-envoy-retriable-header-names
+                                    - remove: x-auth-gateway-request-validation-pending
+                                    - remove: x-auth-gateway-api-key-client
+                                    - remove: x-auth-gateway-mtls-fingerprint
+                                    - remove: x-auth-gateway-mtls-uri-san
+                                    - remove: x-auth-gateway-mtls-dns-san
+                        - name: auth_gateway.credentials
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
+                            mutations:
+                                request_mutations:
+                                    - remove: authorization
+                                    - remove: x-auth-gateway-api-key-client
+                                    - remove: x-auth-gateway-request-validation-pending
                         - name: envoy.filters.http.composite
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.Composite
@@ -570,6 +736,21 @@ static_resources:
                         - name: envoy.filters.http.router
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                    local_reply_config:
+                        mappers:
+                            - filter:
+                                and_filter:
+                                    filters:
+                                        - status_code_filter:
+                                            comparison:
+                                                value:
+                                                    default_value: 403
+                                        - header_filter:
+                                            header:
+                                                name: x-auth-gateway-request-validation-pending
+                                                string_match:
+                                                    exact: "true"
+                              status_code: 400
                     max_request_headers_kb: 32
                     normalize_path: true
                     path_with_escaped_slashes_action: UNESCAPE_AND_FORWARD
@@ -589,6 +770,10 @@ static_resources:
                                           string_match:
                                             exact: GET
                                     prefix: /other/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: other
                                   name: api-0-other-route-0-method-0
                                   route:
                                     cluster: api-other
@@ -607,21 +792,40 @@ static_resources:
                                                     typed_config:
                                                         '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.ExecuteFilterAction
                                                         filter_chain_name: admission-other
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
                                     prefix: /other/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: __local
                                   name: method-not-allowed-0
                                   response_headers_to_add:
                                     - append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                       header:
                                         key: allow
                                         value: GET
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 404
                                   match:
                                     prefix: /
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: __local
                                   name: not-found
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                              typed_per_filter_config:
+                                envoy.filters.http.rbac:
+                                    '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                     stat_prefix: ingress
                     stream_flush_timeout: 5s
                     stream_idle_timeout: 60s
@@ -704,9 +908,37 @@ static_resources:
                                     - remove: x-envoy-upstream-rq-timeout-alt-response
                                     - remove: x-envoy-retriable-status-codes
                                     - remove: x-envoy-retriable-header-names
+                                    - remove: x-auth-gateway-request-validation-pending
+                                    - remove: x-auth-gateway-api-key-client
+                                    - remove: x-auth-gateway-mtls-fingerprint
+                                    - remove: x-auth-gateway-mtls-uri-san
+                                    - remove: x-auth-gateway-mtls-dns-san
+                        - name: auth_gateway.credentials
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
+                            mutations:
+                                request_mutations:
+                                    - remove: authorization
+                                    - remove: x-auth-gateway-api-key-client
+                                    - remove: x-auth-gateway-request-validation-pending
                         - name: envoy.filters.http.router
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                    local_reply_config:
+                        mappers:
+                            - filter:
+                                and_filter:
+                                    filters:
+                                        - status_code_filter:
+                                            comparison:
+                                                value:
+                                                    default_value: 403
+                                        - header_filter:
+                                            header:
+                                                name: x-auth-gateway-request-validation-pending
+                                                string_match:
+                                                    exact: "true"
+                              status_code: 400
                     max_request_headers_kb: 32
                     normalize_path: true
                     path_with_escaped_slashes_action: UNESCAPE_AND_FORWARD
@@ -726,6 +958,10 @@ static_resources:
                                           string_match:
                                             exact: GET
                                     prefix: /plain/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: plain
                                   name: api-0-plain-route-0-method-0
                                   route:
                                     cluster: api-plain
@@ -734,12 +970,19 @@ static_resources:
                                         max_stream_duration: 30s
                                     timeout: 30s
                                   stat_prefix: api-0-plain-route-0-method-0
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - match:
                                     headers:
                                         - name: :method
                                           string_match:
                                             exact: GET
                                     prefix: /disabled/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: disabled
                                   name: api-1-disabled-route-0-method-0
                                   route:
                                     cluster: api-disabled
@@ -748,31 +991,58 @@ static_resources:
                                         max_stream_duration: 30s
                                     timeout: 30s
                                   stat_prefix: api-1-disabled-route-0-method-0
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
                                     prefix: /plain/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: __local
                                   name: method-not-allowed-0
                                   response_headers_to_add:
                                     - append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                       header:
                                         key: allow
                                         value: GET
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
                                     prefix: /disabled/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: __local
                                   name: method-not-allowed-1
                                   response_headers_to_add:
                                     - append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                       header:
                                         key: allow
                                         value: GET
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 404
                                   match:
                                     prefix: /
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: __local
                                   name: not-found
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                              typed_per_filter_config:
+                                envoy.filters.http.rbac:
+                                    '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                     stat_prefix: ingress
                     stream_flush_timeout: 5s
                     stream_idle_timeout: 60s

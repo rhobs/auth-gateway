@@ -12,8 +12,9 @@ share a filter chain. HTTPS hosts select a certificate using TLS SNI, then
 match the exact HTTP `Host` or `:authority` value. A successful TLS handshake
 does not grant access to a host's routes. HTTPS hosts selecting an mTLS
 authenticator validate client certificates against its configured CA bundle.
-Certificate-only and `all_of` servers require a client certificate during the
-handshake; mixed `any_of` servers allow clients to connect without one.
+Dedicated mTLS servers always require a trusted client certificate during the
+handshake, using native `require_client_certificate: true`. Every bound API
+inherits this authentication, and additional API-level methods are rejected.
 
 Each host exposes only its listed APIs. API bindings and routes keep their
 declared order. Routes match an exact path, prefix, or RE2 expression and can
@@ -34,14 +35,26 @@ Envoy validates JWT signatures, issuer, expiry, and `nbf`; configured
 API-key filter validates the configured header against the complete
 Secret-backed credential set.
 
-For mixed `authentication.any_of`, a verified JWT takes precedence when both
-credentials are present, followed by a verified client certificate and then an
-API key. If a higher-priority credential is absent or invalid, Envoy can try
-the next method. An authenticated identity without an authorization grant is
-denied without trying a lower-priority credential. `all_of` requires every
-selected credential. Shared attributes must be nonempty scalar strings with
-equal original values. Invalid credentials return `401`; authenticated
-requests without a matching grant return `403`.
+Each server/API binding expands its original-header selectors into native
+exact-match routes. List selectors produce repeated routes for the allowed
+values. Each route selects its JWT requirement or enables the native API-key
+filter and supplies its own RBAC grants. Authentication is disabled by default
+and enabled only on selected routes. Public APIs require an explicit binding.
+Unmatched access returns `403`; `404` and `405` fallbacks do not authenticate.
+
+There is one selected credential type per entry. Multiple JWT providers use a
+native JWT `requires_any` requirement, with provider-specific verified metadata
+and grants. Another credential type never acts as a fallback or fills missing
+attributes. Invalid selected credentials normally return `401`; the pinned
+Envoy version returns `403` for an untrusted JWT audience. A valid identity
+without a matching grant returns `403`.
+
+A native RBAC CEL guard checks `request.headers`, where Envoy joins repeated
+values with commas. It rejects ambiguous selectors and selected credential
+headers before authentication. A short-lived internal header marks
+this guard so its local denials map to `400`. Input sanitization overwrites the
+marker, and it is removed after validation. Repeated selectors cannot select
+another access entry or reach the backend.
 
 Authorization, upstream headers, and metric labels use values from the declared
 attribute sources. Supply separate source attributes when these uses need
@@ -55,15 +68,18 @@ identity headers before forwarding.
 Envoy keeps source values in per-request dynamic metadata: `jwt_authn` provides
 verified JWT claims, while `header_to_metadata` captures configured request
 headers and values emitted by the API-key and mTLS filters. The native
-`set_filter_state` filter first records the chosen authenticator for mixed
-`any_of` requests. It copies attributes only from that identity, leaving its
-missing, empty, and undeclared values unset. Lower-priority credentials cannot
-fill those values. For `all_of`, every required identity can contribute
-attributes after shared original values have been checked for equality.
+`set_filter_state` filter is disabled by default and enabled per selected
+access route. Each route carries its own extraction settings and copies
+attributes only from its verifying provider. Missing, empty, or undeclared
+values stay unset. Another credential never
+contributes values. RBAC checks literal conditions against original metadata.
+Equality uses a native RBAC CEL condition and nonempty scalar guards for both
+source values, including request-header metadata captured before mutation.
 
 For API keys, `header_to_metadata` records a fixed verified identity marker
-from the native authentication filter's client header. Each credential
-attribute uses a separate extraction regex containing only its own name, so
+from the native authentication filter's client header. Per-route API-key
+configuration explicitly retains client forwarding and credential hiding.
+Each credential attribute uses a separate extraction regex containing only its own name, so
 adding attributes does not increase the size of existing regexes. Credential
 values must be shorter than Envoy's 8 KiB metadata value limit; the combined
 client header may exceed that size because it is not stored as one metadata
@@ -74,10 +90,6 @@ The filter uses CEL to copy source values into
 `auth_gateway.attributes.<name>`. Its configuration is part of the static
 bootstrap. RBAC evaluates grants against source metadata; filter state feeds
 managed upstream headers and metric labels with the same values.
-
-To apply the API-key extraction fix, regenerate the static bootstrap and
-explicitly roll out gateway Deployments. Existing generated `api-keys.yaml`
-credential resources remain compatible.
 
 ## Files and reloads
 
@@ -131,19 +143,6 @@ Envoy exports native update-failure counters for ECDS and SDS. The generated
 Collector exposes these counters at `/metrics`; production alerting is tracked
 in [resource update monitoring](resource-update-monitoring.md).
 
-### Upgrading after attribute mapping removal
-
-The former top-level `processing` block is no longer accepted. Supply any
-different upstream value as an additional JWT claim, API-key credential
-attribute, or permitted source header. Declare that source beside the
-authenticator and reference it in the route's `from_attribute` or the API's
-metric labels. Route-level `processing.request_headers` remains supported.
-
-Remove the top-level block, regenerate and apply the gateway resources, and
-explicitly roll out the Deployment. After the new Pods are ready, delete the
-obsolete `<name>-processing` ConfigMap. File-based deployments can delete the
-old `processing/processing.yaml` after restarting Envoy with the new bootstrap.
-
 ## Timeouts and overload protection
 
 Listener defaults include a `5s` request-header timeout, `30s` request timeout,
@@ -187,8 +186,7 @@ log, never reach the backend, and are excluded from the failure history.
 Admission settings and selectors are static bootstrap data. Regenerate and
 apply the gateway resources, then explicitly roll out the Envoy Deployment
 after changing them. The generated Deployment has no checksum annotation.
-Move any former top-level `admission_control` block manually into the APIs
-that need it; the schema stays at version `1`. See the
+See the
 [configuration reference](configuration-reference.md#admission-control).
 
 ## Fault injection

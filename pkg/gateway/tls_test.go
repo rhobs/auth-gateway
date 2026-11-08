@@ -1,14 +1,9 @@
 package gateway
 
 import (
-	"path"
-	"slices"
 	"strings"
 	"testing"
 
-	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
-	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
-	httpRBAC "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
 )
@@ -48,7 +43,7 @@ func TestValidateKubernetesTLSMounts(t *testing.T) {
 			c.Servers[1].TLSConfig = &gatewayapi.ServerTLS{Secret: "tls-one", Certificate: "/etc/tls-one/server.pem", PrivateKey: "/etc/tls-one/key.pem"}
 		}},
 		{name: "HTTP and HTTPS port conflict", want: "kubernetes.service_port and kubernetes.https_service_port", edit: func(c *gatewayapi.Config) {
-			c.Servers = append(c.Servers, gatewayapi.Server{Hostname: "http.example.com", APIs: []string{"metrics"}})
+			c.Servers = append(c.Servers, gatewayapi.Server{Hostname: "http.example.com", APIs: []gatewayapi.APIBinding{{Name: "metrics", Public: true}}})
 			c.Kubernetes.HTTPSServicePort = new(int32(80))
 		}},
 		{name: "HTTPS port without HTTPS", want: "kubernetes.https_service_port", edit: func(c *gatewayapi.Config) {
@@ -64,8 +59,8 @@ func TestValidateKubernetesTLSMounts(t *testing.T) {
 				t.Fatal(err)
 			}
 			config.Servers = []gatewayapi.Server{
-				{Hostname: "one.example.com", TLSConfig: &gatewayapi.ServerTLS{Secret: "tls-one"}, APIs: []string{"metrics"}},
-				{Hostname: "two.example.com", TLSConfig: &gatewayapi.ServerTLS{Secret: "tls-two"}, APIs: []string{"metrics"}},
+				{Hostname: "one.example.com", TLSConfig: &gatewayapi.ServerTLS{Secret: "tls-one"}, APIs: []gatewayapi.APIBinding{{Name: "metrics", Public: true}}},
+				{Hostname: "two.example.com", TLSConfig: &gatewayapi.ServerTLS{Secret: "tls-two"}, APIs: []gatewayapi.APIBinding{{Name: "metrics", Public: true}}},
 			}
 			test.edit(&config)
 			if err := Validate(config); err == nil || !strings.Contains(err.Error(), test.want) {
@@ -100,142 +95,6 @@ func TestServerTLSDefaults(t *testing.T) {
 				t.Fatalf("TLS paths = %s, %s, want %s, %s", got.Certificate, got.PrivateKey, test.certificate, test.privateKey)
 			}
 		})
-	}
-}
-
-func TestGenerateMTLSClientCAAndCertificateRequirements(t *testing.T) {
-	c := loadConfigCase(t, "mtls-auth")
-	files, err := Generate(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := len(files.ClientCAResources), 4; got != want {
-		t.Fatalf("client CA resource count = %d, want %d", got, want)
-	}
-
-	bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
-	chains := bootstrap.GetStaticResources().GetListeners()[0].GetFilterChains()
-	wantRequired := map[string]bool{
-		"mtls.gateway.test":  true,
-		"mixed.gateway.test": false,
-		"all.gateway.test":   true,
-		"trust.gateway.test": true,
-	}
-	effective := resolveTestConfig(t, c)
-	for serverIndex, server := range effective.servers {
-		if !server.usesMTLS() {
-			continue
-		}
-		caPath := path.Join(EnvoyConfigDirectory, clientCAResourceFilename(serverIndex))
-		resource := generatedContentsByPath(t, files, caPath)
-		secret := decodeTLSSecret(t, resource)
-		validation := secret.GetValidationContext()
-		if validation == nil {
-			t.Fatalf("client CA resource %q has no validation context", caPath)
-		}
-		if got, want := secret.GetName(), clientCASecretName(serverIndex); got != want {
-			t.Errorf("client CA secret name = %q, want %q", got, want)
-		}
-		caFilename := filenameTrustedCA(*server.mtls.MTLS.TrustedCA)
-		if got := validation.GetTrustedCa().GetFilename(); got != caFilename {
-			t.Errorf("trusted CA filename = %q, want %q", got, caFilename)
-		}
-		if got := validation.GetWatchedDirectory().GetPath(); got != path.Dir(caFilename) {
-			t.Errorf("trusted CA watched directory = %q, want %q", got, path.Dir(caFilename))
-		}
-
-		var chain *listener.FilterChain
-		for _, candidate := range chains {
-			for _, hostname := range candidate.GetFilterChainMatch().GetServerNames() {
-				if hostname == server.Hostname {
-					chain = candidate
-				}
-			}
-		}
-		if chain == nil {
-			t.Fatalf("TLS filter chain for %q is missing", server.Hostname)
-		}
-		var downstream tls.DownstreamTlsContext
-		if err := chain.GetTransportSocket().GetTypedConfig().UnmarshalTo(&downstream); err != nil {
-			t.Fatal(err)
-		}
-		if got := downstream.GetRequireClientCertificate(); got == nil || got.GetValue() != wantRequired[server.Hostname] {
-			t.Errorf("%s require_client_certificate = %v, want %t", server.Hostname, got, wantRequired[server.Hostname])
-		}
-		clientCA := downstream.GetCommonTlsContext().GetValidationContextSdsSecretConfig()
-		if clientCA == nil {
-			t.Fatalf("%s has no client CA SDS reference", server.Hostname)
-		}
-		if got, want := clientCA.GetName(), clientCASecretName(serverIndex); got != want {
-			t.Errorf("%s client CA SDS name = %q, want %q", server.Hostname, got, want)
-		}
-		if got, want := clientCA.GetSdsConfig().GetPathConfigSource().GetPath(), caPath; got != want {
-			t.Errorf("%s client CA SDS path = %q, want %q", server.Hostname, got, want)
-		}
-	}
-}
-
-func TestMTLSAllOfSharedAttributesAreCheckedAfterAuthentication(t *testing.T) {
-	c := loadConfigCase(t, "mtls-auth")
-	files, err := Generate(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
-	var allChain *listener.FilterChain
-	for _, chain := range bootstrap.GetStaticResources().GetListeners()[0].GetFilterChains() {
-		if slices.Contains(chain.GetFilterChainMatch().GetServerNames(), "all.gateway.test") {
-			allChain = chain
-			break
-		}
-	}
-	if allChain == nil {
-		t.Fatal("all_of TLS filter chain is missing")
-	}
-	manager := decodeHTTPManager(t, allChain)
-
-	names := httpFilterNames(manager)
-	index := func(name string) int { return slices.Index(names, name) }
-	if index(authenticationFilterName) < 0 ||
-		index(mtlsPendingCleanupFilterName) <= index(authenticationFilterName) ||
-		index(mtlsSANCardinalityFilterName) <= index(mtlsPendingCleanupFilterName) ||
-		index(mtlsSharedAttributesFilterName) <= index(mtlsSANCardinalityFilterName) {
-		t.Fatalf("mTLS filter order = %v", names)
-	}
-
-	var allHost *route.VirtualHost
-	for _, host := range manager.GetRouteConfig().GetVirtualHosts() {
-		if host.GetName() == "all.gateway.test" {
-			allHost = host
-			break
-		}
-	}
-	if allHost == nil {
-		t.Fatal("all_of virtual host is missing")
-	}
-	var authentication httpRBAC.RBACPerRoute
-	authenticationConfig := allHost.GetTypedPerFilterConfig()[authenticationFilterName]
-	if authenticationConfig == nil {
-		t.Fatal("all_of authentication rules are missing")
-	}
-	if err := authenticationConfig.UnmarshalTo(&authentication); err != nil {
-		t.Fatal(err)
-	}
-	if policy := authentication.GetRbac().GetRules().GetPolicies()["authenticated"]; policy == nil || policy.GetCondition() != nil {
-		t.Fatalf("all_of authentication still checks shared attributes: %#v", policy)
-	}
-
-	var sharedAttributes httpRBAC.RBACPerRoute
-	sharedAttributesConfig := allHost.GetTypedPerFilterConfig()[mtlsSharedAttributesFilterName]
-	if sharedAttributesConfig == nil {
-		t.Fatal("all_of shared-attribute rules are missing")
-	}
-	if err := sharedAttributesConfig.UnmarshalTo(&sharedAttributes); err != nil {
-		t.Fatal(err)
-	}
-	policy := sharedAttributes.GetRbac().GetRules().GetPolicies()["shared-attributes"]
-	if policy == nil || policy.GetCondition() == nil || len(policy.GetPrincipals()) == 0 {
-		t.Fatalf("all_of shared-attribute policy = %#v", policy)
 	}
 }
 
@@ -280,5 +139,40 @@ func TestKubernetesTrustedCAFilenameUsesContainerFileWithoutMount(t *testing.T) 
 	}
 	if configMapVolumeCount != len(configMapNames) {
 		t.Fatalf("ConfigMap volume count = %d, want %d generated configuration volumes", configMapVolumeCount, len(configMapNames))
+	}
+}
+
+func TestDedicatedMTLSRequiresCertificateForItsEntireAPISet(t *testing.T) {
+	c := loadConfigCase(t, "access-control")
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
+	var found bool
+	for _, chain := range bootstrap.GetStaticResources().GetListeners()[0].GetFilterChains() {
+		if chain.GetTransportSocket() == nil {
+			continue
+		}
+		found = true
+		var transport tls.DownstreamTlsContext
+		if err := chain.TransportSocket.GetTypedConfig().UnmarshalTo(&transport); err != nil {
+			t.Fatal(err)
+		}
+		if !transport.GetRequireClientCertificate().GetValue() || transport.GetCommonTlsContext().GetValidationContextSdsSecretConfig() == nil {
+			t.Fatal("mTLS must require a verified certificate during the handshake")
+		}
+		manager := decodeHTTPManager(t, chain)
+		for _, name := range []string{jwtAuthnFilterName, apiKeyFilterName} {
+			if hasHTTPFilter(manager, name) {
+				t.Fatalf("dedicated mTLS manager enables %q", name)
+			}
+		}
+		if hosts := manager.GetRouteConfig().GetVirtualHosts(); len(hosts) != 1 || hosts[0].Name != "cert.access.test" {
+			t.Fatalf("mTLS host isolation = %v", hosts)
+		}
+	}
+	if !found {
+		t.Fatal("dedicated mTLS filter chain is missing")
 	}
 }

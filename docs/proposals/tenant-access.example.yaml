@@ -1,0 +1,386 @@
+# Tenant access configuration proposal.
+# Both access styles are supported by the current loader.
+# Complete migration with no backward compatibility.
+# mTLS is a dedicated HTTPS server mode with mandatory client certificates.
+#
+# metrics-write demonstrates both access styles together:
+# - client-123: concrete external JWT policy with literal attribute allowlists.
+# - client-456 and client-789: shared internal JWT policy with tenant equality.
+# - customer-456: a separate API-key policy.
+# A separate mTLS write server authenticates the same resource using certificates.
+#
+# Header value lists and equals_attribute are optional extensions to concrete
+# tenant entries and literal grants. There is no separate tenancy block.
+# Every entry in this example also requires X-Environment: production.
+# Request semantics, example identities, and migration notes follow the config.
+version: 1
+
+listener:
+  port: 8080
+
+# Shared credential validation and original attribute sources.
+authenticators:
+  - name: internal-jwt
+    jwt:
+      issuer: https://sso.internal.example.com/realms/observability
+      jwks:
+        uri: https://sso.internal.example.com/realms/observability/protocol/openid-connect/certs
+      audiences: [metrics-gateway]
+    attributes:
+      tenant_id:
+        claim_path: [organization, id]
+      role:
+        claim_path: [role]
+      requested_tenant:
+        header: X-Tenant
+
+  - name: external-jwt
+    jwt:
+      issuer: https://sso.customer.example.com/realms/customer
+      jwks:
+        uri: https://sso.customer.example.com/realms/customer/protocol/openid-connect/certs
+      audiences: [metrics-gateway]
+    attributes:
+      tenant_id:
+        claim_path: [tenant, id]
+      role:
+        claim_path: [application_role]
+      requested_tenant:
+        header: X-Tenant
+
+  - name: partner-key
+    api_key:
+      secret: metrics-api-keys
+      header: X-API-Key
+    attributes:
+      tenant_id: {credential: true}
+      role: {credential: true}
+      writer_id: {credential: true}
+      requested_tenant:
+        header: X-Tenant
+
+  - name: partner-cert
+    mtls:
+      trusted_ca:
+        config_map: {name: partner-client-ca, key: ca.crt}
+    attributes:
+      tenant_id: {uri_san: true}
+      writer_id: {dns_san: true}
+      requested_tenant:
+        header: X-Tenant
+
+# APIs define resources, routes, upstreams, and forwarding.
+# Each server binding groups tenants under shared access rules.
+apis:
+  - name: metrics-write
+    upstream:
+      address: metrics-writer.observability.svc.cluster.local
+      port: 8080
+    metrics: {}
+    routes:
+      - methods: [POST]
+        path: {exact: /api/v1/write}
+        processing:
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: requested_tenant
+
+  - name: metrics-query
+    upstream:
+      address: metrics-reader.observability.svc.cluster.local
+      port: 8080
+    metrics: {}
+    routes:
+      - methods: [GET, POST]
+        path: {exact: /api/v1/query}
+        processing:
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: requested_tenant
+      - methods: [GET, POST]
+        path: {exact: /api/v1/query_range}
+        processing:
+          request_headers:
+            - name: X-Scope-OrgID
+              from_attribute: requested_tenant
+
+servers:
+  - hostname: metrics.example.com
+    tls_config:
+      secret: metrics-gateway-tls
+    apis:
+      - name: metrics-write
+        access:
+          # A concrete tenant keeps an external JWT grant with literal values.
+          - tenant: client-123
+            match:
+              headers:
+                X-Tenant: {exact: client-123}
+                X-Environment: {exact: production}
+            authentication:
+              jwt:
+                providers: [external-jwt]
+            authorization:
+              grants:
+                - authenticator: external-jwt
+                  attributes:
+                    tenant_id: [organization-789]
+                    role: [writer]
+
+          # These tenants write using internal JWTs only.
+          - name: internal-writers
+            match:
+              headers:
+                X-Tenant: {in: [client-456, client-789]}
+                X-Environment: {exact: production}
+            authentication:
+              jwt:
+                providers: [internal-jwt]
+            authorization:
+              grants:
+                - authenticator: internal-jwt
+                  attributes:
+                    tenant_id:
+                      equals_attribute: requested_tenant
+                    role: [writer]
+
+          # These tenants write using API keys only.
+          - name: partner-writers
+            match:
+              headers:
+                X-Tenant: {in: [customer-456]}
+                X-Environment: {exact: production}
+            authentication:
+              api_key:
+                authenticator: partner-key
+            authorization:
+              grants:
+                - authenticator: partner-key
+                  attributes:
+                    tenant_id:
+                      equals_attribute: requested_tenant
+                    role: [writer]
+                    writer_id: [agent-17, agent-18]
+
+      - name: metrics-query
+        access:
+          # Both tenants share the same providers and permission rules.
+          - name: readers
+            match:
+              headers:
+                X-Tenant: {in: [client-123, customer-456]}
+                X-Environment: {exact: production}
+            authentication:
+              jwt:
+                providers: [internal-jwt, external-jwt]
+            authorization:
+              grants:
+                - authenticator: internal-jwt
+                  attributes:
+                    tenant_id:
+                      equals_attribute: requested_tenant
+                    role: [reader, admin]
+                - authenticator: external-jwt
+                  attributes:
+                    tenant_id:
+                      equals_attribute: requested_tenant
+                    role: [viewer]
+
+  # The same query API has a narrower issuer set on this hostname.
+  - hostname: internal-query.example.com
+    tls_config:
+      secret: metrics-gateway-tls
+    apis:
+      - name: metrics-query
+        access:
+          - name: internal-readers
+            match:
+              headers:
+                X-Tenant: {in: [client-123]}
+                X-Environment: {exact: production}
+            authentication:
+              jwt:
+                providers: [internal-jwt]
+            authorization:
+              grants:
+                - authenticator: internal-jwt
+                  attributes:
+                    tenant_id:
+                      equals_attribute: requested_tenant
+                    role: [reader, admin]
+
+  # Client certificates are mandatory for this server's entire API set.
+  - hostname: mtls-write.example.com
+    tls_config:
+      secret: mtls-write-gateway-tls
+      mtls:
+        authenticator: partner-cert
+    apis:
+      - name: metrics-write
+        access:
+          - tenant: customer-456
+            match:
+              headers:
+                X-Tenant: {exact: customer-456}
+                X-Environment: {exact: production}
+            # Authentication is inherited; any API-level auth is a config error.
+            authorization:
+              grants:
+                - authenticator: partner-cert
+                  attributes:
+                    tenant_id: ['spiffe://partners.example.com/customer-456']
+                    writer_id: [writer-17.partners.example.com]
+
+observability:
+  metrics:
+    enabled: true
+
+kubernetes:
+  name: tenant-auth-gateway
+  namespace: observability
+  replicas: 2
+  https_service_port: 443
+
+# Request semantics
+#
+# On the mTLS server, first complete TLS with a trusted client certificate.
+# Missing or invalid certificates fail the handshake before HTTP processing.
+# 1. Match the hostname, API path, and HTTP method.
+# 2. Select one access entry using the original request headers.
+# 3. Use the entry's validator or the server's verified certificate identity.
+# 4. Check only grants belonging to the verifying authenticator.
+# 5. Forward after a grant succeeds and required forwarding attributes exist.
+#
+# Each header matcher sets exact or in. All configured headers must match.
+# Lists contain allowed values for a single request header, not multiple tenant
+# values in one request. Tenant selectors cannot overlap within a server/API,
+# even when other header conditions differ. There is no fallback between entries
+# or credential types. Missing access or grants is a config error; omission does
+# not make an API public. JWT/API-key entries require authentication; mTLS entries
+# inherit it and must omit that block. Public APIs use explicit public: true.
+#
+# tenant labels a concrete entry; name labels a shared entry. Grants already
+# belong to a server/API, so they do not repeat resource names. Roles here are
+# literal values: admin does not implicitly grant writer access.
+#
+# Grant conditions all have to match. Literal lists accept an allowed scalar
+# value or an allowed member of a verified JWT list claim. For equals_attribute,
+# the left side must be credential-derived; the referenced attribute may come
+# from a matched header captured before mutation. Both names must be declared
+# by the same authenticator. Equality requires nonempty scalar strings and
+# compares original values without normalization, translation, or merging.
+#
+# The internal writer grant binds the particular X-Tenant value to the verified
+# tenant_id. Checking both against independent allowlists would not bind them.
+# The concrete external writer instead explicitly permits organization-789 to
+# write to client-123. Neither source value is rewritten.
+#
+# JWT entries accept one bearer token and providers with distinct issuers.
+# Signature, issuer, audience, and time checks must pass before claims are trusted.
+# Provider-specific grants cannot use another provider's identity or attributes.
+# Unselected credential types are ignored and removed before forwarding.
+#
+# mTLS exclusivity
+#
+# Dedicated servers only; per-API mTLS on a shared JWT/key server is unsupported.
+# tls_config.mtls selects one named mTLS authenticator for the whole server.
+# A server certificate and explicit client CA are required. Client certificates
+# are always required during TLS establishment; no optional-certificate mode.
+# Every bound API inherits this identity and retains its own authorization.
+# Reject as configuration errors:
+# - Any access[].authentication on any API bound to this mTLS server, even for
+#   another tenant/API or the same certificate authenticator.
+# - Any grant naming an authenticator other than the server's mTLS authenticator.
+# - A non-mTLS authenticator reference or missing client CA/server certificate.
+# Another server can expose the same API with JWTs or keys; exclusivity applies
+# to this server's bound API set. This dedicated server exposes only metrics-write.
+# JWT/key headers never replace or supplement certificate authentication. They
+# are ignored and removed; only the certificate identity can authorize a request.
+#
+# X-Scope-OrgID is replaced from requested_tenant after authorization. Bearer
+# tokens, API keys, and internal identity headers are removed before forwarding.
+# Backend Services must enforce tenant isolation using X-Scope-OrgID. The
+# environment header selects requested context; it does not attest where the
+# caller runs. Tenant context is request-scoped, including on reused connections.
+#
+# Expected outcomes, assuming otherwise valid credentials and production context:
+# - Write client-123, external organization-789 with role writer: allowed.
+# - Write client-123 with an internal JWT: 401; the selected provider is external.
+# - Write client-123, external token with another tenant or role: 403.
+# - Write client-456 or client-789, matching internal tenant and writer: allowed.
+# - Write client-789 using an internal token for client-456: 403, despite both
+#   tenant names being present in the configured header list.
+# - Write client-456, internal tenant missing, empty, or list-valued: 403.
+# - Write client-456 with only an external JWT: 401.
+# - Write customer-456 using its approved partner key: allowed.
+# - Write customer-456 using a key with another tenant or writer: 403.
+# - Write customer-456, valid key plus invalid JWT: allowed; only the key is used.
+# - Query client-123 or customer-456 with a matching internal reader/admin or
+#   external viewer: allowed through the shared query entry.
+# - Query client-123 with external tenant organization-789: 403; query uses
+#   equality, while the concrete write grant permits that fixed relationship.
+# - Query using only an API key: 401; write access does not grant query access.
+# - Query with an expired JWT plus a valid key: 401; no credential fallback.
+# - Query on internal-query.example.com using an external JWT: 401.
+# - Query customer-456 on internal-query.example.com: 403; no matching entry.
+# - Write on internal-query.example.com: 404; that API is not exposed there.
+# - Write customer-456 on mtls-write.example.com with the configured trusted URI
+#   and DNS SANs: allowed; the backend tenant is customer-456.
+# - Connect to mtls-write.example.com without a cert or with an invalid/untrusted
+#   cert: TLS handshake failure, including when JWT/key credentials are supplied.
+# - Write on the mTLS server with a trusted but unauthorized certificate: 403.
+# - Query on the mTLS server with a valid certificate: 404; no query API is bound.
+# - Missing/unknown tenant or missing/wrong environment: 403.
+# - Repeated selector/selected credential headers or comma-separated selectors: 400.
+# - Unknown host/path: 404; unsupported method on a known path: 405.
+# - A caller-supplied X-Scope-OrgID is replaced by the authorized request tenant.
+# Denials must not reach the backend. Allowed requests return the backend status.
+#
+# Example verified attributes, extracted using the sources above:
+# - Internal writer: tenant_id=client-456, role=writer.
+# - External concrete writer: tenant_id=organization-789, role=writer.
+# - Internal reader: tenant_id=client-123, role=reader.
+# - External reader: tenant_id=client-123, role=viewer.
+# - mTLS writer: tenant_id=spiffe://partners.example.com/customer-456 and
+#   writer_id=writer-17.partners.example.com, from verified URI and DNS SANs.
+# The external provider reads tenant.id and application_role; the internal
+# provider reads organization.id and role. Attribute values remain unchanged.
+#
+# Example API-key credential document, shown only as comments (not a config field).
+# This is a deliberately fake key:
+# credentials:
+#   - key: EXAMPLE-ONLY-NOT-A-REAL-KEY
+#     attributes:
+#       tenant_id: customer-456
+#       role: writer
+#       writer_id: agent-17
+#
+# Migration and operations
+#
+# Migrate schema, validation, generator, docs, fixtures, goldens, and tests
+# together. Remove general server-wide auth selections, global auth policies,
+# any_of/all_of composition, mixed-method fallback/precedence, and attribute
+# merging/equality between credentials. Keep the explicit authorization
+# comparison between verified attributes and request context. No legacy schema
+# acceptance or compatibility adapter is required. mTLS is the explicit
+# server-level exception and cannot be combined with API-level authentication.
+#
+# Keep provider provenance, source values, credential reloads, and forwarding
+# protections. Cover selector uniqueness, tenant/resource isolation, selected
+# credential validation, provider-specific grants, and header comparisons. Cover
+# mTLS exclusivity validation, required certificates, and certificate grants.
+#
+# External resources: observability namespace, both backend Services, reachable
+# JWKS endpoints, metrics-gateway-tls covering both hostnames, and the API-key
+# resource generated from metrics-api-keys. No live credentials are supplied.
+# The mTLS server also needs mtls-write-gateway-tls for its hostname and a
+# partner-client-ca ConfigMap containing the trusted client CA in ca.crt.
+#
+# Selectors, auth, routes, and forwarding remain static bootstrap configuration.
+# Changes require regeneration and an explicit Envoy Deployment rollout.
+# Credential-only API-key updates retain the existing reload mechanism.
+# Client CA updates retain the existing reload behavior for new connections.
+# Switching credential type is coordinated without a mixed-method overlap.
+# API/status counters here have no attribute labels. Diagnostics should identify
+# resource, requested tenant, verifying authenticator, and denial stage without
+# logging credentials.

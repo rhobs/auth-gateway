@@ -382,26 +382,20 @@ func TestReferenceErrorsFollowConfiguredOrder(t *testing.T) {
 		edit  func(*gatewayapi.Config)
 	}{
 		{
-			name: "API binding", field: "servers[2].apis",
-			edit: func(c *gatewayapi.Config) { c.Servers[2].APIs = []string{"z-missing", "a-missing"} },
-		},
-		{
-			name: "authenticator binding", field: "servers[2].authentication.any_of",
-			edit: func(c *gatewayapi.Config) { c.Servers[2].Authentication.AnyOf = []string{"z-missing", "a-missing"} },
-		},
-		{
-			name: "policy binding", field: "servers[2].authorization.any_of",
-			edit: func(c *gatewayapi.Config) { c.Servers[2].Authorization.AnyOf = []string{"z-missing", "a-missing"} },
-		},
-		{
-			name: "grant API", field: "authorization_policies[0].grants[0].apis",
+			name: "API binding", field: "servers[0].apis",
 			edit: func(c *gatewayapi.Config) {
-				c.AuthorizationPolicies[0].Grants[0].APIs = []string{"z-missing", "a-missing"}
+				c.Servers[0].APIs = []gatewayapi.APIBinding{{Name: "z-missing"}, {Name: "a-missing"}}
+			},
+		},
+		{
+			name: "JWT provider", field: "servers[0].apis[0].access[0].authentication.jwt.providers",
+			edit: func(c *gatewayapi.Config) {
+				c.Servers[0].APIs[0].Access[0].Authentication.JWT.Providers = []string{"z-missing", "a-missing"}
 			},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			c := loadConfigCase(t, "api-key-auth")
+			c := loadConfigCase(t, "access-control")
 			test.edit(&c)
 			for _, operation := range []struct {
 				name string
@@ -555,17 +549,20 @@ func TestGenerateKubernetesSelectorsIgnoreNodeCluster(t *testing.T) {
 func TestGenerateKubernetesPreservesYAMLImageOverrides(t *testing.T) {
 	const input = `version: 1
 servers:
-  - hostname: auth.example.com
-    apis: [status]
-apis:
+- hostname: auth.example.com
+  apis:
   - name: status
-    upstream:
-      address: httpbin
-      port: 8080
-    routes:
-      - methods: [GET]
-        path:
-          exact: /status
+    public: true
+apis:
+- name: status
+  upstream:
+    address: httpbin
+    port: 8080
+  routes:
+  - methods:
+    - GET
+    path:
+      exact: "/status"
 kubernetes:
   name: auth-gateway
   namespace: image-overrides
@@ -686,8 +683,8 @@ func TestGenerateKubernetesMountsServerTLSSecretAndSharesListenerPort(t *testing
 		PrivateKey:  "/etc/gateway-certs/tls.key",
 	}
 	config.Servers = []gatewayapi.Server{
-		{Hostname: "auth.example.com", APIs: []string{"metrics"}},
-		{Hostname: "mts.auth.example.com", TLSConfig: tlsConfig, APIs: []string{"metrics"}},
+		{Hostname: "auth.example.com", APIs: []gatewayapi.APIBinding{{Name: "metrics", Public: true}}},
+		{Hostname: "mts.auth.example.com", TLSConfig: tlsConfig, APIs: []gatewayapi.APIBinding{{Name: "metrics", Public: true}}},
 	}
 	resources, err := GenerateKubernetes(config)
 	if err != nil {
@@ -748,7 +745,7 @@ func TestGenerateKubernetesOmitsHTTPServicePortForHTTPSOnly(t *testing.T) {
 	config.Servers = []gatewayapi.Server{{
 		Hostname:  "mts.auth.example.com",
 		TLSConfig: &gatewayapi.ServerTLS{Secret: "auth-gateway-tls"},
-		APIs:      []string{"metrics"},
+		APIs:      []gatewayapi.APIBinding{{Name: "metrics", Public: true}},
 	}}
 	resources, err := GenerateKubernetes(config)
 	if err != nil {

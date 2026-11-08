@@ -66,6 +66,8 @@ authenticators:
         claim_path: [organization, id]
       writer_id:
         claim_path: [sub]
+      role:
+        claim_path: [role]
       requested_tenant:
         header: X-Tenant
 
@@ -80,6 +82,10 @@ authenticators:
         claim_path: [organization, id]
       writer_id:
         claim_path: [sub]
+      role:
+        claim_path: [role]
+      requested_tenant:
+        header: X-Tenant
 
   - name: partner-key
     api_key:
@@ -87,6 +93,7 @@ authenticators:
       header: X-Partner-Key # Optional; defaults to X-API-Key.
     attributes:
       tenant_id: {credential: true}
+      role: {credential: true}
       writer_id: {credential: true}
       requested_tenant:
         header: X-Tenant
@@ -102,58 +109,6 @@ authenticators:
       writer_id: {dns_san: true}
       requested_tenant:
         header: X-Tenant
-
-authorization_policies:
-  - name: metrics-writers
-    grants:
-      - authenticator: internal-jwt
-        apis: [metrics-write]
-        attributes:
-          tenant_id: [client-123, client-456]
-      - authenticator: external-jwt
-        apis: [metrics-write]
-        attributes:
-          tenant_id: [customer-456]
-
-  - name: logs-writers
-    grants:
-      - authenticator: internal-jwt
-        apis: [logs]
-        attributes:
-          tenant_id: [client-123]
-      - authenticator: external-jwt
-        apis: [logs]
-        attributes:
-          tenant_id: [customer-456, customer-789]
-
-  - name: query-readers
-    grants:
-      - authenticator: internal-jwt
-        apis: [metrics-query]
-        attributes:
-          tenant_id: [client-123, client-456]
-      - authenticator: external-jwt
-        apis: [metrics-query]
-        attributes:
-          tenant_id: [customer-456]
-
-  - name: partner-metrics-writers
-    grants:
-      - authenticator: partner-key
-        apis: [metrics-write]
-        attributes:
-          tenant_id: [client-123]
-          writer_id: [writer-17]
-          requested_tenant: [client-123]
-
-  - name: partner-certificate-writers
-    grants:
-      - authenticator: partner-cert
-        apis: [metrics-write]
-        attributes:
-          tenant_id: [spiffe://partners.example.com/client-123]
-          writer_id: [writer-17.partners.example.com]
-          requested_tenant: [client-123]
 
 # Metrics collection is enabled by default. Per-API counters still need
 # apis[].metrics. Tracing is disabled by default.
@@ -237,7 +192,7 @@ apis:
         processing:
           request_headers:
             - name: X-Scope-OrgID
-              from_attribute: tenant_id
+              from_attribute: requested_tenant
             - name: X-Writer-ID
               from_attribute: writer_id
         # Optional per-route timeout overrides have the same fields as
@@ -316,82 +271,166 @@ apis:
         processing:
           request_headers:
             - name: X-Scope-OrgID
-              from_attribute: tenant_id
+              from_attribute: requested_tenant
 
 servers:
-  - hostname: write-internal.auth.example.com
-    authentication:
-      any_of: [internal-jwt, external-jwt]
-    authorization:
-      any_of: [metrics-writers, logs-writers, query-readers]
-    apis: [metrics-write, metrics-query, logs]
-
-  - hostname: write.auth.example.com
+  - hostname: metrics.example.com
     tls_config:
-      secret: write-gateway-tls
-      # certificate and private_key default to /etc/<secret>/tls.crt and
-      # /etc/<secret>/tls.key. Set them only for a custom file layout.
-      # certificate: /etc/write-gateway-tls/tls.crt
-      # private_key: /etc/write-gateway-tls/tls.key
-    authentication:
-      any_of: [internal-jwt, external-jwt]
-    authorization:
-      any_of: [metrics-writers, logs-writers, query-readers]
-    apis: [metrics-write, metrics-query, logs]
+      secret: metrics-gateway-tls
+    apis:
+      - name: metrics-write
+        access:
+          # A concrete tenant keeps an external JWT grant with literal values.
+          - tenant: client-123
+            match:
+              headers:
+                X-Tenant: {exact: client-123}
+                X-Environment: {exact: production}
+            authentication:
+              jwt:
+                providers: [external-jwt]
+            authorization:
+              grants:
+                - authenticator: external-jwt
+                  attributes:
+                    tenant_id: [organization-789]
+                    role: [writer]
 
-  - hostname: partner.auth.example.com
-    authentication:
-      any_of: [partner-key]
-    authorization:
-      any_of: [partner-metrics-writers]
-    apis: [metrics-write]
+          # These tenants write using internal JWTs only.
+          - name: internal-writers
+            match:
+              headers:
+                X-Tenant: {in: [client-456, client-789]}
+                X-Environment: {exact: production}
+            authentication:
+              jwt:
+                providers: [internal-jwt]
+            authorization:
+              grants:
+                - authenticator: internal-jwt
+                  attributes:
+                    tenant_id:
+                      equals_attribute: requested_tenant
+                    role: [writer]
 
-  - hostname: cert.auth.example.com
+          # These tenants write using API keys only.
+          - name: partner-writers
+            match:
+              headers:
+                X-Tenant: {in: [customer-456]}
+                X-Environment: {exact: production}
+            authentication:
+              api_key:
+                authenticator: partner-key
+            authorization:
+              grants:
+                - authenticator: partner-key
+                  attributes:
+                    tenant_id:
+                      equals_attribute: requested_tenant
+                    role: [writer]
+                    writer_id: [agent-17, agent-18]
+
+      - name: metrics-query
+        access:
+          # Both tenants share the same providers and permission rules.
+          - name: readers
+            match:
+              headers:
+                X-Tenant: {in: [client-123, customer-456]}
+                X-Environment: {exact: production}
+            authentication:
+              jwt:
+                providers: [internal-jwt, external-jwt]
+            authorization:
+              grants:
+                - authenticator: internal-jwt
+                  attributes:
+                    tenant_id:
+                      equals_attribute: requested_tenant
+                    role: [reader, admin]
+                - authenticator: external-jwt
+                  attributes:
+                    tenant_id:
+                      equals_attribute: requested_tenant
+                    role: [viewer]
+
+  # The same query API has a narrower issuer set on this hostname.
+      - name: logs
+        access:
+          - name: log-writers
+            match:
+              headers:
+                X-Tenant: {in: [client-123, customer-456]}
+                X-Environment: {exact: production}
+            authentication:
+              jwt: {providers: [internal-jwt, external-jwt]}
+            authorization:
+              grants:
+                - authenticator: internal-jwt
+                  attributes:
+                    tenant_id: {equals_attribute: requested_tenant}
+                    role: [writer]
+                - authenticator: external-jwt
+                  attributes:
+                    tenant_id: {equals_attribute: requested_tenant}
+                    role: [writer]
+
+  - hostname: internal-query.example.com
     tls_config:
-      secret: write-gateway-tls
-    authentication:
-      any_of: [partner-cert]
-    authorization:
-      any_of: [partner-certificate-writers]
-    apis: [metrics-write]
+      secret: metrics-gateway-tls
+    apis:
+      - name: metrics-query
+        access:
+          - name: internal-readers
+            match:
+              headers:
+                X-Tenant: {in: [client-123]}
+                X-Environment: {exact: production}
+            authentication:
+              jwt:
+                providers: [internal-jwt]
+            authorization:
+              grants:
+                - authenticator: internal-jwt
+                  attributes:
+                    tenant_id:
+                      equals_attribute: requested_tenant
+                    role: [reader, admin]
 
-  - hostname: either.auth.example.com
-    authentication:
-      # A valid JWT wins when both JWT and API-key credentials are present.
-      # Only that identity supplies attributes; missing values stay unset.
-      any_of: [internal-jwt, partner-key]
-    authorization:
-      any_of: [metrics-writers, partner-metrics-writers]
-    apis: [metrics-write]
-
-  - hostname: either-with-cert.auth.example.com
+  # Client certificates are mandatory for this server's entire API set.
+  - hostname: mtls-write.example.com
     tls_config:
-      secret: write-gateway-tls
-    authentication:
-      # A valid JWT wins, followed by a verified certificate, then an API key.
-      # Only that identity supplies attributes; missing values stay unset.
-      any_of: [internal-jwt, partner-cert, partner-key]
-    authorization:
-      any_of: [metrics-writers, partner-certificate-writers, partner-metrics-writers]
-    apis: [metrics-write]
+      secret: mtls-write-gateway-tls
+      mtls:
+        authenticator: partner-cert
+    apis:
+      - name: metrics-write
+        access:
+          - tenant: customer-456
+            match:
+              headers:
+                X-Tenant: {exact: customer-456}
+                X-Environment: {exact: production}
+            # Authentication is inherited; any API-level auth is a config error.
+            authorization:
+              grants:
+                - authenticator: partner-cert
+                  attributes:
+                    tenant_id: ['spiffe://partners.example.com/customer-456']
+                    writer_id: [writer-17.partners.example.com]
 
-  - hostname: both.auth.example.com
-    authentication:
-      # Shared attributes must have matching nonempty raw values.
-      all_of: [internal-jwt, partner-key]
-    authorization:
-      all_of: [metrics-writers, partner-metrics-writers]
-    apis: [metrics-write]
-
-  # A server without authentication is public.
-  # - hostname: public.auth.example.com
-  #   apis: [metrics-query]
+# Public APIs require an explicit public binding and no access entries.
+# - hostname: public.example.com
+#   apis:
+#     - name: metrics-query
+#       public: true
 
 kubernetes:
   name: auth-gateway # Also identifies this gateway in Pod and Service selectors.
   namespace: observability
-  image: "" # Empty or omitted uses config.DefaultEnvoyImage.
-  otel_collector_image: "" # Empty or omitted uses config.DefaultOTelCollectorImage.
+  image: "" # Empty or omitted uses gateway.DefaultEnvoyImage.
+  otel_collector_image: "" # Empty or omitted uses gateway.DefaultOTelCollectorImage.
   replicas: 2 # Default.
   # service_port: 80 # Default.
   # https_service_port: 443 # Default when an HTTPS server exists.

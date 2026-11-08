@@ -1,16 +1,20 @@
+---
 version: 1
 servers:
-  - hostname: auth.example.com
-    apis: [metrics]
-apis:
+- hostname: auth.example.com
+  apis:
   - name: metrics
-    upstream:
-      address: thanos-receive
-      port: 19291
-    routes:
-      - methods: [POST]
-        path:
-          exact: /metrics/api/v1/receive
+    public: true
+apis:
+- name: metrics
+  upstream:
+    address: thanos-receive
+    port: 19291
+  routes:
+  - methods:
+    - POST
+    path:
+      exact: "/metrics/api/v1/receive"
 kubernetes:
   name: auth-gateway
   namespace: observability

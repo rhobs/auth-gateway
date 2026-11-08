@@ -18,153 +18,111 @@ import (
 const (
 	headerJWTOnlyHost   = "jwt.header-attributes.auth-gateway.test"
 	headerKeyOnlyHost   = "key.header-attributes.auth-gateway.test"
-	headerAnyHost       = "any.header-attributes.auth-gateway.test"
-	headerAllHost       = "all.header-attributes.auth-gateway.test"
 	headerAttributeBody = "header-attribute-payload"
 )
 
 var headerAttributesNamespace = e2eNamespace("auth-gateway-header-attributes-e2e")
 
-var _ = Describe("Header-sourced attributes", Label("gateway", "authentication", "authorization", "header-attributes", "namespace-"+headerAttributesNamespace), Ordered, func() {
+var _ = Describe("Header-to-credential tenant equality", Label("gateway", "authentication", "authorization", "header-attributes", "namespace-"+headerAttributesNamespace), Ordered, func() {
 	var gateway *apiKeyE2E
 
 	BeforeAll(func(ctx SpecContext) {
 		DeferCleanup(func() { deleteNamespaceInBackground(headerAttributesNamespace) })
 		var err error
-		gateway, err = setupAPIKeyGatewayWithShape(ctx, headerAttributesNamespace, false, []gatewayapi.APIKeyCredential{{
-			Key: "header-key", Attributes: map[string]string{"tenant_id": "client-a", "writer_id": "writer-a"},
-		}}, "header-key", shapeHeaderAttributeGateway)
+		gateway, err = setupAPIKeyGatewayWithShape(ctx, headerAttributesNamespace, false, []gatewayapi.APIKeyCredential{
+			{Key: "header-key", Attributes: map[string]string{"tenant_id": "client-a", "writer_id": "writer-a"}},
+			{Key: "header-key-b", Attributes: map[string]string{"tenant_id": "client-b", "writer_id": "writer-b"}},
+		}, "header-key", shapeHeaderAttributeGateway)
 		Expect(err).NotTo(HaveOccurred())
 	}, NodeTimeout(12*time.Minute))
 
-	It("uses header-only JWT and key grants and source values for headers and metrics", func(ctx SpecContext) {
-		for _, test := range []struct {
-			name   string
-			host   string
-			token  string
-			key    string
-			header string
-		}{
-			{name: "JWT", host: headerJWTOnlyHost, token: gateway.token("client-a", "writer-a"), header: "X-JWT-Tenant"},
-			{name: "API key", host: headerKeyOnlyHost, key: "header-key", header: "X-Key-Tenant"},
-		} {
-			labels := map[string]string{"api": "header-ingest", "http_status_code": strconv.Itoa(http.StatusOK), "tenant": "client-a"}
-			before, err := requestMetricCount(ctx, gateway.adminAddr, labels)
-			Expect(err).NotTo(HaveOccurred())
-			headers := http.Header{test.header: []string{"client-a"}}
-			status, body, err := gateway.request(ctx, test.host, false, http.MethodPost, "/header-ingest", headerAttributeBody, test.token, test.key, headers)
-			Expect(err).NotTo(HaveOccurred(), test.name)
-			Expect(status).To(Equal(http.StatusOK), test.name+": "+string(body))
-			expectHeaderAttributeEcho(body, "client-a", map[string]string{test.header: "client-a"})
-			after, err := requestMetricCount(ctx, gateway.adminAddr, labels)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(after).To(BeNumerically(">", before))
-		}
-	}, NodeTimeout(90*time.Second))
-
-	It("denies absent credentials and missing or unlisted header values before the backend", func(ctx SpecContext) {
-		jwt := gateway.token("client-a", "writer-a")
-		for _, test := range []struct {
-			name    string
-			host    string
-			token   string
-			key     string
-			headers http.Header
-			status  int
-		}{
-			{name: "JWT credential missing", host: headerJWTOnlyHost, headers: http.Header{"X-JWT-Tenant": []string{"client-a"}}, status: http.StatusUnauthorized},
-			{name: "JWT credential invalid", host: headerJWTOnlyHost, token: "invalid.jwt", headers: http.Header{"X-JWT-Tenant": []string{"client-a"}}, status: http.StatusUnauthorized},
-			{name: "JWT header missing", host: headerJWTOnlyHost, token: jwt, status: http.StatusForbidden},
-			{name: "JWT header empty", host: headerJWTOnlyHost, token: jwt, headers: http.Header{"X-JWT-Tenant": []string{""}}, status: http.StatusForbidden},
-			{name: "JWT header unlisted", host: headerJWTOnlyHost, token: jwt, headers: http.Header{"X-JWT-Tenant": []string{"client-c"}}, status: http.StatusForbidden},
-			{name: "key missing", host: headerKeyOnlyHost, headers: http.Header{"X-Key-Tenant": []string{"client-a"}}, status: http.StatusUnauthorized},
-			{name: "key invalid", host: headerKeyOnlyHost, key: "unknown-key", headers: http.Header{"X-Key-Tenant": []string{"client-a"}}, status: http.StatusUnauthorized},
-			{name: "key header missing", host: headerKeyOnlyHost, key: "header-key", status: http.StatusForbidden},
-			{name: "key header empty", host: headerKeyOnlyHost, key: "header-key", headers: http.Header{"X-Key-Tenant": []string{""}}, status: http.StatusForbidden},
-			{name: "key header unlisted", host: headerKeyOnlyHost, key: "header-key", headers: http.Header{"X-Key-Tenant": []string{"client-c"}}, status: http.StatusForbidden},
-		} {
-			expectHeaderAttributeDenied(ctx, gateway, test.name, test.host, test.token, test.key, test.headers, test.status)
+	It("forwards each authorized requested tenant from the original header and records it in metrics", func(ctx SpecContext) {
+		for _, tenant := range []string{"client-a", "client-b"} {
+			for _, method := range []string{"jwt", "api-key"} {
+				host, source, token, key := headerJWTOnlyHost, "X-JWT-Tenant", gateway.token(tenant, "writer-a"), ""
+				if method == "api-key" {
+					host, source, token, key = headerKeyOnlyHost, "X-Key-Tenant", "", "header-key"
+					if tenant == "client-b" {
+						key = "header-key-b"
+					}
+				}
+				labels := map[string]string{"api": "header-ingest", "http_status_code": strconv.Itoa(http.StatusOK), "tenant": tenant}
+				before, err := requestMetricCount(ctx, gateway.adminAddr, labels)
+				Expect(err).NotTo(HaveOccurred())
+				headers := http.Header{source: []string{tenant}, "X-Forwarded-Tenant": []string{"caller-controlled"}}
+				status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, "api-header-ingest", method+" "+tenant, 1, func() (int, []byte, error) {
+					return gateway.request(ctx, host, false, http.MethodPost, "/header-ingest", headerAttributeBody, token, key, headers)
+				})
+				Expect(status).To(Equal(http.StatusOK), string(body))
+				expectHeaderAttributeEcho(body, tenant, map[string]string{source: tenant})
+				after, err := requestMetricCount(ctx, gateway.adminAddr, labels)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(after).To(BeNumerically(">", before))
+			}
 		}
 	}, NodeTimeout(2*time.Minute))
 
-	It("keeps the verified JWT working value on mixed any_of", func(ctx SpecContext) {
-		headers := http.Header{"X-JWT-Tenant": []string{"client-a"}, "X-Key-Tenant": []string{"client-b"}}
-		status, body, err := gateway.request(ctx, headerAnyHost, false, http.MethodPost, "/header-ingest", headerAttributeBody,
-			gateway.token("client-a", "writer-a"), "header-key", headers)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectHeaderAttributeEcho(body, "client-a", map[string]string{"X-JWT-Tenant": "client-a", "X-Key-Tenant": "client-b"})
+	It("denies absent credentials and unmatched or unequal tenants before the backend", func(ctx SpecContext) {
+		for _, method := range []string{"jwt", "api-key"} {
+			host, source, token, key := headerJWTOnlyHost, "X-JWT-Tenant", gateway.token("client-a", "writer-a"), ""
+			if method == "api-key" {
+				host, source, token, key = headerKeyOnlyHost, "X-Key-Tenant", "", "header-key"
+			}
+			for _, test := range []struct {
+				name              string
+				values            []string
+				missingCredential bool
+				status            int
+			}{
+				{name: "missing credential", values: []string{"client-a"}, missingCredential: true, status: http.StatusUnauthorized},
+				{name: "missing header", status: http.StatusForbidden},
+				{name: "empty header", values: []string{""}, status: http.StatusForbidden},
+				{name: "unlisted tenant", values: []string{"client-c"}, status: http.StatusForbidden},
+				{name: "another listed tenant", values: []string{"client-b"}, status: http.StatusForbidden},
+				{name: "duplicate tenant header", values: []string{"client-a", "client-b"}, status: http.StatusBadRequest},
+				{name: "identical repeated tenant", values: []string{"client-a", "client-a"}, status: http.StatusBadRequest},
+				{name: "comma-separated tenant", values: []string{"client-a,client-b"}, status: http.StatusBadRequest},
+			} {
+				headers := http.Header{"X-Forwarded-Tenant": []string{"client-a"}}
+				if test.values != nil {
+					headers[source] = test.values
+				}
+				requestToken, requestKey := token, key
+				if test.missingCredential {
+					requestToken, requestKey = "", ""
+				}
+				expectHeaderAttributeDenied(ctx, gateway, method+" "+test.name, host, requestToken, requestKey, headers, test.status)
+			}
+		}
+	}, NodeTimeout(2*time.Minute))
 
-		expectHeaderAttributeDenied(ctx, gateway, "valid but unprivileged JWT wins", headerAnyHost,
-			gateway.token("client-a", "writer-a"), "header-key",
-			http.Header{"X-JWT-Tenant": []string{"client-c"}, "X-Key-Tenant": []string{"client-a"}}, http.StatusForbidden)
-
-		status, body, err = gateway.request(ctx, headerAnyHost, false, http.MethodPost, "/header-ingest", headerAttributeBody,
-			"invalid.jwt", "header-key", http.Header{"X-JWT-Tenant": []string{"client-b"}, "X-Key-Tenant": []string{"client-a"}})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectHeaderAttributeEcho(body, "client-a", map[string]string{"X-JWT-Tenant": "client-b", "X-Key-Tenant": "client-a"})
-	}, NodeTimeout(90*time.Second))
-
-	It("requires matching nonempty raw values across headers, claims, and key credentials on all_of", func(ctx SpecContext) {
-		jwt := gateway.token("client-a", "writer-a")
-		matching := http.Header{"X-JWT-Tenant": []string{"client-a"}, "X-Key-Tenant": []string{"client-a"}}
-		status, body, err := gateway.request(ctx, headerAllHost, false, http.MethodPost, "/header-ingest", headerAttributeBody, jwt, "header-key", matching)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectHeaderAttributeEcho(body, "client-a", map[string]string{"X-JWT-Tenant": "client-a", "X-Key-Tenant": "client-a"})
-
-		for _, test := range []struct {
-			name    string
-			token   string
-			key     string
-			headers http.Header
-			status  int
-		}{
-			{name: "JWT missing", key: "header-key", headers: matching, status: http.StatusUnauthorized},
-			{name: "key missing", token: jwt, headers: matching, status: http.StatusUnauthorized},
-			{name: "header missing", token: jwt, key: "header-key", headers: http.Header{"X-JWT-Tenant": []string{"client-a"}}, status: http.StatusForbidden},
-			{name: "header mismatch", token: jwt, key: "header-key", headers: http.Header{"X-JWT-Tenant": []string{"client-b"}, "X-Key-Tenant": []string{"client-a"}}, status: http.StatusForbidden},
-			{name: "claim and header mismatch", token: jwt, key: "header-key", headers: http.Header{"X-JWT-Tenant": []string{"client-b"}, "X-Key-Tenant": []string{"client-b"}}, status: http.StatusForbidden},
-		} {
-			expectHeaderAttributeDenied(ctx, gateway, test.name, headerAllHost, test.token, test.key, test.headers, test.status)
+	It("requires a nonempty scalar JWT tenant for equality", func(ctx SpecContext) {
+		for _, tenant := range []any{nil, "", []string{"client-a"}, 123, map[string]any{"id": "client-a"}} {
+			claims := map[string]any{"organization": map[string]any{"id": tenant}, "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix()}
+			token := (&jwtE2E{keys: gateway.keys}).token("issuer-one", claims, nil)
+			expectHeaderAttributeDenied(ctx, gateway, "non-scalar or empty tenant", headerJWTOnlyHost, token, "", http.Header{"X-JWT-Tenant": []string{"client-a"}}, http.StatusForbidden)
 		}
 	}, NodeTimeout(90*time.Second))
 })
 
 func shapeHeaderAttributeGateway(c *gatewayapi.Config) {
-	c.Authenticators[0].Attributes["requested_tenant"] = headerAttributeSource("X-JWT-Tenant")
-	c.Authenticators[0].Attributes["tenant_check"] = gatewayapi.AttributeSource{ClaimPath: []string{"organization", "id"}}
-	c.Authenticators[1].Attributes["requested_tenant"] = headerAttributeSource("X-Key-Tenant")
-	c.Authenticators[1].Attributes["tenant_check"] = headerAttributeSource("X-Key-Tenant")
-	c.AuthorizationPolicies = append(c.AuthorizationPolicies, gatewayapi.AuthorizationPolicy{
-		Name: "header-writers",
-		Grants: []gatewayapi.AuthorizationGrant{
-			{Authenticator: "issuer-one", APIs: []string{"header-ingest"}, Attributes: map[string][]string{"requested_tenant": {"client-a", "client-b"}}},
-			{Authenticator: "partner-key", APIs: []string{"header-ingest"}, Attributes: map[string][]string{"requested_tenant": {"client-a", "client-b"}}},
-		},
-	})
+	c.Authenticators[0].Attributes["requested_tenant"] = gatewayapi.AttributeSource{Header: new("X-JWT-Tenant")}
+	c.Authenticators[1].Attributes["requested_tenant"] = gatewayapi.AttributeSource{Header: new("X-Key-Tenant")}
 	c.APIs = append(c.APIs, gatewayapi.API{
 		Name:     "header-ingest",
 		Metrics:  &gatewayapi.APIMetrics{Labels: map[string]string{"tenant": "requested_tenant"}},
 		Upstream: gatewayapi.Upstream{Address: "httpbin", Port: 8080},
-		Routes: []gatewayapi.Route{{
-			Methods:    []string{http.MethodPost},
-			Path:       gatewayapi.PathMatch{Exact: "/header-ingest"},
-			Rewrite:    &gatewayapi.PathRewrite{Path: "/anything"},
-			Processing: &gatewayapi.RouteProcessing{RequestHeaders: []gatewayapi.RequestHeaderMapping{{Name: "X-Forwarded-Tenant", FromAttribute: "requested_tenant"}}},
-		}},
+		Routes:   []gatewayapi.Route{{Methods: []string{http.MethodPost}, Path: gatewayapi.PathMatch{Exact: "/header-ingest"}, Rewrite: &gatewayapi.PathRewrite{Path: "/anything"}, Processing: &gatewayapi.RouteProcessing{RequestHeaders: []gatewayapi.RequestHeaderMapping{{Name: "X-Forwarded-Tenant", FromAttribute: "requested_tenant"}}}}},
 	})
-	c.Servers = append(c.Servers, []gatewayapi.Server{
-		{Hostname: headerJWTOnlyHost, Authentication: &gatewayapi.Authentication{AnyOf: []string{"issuer-one"}}, Authorization: &gatewayapi.Authorization{AnyOf: []string{"header-writers"}}, APIs: []string{"header-ingest"}},
-		{Hostname: headerKeyOnlyHost, Authentication: &gatewayapi.Authentication{AnyOf: []string{"partner-key"}}, Authorization: &gatewayapi.Authorization{AnyOf: []string{"header-writers"}}, APIs: []string{"header-ingest"}},
-		{Hostname: headerAnyHost, Authentication: &gatewayapi.Authentication{AnyOf: []string{"issuer-one", "partner-key"}}, Authorization: &gatewayapi.Authorization{AnyOf: []string{"header-writers"}}, APIs: []string{"header-ingest"}},
-		{Hostname: headerAllHost, Authentication: &gatewayapi.Authentication{AllOf: []string{"issuer-one", "partner-key"}}, Authorization: &gatewayapi.Authorization{AllOf: []string{"header-writers"}}, APIs: []string{"header-ingest"}},
-	}...)
-}
-
-func headerAttributeSource(header string) gatewayapi.AttributeSource {
-	return gatewayapi.AttributeSource{Header: &header}
+	for _, method := range []struct {
+		host, header, authenticator string
+		authentication              gatewayapi.Authentication
+	}{
+		{headerJWTOnlyHost, "X-JWT-Tenant", "issuer-one", gatewayapi.Authentication{JWT: &gatewayapi.JWTAuthentication{Providers: []string{"issuer-one"}}}},
+		{headerKeyOnlyHost, "X-Key-Tenant", "partner-key", gatewayapi.Authentication{APIKey: &gatewayapi.AuthenticatorReference{Authenticator: "partner-key"}}},
+	} {
+		c.Servers = append(c.Servers, gatewayapi.Server{Hostname: method.host, APIs: []gatewayapi.APIBinding{{Name: "header-ingest", Access: []gatewayapi.Access{{Name: "writers", Match: gatewayapi.AccessMatch{Headers: map[string]gatewayapi.HeaderMatch{method.header: {In: []string{"client-a", "client-b"}}}}, Authentication: &method.authentication, Authorization: gatewayapi.Authorization{Grants: []gatewayapi.AuthorizationGrant{{Authenticator: method.authenticator, Attributes: map[string]*gatewayapi.AttributeCondition{"tenant_id": {EqualsAttribute: "requested_tenant"}}}}}}}}}})
+	}
 }
 
 func expectHeaderAttributeEcho(body []byte, tenant string, sourceHeaders map[string]string) {
@@ -177,7 +135,7 @@ func expectHeaderAttributeEcho(body []byte, tenant string, sourceHeaders map[str
 	for name, value := range sourceHeaders {
 		Expect(headerValue(echo.Headers, name)).To(Equal(value), name)
 	}
-	for _, name := range []string{"Authorization", "X-Partner-Key", "X-Auth-Gateway-API-Key-Client", "X-Auth-Gateway-JWT-Verified-Issuer-One"} {
+	for _, name := range []string{"Authorization", "X-Partner-Key", "X-Auth-Gateway-API-Key-Client", "X-Auth-Gateway-Request-Validation-Pending"} {
 		Expect(headerValue(echo.Headers, name)).To(BeEmpty(), name+" leaked to the backend")
 	}
 }

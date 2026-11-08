@@ -51,43 +51,71 @@ type Authenticator struct {
 	Attributes map[string]AttributeSource `yaml:"attributes,omitempty"`
 }
 
-// Authentication selects credential validators for a server.
+// Authentication selects one credential type for an access entry.
 type Authentication struct {
-	AnyOf []string `yaml:"any_of,omitempty"`
-	AllOf []string `yaml:"all_of,omitempty"`
+	JWT    *JWTAuthentication      `yaml:"jwt,omitempty"`
+	APIKey *AuthenticatorReference `yaml:"api_key,omitempty"`
 }
 
-// AuthorizationPolicy contains allow grants for named APIs.
-type AuthorizationPolicy struct {
-	Name   string               `yaml:"name"`
-	Grants []AuthorizationGrant `yaml:"grants,omitempty"`
+// JWTAuthentication selects the issuers trusted by one access entry.
+type JWTAuthentication struct {
+	Providers []string `yaml:"providers"`
 }
 
-// AuthorizationGrant allows selected APIs for raw verified claims from one authenticator.
+// AuthenticatorReference selects one named credential validator.
+type AuthenticatorReference struct {
+	Authenticator string `yaml:"authenticator"`
+}
+
+// AuthorizationGrant checks attributes supplied by its verifying authenticator.
 type AuthorizationGrant struct {
-	Authenticator string              `yaml:"authenticator"`
-	APIs          []string            `yaml:"apis"`
-	Attributes    map[string][]string `yaml:"attributes"`
+	Authenticator string                         `yaml:"authenticator"`
+	Attributes    map[string]*AttributeCondition `yaml:"attributes"`
 }
 
-// Authorization selects policies for a server.
+// Authorization grants access within one server/API entry.
 type Authorization struct {
-	AnyOf []string `yaml:"any_of,omitempty"`
-	AllOf []string `yaml:"all_of,omitempty"`
+	Grants []AuthorizationGrant `yaml:"grants"`
+}
+
+// APIBinding exposes one API with explicit public access or protected entries.
+type APIBinding struct {
+	Name   string   `yaml:"name"`
+	Public bool     `yaml:"public,omitempty"`
+	Access []Access `yaml:"access,omitempty"`
+}
+
+// Access binds request selectors to one authentication and authorization path.
+type Access struct {
+	Tenant         string          `yaml:"tenant,omitempty"`
+	Name           string          `yaml:"name,omitempty"`
+	Match          AccessMatch     `yaml:"match,omitempty"`
+	Authentication *Authentication `yaml:"authentication,omitempty"`
+	Authorization  Authorization   `yaml:"authorization"`
+}
+
+// AccessMatch requires every configured request header to match.
+type AccessMatch struct {
+	Headers map[string]HeaderMatch `yaml:"headers,omitempty"`
+}
+
+// HeaderMatch accepts one exact value or one member of an allowed list.
+type HeaderMatch struct {
+	Exact *string  `yaml:"exact,omitempty"`
+	In    []string `yaml:"in,omitempty"`
 }
 
 // Config describes gateway behavior, observability, and optional Kubernetes output.
 type Config struct {
-	Version               int                   `yaml:"version"`
-	Node                  EnvoyNode             `yaml:"node,omitempty"`
-	Listener              Listener              `yaml:"listener"`
-	Overload              *OverloadConfig       `yaml:"overload,omitempty"`
-	Authenticators        []Authenticator       `yaml:"authenticators,omitempty"`
-	AuthorizationPolicies []AuthorizationPolicy `yaml:"authorization_policies,omitempty"`
-	Servers               []Server              `yaml:"servers"`
-	APIs                  []API                 `yaml:"apis"`
-	Observability         ObservabilityConfig   `yaml:"observability,omitempty"`
-	Kubernetes            *Kubernetes           `yaml:"kubernetes,omitempty"`
+	Version        int                 `yaml:"version"`
+	Node           EnvoyNode           `yaml:"node,omitempty"`
+	Listener       Listener            `yaml:"listener"`
+	Overload       *OverloadConfig     `yaml:"overload,omitempty"`
+	Authenticators []Authenticator     `yaml:"authenticators,omitempty"`
+	Servers        []Server            `yaml:"servers"`
+	APIs           []API               `yaml:"apis"`
+	Observability  ObservabilityConfig `yaml:"observability,omitempty"`
+	Kubernetes     *Kubernetes         `yaml:"kubernetes,omitempty"`
 }
 
 // EnvoyNode describes the identity and logical cluster of this Envoy instance.
@@ -266,20 +294,19 @@ type RequestHeaderMapping struct {
 	FromAttribute string `yaml:"from_attribute"`
 }
 
-// Server binds an exact hostname and protocol to named APIs and optional access policies.
+// Server binds an exact hostname and protocol to API access rules.
 type Server struct {
-	Hostname       string          `yaml:"hostname"`
-	TLSConfig      *ServerTLS      `yaml:"tls_config,omitempty"`
-	Authentication *Authentication `yaml:"authentication,omitempty"`
-	Authorization  *Authorization  `yaml:"authorization,omitempty"`
-	APIs           []string        `yaml:"apis,omitempty"`
+	Hostname  string       `yaml:"hostname"`
+	TLSConfig *ServerTLS   `yaml:"tls_config,omitempty"`
+	APIs      []APIBinding `yaml:"apis"`
 }
 
 // ServerTLS describes the certificate used by one HTTPS server.
 type ServerTLS struct {
-	Secret      string `yaml:"secret,omitempty"`
-	Certificate string `yaml:"certificate,omitempty"`
-	PrivateKey  string `yaml:"private_key,omitempty"`
+	Secret      string                  `yaml:"secret,omitempty"`
+	Certificate string                  `yaml:"certificate,omitempty"`
+	PrivateKey  string                  `yaml:"private_key,omitempty"`
+	MTLS        *AuthenticatorReference `yaml:"mtls,omitempty"`
 }
 
 // RouteTimeouts overrides API or listener fallbacks independently for each timer.

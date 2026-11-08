@@ -8,7 +8,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -23,7 +22,6 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
 	gatewayconfig "github.com/rhobs/auth-gateway/pkg/gateway"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,16 +30,11 @@ import (
 
 const (
 	mtlsOnlyHost       = "cert.mtls.auth-gateway.test"
-	mtlsMixedHost      = "mixed.mtls.auth-gateway.test"
-	mtlsJWTCertHost    = "jwt-cert.mtls.auth-gateway.test"
-	mtlsAllHost        = "all.mtls.auth-gateway.test"
 	mtlsTrustHost      = "trust.mtls.auth-gateway.test"
 	mtlsAllowedURI     = "spiffe://clients.example.test/client-a"
 	mtlsSecondURI      = "spiffe://clients.example.test/client-b"
 	mtlsDeniedURI      = "spiffe://clients.example.test/denied"
 	mtlsPayload        = "mtls-e2e-payload"
-	mtlsAllowedKey     = "mtls-key-a"
-	mtlsDeniedKey      = "mtls-key-denied"
 	mtlsClientCAName   = "gateway-client-ca"
 	mtlsClientCAKey    = "ca.crt"
 	mtlsGatewayTLSName = "mtls-gateway-tls"
@@ -52,7 +45,6 @@ type mtlsE2E struct {
 	address   string
 	adminAddr string
 	roots     *x509.CertPool
-	keys      map[string]*rsa.PrivateKey
 	caA       *mtlsTestCA
 	caB       *mtlsTestCA
 	allowed   tls.Certificate
@@ -127,10 +119,6 @@ func (ca *mtlsTestCA) clientCertificate(uriValues, dnsNames []string) (tls.Certi
 }
 
 func setupMTLSGateway(ctx SpecContext, namespace string) (*mtlsE2E, error) {
-	return setupMTLSGatewayWithShape(ctx, namespace, nil)
-}
-
-func setupMTLSGatewayWithShape(ctx SpecContext, namespace string, shape func(*gatewayapi.Config)) (*mtlsE2E, error) {
 	if err := resetE2ENamespace(ctx, namespace); err != nil {
 		return nil, err
 	}
@@ -143,9 +131,6 @@ func setupMTLSGatewayWithShape(ctx SpecContext, namespace string, shape func(*ga
 		return nil, err
 	}
 	c.Kubernetes.Namespace = namespace
-	if shape != nil {
-		shape(&c)
-	}
 	caA, err := newMTLSTestCA()
 	if err != nil {
 		return nil, err
@@ -180,13 +165,6 @@ func setupMTLSGatewayWithShape(ctx SpecContext, namespace string, shape func(*ga
 		}
 	}
 
-	gateway.keys = make(map[string]*rsa.PrivateKey)
-	for _, name := range []string{"issuer-one", "issuer-two"} {
-		gateway.keys[name], err = rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			return nil, err
-		}
-	}
 	serverNames := []string{"jwks." + namespace + ".svc.cluster.local"}
 	for _, server := range c.Servers {
 		serverNames = append(serverNames, server.Hostname)
@@ -197,19 +175,6 @@ func setupMTLSGatewayWithShape(ctx SpecContext, namespace string, shape func(*ga
 	}
 	gateway.roots = x509.NewCertPool()
 	gateway.roots.AddCert(serverCertificates.root)
-	for index := range c.Authenticators {
-		if c.Authenticators[index].JWT != nil {
-			c.Authenticators[index].JWT.JWKS.URI = "https://jwks." + namespace + ".svc.cluster.local/" + c.Authenticators[index].Name
-			c.Authenticators[index].JWT.JWKS.TrustedCA = jwtTrustedCA()
-		}
-	}
-	issuer, err := jwtIssuerManifest(namespace, serverCertificates, gateway.keys)
-	if err != nil {
-		return nil, err
-	}
-	if err := env.Apply(ctx, namespace, issuer); err != nil {
-		return nil, err
-	}
 	backend, err := env.Fixture("httpbin.yaml")
 	if err != nil {
 		return nil, err
@@ -223,35 +188,12 @@ func setupMTLSGatewayWithShape(ctx SpecContext, namespace string, shape func(*ga
 		Type:       corev1.SecretTypeTLS,
 		Data:       map[string][]byte{corev1.TLSCertKey: serverCertificates.chainPEM, corev1.TLSPrivateKeyKey: serverCertificates.keyPEM},
 	}
-	issuerCA := &corev1.ConfigMap{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
-		ObjectMeta: metav1.ObjectMeta{Name: "jwt-jwks-ca", Namespace: namespace},
-		Data:       map[string]string{"ca.pem": string(serverCertificates.caPEM)},
-	}
 	clientCA := gateway.clientCAConfigMap(caA)
-	prerequisites, err := yamlDocuments(serverSecret, issuerCA, clientCA)
+	prerequisites, err := yamlDocuments(serverSecret, clientCA)
 	if err != nil {
 		return nil, err
 	}
 	if err := env.Apply(ctx, namespace, prerequisites); err != nil {
-		return nil, err
-	}
-	keyAuthenticator, found := findAPIKeyAuthenticator(c.Authenticators)
-	if !found {
-		return nil, fmt.Errorf("mTLS fixture has no API-key authenticator")
-	}
-	keySecret, err := gatewayconfig.APIKeySecret(namespace, keyAuthenticator, []gatewayapi.APIKeyCredential{
-		{Key: mtlsAllowedKey, Attributes: map[string]string{"tenant_id": mtlsAllowedURI}},
-		{Key: mtlsDeniedKey, Attributes: map[string]string{"tenant_id": mtlsDeniedURI}},
-	})
-	if err != nil {
-		return nil, err
-	}
-	keyManifest, err := yaml.Marshal(keySecret)
-	if err != nil {
-		return nil, err
-	}
-	if err := env.Apply(ctx, namespace, keyManifest); err != nil {
 		return nil, err
 	}
 	resources, err := gatewayconfig.GenerateKubernetes(c)
@@ -265,7 +207,7 @@ func setupMTLSGatewayWithShape(ctx SpecContext, namespace string, shape func(*ga
 	if err := env.Apply(ctx, namespace, manifest); err != nil {
 		return nil, err
 	}
-	for _, deployment := range []string{"httpbin", "jwt-jwks", "auth-gateway"} {
+	for _, deployment := range []string{"httpbin", "auth-gateway"} {
 		if err := env.WaitForDeployment(ctx, namespace, deployment, 4*time.Minute); err != nil {
 			return nil, err
 		}
@@ -306,15 +248,6 @@ func (g *mtlsE2E) applyClientCA(ctx context.Context, ca *mtlsTestCA) error {
 		return err
 	}
 	return env.Apply(ctx, g.namespace, manifest)
-}
-
-func (g *mtlsE2E) token(tenant string) string {
-	claims := map[string]any{
-		"organization": map[string]any{"id": tenant},
-		"aud":          "gateway-test",
-		"exp":          time.Now().Add(5 * time.Minute).Unix(),
-	}
-	return (&jwtE2E{keys: g.keys}).token("issuer-one", claims, nil)
 }
 
 func mtlsRequestHeaders() http.Header {
@@ -364,8 +297,8 @@ func expectMTLSEcho(body []byte, tenant string) {
 	Expect(headerValue(echo.Headers, "Content-Type")).To(Equal("application/octet-stream"))
 	Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(Equal(tenant))
 	for _, name := range []string{
-		"Authorization", "X-Partner-Key", "X-Auth-Gateway-API-Key-Client", "X-Auth-Gateway-JWT-Verified-Issuer-One",
-		"X-Auth-Gateway-MTLS-Fingerprint", "X-Auth-Gateway-MTLS-URI-SAN", "X-Auth-Gateway-MTLS-DNS-SAN", "X-Auth-Gateway-MTLS-Authentication-Pending",
+		"Authorization", "X-Partner-Key", "X-Auth-Gateway-API-Key-Client",
+		"X-Auth-Gateway-MTLS-Fingerprint", "X-Auth-Gateway-MTLS-URI-SAN", "X-Auth-Gateway-MTLS-DNS-SAN", "X-Auth-Gateway-Request-Validation-Pending",
 	} {
 		Expect(headerValue(echo.Headers, name)).To(BeEmpty(), name+" leaked to the upstream")
 	}

@@ -32,15 +32,22 @@ func TestLoadRejectsIncompatibleEffectiveRouteTimeouts(t *testing.T) {
 listener:
   max_stream_duration: 10s
 servers:
-  - hostname: auth.example.test
-    apis: [metrics]
-apis:
+- hostname: auth.example.test
+  apis:
   - name: metrics
-    upstream: {address: httpbin, port: 80}
-    timeouts: {response_timeout: 20s}
-    routes:
-      - methods: [GET]
-        path: {exact: /metrics}
+    public: true
+apis:
+- name: metrics
+  upstream:
+    address: httpbin
+    port: 80
+  timeouts:
+    response_timeout: 20s
+  routes:
+  - methods:
+    - GET
+    path:
+      exact: "/metrics"
 `
 	if _, err := Load(strings.NewReader(input)); err == nil ||
 		!strings.Contains(err.Error(), "apis[0].routes[0].timeouts.response_timeout (20s)") ||

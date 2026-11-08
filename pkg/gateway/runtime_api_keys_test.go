@@ -26,7 +26,6 @@ func TestEnvoyAPIKeyAttributeLayouts(t *testing.T) {
 		{name: "longest-attribute-name", count: 1, longName: true},
 		{name: "combined-identity-over-8-KiB", count: 20, valueBytes: 512},
 		{name: "maximum-attribute-value", count: 1, valueBytes: 8191},
-		{name: "no-credential-attributes"},
 		{name: "attribute-absent-from-client", count: 1, absentFromClient: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -36,6 +35,12 @@ func TestEnvoyAPIKeyAttributeLayouts(t *testing.T) {
 				c.Authenticators[0].Attributes[name] = c.Authenticators[0].Attributes["attribute00"]
 				delete(c.Authenticators[0].Attributes, "attribute00")
 				c.APIs[0].Routes[0].Processing.RequestHeaders[0].FromAttribute = name
+				grant := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0]
+				grant.Attributes[name] = grant.Attributes["attribute00"]
+				delete(grant.Attributes, "attribute00")
+			}
+			if test.valueBytes > 0 {
+				c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes["attribute00"].Values = []string{"value00" + strings.Repeat("v", test.valueBytes-len("value00"))}
 			}
 			files, err := Generate(c)
 			if err != nil {

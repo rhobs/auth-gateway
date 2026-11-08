@@ -27,7 +27,6 @@ const (
 	mtlsFingerprintHeaderName  = "x-auth-gateway-mtls-fingerprint"
 	mtlsURIHeaderName          = "x-auth-gateway-mtls-uri-san"
 	mtlsDNSHeaderName          = "x-auth-gateway-mtls-dns-san"
-	mtlsPendingHeaderName      = "x-auth-gateway-mtls-authentication-pending"
 	// Request-control and peer filters remove client values and overwrite this
 	// header from TLS state. Keep the matcher below Envoy's RE2 size limit.
 	mtlsFingerprintPattern      = "^[0-9A-Fa-f:]+$"
@@ -57,10 +56,12 @@ func tlsMounts(c gatewayapi.Config) []serverTLSMount {
 			continue
 		}
 		binding := *server.TLSConfig
-		if _, exists := seen[binding]; exists {
+		identity := binding
+		identity.MTLS = nil
+		if _, exists := seen[identity]; exists {
 			continue
 		}
-		seen[binding] = struct{}{}
+		seen[identity] = struct{}{}
 		mounts = append(mounts, serverTLSMount{serverIndex: i, config: binding})
 	}
 	return mounts
@@ -86,10 +87,6 @@ func validateTLSMounts(c gatewayapi.Config) error {
 		}
 	}
 	return nil
-}
-
-func requiresClientCertificate(server gatewayapi.Server) bool {
-	return server.Authentication.AllOf != nil || len(server.Authentication.AnyOf) == 1
 }
 
 func cloneMTLSAuthenticator(m gatewayapi.MTLSAuthenticator) gatewayapi.MTLSAuthenticator {
@@ -139,6 +136,7 @@ func directoriesOverlap(a, b string) bool {
 }
 
 func cloneServerTLS(s gatewayapi.ServerTLS) gatewayapi.ServerTLS {
+	s.MTLS = clonePointer(s.MTLS)
 	return s
 }
 
@@ -227,7 +225,7 @@ func serverTLSSecret(config gatewayapi.ServerTLS, index int) *tls.Secret {
 	}
 }
 
-func serverTLSTransportSocket(index int, mtls *gatewayapi.MTLSAuthenticator, requireClientCertificate bool) (*core.TransportSocket, error) {
+func serverTLSTransportSocket(index int, mtls *gatewayapi.MTLSAuthenticator) (*core.TransportSocket, error) {
 	context := &tls.DownstreamTlsContext{CommonTlsContext: &tls.CommonTlsContext{
 		TlsParams: &tls.TlsParameters{
 			TlsMinimumProtocolVersion: tls.TlsParameters_TLSv1_2,
@@ -243,7 +241,7 @@ func serverTLSTransportSocket(index int, mtls *gatewayapi.MTLSAuthenticator, req
 		context.CommonTlsContext.ValidationContextType = &tls.CommonTlsContext_ValidationContextSdsSecretConfig{ValidationContextSdsSecretConfig: &tls.SdsSecretConfig{
 			Name: clientCASecretName(index), SdsConfig: fileConfigSource(path.Join(EnvoyConfigDirectory, clientCAResourceFilename(index))),
 		}}
-		context.RequireClientCertificate = wrapperspb.Bool(requireClientCertificate)
+		context.RequireClientCertificate = wrapperspb.Bool(true)
 		context.DisableStatefulSessionResumption = true
 		context.SessionTicketKeysType = &tls.DownstreamTlsContext_DisableStatelessSessionResumption{DisableStatelessSessionResumption: true}
 	}

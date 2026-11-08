@@ -66,8 +66,8 @@ func TestJWTProviderClustersAndTrust(t *testing.T) {
 			t.Fatalf("JWT provider %q cache duration = %s, want default %s", name, got, want)
 		}
 	}
-	if jwtConfig.RequirementMap[serverJWTRequirementName(1)].GetProviderName() != "issuer-one" {
-		t.Fatalf("issuer-restricted server JWT requirement = %#v", jwtConfig.RequirementMap[serverJWTRequirementName(1)])
+	if jwtConfig.RequirementMap["server-1-api-0-access-0"].GetProviderName() != "issuer-one" {
+		t.Fatalf("issuer-restricted server JWT requirement = %#v", jwtConfig.RequirementMap["server-1-api-0-access-0"])
 	}
 
 	clusters := make(map[string]*cluster.Cluster, len(generated.StaticResources.Clusters))
@@ -133,8 +133,6 @@ func TestJWKSValidationIncludesUnusedProviders(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := loadConfigCase(t, "jwt-auth")
-			c.Servers[0].Authentication = nil
-			c.Servers[0].Authorization = nil
 			tt.edit(&c)
 			if err := Validate(c); err == nil || !strings.Contains(err.Error(), "authenticators[0].jwt.jwks"+tt.field) {
 				t.Fatalf("validation = %v", err)

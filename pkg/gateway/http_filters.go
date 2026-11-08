@@ -1,19 +1,14 @@
 package gateway
 
 import (
-	"fmt"
-
 	xdscore "github.com/cncf/xds/go/xds/core/v3"
 	xdsmatcher "github.com/cncf/xds/go/xds/type/matcher/v3"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
-	matching "github.com/envoyproxy/go-control-plane/envoy/extensions/common/matching/v3"
-	skip "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/matcher/action/v3"
 	composite "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/composite/v3"
 	router "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/router/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	networkinput "github.com/envoyproxy/go-control-plane/envoy/extensions/matching/common_inputs/network/v3"
-	matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
 	"google.golang.org/protobuf/types/known/anypb"
 )
@@ -47,73 +42,6 @@ func compositePerRouteConfig(m *xdsmatcher.Matcher) (*anypb.Any, error) {
 	return packEnvoy(&composite.CompositePerRoute{Matcher: m})
 }
 
-func apiKeyPerRouteConfig(c resolvedConfig, server resolvedServer) (*anypb.Any, error) {
-	config := &matching.ExtensionWithMatcherPerRoute{}
-	if server.mixedAnyOf() {
-		matcher, err := apiKeySkipMatcher(c, server)
-		if err != nil {
-			return nil, err
-		}
-		config.XdsMatcher = matcher
-	}
-	perRoute, err := packEnvoy(config)
-	if err != nil {
-		return nil, err
-	}
-	return packEnvoy(&route.FilterConfig{Config: perRoute})
-}
-
-func apiKeySkipMatcher(c resolvedConfig, server resolvedServer) (*xdsmatcher.Matcher, error) {
-	action, err := apiKeySkipAction()
-	if err != nil {
-		return nil, err
-	}
-	var fields []*xdsmatcher.Matcher_MatcherList_FieldMatcher
-	for _, authenticator := range server.authenticators {
-		if authenticator.JWT == nil {
-			continue
-		}
-		input, err := requestHeaderMatcherInput(jwtVerifiedHeaderName(authenticator.Name))
-		if err != nil {
-			return nil, fmt.Errorf("encode JWT marker input: %w", err)
-		}
-		fields = append(fields, &xdsmatcher.Matcher_MatcherList_FieldMatcher{
-			Predicate: &xdsmatcher.Matcher_MatcherList_Predicate{MatchType: &xdsmatcher.Matcher_MatcherList_Predicate_SinglePredicate_{SinglePredicate: &xdsmatcher.Matcher_MatcherList_Predicate_SinglePredicate{
-				Input:   input,
-				Matcher: &xdsmatcher.Matcher_MatcherList_Predicate_SinglePredicate_ValueMatch{ValueMatch: &xdsmatcher.StringMatcher{MatchPattern: &xdsmatcher.StringMatcher_Exact{Exact: authenticator.JWT.Issuer}}},
-			}}},
-			OnMatch: action,
-		})
-	}
-	if server.usesMTLS() {
-		input, err := requestHeaderMatcherInput(mtlsFingerprintHeaderName)
-		if err != nil {
-			return nil, fmt.Errorf("encode mTLS marker input: %w", err)
-		}
-		fields = append(fields, &xdsmatcher.Matcher_MatcherList_FieldMatcher{
-			Predicate: &xdsmatcher.Matcher_MatcherList_Predicate{MatchType: &xdsmatcher.Matcher_MatcherList_Predicate_SinglePredicate_{SinglePredicate: &xdsmatcher.Matcher_MatcherList_Predicate_SinglePredicate{
-				Input: input,
-				Matcher: &xdsmatcher.Matcher_MatcherList_Predicate_SinglePredicate_ValueMatch{ValueMatch: &xdsmatcher.StringMatcher{
-					MatchPattern: &xdsmatcher.StringMatcher_SafeRegex{SafeRegex: &xdsmatcher.RegexMatcher{
-						EngineType: &xdsmatcher.RegexMatcher_GoogleRe2{GoogleRe2: &xdsmatcher.RegexMatcher_GoogleRE2{}},
-						Regex:      mtlsFingerprintPattern,
-					}},
-				}},
-			}}},
-			OnMatch: action,
-		})
-	}
-	return &xdsmatcher.Matcher{MatcherType: &xdsmatcher.Matcher_MatcherList_{MatcherList: &xdsmatcher.Matcher_MatcherList{Matchers: fields}}}, nil
-}
-
-func extensionWithMatcherConfig(config *core.TypedExtensionConfig) (*anypb.Any, error) {
-	return packEnvoy(&matching.ExtensionWithMatcher{ExtensionConfig: config})
-}
-
-func extensionWithMatcherTypeName() string {
-	return string((&matching.ExtensionWithMatcher{}).ProtoReflect().Descriptor().FullName())
-}
-
 func httpFilters(c resolvedConfig, hosts []indexedVirtualHost, protected bool) ([]*hcm.HttpFilter, error) {
 	filters, err := requestControlFilters(c, routeVirtualHosts(hosts))
 	if err != nil {
@@ -125,12 +53,17 @@ func httpFilters(c resolvedConfig, hosts []indexedVirtualHost, protected bool) (
 			return nil, err
 		}
 	}
-	if (c.usesAPIKeys() || c.usesJWT() || c.usesMTLS()) && !protected {
-		cleanup, err := credentialCleanupFilter(c)
+	cleanup, err := credentialCleanupFilter(c)
+	if err != nil {
+		return nil, err
+	}
+	filters = append(filters, cleanup)
+	if apis := apisForHosts(c, hosts); hasRequestHeaderProcessing(apis) {
+		headers, err := requestHeaderHTTPFilter(apis)
 		if err != nil {
 			return nil, err
 		}
-		filters = append(filters, cleanup)
+		filters = append(filters, headers)
 	}
 	fault, err := faultHTTPFilter(c, hosts)
 	if err != nil {
@@ -146,140 +79,102 @@ func httpFilters(c resolvedConfig, hosts []indexedVirtualHost, protected bool) (
 	if admission != nil {
 		filters = append(filters, admission)
 	}
-	terminalRouter, err := routerHTTPFilter()
+	router, err := routerHTTPFilter()
 	if err != nil {
 		return nil, err
 	}
-	return append(filters, terminalRouter), nil
+	return append(filters, router), nil
 }
 
 func requestControlFilters(c resolvedConfig, hosts []*route.VirtualHost) ([]*hcm.HttpFilter, error) {
-	controls, err := requestControlHeaderFilter(c)
+	controls, err := requestControlHeaderFilter()
 	if err != nil {
 		return nil, err
 	}
 	filters := []*hcm.HttpFilter{controls}
-	if !hasRequestMetricRoutes(hosts) {
-		return filters, nil
+	if hasRequestMetricRoutes(hosts) {
+		metrics, err := requestMetricsHTTPFilter(c)
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, metrics)
 	}
-	metric, err := requestMetricsHTTPFilter(c)
-	if err != nil {
-		return nil, err
-	}
-	filters = append(filters, metric)
 	return filters, nil
 }
 
 func protectedHTTPFilters(c resolvedConfig, filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
 	usesJWT, usesKey, usesMTLS := false, false, false
-	serverIndexes := make([]int, 0, len(hosts))
+	var indexes []int
 	for _, host := range hosts {
-		serverIndexes = append(serverIndexes, host.serverIndex)
-		usesJWT = usesJWT || c.servers[host.serverIndex].hasJWT
-		usesKey = usesKey || c.servers[host.serverIndex].hasAPIKey
-		usesMTLS = usesMTLS || c.servers[host.serverIndex].usesMTLS()
+		server := c.servers[host.serverIndex]
+		indexes = append(indexes, host.serverIndex)
+		usesJWT = usesJWT || server.hasJWT
+		usesKey = usesKey || server.hasAPIKey
+		usesMTLS = usesMTLS || server.usesMTLS()
 	}
-	var err error
-	filters, err = authenticationHTTPFilters(c, filters, serverIndexes, usesJWT, usesKey, usesMTLS)
+	validation, err := requestValidationHTTPFilter()
 	if err != nil {
 		return nil, err
 	}
-	if needsWorkingAttributes(c) {
-		filters, err = attributeHTTPFilters(c, filters, hosts)
-		if err != nil {
-			return nil, err
-		}
+	begin, err := requestValidationMarkerFilter(true)
+	if err != nil {
+		return nil, err
 	}
-	return authorizationHTTPFilters(c, filters)
-}
-
-func authenticationHTTPFilters(c resolvedConfig, filters []*hcm.HttpFilter, serverIndexes []int, usesJWT, usesKey, usesMTLS bool) ([]*hcm.HttpFilter, error) {
+	end, err := requestValidationMarkerFilter(false)
+	if err != nil {
+		return nil, err
+	}
+	filters = append(filters, begin, validation, end)
 	if usesMTLS {
 		peer, err := mtlsPeerHeadersFilter()
 		if err != nil {
-			return nil, fmt.Errorf("encode mTLS peer headers: %w", err)
+			return nil, err
 		}
-		filters = append(filters, peer)
-	}
-	if usesJWT {
-		jwtFilter, err := jwtHTTPFilter(c, serverIndexes)
+		cardinality, err := mtlsSANCardinalityFilter()
 		if err != nil {
 			return nil, err
 		}
-		filters = append(filters, jwtFilter)
+		filters = append(filters, peer, cardinality)
 	}
-	headers := requestHeaderSources(c, serverIndexes)
-	var keyAuthenticator gatewayapi.Authenticator
+	if usesJWT {
+		jwt, err := jwtHTTPFilter(c, indexes)
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, jwt)
+	}
 	if usesKey {
 		filters = append(filters, apiKeyFilter())
-		keyAuthenticator, _ = c.apiKeyAuthenticator()
 	}
-	if usesKey || usesMTLS || len(headers) > 0 {
-		metadata, err := requestMetadataFilter(keyAuthenticator, headers, usesMTLS)
+	headers := requestHeaderSources(c, indexes)
+	if usesKey || usesMTLS || len(headers) != 0 {
+		metadata, err := requestMetadataFilter(c.apiKey, headers, usesMTLS)
 		if err != nil {
-			return nil, fmt.Errorf("encode request metadata filter: %w", err)
+			return nil, err
 		}
 		filters = append(filters, metadata)
 	}
-	if usesKey || usesMTLS {
-		var err error
-		filters, err = appendAuthenticationRBAC(filters)
+	if needsWorkingAttributes(c) {
+		attributes, err := attributeHTTPFilter()
 		if err != nil {
 			return nil, err
 		}
+		filters = append(filters, attributes)
 	}
-	if usesMTLS {
-		cleanup, err := mtlsPendingCleanupFilter()
-		if err != nil {
-			return nil, fmt.Errorf("encode mTLS authentication marker cleanup: %w", err)
-		}
-		filters = append(filters, cleanup)
-		cardinality, err := mtlsSANCardinalityFilter()
-		if err != nil {
-			return nil, fmt.Errorf("encode mTLS SAN cardinality: %w", err)
-		}
-		filters = append(filters, cardinality)
-		shared, err := mtlsSharedAttributesHTTPFilter()
-		if err != nil {
-			return nil, err
-		}
-		filters = append(filters, shared)
-	}
-	return filters, nil
-}
-
-func authorizationHTTPFilters(c resolvedConfig, filters []*hcm.HttpFilter) ([]*hcm.HttpFilter, error) {
 	authorization, err := authorizationHTTPFilter()
 	if err != nil {
 		return nil, err
 	}
 	filters = append(filters, authorization)
-	if hasRequestHeaderProcessing(c.APIs) {
-		filters, err = appendRequiredHeaderRBAC(filters)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if c.usesAPIKeys() || c.usesJWT() || c.usesMTLS() {
-		cleanup, err := credentialCleanupFilter(c)
-		if err != nil {
-			return nil, err
-		}
-		filters = append(filters, cleanup)
-	}
-	if hasRequestHeaderProcessing(c.APIs) {
-		headers, err := requestHeaderHTTPFilter(c.APIs)
-		if err != nil {
-			return nil, err
-		}
-		filters = append(filters, headers)
+	if hasRequestHeaderProcessing(apisForHosts(c, hosts)) {
+		return appendRequiredHeaderRBAC(filters)
 	}
 	return filters, nil
 }
 
-func hasProtectedHosts(hosts []indexedVirtualHost) bool {
+func hasProtectedHosts(c resolvedConfig, hosts []indexedVirtualHost) bool {
 	for _, host := range hosts {
-		if host.host != nil && host.host.TypedPerFilterConfig[authorizationFilterName] != nil {
+		if len(c.servers[host.serverIndex].authenticators) != 0 {
 			return true
 		}
 	}
@@ -294,26 +189,18 @@ func filterStateMatcherInput(key string) (*xdscore.TypedExtensionConfig, error) 
 	return &xdscore.TypedExtensionConfig{Name: "envoy.matching.inputs.filter_state", TypedConfig: config}, nil
 }
 
-func requestHeaderMatcherInput(header string) (*xdscore.TypedExtensionConfig, error) {
-	config, err := packEnvoy(&matcher.HttpRequestHeaderMatchInput{HeaderName: header})
-	if err != nil {
-		return nil, err
-	}
-	return &xdscore.TypedExtensionConfig{Name: "envoy.matching.inputs.request_headers", TypedConfig: config}, nil
-}
-
-func apiKeySkipAction() (*xdsmatcher.Matcher_OnMatch, error) {
-	packedSkip, err := packEnvoy(&skip.SkipFilter{})
-	if err != nil {
-		return nil, fmt.Errorf("encode API-key skip action: %w", err)
-	}
-	return &xdsmatcher.Matcher_OnMatch{OnMatch: &xdsmatcher.Matcher_OnMatch_Action{Action: &xdscore.TypedExtensionConfig{Name: "skip", TypedConfig: packedSkip}}}, nil
-}
-
 func routerHTTPFilter() (*hcm.HttpFilter, error) {
 	config, err := packEnvoy(&router.Router{})
 	if err != nil {
 		return nil, err
 	}
 	return &hcm.HttpFilter{Name: routerFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: config}}, nil
+}
+
+func apisForHosts(c resolvedConfig, hosts []indexedVirtualHost) []gatewayapi.API {
+	var apis []gatewayapi.API
+	for _, host := range hosts {
+		apis = append(apis, c.servers[host.serverIndex].apis...)
+	}
+	return apis
 }

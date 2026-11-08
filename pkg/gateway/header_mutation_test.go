@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	setfilterstatecommon "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
 	headermutation "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
 	httpRBAC "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
@@ -66,13 +67,14 @@ func TestJWTRequiredHeadersAreRouteScopedAndManaged(t *testing.T) {
 	if len(removed) != 2 || !removed["x-scope-orgid"] || !removed["x-writer-id"] {
 		t.Fatalf("managed headers removed = %v", removed)
 	}
+	var wrapper route.FilterConfig
+	packed := manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()[0].TypedPerFilterConfig[attributeFilterName]
+	if err := packed.UnmarshalTo(&wrapper); err != nil {
+		t.Fatal(err)
+	}
 	var initialized setfilterstate.Config
-	for _, filter := range manager.HttpFilters {
-		if filter.Name == attributeFilterName {
-			if err := filter.GetTypedConfig().UnmarshalTo(&initialized); err != nil {
-				t.Fatal(err)
-			}
-		}
+	if err := wrapper.Config.UnmarshalTo(&initialized); err != nil {
+		t.Fatal(err)
 	}
 	if len(initialized.OnRequestHeaders) != 2 {
 		t.Fatalf("initialized attribute count = %d, want tenant_id and writer_id", len(initialized.OnRequestHeaders))
@@ -90,7 +92,7 @@ func TestJWTRequiredHeadersAreRouteScopedAndManaged(t *testing.T) {
 	var protected, methodFallback, notFound bool
 	for _, generatedRoute := range host.GetRoutes() {
 		switch generatedRoute.Name {
-		case "api-0-metrics-route-0-method-0":
+		case "api-0-metrics-route-0-method-0-access-0-match-0":
 			protected = true
 			headerConfig := generatedRoute.TypedPerFilterConfig["envoy.filters.http.header_mutation"]
 			if headerConfig == nil {

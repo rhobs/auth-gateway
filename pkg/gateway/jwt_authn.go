@@ -9,11 +9,10 @@ import (
 	"time"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
-	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	jwt "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/jwt_authn/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
-	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 const (
@@ -24,7 +23,6 @@ const (
 	jwksDNSLookupFamilyV6Only      = "V6_ONLY"
 	jwksDNSLookupFamilyV4Preferred = "V4_PREFERRED"
 	jwksDNSLookupFamilyAll         = "ALL"
-	jwtVerifiedHeaderPrefix        = "x-auth-gateway-jwt-verified-"
 	jwtAuthnFilterName             = "envoy.filters.http.jwt_authn"
 	jwtIssuerClaimName             = "iss"
 )
@@ -43,37 +41,6 @@ func validateUniqueIssuerBindings(name string, selected []string, authenticators
 		seen[issuer] = authenticatorName
 	}
 	return nil
-}
-
-func validatePermissiveJWTIssuerBindings(servers []gatewayapi.Server, authenticators map[string]gatewayapi.Authenticator) error {
-	selected := make([]string, 0, len(authenticators))
-	seen := make(map[string]struct{}, len(authenticators))
-	mixedServer := -1
-	for index, server := range servers {
-		if server.TLSConfig != nil || server.Authentication == nil {
-			continue
-		}
-		names := selectedAuthenticatorNames(server)
-		hasOther, hasJWT := false, false
-		for _, name := range names {
-			if authenticators[name].JWT != nil {
-				hasJWT = true
-				if _, exists := seen[name]; !exists {
-					selected = append(selected, name)
-					seen[name] = struct{}{}
-				}
-			} else {
-				hasOther = true
-			}
-		}
-		if server.Authentication.AnyOf != nil && hasOther && hasJWT {
-			mixedServer = index
-		}
-	}
-	if mixedServer < 0 {
-		return nil
-	}
-	return validateUniqueIssuerBindings(fmt.Sprintf("servers[%d].authentication.any_of", mixedServer), selected, authenticators)
 }
 
 func validateJWTAuthenticator(name string, jwt gatewayapi.JWTAuthenticator) error {
@@ -158,23 +125,6 @@ func validateJWKSConfig(j gatewayapi.JWKSConfig, name string, kubernetes bool) e
 	return validateTrustedCA(name+".trusted_ca", j.TrustedCA, kubernetes)
 }
 
-func jwtVerifiedHeaderName(name string) string { return jwtVerifiedHeaderPrefix + name }
-
-func serverJWTRequirementName(index int) string { return "server-" + strconv.Itoa(index) }
-
-func addServerJWTRequirement(c resolvedConfig, host *route.VirtualHost, index int, server resolvedServer) error {
-	if !server.hasJWT {
-		return nil
-	}
-	requirementName := serverJWTRequirementName(index)
-	perRoute, err := packEnvoy(&jwt.PerRouteConfig{RequirementSpecifier: &jwt.PerRouteConfig_RequirementName{RequirementName: requirementName}})
-	if err != nil {
-		return fmt.Errorf("servers[%d] JWT requirement: %w", index, err)
-	}
-	host.TypedPerFilterConfig[jwtAuthnFilterName] = perRoute
-	return nil
-}
-
 func jwtFilterConfig(c resolvedConfig, serverIndexes ...int) (*jwt.JwtAuthentication, error) {
 	config := &jwt.JwtAuthentication{Providers: map[string]*jwt.JwtProvider{}, RequirementMap: map[string]*jwt.JwtRequirement{}, StripFailureResponse: true}
 	if len(serverIndexes) == 0 {
@@ -182,78 +132,49 @@ func jwtFilterConfig(c resolvedConfig, serverIndexes ...int) (*jwt.JwtAuthentica
 			serverIndexes = append(serverIndexes, index)
 		}
 	}
-	used := make(map[string]struct{})
-	permissive := false
 	for _, index := range serverIndexes {
-		server := c.servers[index]
-		permissive = permissive || server.mixedAnyOf()
-		for _, authenticator := range server.authenticators {
-			used[authenticator.Name] = struct{}{}
-		}
-	}
-	for _, authenticator := range c.Authenticators {
-		if authenticator.JWT == nil {
-			continue
-		}
-		if _, exists := used[authenticator.Name]; !exists {
-			continue
-		}
-		provider := &jwt.JwtProvider{
-			Issuer:            authenticator.JWT.Issuer,
-			Audiences:         authenticator.JWT.Audiences,
-			RequireExpiration: true,
-			JwksSourceSpecifier: &jwt.JwtProvider_RemoteJwks{RemoteJwks: &jwt.RemoteJwks{
-				HttpUri:       &core.HttpUri{Uri: authenticator.JWT.JWKS.URI, HttpUpstreamType: &core.HttpUri_Cluster{Cluster: jwksClusterName(authenticator.Name)}, Timeout: protobufDuration(authenticator.JWT.JWKS.FetchTimeout)},
-				CacheDuration: protobufDuration(authenticator.JWT.JWKS.CacheDuration),
-			}},
-			FromHeaders:       []*jwt.JwtHeader{{Name: "Authorization", ValuePrefix: "Bearer "}},
-			PayloadInMetadata: authenticator.Name,
-		}
-		if permissive {
-			provider.ClaimToHeaders = []*jwt.JwtClaimToHeader{{HeaderName: jwtVerifiedHeaderName(authenticator.Name), ClaimName: jwtIssuerClaimName}}
-		}
-		config.Providers[authenticator.Name] = provider
-	}
-	for _, index := range serverIndexes {
-		server := c.servers[index]
-		if server.Authentication == nil || !server.hasJWT {
-			continue
-		}
-		requirements := make([]*jwt.JwtRequirement, 0, len(server.authenticators))
-		for _, authenticator := range server.authenticators {
-			if authenticator.JWT != nil {
-				requirements = append(requirements, &jwt.JwtRequirement{RequiresType: &jwt.JwtRequirement_ProviderName{ProviderName: authenticator.Name}})
+		for _, binding := range c.servers[index].bindings {
+			for _, access := range binding.access {
+				var requirements []*jwt.JwtRequirement
+				for _, authenticator := range access.authenticators {
+					if authenticator.JWT == nil {
+						continue
+					}
+					provider := authenticator.JWT
+					config.Providers[authenticator.Name] = &jwt.JwtProvider{
+						Issuer: provider.Issuer, Audiences: provider.Audiences, RequireExpiration: true,
+						JwksSourceSpecifier: &jwt.JwtProvider_RemoteJwks{RemoteJwks: &jwt.RemoteJwks{
+							HttpUri:       &core.HttpUri{Uri: provider.JWKS.URI, HttpUpstreamType: &core.HttpUri_Cluster{Cluster: jwksClusterName(authenticator.Name)}, Timeout: protobufDuration(provider.JWKS.FetchTimeout)},
+							CacheDuration: protobufDuration(provider.JWKS.CacheDuration),
+						}},
+						FromHeaders:       []*jwt.JwtHeader{{Name: "Authorization", ValuePrefix: "Bearer "}},
+						PayloadInMetadata: authenticator.Name,
+					}
+					requirements = append(requirements, &jwt.JwtRequirement{RequiresType: &jwt.JwtRequirement_ProviderName{ProviderName: authenticator.Name}})
+				}
+				if len(requirements) == 1 {
+					config.RequirementMap[access.id] = requirements[0]
+				} else if len(requirements) > 1 {
+					config.RequirementMap[access.id] = &jwt.JwtRequirement{RequiresType: &jwt.JwtRequirement_RequiresAny{RequiresAny: &jwt.JwtRequirementOrList{Requirements: requirements}}}
+				}
 			}
 		}
-		var requirement *jwt.JwtRequirement
-		if server.mixedAnyOf() {
-			requirement = &jwt.JwtRequirement{RequiresType: &jwt.JwtRequirement_AllowMissingOrFailed{AllowMissingOrFailed: &emptypb.Empty{}}}
-		} else if len(requirements) == 1 {
-			requirement = requirements[0]
-		} else if len(server.Authentication.AllOf) > 0 {
-			requirement = &jwt.JwtRequirement{RequiresType: &jwt.JwtRequirement_RequiresAll{RequiresAll: &jwt.JwtRequirementAndList{Requirements: requirements}}}
-		} else {
-			requirement = &jwt.JwtRequirement{RequiresType: &jwt.JwtRequirement_RequiresAny{RequiresAny: &jwt.JwtRequirementOrList{Requirements: requirements}}}
-		}
-		config.RequirementMap[serverJWTRequirementName(index)] = requirement
 	}
 	return config, nil
 }
 
 func jwtHTTPFilter(c resolvedConfig, serverIndexes []int) (*hcm.HttpFilter, error) {
-	var jwtConfig *jwt.JwtAuthentication
-	var err error
-	if c.usesAPIKeys() || c.usesMTLS() {
-		jwtConfig, err = jwtFilterConfig(c, serverIndexes...)
-	} else {
-		jwtConfig, err = jwtFilterConfig(c)
-	}
+	config, err := jwtFilterConfig(c, serverIndexes...)
 	if err != nil {
 		return nil, err
 	}
-	packed, err := packEnvoy(jwtConfig)
+	packed, err := packEnvoy(config)
 	if err != nil {
-		return nil, fmt.Errorf("encode JWT authentication filter: %w", err)
+		return nil, err
 	}
 	return &hcm.HttpFilter{Name: jwtAuthnFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: packed}}, nil
+}
+
+func jwtPerRouteConfig(access resolvedAccess) (*anypb.Any, error) {
+	return packEnvoy(&jwt.PerRouteConfig{RequirementSpecifier: &jwt.PerRouteConfig_RequirementName{RequirementName: access.id}})
 }

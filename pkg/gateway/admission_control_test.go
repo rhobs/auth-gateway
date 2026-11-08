@@ -33,15 +33,21 @@ func TestLoadAPIAdmissionControl(t *testing.T) {
 func TestLoadEmptyAdmissionControlDefaultsOff(t *testing.T) {
 	input := `version: 1
 servers:
-  - hostname: admission.test
-    apis: [plain]
-apis:
+- hostname: admission.test
+  apis:
   - name: plain
-    admission_control: {}
-    upstream: {address: httpbin, port: 8080}
-    routes:
-      - methods: [GET]
-        path: {exact: /plain}
+    public: true
+apis:
+- name: plain
+  admission_control: {}
+  upstream:
+    address: httpbin
+    port: 8080
+  routes:
+  - methods:
+    - GET
+    path:
+      exact: "/plain"
 `
 	c, err := Load(strings.NewReader(input))
 	if err != nil {
@@ -286,7 +292,7 @@ func TestAdmissionControlPreservesRouteProcessing(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := firstGeneratedHTTPManager(t, files.EnvoyBootstrap.Contents)
-	route := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes(), "api-0-metrics-route-0-method-0")
+	route := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes(), "api-0-metrics-route-0-method-0-access-0-match-0")
 	if route == nil {
 		t.Fatal("processed route is missing")
 	}

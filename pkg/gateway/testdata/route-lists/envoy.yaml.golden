@@ -94,9 +94,37 @@ static_resources:
                                     - remove: x-envoy-upstream-rq-timeout-alt-response
                                     - remove: x-envoy-retriable-status-codes
                                     - remove: x-envoy-retriable-header-names
+                                    - remove: x-auth-gateway-request-validation-pending
+                                    - remove: x-auth-gateway-api-key-client
+                                    - remove: x-auth-gateway-mtls-fingerprint
+                                    - remove: x-auth-gateway-mtls-uri-san
+                                    - remove: x-auth-gateway-mtls-dns-san
+                        - name: auth_gateway.credentials
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
+                            mutations:
+                                request_mutations:
+                                    - remove: authorization
+                                    - remove: x-auth-gateway-api-key-client
+                                    - remove: x-auth-gateway-request-validation-pending
                         - name: envoy.filters.http.router
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                    local_reply_config:
+                        mappers:
+                            - filter:
+                                and_filter:
+                                    filters:
+                                        - status_code_filter:
+                                            comparison:
+                                                value:
+                                                    default_value: 403
+                                        - header_filter:
+                                            header:
+                                                name: x-auth-gateway-request-validation-pending
+                                                string_match:
+                                                    exact: "true"
+                              status_code: 400
                     max_request_headers_kb: 32
                     normalize_path: true
                     path_with_escaped_slashes_action: UNESCAPE_AND_FORWARD
@@ -117,6 +145,10 @@ static_resources:
                                             exact: GET
                                     safe_regex:
                                         regex: ^/metrics/api/v1/(query|query_range)$
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: metrics-query
                                   name: api-0-metrics-query-route-0-method-0
                                   route:
                                     cluster: api-metrics-query
@@ -129,6 +161,9 @@ static_resources:
                                         substitution: /\1
                                     timeout: 30s
                                   stat_prefix: api-0-metrics-query-route-0-method-0
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - match:
                                     headers:
                                         - name: :method
@@ -136,6 +171,10 @@ static_resources:
                                             exact: POST
                                     safe_regex:
                                         regex: ^/metrics/api/v1/(query|query_range)$
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: metrics-query
                                   name: api-0-metrics-query-route-0-method-1
                                   route:
                                     cluster: api-metrics-query
@@ -148,12 +187,19 @@ static_resources:
                                         substitution: /\1
                                     timeout: 30s
                                   stat_prefix: api-0-metrics-query-route-0-method-1
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - match:
                                     headers:
                                         - name: :method
                                           string_match:
                                             exact: GET
                                     prefix: /metrics/api/v1/label/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: metrics-query
                                   name: api-0-metrics-query-route-1-method-0
                                   route:
                                     cluster: api-metrics-query
@@ -163,12 +209,19 @@ static_resources:
                                     prefix_rewrite: /api/v1/label/
                                     timeout: 30s
                                   stat_prefix: api-0-metrics-query-route-1-method-0
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - match:
                                     headers:
                                         - name: :method
                                           string_match:
                                             exact: GET
                                     path: /metrics/api/v1/labels
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: metrics-query
                                   name: api-0-metrics-query-route-2-method-0
                                   route:
                                     cluster: api-metrics-query
@@ -178,42 +231,76 @@ static_resources:
                                     path_rewrite: /api/v1/labels
                                     timeout: 30s
                                   stat_prefix: api-0-metrics-query-route-2-method-0
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
                                     safe_regex:
                                         regex: ^/metrics/api/v1/(query|query_range)$
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: __local
                                   name: method-not-allowed-0
                                   response_headers_to_add:
                                     - append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                       header:
                                         key: allow
                                         value: GET, POST
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
                                     prefix: /metrics/api/v1/label/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: __local
                                   name: method-not-allowed-1
                                   response_headers_to_add:
                                     - append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                       header:
                                         key: allow
                                         value: GET
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
                                     path: /metrics/api/v1/labels
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: __local
                                   name: method-not-allowed-2
                                   response_headers_to_add:
                                     - append_action: OVERWRITE_IF_EXISTS_OR_ADD
                                       header:
                                         key: allow
                                         value: GET
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 404
                                   match:
                                     prefix: /
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.rbac:
+                                            api: __local
                                   name: not-found
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                              typed_per_filter_config:
+                                envoy.filters.http.rbac:
+                                    '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                     stat_prefix: ingress
                     stream_flush_timeout: 5s
                     stream_idle_timeout: 60s

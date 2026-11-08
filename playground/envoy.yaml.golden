@@ -283,9 +283,11 @@ static_resources:
                                     - remove: x-envoy-upstream-rq-timeout-alt-response
                                     - remove: x-envoy-retriable-status-codes
                                     - remove: x-envoy-retriable-header-names
+                                    - remove: x-auth-gateway-request-validation-pending
                                     - remove: x-auth-gateway-api-key-client
-                                    - remove: x-auth-gateway-jwt-verified-playground-metrics-jwt
-                                    - remove: x-auth-gateway-jwt-verified-playground-logs-jwt
+                                    - remove: x-auth-gateway-mtls-fingerprint
+                                    - remove: x-auth-gateway-mtls-uri-san
+                                    - remove: x-auth-gateway-mtls-dns-san
                         - name: envoy.filters.http.lua
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
@@ -334,6 +336,25 @@ static_resources:
                                       end
                                       response_handle:stats():counter(name):inc()
                                     end
+                        - name: auth_gateway.request_validation.begin
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
+                            mutations:
+                                request_mutations:
+                                    - append:
+                                        append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                                        header:
+                                            key: x-auth-gateway-request-validation-pending
+                                            value: "true"
+                        - name: auth_gateway.request_validation
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+                        - name: auth_gateway.request_validation.complete
+                          typed_config:
+                            '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
+                            mutations:
+                                request_mutations:
+                                    - remove: x-auth-gateway-request-validation-pending
                         - name: envoy.filters.http.jwt_authn
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
@@ -341,9 +362,6 @@ static_resources:
                                 playground-logs-jwt:
                                     audiences:
                                         - auth-gateway-playground
-                                    claim_to_headers:
-                                        - claim_name: iss
-                                          header_name: x-auth-gateway-jwt-verified-playground-logs-jwt
                                     from_headers:
                                         - name: Authorization
                                           value_prefix: 'Bearer '
@@ -359,9 +377,6 @@ static_resources:
                                 playground-metrics-jwt:
                                     audiences:
                                         - auth-gateway-playground
-                                    claim_to_headers:
-                                        - claim_name: iss
-                                          header_name: x-auth-gateway-jwt-verified-playground-metrics-jwt
                                     from_headers:
                                         - name: Authorization
                                           value_prefix: 'Bearer '
@@ -375,13 +390,14 @@ static_resources:
                                             uri: https://mock-oauth2-server:8443/metrics/jwks
                                     require_expiration: true
                             requirement_map:
-                                server-2:
-                                    requires_any:
-                                        requirements:
-                                            - provider_name: playground-metrics-jwt
-                                            - provider_name: playground-logs-jwt
-                                server-3:
-                                    allow_missing_or_failed: {}
+                                server-2-api-0-access-0:
+                                    provider_name: playground-metrics-jwt
+                                server-2-api-1-access-0:
+                                    provider_name: playground-logs-jwt
+                                server-3-api-0-access-1:
+                                    provider_name: playground-metrics-jwt
+                                server-3-api-1-access-1:
+                                    provider_name: playground-logs-jwt
                             strip_failure_response: true
                         - config_discovery:
                             config_source:
@@ -391,7 +407,7 @@ static_resources:
                                         path: /etc/auth-gateway/api-keys
                                 resource_api_version: V3
                             type_urls:
-                                - envoy.extensions.common.matching.v3.ExtensionWithMatcher
+                                - envoy.extensions.filters.http.api_key_auth.v3.ApiKeyAuth
                           disabled: true
                           name: envoy.filters.http.api_key_auth
                         - name: envoy.filters.http.header_to_metadata
@@ -412,90 +428,14 @@ static_resources:
                                             regex: ^(?:(?:[^;]*;)*user_id=([^;]*)(?:;[^;]*)*|.*)$
                                         substitution: \1
                                   remove: true
-                        - name: auth_gateway.authentication
-                          typed_config:
-                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
                         - disabled: true
-                          name: auth_gateway.attributes.server-1
+                          name: envoy.filters.http.set_filter_state
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
-                            on_request_headers:
-                                - factory_key: envoy.string
-                                  format_string:
-                                    omit_empty_values: true
-                                    text_format_source:
-                                        inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.user_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"] : "")%'
-                                  object_key: auth_gateway.attributes.user_id
-                                  skip_if_empty: true
-                        - disabled: true
-                          name: auth_gateway.attributes.server-2
-                          typed_config:
-                            '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
-                            on_request_headers:
-                                - factory_key: envoy.string
-                                  format_string:
-                                    omit_empty_values: true
-                                    text_format_source:
-                                        inline_string: '%CEL((("playground-metrics-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["sub"] : "")%'
-                                  object_key: auth_gateway.attributes.user_id
-                                  skip_if_empty: true
-                                - factory_key: envoy.string
-                                  format_string:
-                                    omit_empty_values: true
-                                    text_format_source:
-                                        inline_string: '%CEL((("playground-logs-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["sub"] : "")%'
-                                  object_key: auth_gateway.attributes.user_id
-                                  skip_if_empty: true
-                        - disabled: true
-                          name: auth_gateway.attributes.server-3
-                          typed_config:
-                            '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
-                            on_request_headers:
-                                - factory_key: envoy.string
-                                  format_string:
-                                    omit_empty_values: true
-                                    text_format_source:
-                                        inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "identity" in metadata.filter_metadata["auth_gateway.api_key"] && type(metadata.filter_metadata["auth_gateway.api_key"]["identity"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["identity"] != "") ? "playground-key" : ""))%'
-                                  object_key: auth_gateway.authenticator
-                                  skip_if_empty: true
-                                - factory_key: envoy.string
-                                  format_string:
-                                    omit_empty_values: true
-                                    text_format_source:
-                                        inline_string: '%CEL((("envoy.filters.http.jwt_authn" in metadata.filter_metadata && "playground-metrics-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "iss" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"] && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["iss"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["iss"] == "https://auth.localhost:8443/metrics") ? "playground-metrics-jwt" : ""))%'
-                                  object_key: auth_gateway.authenticator
-                                  skip_if_empty: true
-                                - factory_key: envoy.string
-                                  format_string:
-                                    omit_empty_values: true
-                                    text_format_source:
-                                        inline_string: '%CEL((("envoy.filters.http.jwt_authn" in metadata.filter_metadata && "playground-logs-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "iss" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"] && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["iss"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["iss"] == "https://auth.localhost:8443/logs") ? "playground-logs-jwt" : ""))%'
-                                  object_key: auth_gateway.authenticator
-                                  skip_if_empty: true
-                                - factory_key: envoy.string
-                                  format_string:
-                                    omit_empty_values: true
-                                    text_format_source:
-                                        inline_string: '%CEL(("auth_gateway.authenticator" in filter_state && filter_state["auth_gateway.authenticator"] == b"playground-key") ? ((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.user_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"] : "") : "")%'
-                                  object_key: auth_gateway.attributes.user_id
-                                  skip_if_empty: true
-                                - factory_key: envoy.string
-                                  format_string:
-                                    omit_empty_values: true
-                                    text_format_source:
-                                        inline_string: '%CEL(("auth_gateway.authenticator" in filter_state && filter_state["auth_gateway.authenticator"] == b"playground-metrics-jwt") ? ((("playground-metrics-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["sub"] : "") : "")%'
-                                  object_key: auth_gateway.attributes.user_id
-                                  skip_if_empty: true
-                                - factory_key: envoy.string
-                                  format_string:
-                                    omit_empty_values: true
-                                    text_format_source:
-                                        inline_string: '%CEL(("auth_gateway.authenticator" in filter_state && filter_state["auth_gateway.authenticator"] == b"playground-logs-jwt") ? ((("playground-logs-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["sub"] : "") : "")%'
-                                  object_key: auth_gateway.attributes.user_id
-                                  skip_if_empty: true
                         - name: envoy.filters.http.rbac
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+                            rules: {}
                         - name: auth_gateway.required_headers
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
@@ -507,8 +447,7 @@ static_resources:
                                     - remove: authorization
                                     - remove: x-api-key
                                     - remove: x-auth-gateway-api-key-client
-                                    - remove: x-auth-gateway-jwt-verified-playground-logs-jwt
-                                    - remove: x-auth-gateway-jwt-verified-playground-metrics-jwt
+                                    - remove: x-auth-gateway-request-validation-pending
                         - name: envoy.filters.http.header_mutation
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
@@ -518,6 +457,21 @@ static_resources:
                         - name: envoy.filters.http.router
                           typed_config:
                             '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                    local_reply_config:
+                        mappers:
+                            - filter:
+                                and_filter:
+                                    filters:
+                                        - status_code_filter:
+                                            comparison:
+                                                value:
+                                                    default_value: 403
+                                        - header_filter:
+                                            header:
+                                                name: x-auth-gateway-request-validation-pending
+                                                string_match:
+                                                    exact: "true"
+                              status_code: 400
                     max_request_headers_kb: 32
                     normalize_path: true
                     path_with_escaped_slashes_action: UNESCAPE_AND_FORWARD
@@ -549,6 +503,9 @@ static_resources:
                                         max_stream_duration: 30s
                                     timeout: 30s
                                   stat_prefix: api-0-playground-public-route-0-method-0
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
@@ -563,6 +520,9 @@ static_resources:
                                       header:
                                         key: allow
                                         value: GET
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 404
                                   match:
@@ -572,6 +532,15 @@ static_resources:
                                         envoy.filters.http.rbac:
                                             api: __local
                                   name: not-found
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                              typed_per_filter_config:
+                                envoy.filters.http.jwt_authn:
+                                    '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
+                                    disabled: true
+                                envoy.filters.http.rbac:
+                                    '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                             - domains:
                                 - api-key.localhost
                               name: api-key.localhost
@@ -590,7 +559,7 @@ static_resources:
                                                 user_id: user_id
                                         envoy.filters.http.rbac:
                                             api: metrics-write
-                                  name: api-0-metrics-write-route-0-method-0
+                                  name: api-0-metrics-write-route-0-method-0-access-0-match-0
                                   route:
                                     cluster: api-metrics-write
                                     idle_timeout: 60s
@@ -598,8 +567,60 @@ static_resources:
                                         max_stream_duration: 30s
                                     path_rewrite: /anything
                                     timeout: 30s
-                                  stat_prefix: api-0-metrics-write-route-0-method-0
+                                  stat_prefix: api-0-metrics-write-route-0-method-0-access-0-match-0
                                   typed_per_filter_config:
+                                    auth_gateway.request_validation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                action: DENY
+                                                policies:
+                                                    invalid-request-headers:
+                                                        condition:
+                                                            call_expr:
+                                                                args:
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - const_expr:
+                                                                                string_value: x-api-key
+                                                                              id: "3"
+                                                                            - id: "2"
+                                                                              select_expr:
+                                                                                field: headers
+                                                                                operand:
+                                                                                    id: "1"
+                                                                                    ident_expr:
+                                                                                        name: request
+                                                                        function: '@in'
+                                                                      id: "4"
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - const_expr:
+                                                                                string_value: ','
+                                                                              id: "7"
+                                                                        function: contains
+                                                                        target:
+                                                                            call_expr:
+                                                                                args:
+                                                                                    - id: "2"
+                                                                                      select_expr:
+                                                                                        field: headers
+                                                                                        operand:
+                                                                                            id: "1"
+                                                                                            ident_expr:
+                                                                                                name: request
+                                                                                    - const_expr:
+                                                                                        string_value: x-api-key
+                                                                                      id: "3"
+                                                                                function: _[_]
+                                                                            id: "5"
+                                                                      id: "6"
+                                                                function: _&&_
+                                                            id: "8"
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - any: true
                                     auth_gateway.required_headers:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                         rbac:
@@ -614,6 +635,13 @@ static_resources:
                                                                 string_match:
                                                                     safe_regex:
                                                                         regex: ^[^\x00-\x1f\x7f]+$
+                                    envoy.filters.http.api_key_auth:
+                                        '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                        config:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.api_key_auth.v3.ApiKeyAuthPerRoute
+                                            forwarding:
+                                                header: x-auth-gateway-api-key-client
+                                                hide_credentials: true
                                     envoy.filters.http.header_mutation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
                                         mutations:
@@ -623,6 +651,66 @@ static_resources:
                                                     header:
                                                         key: X-Authenticated-User
                                                         value: '%FILTER_STATE(auth_gateway.attributes.user_id:PLAIN)%'
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                policies:
+                                                    grant-0:
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - and_ids:
+                                                                ids:
+                                                                    - sourced_metadata:
+                                                                        metadata_matcher:
+                                                                            filter: auth_gateway.api_key
+                                                                            path:
+                                                                                - key: identity
+                                                                            value:
+                                                                                string_match:
+                                                                                    exact: verified
+                                                                    - sourced_metadata:
+                                                                        metadata_matcher:
+                                                                            filter: auth_gateway.api_key
+                                                                            path:
+                                                                                - key: attribute.user_id
+                                                                            value:
+                                                                                string_match:
+                                                                                    exact: metrics-writer
+                                    envoy.filters.http.set_filter_state:
+                                        '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                        config:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
+                                            on_request_headers:
+                                                - factory_key: envoy.string
+                                                  format_string:
+                                                    omit_empty_values: true
+                                                    text_format_source:
+                                                        inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.user_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"] : "")%'
+                                                  object_key: auth_gateway.attributes.user_id
+                                                  skip_if_empty: true
+                                - direct_response:
+                                    status: 403
+                                  match:
+                                    headers:
+                                        - name: :method
+                                          string_match:
+                                            exact: POST
+                                    path: /metrics/api/v1/receive
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.lua:
+                                            api: metrics-write
+                                            labels:
+                                                user_id: user_id
+                                        envoy.filters.http.rbac:
+                                            api: metrics-write
+                                  name: api-0-metrics-write-route-0-method-0-access-denied
+                                  stat_prefix: api-0-metrics-write-route-0-method-0-access-denied
+                                  typed_per_filter_config:
+                                    auth_gateway.request_validation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - match:
                                     headers:
                                         - name: :method
@@ -637,7 +725,7 @@ static_resources:
                                                 user_id: user_id
                                         envoy.filters.http.rbac:
                                             api: logs
-                                  name: api-1-logs-route-0-method-0
+                                  name: api-1-logs-route-0-method-0-access-0-match-0
                                   route:
                                     cluster: api-logs
                                     idle_timeout: 60s
@@ -645,8 +733,60 @@ static_resources:
                                         max_stream_duration: 30s
                                     prefix_rewrite: /anything/
                                     timeout: 30s
-                                  stat_prefix: api-1-logs-route-0-method-0
+                                  stat_prefix: api-1-logs-route-0-method-0-access-0-match-0
                                   typed_per_filter_config:
+                                    auth_gateway.request_validation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                action: DENY
+                                                policies:
+                                                    invalid-request-headers:
+                                                        condition:
+                                                            call_expr:
+                                                                args:
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - const_expr:
+                                                                                string_value: x-api-key
+                                                                              id: "3"
+                                                                            - id: "2"
+                                                                              select_expr:
+                                                                                field: headers
+                                                                                operand:
+                                                                                    id: "1"
+                                                                                    ident_expr:
+                                                                                        name: request
+                                                                        function: '@in'
+                                                                      id: "4"
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - const_expr:
+                                                                                string_value: ','
+                                                                              id: "7"
+                                                                        function: contains
+                                                                        target:
+                                                                            call_expr:
+                                                                                args:
+                                                                                    - id: "2"
+                                                                                      select_expr:
+                                                                                        field: headers
+                                                                                        operand:
+                                                                                            id: "1"
+                                                                                            ident_expr:
+                                                                                                name: request
+                                                                                    - const_expr:
+                                                                                        string_value: x-api-key
+                                                                                      id: "3"
+                                                                                function: _[_]
+                                                                            id: "5"
+                                                                      id: "6"
+                                                                function: _&&_
+                                                            id: "8"
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - any: true
                                     auth_gateway.required_headers:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                         rbac:
@@ -661,6 +801,13 @@ static_resources:
                                                                 string_match:
                                                                     safe_regex:
                                                                         regex: ^[^\x00-\x1f\x7f]+$
+                                    envoy.filters.http.api_key_auth:
+                                        '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                        config:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.api_key_auth.v3.ApiKeyAuthPerRoute
+                                            forwarding:
+                                                header: x-auth-gateway-api-key-client
+                                                hide_credentials: true
                                     envoy.filters.http.header_mutation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
                                         mutations:
@@ -670,6 +817,66 @@ static_resources:
                                                     header:
                                                         key: X-Authenticated-User
                                                         value: '%FILTER_STATE(auth_gateway.attributes.user_id:PLAIN)%'
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                policies:
+                                                    grant-0:
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - and_ids:
+                                                                ids:
+                                                                    - sourced_metadata:
+                                                                        metadata_matcher:
+                                                                            filter: auth_gateway.api_key
+                                                                            path:
+                                                                                - key: identity
+                                                                            value:
+                                                                                string_match:
+                                                                                    exact: verified
+                                                                    - sourced_metadata:
+                                                                        metadata_matcher:
+                                                                            filter: auth_gateway.api_key
+                                                                            path:
+                                                                                - key: attribute.user_id
+                                                                            value:
+                                                                                string_match:
+                                                                                    exact: logs-writer
+                                    envoy.filters.http.set_filter_state:
+                                        '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                        config:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
+                                            on_request_headers:
+                                                - factory_key: envoy.string
+                                                  format_string:
+                                                    omit_empty_values: true
+                                                    text_format_source:
+                                                        inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.user_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"] : "")%'
+                                                  object_key: auth_gateway.attributes.user_id
+                                                  skip_if_empty: true
+                                - direct_response:
+                                    status: 403
+                                  match:
+                                    headers:
+                                        - name: :method
+                                          string_match:
+                                            exact: POST
+                                    prefix: /logs/otlp/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.lua:
+                                            api: logs
+                                            labels:
+                                                user_id: user_id
+                                        envoy.filters.http.rbac:
+                                            api: logs
+                                  name: api-1-logs-route-0-method-0-access-denied
+                                  stat_prefix: api-1-logs-route-0-method-0-access-denied
+                                  typed_per_filter_config:
+                                    auth_gateway.request_validation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
@@ -684,6 +891,9 @@ static_resources:
                                       header:
                                         key: allow
                                         value: POST
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
@@ -698,6 +908,9 @@ static_resources:
                                       header:
                                         key: allow
                                         value: POST
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 404
                                   match:
@@ -707,114 +920,17 @@ static_resources:
                                         envoy.filters.http.rbac:
                                             api: __local
                                   name: not-found
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                               typed_per_filter_config:
-                                auth_gateway.attributes.server-1:
-                                    '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
-                                    config:
-                                        '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
-                                auth_gateway.authentication:
-                                    '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
-                                    rbac:
-                                        rules:
-                                            policies:
-                                                authenticated:
-                                                    permissions:
-                                                        - any: true
-                                                    principals:
-                                                        - sourced_metadata:
-                                                            metadata_matcher:
-                                                                filter: auth_gateway.api_key
-                                                                path:
-                                                                    - key: identity
-                                                                value:
-                                                                    string_match:
-                                                                        exact: verified
-                                envoy.filters.http.api_key_auth:
-                                    '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
-                                    config:
-                                        '@type': type.googleapis.com/envoy.extensions.common.matching.v3.ExtensionWithMatcherPerRoute
+                                envoy.filters.http.jwt_authn:
+                                    '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
+                                    disabled: true
                                 envoy.filters.http.rbac:
                                     '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                     rbac:
-                                        rules:
-                                            policies:
-                                                api-logs:
-                                                    permissions:
-                                                        - sourced_metadata:
-                                                            metadata_matcher:
-                                                                filter: envoy.filters.http.rbac
-                                                                path:
-                                                                    - key: api
-                                                                value:
-                                                                    string_match:
-                                                                        exact: logs
-                                                            metadata_source: ROUTE
-                                                    principals:
-                                                        - or_ids:
-                                                            ids:
-                                                                - and_ids:
-                                                                    ids:
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway.api_key
-                                                                                path:
-                                                                                    - key: identity
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: verified
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway.api_key
-                                                                                path:
-                                                                                    - key: attribute.user_id
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: logs-writer
-                                                api-metrics-write:
-                                                    permissions:
-                                                        - sourced_metadata:
-                                                            metadata_matcher:
-                                                                filter: envoy.filters.http.rbac
-                                                                path:
-                                                                    - key: api
-                                                                value:
-                                                                    string_match:
-                                                                        exact: metrics-write
-                                                            metadata_source: ROUTE
-                                                    principals:
-                                                        - or_ids:
-                                                            ids:
-                                                                - and_ids:
-                                                                    ids:
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway.api_key
-                                                                                path:
-                                                                                    - key: identity
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: verified
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway.api_key
-                                                                                path:
-                                                                                    - key: attribute.user_id
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: metrics-writer
-                                                local-responses:
-                                                    permissions:
-                                                        - sourced_metadata:
-                                                            metadata_matcher:
-                                                                filter: envoy.filters.http.rbac
-                                                                path:
-                                                                    - key: api
-                                                                value:
-                                                                    string_match:
-                                                                        exact: __local
-                                                            metadata_source: ROUTE
-                                                    principals:
-                                                        - any: true
+                                        rules: {}
                             - domains:
                                 - jwt.localhost
                               name: jwt.localhost
@@ -833,7 +949,7 @@ static_resources:
                                                 user_id: user_id
                                         envoy.filters.http.rbac:
                                             api: metrics-write
-                                  name: api-0-metrics-write-route-0-method-0
+                                  name: api-0-metrics-write-route-0-method-0-access-0-match-0
                                   route:
                                     cluster: api-metrics-write
                                     idle_timeout: 60s
@@ -841,8 +957,60 @@ static_resources:
                                         max_stream_duration: 30s
                                     path_rewrite: /anything
                                     timeout: 30s
-                                  stat_prefix: api-0-metrics-write-route-0-method-0
+                                  stat_prefix: api-0-metrics-write-route-0-method-0-access-0-match-0
                                   typed_per_filter_config:
+                                    auth_gateway.request_validation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                action: DENY
+                                                policies:
+                                                    invalid-request-headers:
+                                                        condition:
+                                                            call_expr:
+                                                                args:
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - const_expr:
+                                                                                string_value: authorization
+                                                                              id: "3"
+                                                                            - id: "2"
+                                                                              select_expr:
+                                                                                field: headers
+                                                                                operand:
+                                                                                    id: "1"
+                                                                                    ident_expr:
+                                                                                        name: request
+                                                                        function: '@in'
+                                                                      id: "4"
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - const_expr:
+                                                                                string_value: ','
+                                                                              id: "7"
+                                                                        function: contains
+                                                                        target:
+                                                                            call_expr:
+                                                                                args:
+                                                                                    - id: "2"
+                                                                                      select_expr:
+                                                                                        field: headers
+                                                                                        operand:
+                                                                                            id: "1"
+                                                                                            ident_expr:
+                                                                                                name: request
+                                                                                    - const_expr:
+                                                                                        string_value: authorization
+                                                                                      id: "3"
+                                                                                function: _[_]
+                                                                            id: "5"
+                                                                      id: "6"
+                                                                function: _&&_
+                                                            id: "8"
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - any: true
                                     auth_gateway.required_headers:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                         rbac:
@@ -866,6 +1034,77 @@ static_resources:
                                                     header:
                                                         key: X-Authenticated-User
                                                         value: '%FILTER_STATE(auth_gateway.attributes.user_id:PLAIN)%'
+                                    envoy.filters.http.jwt_authn:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
+                                        requirement_name: server-2-api-0-access-0
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                policies:
+                                                    grant-0:
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - and_ids:
+                                                                ids:
+                                                                    - sourced_metadata:
+                                                                        metadata_matcher:
+                                                                            filter: envoy.filters.http.jwt_authn
+                                                                            path:
+                                                                                - key: playground-metrics-jwt
+                                                                                - key: iss
+                                                                            value:
+                                                                                string_match:
+                                                                                    exact: https://auth.localhost:8443/metrics
+                                                                    - sourced_metadata:
+                                                                        metadata_matcher:
+                                                                            filter: envoy.filters.http.jwt_authn
+                                                                            path:
+                                                                                - key: playground-metrics-jwt
+                                                                                - key: sub
+                                                                            value:
+                                                                                or_match:
+                                                                                    value_matchers:
+                                                                                        - string_match:
+                                                                                            exact: metrics-writer
+                                                                                        - list_match:
+                                                                                            one_of:
+                                                                                                string_match:
+                                                                                                    exact: metrics-writer
+                                    envoy.filters.http.set_filter_state:
+                                        '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                        config:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
+                                            on_request_headers:
+                                                - factory_key: envoy.string
+                                                  format_string:
+                                                    omit_empty_values: true
+                                                    text_format_source:
+                                                        inline_string: '%CEL((("playground-metrics-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["sub"] : "")%'
+                                                  object_key: auth_gateway.attributes.user_id
+                                                  skip_if_empty: true
+                                - direct_response:
+                                    status: 403
+                                  match:
+                                    headers:
+                                        - name: :method
+                                          string_match:
+                                            exact: POST
+                                    path: /metrics/api/v1/receive
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.lua:
+                                            api: metrics-write
+                                            labels:
+                                                user_id: user_id
+                                        envoy.filters.http.rbac:
+                                            api: metrics-write
+                                  name: api-0-metrics-write-route-0-method-0-access-denied
+                                  stat_prefix: api-0-metrics-write-route-0-method-0-access-denied
+                                  typed_per_filter_config:
+                                    auth_gateway.request_validation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - match:
                                     headers:
                                         - name: :method
@@ -880,7 +1119,7 @@ static_resources:
                                                 user_id: user_id
                                         envoy.filters.http.rbac:
                                             api: logs
-                                  name: api-1-logs-route-0-method-0
+                                  name: api-1-logs-route-0-method-0-access-0-match-0
                                   route:
                                     cluster: api-logs
                                     idle_timeout: 60s
@@ -888,8 +1127,60 @@ static_resources:
                                         max_stream_duration: 30s
                                     prefix_rewrite: /anything/
                                     timeout: 30s
-                                  stat_prefix: api-1-logs-route-0-method-0
+                                  stat_prefix: api-1-logs-route-0-method-0-access-0-match-0
                                   typed_per_filter_config:
+                                    auth_gateway.request_validation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                action: DENY
+                                                policies:
+                                                    invalid-request-headers:
+                                                        condition:
+                                                            call_expr:
+                                                                args:
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - const_expr:
+                                                                                string_value: authorization
+                                                                              id: "3"
+                                                                            - id: "2"
+                                                                              select_expr:
+                                                                                field: headers
+                                                                                operand:
+                                                                                    id: "1"
+                                                                                    ident_expr:
+                                                                                        name: request
+                                                                        function: '@in'
+                                                                      id: "4"
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - const_expr:
+                                                                                string_value: ','
+                                                                              id: "7"
+                                                                        function: contains
+                                                                        target:
+                                                                            call_expr:
+                                                                                args:
+                                                                                    - id: "2"
+                                                                                      select_expr:
+                                                                                        field: headers
+                                                                                        operand:
+                                                                                            id: "1"
+                                                                                            ident_expr:
+                                                                                                name: request
+                                                                                    - const_expr:
+                                                                                        string_value: authorization
+                                                                                      id: "3"
+                                                                                function: _[_]
+                                                                            id: "5"
+                                                                      id: "6"
+                                                                function: _&&_
+                                                            id: "8"
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - any: true
                                     auth_gateway.required_headers:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                         rbac:
@@ -913,6 +1204,77 @@ static_resources:
                                                     header:
                                                         key: X-Authenticated-User
                                                         value: '%FILTER_STATE(auth_gateway.attributes.user_id:PLAIN)%'
+                                    envoy.filters.http.jwt_authn:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
+                                        requirement_name: server-2-api-1-access-0
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                policies:
+                                                    grant-0:
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - and_ids:
+                                                                ids:
+                                                                    - sourced_metadata:
+                                                                        metadata_matcher:
+                                                                            filter: envoy.filters.http.jwt_authn
+                                                                            path:
+                                                                                - key: playground-logs-jwt
+                                                                                - key: iss
+                                                                            value:
+                                                                                string_match:
+                                                                                    exact: https://auth.localhost:8443/logs
+                                                                    - sourced_metadata:
+                                                                        metadata_matcher:
+                                                                            filter: envoy.filters.http.jwt_authn
+                                                                            path:
+                                                                                - key: playground-logs-jwt
+                                                                                - key: sub
+                                                                            value:
+                                                                                or_match:
+                                                                                    value_matchers:
+                                                                                        - string_match:
+                                                                                            exact: logs-writer
+                                                                                        - list_match:
+                                                                                            one_of:
+                                                                                                string_match:
+                                                                                                    exact: logs-writer
+                                    envoy.filters.http.set_filter_state:
+                                        '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                        config:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
+                                            on_request_headers:
+                                                - factory_key: envoy.string
+                                                  format_string:
+                                                    omit_empty_values: true
+                                                    text_format_source:
+                                                        inline_string: '%CEL((("playground-logs-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["sub"] : "")%'
+                                                  object_key: auth_gateway.attributes.user_id
+                                                  skip_if_empty: true
+                                - direct_response:
+                                    status: 403
+                                  match:
+                                    headers:
+                                        - name: :method
+                                          string_match:
+                                            exact: POST
+                                    prefix: /logs/otlp/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.lua:
+                                            api: logs
+                                            labels:
+                                                user_id: user_id
+                                        envoy.filters.http.rbac:
+                                            api: logs
+                                  name: api-1-logs-route-0-method-0-access-denied
+                                  stat_prefix: api-1-logs-route-0-method-0-access-denied
+                                  typed_per_filter_config:
+                                    auth_gateway.request_validation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
@@ -927,6 +1289,9 @@ static_resources:
                                       header:
                                         key: allow
                                         value: POST
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
@@ -941,6 +1306,9 @@ static_resources:
                                       header:
                                         key: allow
                                         value: POST
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 404
                                   match:
@@ -950,99 +1318,29 @@ static_resources:
                                         envoy.filters.http.rbac:
                                             api: __local
                                   name: not-found
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                               typed_per_filter_config:
-                                auth_gateway.attributes.server-2:
-                                    '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
-                                    config:
-                                        '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
                                 envoy.filters.http.jwt_authn:
                                     '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
-                                    requirement_name: server-2
+                                    disabled: true
                                 envoy.filters.http.rbac:
                                     '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                     rbac:
-                                        rules:
-                                            policies:
-                                                api-logs:
-                                                    permissions:
-                                                        - sourced_metadata:
-                                                            metadata_matcher:
-                                                                filter: envoy.filters.http.rbac
-                                                                path:
-                                                                    - key: api
-                                                                value:
-                                                                    string_match:
-                                                                        exact: logs
-                                                            metadata_source: ROUTE
-                                                    principals:
-                                                        - or_ids:
-                                                            ids:
-                                                                - sourced_metadata:
-                                                                    metadata_matcher:
-                                                                        filter: envoy.filters.http.jwt_authn
-                                                                        path:
-                                                                            - key: playground-logs-jwt
-                                                                            - key: sub
-                                                                        value:
-                                                                            or_match:
-                                                                                value_matchers:
-                                                                                    - string_match:
-                                                                                        exact: logs-writer
-                                                                                    - list_match:
-                                                                                        one_of:
-                                                                                            string_match:
-                                                                                                exact: logs-writer
-                                                api-metrics-write:
-                                                    permissions:
-                                                        - sourced_metadata:
-                                                            metadata_matcher:
-                                                                filter: envoy.filters.http.rbac
-                                                                path:
-                                                                    - key: api
-                                                                value:
-                                                                    string_match:
-                                                                        exact: metrics-write
-                                                            metadata_source: ROUTE
-                                                    principals:
-                                                        - or_ids:
-                                                            ids:
-                                                                - sourced_metadata:
-                                                                    metadata_matcher:
-                                                                        filter: envoy.filters.http.jwt_authn
-                                                                        path:
-                                                                            - key: playground-metrics-jwt
-                                                                            - key: sub
-                                                                        value:
-                                                                            or_match:
-                                                                                value_matchers:
-                                                                                    - string_match:
-                                                                                        exact: metrics-writer
-                                                                                    - list_match:
-                                                                                        one_of:
-                                                                                            string_match:
-                                                                                                exact: metrics-writer
-                                                local-responses:
-                                                    permissions:
-                                                        - sourced_metadata:
-                                                            metadata_matcher:
-                                                                filter: envoy.filters.http.rbac
-                                                                path:
-                                                                    - key: api
-                                                                value:
-                                                                    string_match:
-                                                                        exact: __local
-                                                            metadata_source: ROUTE
-                                                    principals:
-                                                        - any: true
+                                        rules: {}
                             - domains:
-                                - mixed.localhost
-                              name: mixed.localhost
+                                - tenants.localhost
+                              name: tenants.localhost
                               routes:
                                 - match:
                                     headers:
                                         - name: :method
                                           string_match:
                                             exact: POST
+                                        - name: x-tenant
+                                          string_match:
+                                            exact: partner
                                     path: /metrics/api/v1/receive
                                   metadata:
                                     filter_metadata:
@@ -1052,7 +1350,7 @@ static_resources:
                                                 user_id: user_id
                                         envoy.filters.http.rbac:
                                             api: metrics-write
-                                  name: api-0-metrics-write-route-0-method-0
+                                  name: api-0-metrics-write-route-0-method-0-access-0-match-0
                                   route:
                                     cluster: api-metrics-write
                                     idle_timeout: 60s
@@ -1060,8 +1358,296 @@ static_resources:
                                         max_stream_duration: 30s
                                     path_rewrite: /anything
                                     timeout: 30s
-                                  stat_prefix: api-0-metrics-write-route-0-method-0
+                                  stat_prefix: api-0-metrics-write-route-0-method-0-access-0-match-0
                                   typed_per_filter_config:
+                                    auth_gateway.request_validation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                action: DENY
+                                                policies:
+                                                    invalid-request-headers:
+                                                        condition:
+                                                            call_expr:
+                                                                args:
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - call_expr:
+                                                                                args:
+                                                                                    - const_expr:
+                                                                                        string_value: x-tenant
+                                                                                      id: "3"
+                                                                                    - id: "2"
+                                                                                      select_expr:
+                                                                                        field: headers
+                                                                                        operand:
+                                                                                            id: "1"
+                                                                                            ident_expr:
+                                                                                                name: request
+                                                                                function: '@in'
+                                                                              id: "4"
+                                                                            - call_expr:
+                                                                                args:
+                                                                                    - const_expr:
+                                                                                        string_value: ','
+                                                                                      id: "7"
+                                                                                function: contains
+                                                                                target:
+                                                                                    call_expr:
+                                                                                        args:
+                                                                                            - id: "2"
+                                                                                              select_expr:
+                                                                                                field: headers
+                                                                                                operand:
+                                                                                                    id: "1"
+                                                                                                    ident_expr:
+                                                                                                        name: request
+                                                                                            - const_expr:
+                                                                                                string_value: x-tenant
+                                                                                              id: "3"
+                                                                                        function: _[_]
+                                                                                    id: "5"
+                                                                              id: "6"
+                                                                        function: _&&_
+                                                                      id: "8"
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - call_expr:
+                                                                                args:
+                                                                                    - const_expr:
+                                                                                        string_value: x-api-key
+                                                                                      id: "11"
+                                                                                    - id: "10"
+                                                                                      select_expr:
+                                                                                        field: headers
+                                                                                        operand:
+                                                                                            id: "9"
+                                                                                            ident_expr:
+                                                                                                name: request
+                                                                                function: '@in'
+                                                                              id: "12"
+                                                                            - call_expr:
+                                                                                args:
+                                                                                    - const_expr:
+                                                                                        string_value: ','
+                                                                                      id: "15"
+                                                                                function: contains
+                                                                                target:
+                                                                                    call_expr:
+                                                                                        args:
+                                                                                            - id: "10"
+                                                                                              select_expr:
+                                                                                                field: headers
+                                                                                                operand:
+                                                                                                    id: "9"
+                                                                                                    ident_expr:
+                                                                                                        name: request
+                                                                                            - const_expr:
+                                                                                                string_value: x-api-key
+                                                                                              id: "11"
+                                                                                        function: _[_]
+                                                                                    id: "13"
+                                                                              id: "14"
+                                                                        function: _&&_
+                                                                      id: "16"
+                                                                function: _||_
+                                                            id: "17"
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - any: true
+                                    auth_gateway.required_headers:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                policies:
+                                                    required-attributes:
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - filter_state:
+                                                                key: auth_gateway.attributes.user_id
+                                                                string_match:
+                                                                    safe_regex:
+                                                                        regex: ^[^\x00-\x1f\x7f]+$
+                                    envoy.filters.http.api_key_auth:
+                                        '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                        config:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.api_key_auth.v3.ApiKeyAuthPerRoute
+                                            forwarding:
+                                                header: x-auth-gateway-api-key-client
+                                                hide_credentials: true
+                                    envoy.filters.http.header_mutation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
+                                        mutations:
+                                            request_mutations:
+                                                - append:
+                                                    append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                                                    header:
+                                                        key: X-Authenticated-User
+                                                        value: '%FILTER_STATE(auth_gateway.attributes.user_id:PLAIN)%'
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                policies:
+                                                    grant-0:
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - and_ids:
+                                                                ids:
+                                                                    - sourced_metadata:
+                                                                        metadata_matcher:
+                                                                            filter: auth_gateway.api_key
+                                                                            path:
+                                                                                - key: identity
+                                                                            value:
+                                                                                string_match:
+                                                                                    exact: verified
+                                                                    - sourced_metadata:
+                                                                        metadata_matcher:
+                                                                            filter: auth_gateway.api_key
+                                                                            path:
+                                                                                - key: attribute.user_id
+                                                                            value:
+                                                                                string_match:
+                                                                                    exact: metrics-writer
+                                    envoy.filters.http.set_filter_state:
+                                        '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                        config:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
+                                            on_request_headers:
+                                                - factory_key: envoy.string
+                                                  format_string:
+                                                    omit_empty_values: true
+                                                    text_format_source:
+                                                        inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.user_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"] : "")%'
+                                                  object_key: auth_gateway.attributes.user_id
+                                                  skip_if_empty: true
+                                - match:
+                                    headers:
+                                        - name: :method
+                                          string_match:
+                                            exact: POST
+                                        - name: x-tenant
+                                          string_match:
+                                            exact: internal
+                                    path: /metrics/api/v1/receive
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.lua:
+                                            api: metrics-write
+                                            labels:
+                                                user_id: user_id
+                                        envoy.filters.http.rbac:
+                                            api: metrics-write
+                                  name: api-0-metrics-write-route-0-method-0-access-1-match-0
+                                  route:
+                                    cluster: api-metrics-write
+                                    idle_timeout: 60s
+                                    max_stream_duration:
+                                        max_stream_duration: 30s
+                                    path_rewrite: /anything
+                                    timeout: 30s
+                                  stat_prefix: api-0-metrics-write-route-0-method-0-access-1-match-0
+                                  typed_per_filter_config:
+                                    auth_gateway.request_validation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                action: DENY
+                                                policies:
+                                                    invalid-request-headers:
+                                                        condition:
+                                                            call_expr:
+                                                                args:
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - call_expr:
+                                                                                args:
+                                                                                    - const_expr:
+                                                                                        string_value: x-tenant
+                                                                                      id: "3"
+                                                                                    - id: "2"
+                                                                                      select_expr:
+                                                                                        field: headers
+                                                                                        operand:
+                                                                                            id: "1"
+                                                                                            ident_expr:
+                                                                                                name: request
+                                                                                function: '@in'
+                                                                              id: "4"
+                                                                            - call_expr:
+                                                                                args:
+                                                                                    - const_expr:
+                                                                                        string_value: ','
+                                                                                      id: "7"
+                                                                                function: contains
+                                                                                target:
+                                                                                    call_expr:
+                                                                                        args:
+                                                                                            - id: "2"
+                                                                                              select_expr:
+                                                                                                field: headers
+                                                                                                operand:
+                                                                                                    id: "1"
+                                                                                                    ident_expr:
+                                                                                                        name: request
+                                                                                            - const_expr:
+                                                                                                string_value: x-tenant
+                                                                                              id: "3"
+                                                                                        function: _[_]
+                                                                                    id: "5"
+                                                                              id: "6"
+                                                                        function: _&&_
+                                                                      id: "8"
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - call_expr:
+                                                                                args:
+                                                                                    - const_expr:
+                                                                                        string_value: authorization
+                                                                                      id: "11"
+                                                                                    - id: "10"
+                                                                                      select_expr:
+                                                                                        field: headers
+                                                                                        operand:
+                                                                                            id: "9"
+                                                                                            ident_expr:
+                                                                                                name: request
+                                                                                function: '@in'
+                                                                              id: "12"
+                                                                            - call_expr:
+                                                                                args:
+                                                                                    - const_expr:
+                                                                                        string_value: ','
+                                                                                      id: "15"
+                                                                                function: contains
+                                                                                target:
+                                                                                    call_expr:
+                                                                                        args:
+                                                                                            - id: "10"
+                                                                                              select_expr:
+                                                                                                field: headers
+                                                                                                operand:
+                                                                                                    id: "9"
+                                                                                                    ident_expr:
+                                                                                                        name: request
+                                                                                            - const_expr:
+                                                                                                string_value: authorization
+                                                                                              id: "11"
+                                                                                        function: _[_]
+                                                                                    id: "13"
+                                                                              id: "14"
+                                                                        function: _&&_
+                                                                      id: "16"
+                                                                function: _||_
+                                                            id: "17"
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - any: true
                                     auth_gateway.required_headers:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                         rbac:
@@ -1085,7 +1671,518 @@ static_resources:
                                                     header:
                                                         key: X-Authenticated-User
                                                         value: '%FILTER_STATE(auth_gateway.attributes.user_id:PLAIN)%'
+                                    envoy.filters.http.jwt_authn:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
+                                        requirement_name: server-3-api-0-access-1
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                policies:
+                                                    grant-0:
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - and_ids:
+                                                                ids:
+                                                                    - sourced_metadata:
+                                                                        metadata_matcher:
+                                                                            filter: envoy.filters.http.jwt_authn
+                                                                            path:
+                                                                                - key: playground-metrics-jwt
+                                                                                - key: iss
+                                                                            value:
+                                                                                string_match:
+                                                                                    exact: https://auth.localhost:8443/metrics
+                                                                    - sourced_metadata:
+                                                                        metadata_matcher:
+                                                                            filter: envoy.filters.http.jwt_authn
+                                                                            path:
+                                                                                - key: playground-metrics-jwt
+                                                                                - key: sub
+                                                                            value:
+                                                                                or_match:
+                                                                                    value_matchers:
+                                                                                        - string_match:
+                                                                                            exact: metrics-writer
+                                                                                        - list_match:
+                                                                                            one_of:
+                                                                                                string_match:
+                                                                                                    exact: metrics-writer
+                                    envoy.filters.http.set_filter_state:
+                                        '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                        config:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
+                                            on_request_headers:
+                                                - factory_key: envoy.string
+                                                  format_string:
+                                                    omit_empty_values: true
+                                                    text_format_source:
+                                                        inline_string: '%CEL((("playground-metrics-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-metrics-jwt"]["sub"] : "")%'
+                                                  object_key: auth_gateway.attributes.user_id
+                                                  skip_if_empty: true
+                                - direct_response:
+                                    status: 403
+                                  match:
+                                    headers:
+                                        - name: :method
+                                          string_match:
+                                            exact: POST
+                                    path: /metrics/api/v1/receive
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.lua:
+                                            api: metrics-write
+                                            labels:
+                                                user_id: user_id
+                                        envoy.filters.http.rbac:
+                                            api: metrics-write
+                                  name: api-0-metrics-write-route-0-method-0-access-denied
+                                  stat_prefix: api-0-metrics-write-route-0-method-0-access-denied
+                                  typed_per_filter_config:
+                                    auth_gateway.request_validation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                action: DENY
+                                                policies:
+                                                    invalid-request-headers:
+                                                        condition:
+                                                            call_expr:
+                                                                args:
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - const_expr:
+                                                                                string_value: x-tenant
+                                                                              id: "3"
+                                                                            - id: "2"
+                                                                              select_expr:
+                                                                                field: headers
+                                                                                operand:
+                                                                                    id: "1"
+                                                                                    ident_expr:
+                                                                                        name: request
+                                                                        function: '@in'
+                                                                      id: "4"
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - const_expr:
+                                                                                string_value: ','
+                                                                              id: "7"
+                                                                        function: contains
+                                                                        target:
+                                                                            call_expr:
+                                                                                args:
+                                                                                    - id: "2"
+                                                                                      select_expr:
+                                                                                        field: headers
+                                                                                        operand:
+                                                                                            id: "1"
+                                                                                            ident_expr:
+                                                                                                name: request
+                                                                                    - const_expr:
+                                                                                        string_value: x-tenant
+                                                                                      id: "3"
+                                                                                function: _[_]
+                                                                            id: "5"
+                                                                      id: "6"
+                                                                function: _&&_
+                                                            id: "8"
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - any: true
                                 - match:
+                                    headers:
+                                        - name: :method
+                                          string_match:
+                                            exact: POST
+                                        - name: x-tenant
+                                          string_match:
+                                            exact: partner
+                                    prefix: /logs/otlp/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.lua:
+                                            api: logs
+                                            labels:
+                                                user_id: user_id
+                                        envoy.filters.http.rbac:
+                                            api: logs
+                                  name: api-1-logs-route-0-method-0-access-0-match-0
+                                  route:
+                                    cluster: api-logs
+                                    idle_timeout: 60s
+                                    max_stream_duration:
+                                        max_stream_duration: 30s
+                                    prefix_rewrite: /anything/
+                                    timeout: 30s
+                                  stat_prefix: api-1-logs-route-0-method-0-access-0-match-0
+                                  typed_per_filter_config:
+                                    auth_gateway.request_validation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                action: DENY
+                                                policies:
+                                                    invalid-request-headers:
+                                                        condition:
+                                                            call_expr:
+                                                                args:
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - call_expr:
+                                                                                args:
+                                                                                    - const_expr:
+                                                                                        string_value: x-tenant
+                                                                                      id: "3"
+                                                                                    - id: "2"
+                                                                                      select_expr:
+                                                                                        field: headers
+                                                                                        operand:
+                                                                                            id: "1"
+                                                                                            ident_expr:
+                                                                                                name: request
+                                                                                function: '@in'
+                                                                              id: "4"
+                                                                            - call_expr:
+                                                                                args:
+                                                                                    - const_expr:
+                                                                                        string_value: ','
+                                                                                      id: "7"
+                                                                                function: contains
+                                                                                target:
+                                                                                    call_expr:
+                                                                                        args:
+                                                                                            - id: "2"
+                                                                                              select_expr:
+                                                                                                field: headers
+                                                                                                operand:
+                                                                                                    id: "1"
+                                                                                                    ident_expr:
+                                                                                                        name: request
+                                                                                            - const_expr:
+                                                                                                string_value: x-tenant
+                                                                                              id: "3"
+                                                                                        function: _[_]
+                                                                                    id: "5"
+                                                                              id: "6"
+                                                                        function: _&&_
+                                                                      id: "8"
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - call_expr:
+                                                                                args:
+                                                                                    - const_expr:
+                                                                                        string_value: x-api-key
+                                                                                      id: "11"
+                                                                                    - id: "10"
+                                                                                      select_expr:
+                                                                                        field: headers
+                                                                                        operand:
+                                                                                            id: "9"
+                                                                                            ident_expr:
+                                                                                                name: request
+                                                                                function: '@in'
+                                                                              id: "12"
+                                                                            - call_expr:
+                                                                                args:
+                                                                                    - const_expr:
+                                                                                        string_value: ','
+                                                                                      id: "15"
+                                                                                function: contains
+                                                                                target:
+                                                                                    call_expr:
+                                                                                        args:
+                                                                                            - id: "10"
+                                                                                              select_expr:
+                                                                                                field: headers
+                                                                                                operand:
+                                                                                                    id: "9"
+                                                                                                    ident_expr:
+                                                                                                        name: request
+                                                                                            - const_expr:
+                                                                                                string_value: x-api-key
+                                                                                              id: "11"
+                                                                                        function: _[_]
+                                                                                    id: "13"
+                                                                              id: "14"
+                                                                        function: _&&_
+                                                                      id: "16"
+                                                                function: _||_
+                                                            id: "17"
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - any: true
+                                    auth_gateway.required_headers:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                policies:
+                                                    required-attributes:
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - filter_state:
+                                                                key: auth_gateway.attributes.user_id
+                                                                string_match:
+                                                                    safe_regex:
+                                                                        regex: ^[^\x00-\x1f\x7f]+$
+                                    envoy.filters.http.api_key_auth:
+                                        '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                        config:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.api_key_auth.v3.ApiKeyAuthPerRoute
+                                            forwarding:
+                                                header: x-auth-gateway-api-key-client
+                                                hide_credentials: true
+                                    envoy.filters.http.header_mutation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
+                                        mutations:
+                                            request_mutations:
+                                                - append:
+                                                    append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                                                    header:
+                                                        key: X-Authenticated-User
+                                                        value: '%FILTER_STATE(auth_gateway.attributes.user_id:PLAIN)%'
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                policies:
+                                                    grant-0:
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - and_ids:
+                                                                ids:
+                                                                    - sourced_metadata:
+                                                                        metadata_matcher:
+                                                                            filter: auth_gateway.api_key
+                                                                            path:
+                                                                                - key: identity
+                                                                            value:
+                                                                                string_match:
+                                                                                    exact: verified
+                                                                    - sourced_metadata:
+                                                                        metadata_matcher:
+                                                                            filter: auth_gateway.api_key
+                                                                            path:
+                                                                                - key: attribute.user_id
+                                                                            value:
+                                                                                string_match:
+                                                                                    exact: logs-writer
+                                    envoy.filters.http.set_filter_state:
+                                        '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                        config:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
+                                            on_request_headers:
+                                                - factory_key: envoy.string
+                                                  format_string:
+                                                    omit_empty_values: true
+                                                    text_format_source:
+                                                        inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.user_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.user_id"] : "")%'
+                                                  object_key: auth_gateway.attributes.user_id
+                                                  skip_if_empty: true
+                                - match:
+                                    headers:
+                                        - name: :method
+                                          string_match:
+                                            exact: POST
+                                        - name: x-tenant
+                                          string_match:
+                                            exact: internal
+                                    prefix: /logs/otlp/
+                                  metadata:
+                                    filter_metadata:
+                                        envoy.filters.http.lua:
+                                            api: logs
+                                            labels:
+                                                user_id: user_id
+                                        envoy.filters.http.rbac:
+                                            api: logs
+                                  name: api-1-logs-route-0-method-0-access-1-match-0
+                                  route:
+                                    cluster: api-logs
+                                    idle_timeout: 60s
+                                    max_stream_duration:
+                                        max_stream_duration: 30s
+                                    prefix_rewrite: /anything/
+                                    timeout: 30s
+                                  stat_prefix: api-1-logs-route-0-method-0-access-1-match-0
+                                  typed_per_filter_config:
+                                    auth_gateway.request_validation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                action: DENY
+                                                policies:
+                                                    invalid-request-headers:
+                                                        condition:
+                                                            call_expr:
+                                                                args:
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - call_expr:
+                                                                                args:
+                                                                                    - const_expr:
+                                                                                        string_value: x-tenant
+                                                                                      id: "3"
+                                                                                    - id: "2"
+                                                                                      select_expr:
+                                                                                        field: headers
+                                                                                        operand:
+                                                                                            id: "1"
+                                                                                            ident_expr:
+                                                                                                name: request
+                                                                                function: '@in'
+                                                                              id: "4"
+                                                                            - call_expr:
+                                                                                args:
+                                                                                    - const_expr:
+                                                                                        string_value: ','
+                                                                                      id: "7"
+                                                                                function: contains
+                                                                                target:
+                                                                                    call_expr:
+                                                                                        args:
+                                                                                            - id: "2"
+                                                                                              select_expr:
+                                                                                                field: headers
+                                                                                                operand:
+                                                                                                    id: "1"
+                                                                                                    ident_expr:
+                                                                                                        name: request
+                                                                                            - const_expr:
+                                                                                                string_value: x-tenant
+                                                                                              id: "3"
+                                                                                        function: _[_]
+                                                                                    id: "5"
+                                                                              id: "6"
+                                                                        function: _&&_
+                                                                      id: "8"
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - call_expr:
+                                                                                args:
+                                                                                    - const_expr:
+                                                                                        string_value: authorization
+                                                                                      id: "11"
+                                                                                    - id: "10"
+                                                                                      select_expr:
+                                                                                        field: headers
+                                                                                        operand:
+                                                                                            id: "9"
+                                                                                            ident_expr:
+                                                                                                name: request
+                                                                                function: '@in'
+                                                                              id: "12"
+                                                                            - call_expr:
+                                                                                args:
+                                                                                    - const_expr:
+                                                                                        string_value: ','
+                                                                                      id: "15"
+                                                                                function: contains
+                                                                                target:
+                                                                                    call_expr:
+                                                                                        args:
+                                                                                            - id: "10"
+                                                                                              select_expr:
+                                                                                                field: headers
+                                                                                                operand:
+                                                                                                    id: "9"
+                                                                                                    ident_expr:
+                                                                                                        name: request
+                                                                                            - const_expr:
+                                                                                                string_value: authorization
+                                                                                              id: "11"
+                                                                                        function: _[_]
+                                                                                    id: "13"
+                                                                              id: "14"
+                                                                        function: _&&_
+                                                                      id: "16"
+                                                                function: _||_
+                                                            id: "17"
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - any: true
+                                    auth_gateway.required_headers:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                policies:
+                                                    required-attributes:
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - filter_state:
+                                                                key: auth_gateway.attributes.user_id
+                                                                string_match:
+                                                                    safe_regex:
+                                                                        regex: ^[^\x00-\x1f\x7f]+$
+                                    envoy.filters.http.header_mutation:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
+                                        mutations:
+                                            request_mutations:
+                                                - append:
+                                                    append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                                                    header:
+                                                        key: X-Authenticated-User
+                                                        value: '%FILTER_STATE(auth_gateway.attributes.user_id:PLAIN)%'
+                                    envoy.filters.http.jwt_authn:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
+                                        requirement_name: server-3-api-1-access-1
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                        rbac:
+                                            rules:
+                                                policies:
+                                                    grant-0:
+                                                        permissions:
+                                                            - any: true
+                                                        principals:
+                                                            - and_ids:
+                                                                ids:
+                                                                    - sourced_metadata:
+                                                                        metadata_matcher:
+                                                                            filter: envoy.filters.http.jwt_authn
+                                                                            path:
+                                                                                - key: playground-logs-jwt
+                                                                                - key: iss
+                                                                            value:
+                                                                                string_match:
+                                                                                    exact: https://auth.localhost:8443/logs
+                                                                    - sourced_metadata:
+                                                                        metadata_matcher:
+                                                                            filter: envoy.filters.http.jwt_authn
+                                                                            path:
+                                                                                - key: playground-logs-jwt
+                                                                                - key: sub
+                                                                            value:
+                                                                                or_match:
+                                                                                    value_matchers:
+                                                                                        - string_match:
+                                                                                            exact: logs-writer
+                                                                                        - list_match:
+                                                                                            one_of:
+                                                                                                string_match:
+                                                                                                    exact: logs-writer
+                                    envoy.filters.http.set_filter_state:
+                                        '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                        config:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
+                                            on_request_headers:
+                                                - factory_key: envoy.string
+                                                  format_string:
+                                                    omit_empty_values: true
+                                                    text_format_source:
+                                                        inline_string: '%CEL((("playground-logs-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["playground-logs-jwt"]["sub"] : "")%'
+                                                  object_key: auth_gateway.attributes.user_id
+                                                  skip_if_empty: true
+                                - direct_response:
+                                    status: 403
+                                  match:
                                     headers:
                                         - name: :method
                                           string_match:
@@ -1099,39 +2196,61 @@ static_resources:
                                                 user_id: user_id
                                         envoy.filters.http.rbac:
                                             api: logs
-                                  name: api-1-logs-route-0-method-0
-                                  route:
-                                    cluster: api-logs
-                                    idle_timeout: 60s
-                                    max_stream_duration:
-                                        max_stream_duration: 30s
-                                    prefix_rewrite: /anything/
-                                    timeout: 30s
-                                  stat_prefix: api-1-logs-route-0-method-0
+                                  name: api-1-logs-route-0-method-0-access-denied
+                                  stat_prefix: api-1-logs-route-0-method-0-access-denied
                                   typed_per_filter_config:
-                                    auth_gateway.required_headers:
+                                    auth_gateway.request_validation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                         rbac:
                                             rules:
+                                                action: DENY
                                                 policies:
-                                                    required-attributes:
+                                                    invalid-request-headers:
+                                                        condition:
+                                                            call_expr:
+                                                                args:
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - const_expr:
+                                                                                string_value: x-tenant
+                                                                              id: "3"
+                                                                            - id: "2"
+                                                                              select_expr:
+                                                                                field: headers
+                                                                                operand:
+                                                                                    id: "1"
+                                                                                    ident_expr:
+                                                                                        name: request
+                                                                        function: '@in'
+                                                                      id: "4"
+                                                                    - call_expr:
+                                                                        args:
+                                                                            - const_expr:
+                                                                                string_value: ','
+                                                                              id: "7"
+                                                                        function: contains
+                                                                        target:
+                                                                            call_expr:
+                                                                                args:
+                                                                                    - id: "2"
+                                                                                      select_expr:
+                                                                                        field: headers
+                                                                                        operand:
+                                                                                            id: "1"
+                                                                                            ident_expr:
+                                                                                                name: request
+                                                                                    - const_expr:
+                                                                                        string_value: x-tenant
+                                                                                      id: "3"
+                                                                                function: _[_]
+                                                                            id: "5"
+                                                                      id: "6"
+                                                                function: _&&_
+                                                            id: "8"
                                                         permissions:
                                                             - any: true
                                                         principals:
-                                                            - filter_state:
-                                                                key: auth_gateway.attributes.user_id
-                                                                string_match:
-                                                                    safe_regex:
-                                                                        regex: ^[^\x00-\x1f\x7f]+$
-                                    envoy.filters.http.header_mutation:
-                                        '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
-                                        mutations:
-                                            request_mutations:
-                                                - append:
-                                                    append_action: OVERWRITE_IF_EXISTS_OR_ADD
-                                                    header:
-                                                        key: X-Authenticated-User
-                                                        value: '%FILTER_STATE(auth_gateway.attributes.user_id:PLAIN)%'
+                                                            - any: true
                                 - direct_response:
                                     status: 405
                                   match:
@@ -1146,6 +2265,9 @@ static_resources:
                                       header:
                                         key: allow
                                         value: POST
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 405
                                   match:
@@ -1160,6 +2282,9 @@ static_resources:
                                       header:
                                         key: allow
                                         value: POST
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                 - direct_response:
                                     status: 404
                                   match:
@@ -1169,200 +2294,17 @@ static_resources:
                                         envoy.filters.http.rbac:
                                             api: __local
                                   name: not-found
+                                  typed_per_filter_config:
+                                    envoy.filters.http.rbac:
+                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                               typed_per_filter_config:
-                                auth_gateway.attributes.server-3:
-                                    '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
-                                    config:
-                                        '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
-                                auth_gateway.authentication:
-                                    '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
-                                    rbac:
-                                        rules:
-                                            policies:
-                                                authenticated:
-                                                    permissions:
-                                                        - any: true
-                                                    principals:
-                                                        - or_ids:
-                                                            ids:
-                                                                - sourced_metadata:
-                                                                    metadata_matcher:
-                                                                        filter: auth_gateway.api_key
-                                                                        path:
-                                                                            - key: identity
-                                                                        value:
-                                                                            string_match:
-                                                                                exact: verified
-                                                                - header:
-                                                                    name: x-auth-gateway-jwt-verified-playground-metrics-jwt
-                                                                    string_match:
-                                                                        exact: https://auth.localhost:8443/metrics
-                                                                - header:
-                                                                    name: x-auth-gateway-jwt-verified-playground-logs-jwt
-                                                                    string_match:
-                                                                        exact: https://auth.localhost:8443/logs
-                                envoy.filters.http.api_key_auth:
-                                    '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
-                                    config:
-                                        '@type': type.googleapis.com/envoy.extensions.common.matching.v3.ExtensionWithMatcherPerRoute
-                                        xds_matcher:
-                                            matcher_list:
-                                                matchers:
-                                                    - on_match:
-                                                        action:
-                                                            name: skip
-                                                            typed_config:
-                                                                '@type': type.googleapis.com/envoy.extensions.filters.common.matcher.action.v3.SkipFilter
-                                                      predicate:
-                                                        single_predicate:
-                                                            input:
-                                                                name: envoy.matching.inputs.request_headers
-                                                                typed_config:
-                                                                    '@type': type.googleapis.com/envoy.type.matcher.v3.HttpRequestHeaderMatchInput
-                                                                    header_name: x-auth-gateway-jwt-verified-playground-metrics-jwt
-                                                            value_match:
-                                                                exact: https://auth.localhost:8443/metrics
-                                                    - on_match:
-                                                        action:
-                                                            name: skip
-                                                            typed_config:
-                                                                '@type': type.googleapis.com/envoy.extensions.filters.common.matcher.action.v3.SkipFilter
-                                                      predicate:
-                                                        single_predicate:
-                                                            input:
-                                                                name: envoy.matching.inputs.request_headers
-                                                                typed_config:
-                                                                    '@type': type.googleapis.com/envoy.type.matcher.v3.HttpRequestHeaderMatchInput
-                                                                    header_name: x-auth-gateway-jwt-verified-playground-logs-jwt
-                                                            value_match:
-                                                                exact: https://auth.localhost:8443/logs
                                 envoy.filters.http.jwt_authn:
                                     '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
-                                    requirement_name: server-3
+                                    disabled: true
                                 envoy.filters.http.rbac:
                                     '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                     rbac:
-                                        rules:
-                                            policies:
-                                                api-logs:
-                                                    permissions:
-                                                        - sourced_metadata:
-                                                            metadata_matcher:
-                                                                filter: envoy.filters.http.rbac
-                                                                path:
-                                                                    - key: api
-                                                                value:
-                                                                    string_match:
-                                                                        exact: logs
-                                                            metadata_source: ROUTE
-                                                    principals:
-                                                        - or_ids:
-                                                            ids:
-                                                                - and_ids:
-                                                                    ids:
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway.api_key
-                                                                                path:
-                                                                                    - key: identity
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: verified
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway.api_key
-                                                                                path:
-                                                                                    - key: attribute.user_id
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: logs-writer
-                                                                - and_ids:
-                                                                    ids:
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: envoy.filters.http.jwt_authn
-                                                                                path:
-                                                                                    - key: playground-logs-jwt
-                                                                                    - key: sub
-                                                                                value:
-                                                                                    or_match:
-                                                                                        value_matchers:
-                                                                                            - string_match:
-                                                                                                exact: logs-writer
-                                                                                            - list_match:
-                                                                                                one_of:
-                                                                                                    string_match:
-                                                                                                        exact: logs-writer
-                                                                        - header:
-                                                                            name: x-auth-gateway-jwt-verified-playground-logs-jwt
-                                                                            string_match:
-                                                                                exact: https://auth.localhost:8443/logs
-                                                api-metrics-write:
-                                                    permissions:
-                                                        - sourced_metadata:
-                                                            metadata_matcher:
-                                                                filter: envoy.filters.http.rbac
-                                                                path:
-                                                                    - key: api
-                                                                value:
-                                                                    string_match:
-                                                                        exact: metrics-write
-                                                            metadata_source: ROUTE
-                                                    principals:
-                                                        - or_ids:
-                                                            ids:
-                                                                - and_ids:
-                                                                    ids:
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway.api_key
-                                                                                path:
-                                                                                    - key: identity
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: verified
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: auth_gateway.api_key
-                                                                                path:
-                                                                                    - key: attribute.user_id
-                                                                                value:
-                                                                                    string_match:
-                                                                                        exact: metrics-writer
-                                                                - and_ids:
-                                                                    ids:
-                                                                        - sourced_metadata:
-                                                                            metadata_matcher:
-                                                                                filter: envoy.filters.http.jwt_authn
-                                                                                path:
-                                                                                    - key: playground-metrics-jwt
-                                                                                    - key: sub
-                                                                                value:
-                                                                                    or_match:
-                                                                                        value_matchers:
-                                                                                            - string_match:
-                                                                                                exact: metrics-writer
-                                                                                            - list_match:
-                                                                                                one_of:
-                                                                                                    string_match:
-                                                                                                        exact: metrics-writer
-                                                                        - header:
-                                                                            name: x-auth-gateway-jwt-verified-playground-metrics-jwt
-                                                                            string_match:
-                                                                                exact: https://auth.localhost:8443/metrics
-                                                local-responses:
-                                                    permissions:
-                                                        - sourced_metadata:
-                                                            metadata_matcher:
-                                                                filter: envoy.filters.http.rbac
-                                                                path:
-                                                                    - key: api
-                                                                value:
-                                                                    string_match:
-                                                                        exact: __local
-                                                            metadata_source: ROUTE
-                                                    principals:
-                                                        - any: true
+                                        rules: {}
                     stat_prefix: ingress
                     stream_flush_timeout: 5s
                     stream_idle_timeout: 60s

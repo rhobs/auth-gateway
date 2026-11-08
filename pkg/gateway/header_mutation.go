@@ -15,12 +15,12 @@ import (
 )
 
 const (
-	credentialCleanupFilterName  = "auth_gateway.credentials"
-	requestControlsFilterName    = "auth_gateway.request_controls"
-	headerMutationFilterName     = "envoy.filters.http.header_mutation"
-	mtlsPeerHeadersFilterName    = "auth_gateway.mtls.peer_headers"
-	mtlsPendingCleanupFilterName = "auth_gateway.mtls.authentication_complete"
-	authorizationHeaderName      = "authorization"
+	requestValidationPendingHeaderName = "x-auth-gateway-request-validation-pending"
+	credentialCleanupFilterName        = "auth_gateway.credentials"
+	requestControlsFilterName          = "auth_gateway.request_controls"
+	headerMutationFilterName           = "envoy.filters.http.header_mutation"
+	mtlsPeerHeadersFilterName          = "auth_gateway.mtls.peer_headers"
+	authorizationHeaderName            = "authorization"
 )
 
 var (
@@ -42,19 +42,14 @@ var (
 )
 
 func credentialCleanupConfig(c resolvedConfig) *headermutation.HeaderMutation {
-	removed := map[string]struct{}{authorizationHeaderName: {}, apiKeyClientHeader: {}}
+	removed := map[string]struct{}{authorizationHeaderName: {}, apiKeyClientHeader: {}, requestValidationPendingHeaderName: {}}
 	if c.usesMTLS() {
-		for _, name := range []string{mtlsPendingHeaderName, mtlsFingerprintHeaderName, mtlsURIHeaderName, mtlsDNSHeaderName} {
+		for _, name := range []string{mtlsFingerprintHeaderName, mtlsURIHeaderName, mtlsDNSHeaderName} {
 			removed[name] = struct{}{}
 		}
 	}
 	if authenticator, exists := c.apiKeyAuthenticator(); exists {
 		removed[strings.ToLower(authenticator.APIKey.Header)] = struct{}{}
-	}
-	for _, authenticator := range c.Authenticators {
-		if authenticator.JWT != nil {
-			removed[jwtVerifiedHeaderName(authenticator.Name)] = struct{}{}
-		}
 	}
 	mutations := make([]*mutationrules.HeaderMutation, 0, len(removed))
 	for _, name := range slices.Sorted(maps.Keys(removed)) {
@@ -63,7 +58,7 @@ func credentialCleanupConfig(c resolvedConfig) *headermutation.HeaderMutation {
 	return &headermutation.HeaderMutation{Mutations: &headermutation.Mutations{RequestMutations: mutations}}
 }
 
-// credentialCleanupFilter builds the Envoy filter that removes gateway credentials and JWT verification markers before requests reach upstreams.
+// credentialCleanupFilter removes credentials before forwarding.
 func credentialCleanupFilter(c resolvedConfig) (*hcm.HttpFilter, error) {
 	cleanup, err := packEnvoy(credentialCleanupConfig(c))
 	if err != nil {
@@ -112,7 +107,6 @@ func requestHeaderMutations(mappings []gatewayapi.RequestHeaderMapping) []*mutat
 
 func mtlsPeerHeadersFilter() (*hcm.HttpFilter, error) {
 	values := []struct{ name, format string }{
-		{mtlsPendingHeaderName, "true"},
 		{mtlsFingerprintHeaderName, "%DOWNSTREAM_PEER_FINGERPRINT_256%"},
 		{mtlsURIHeaderName, "%DOWNSTREAM_PEER_URI_SAN%"},
 		{mtlsDNSHeaderName, "%DOWNSTREAM_PEER_DNS_SAN%"},
@@ -131,31 +125,8 @@ func mtlsPeerHeadersFilter() (*hcm.HttpFilter, error) {
 	return &hcm.HttpFilter{Name: mtlsPeerHeadersFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: packed}}, nil
 }
 
-func mtlsPendingCleanupFilter() (*hcm.HttpFilter, error) {
-	// A denial before this filter is an authentication failure; successful
-	// authentication reaches it before authorization runs.
-	packed, err := packEnvoy(&headermutation.HeaderMutation{Mutations: &headermutation.Mutations{RequestMutations: []*mutationrules.HeaderMutation{{
-		Action: &mutationrules.HeaderMutation_Remove{Remove: mtlsPendingHeaderName},
-	}}}})
-	if err != nil {
-		return nil, err
-	}
-	return &hcm.HttpFilter{Name: mtlsPendingCleanupFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: packed}}, nil
-}
-
-func requestControlHeaderFilter(c resolvedConfig) (*hcm.HttpFilter, error) {
-	var identityHeaders []string
-	if c.usesAPIKeys() {
-		identityHeaders = append(identityHeaders, apiKeyClientHeader)
-	}
-	for _, authenticator := range c.Authenticators {
-		if authenticator.JWT != nil && c.authenticatorUsed(authenticator.Name) {
-			identityHeaders = append(identityHeaders, jwtVerifiedHeaderName(authenticator.Name))
-		}
-	}
-	if c.usesMTLS() {
-		identityHeaders = append(identityHeaders, mtlsPendingHeaderName, mtlsFingerprintHeaderName, mtlsURIHeaderName, mtlsDNSHeaderName)
-	}
+func requestControlHeaderFilter() (*hcm.HttpFilter, error) {
+	identityHeaders := []string{requestValidationPendingHeaderName, apiKeyClientHeader, mtlsFingerprintHeaderName, mtlsURIHeaderName, mtlsDNSHeaderName}
 	controls, err := packEnvoy(requestControlMutations(identityHeaders...))
 	if err != nil {
 		return nil, fmt.Errorf("encode request-control header removal: %w", err)
@@ -248,4 +219,20 @@ func hasRequestHeaderProcessing(apis []gatewayapi.API) bool {
 		}
 	}
 	return false
+}
+
+func requestValidationMarkerFilter(pending bool) (*hcm.HttpFilter, error) {
+	name := requestValidationFilterName + ".complete"
+	mutation := &mutationrules.HeaderMutation{Action: &mutationrules.HeaderMutation_Remove{Remove: requestValidationPendingHeaderName}}
+	if pending {
+		name = requestValidationFilterName + ".begin"
+		mutation = &mutationrules.HeaderMutation{Action: &mutationrules.HeaderMutation_Append{Append: &core.HeaderValueOption{
+			Header: &core.HeaderValue{Key: requestValidationPendingHeaderName, Value: "true"}, AppendAction: core.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+		}}}
+	}
+	packed, err := packEnvoy(&headermutation.HeaderMutation{Mutations: &headermutation.Mutations{RequestMutations: []*mutationrules.HeaderMutation{mutation}}})
+	if err != nil {
+		return nil, err
+	}
+	return &hcm.HttpFilter{Name: name, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: packed}}, nil
 }

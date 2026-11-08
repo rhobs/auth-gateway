@@ -58,7 +58,7 @@ func registerJWTRequestMetricSpecs() {
 
 		claims := jwtTestClaims("customer-a")
 		delete(claims, "sub")
-		token := gateway.token("issuer-two", claims, nil)
+		token := gateway.token("issuer-one", claims, nil)
 		status, body := expectDeniedBeforeUpstream(ctx, adminAddress, "api-metrics", "RBAC denial", http.StatusForbidden, func() (int, []byte, error) {
 			return gateway.request(ctx, gateway.httpAddr, jwtHTTPHost, false, token, false)
 		})

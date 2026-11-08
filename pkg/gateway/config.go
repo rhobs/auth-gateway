@@ -27,7 +27,6 @@ type resolvedConfig struct {
 	gatewayapi.Config
 	apiIndex           map[string]gatewayapi.API
 	authenticatorIndex map[string]gatewayapi.Authenticator
-	policyIndex        map[string]gatewayapi.AuthorizationPolicy
 	servers            []resolvedServer
 	usedAuthenticators map[string]struct{}
 	apiKey             gatewayapi.Authenticator
@@ -38,13 +37,24 @@ type resolvedConfig struct {
 
 type resolvedServer struct {
 	*gatewayapi.Server
-	apis                   []gatewayapi.API
-	authenticators         []gatewayapi.Authenticator
-	policies               []gatewayapi.AuthorizationPolicy
-	selectedAuthenticators map[string]struct{}
-	hasJWT                 bool
-	hasAPIKey              bool
-	mtls                   gatewayapi.Authenticator
+	apis           []gatewayapi.API
+	bindings       []resolvedAPIBinding
+	authenticators []gatewayapi.Authenticator
+	hasJWT         bool
+	hasAPIKey      bool
+	mtls           gatewayapi.Authenticator
+}
+
+type resolvedAPIBinding struct {
+	*gatewayapi.APIBinding
+	api    gatewayapi.API
+	access []resolvedAccess
+}
+
+type resolvedAccess struct {
+	*gatewayapi.Access
+	id             string
+	authenticators []gatewayapi.Authenticator
 }
 
 func validateAPI(name string, api gatewayapi.API, hasKubernetes bool) error {
@@ -254,7 +264,6 @@ func cloneConfig(c gatewayapi.Config) gatewayapi.Config {
 	c.Listener = cloneListener(c.Listener)
 	c.Overload = cloneConfigPointer(c.Overload, cloneOverloadConfig)
 	c.Authenticators = cloneSlice(c.Authenticators, cloneAuthenticator)
-	c.AuthorizationPolicies = cloneSlice(c.AuthorizationPolicies, cloneAuthorizationPolicy)
 	c.Servers = cloneSlice(c.Servers, cloneServer)
 	c.APIs = cloneSlice(c.APIs, cloneAPI)
 	c.Observability = cloneObservabilityConfig(c.Observability)
@@ -315,12 +324,6 @@ func validateDefaulted(c gatewayapi.Config, resolveTimeouts bool) (resolvedConfi
 		effective.hasAPIKey = effective.hasAPIKey || server.hasAPIKey
 		effective.hasMTLS = effective.hasMTLS || server.usesMTLS()
 	}
-	for _, authenticator := range c.Authenticators {
-		if authenticator.APIKey != nil {
-			effective.apiKey = authenticator
-			break
-		}
-	}
 	return effective, nil
 }
 
@@ -372,77 +375,17 @@ func resolveAuthentication(c *resolvedConfig) error {
 	if err := validateMetricAttributeReferences(c.APIs, authenticators); err != nil {
 		return err
 	}
-	policies, err := validateAuthorizationPolicies(c.Config)
-	if err != nil {
-		return err
-	}
 	c.authenticatorIndex = authenticators
-	c.policyIndex = policies
-	if err := validateAuthorizationPolicyGrants(c.Config, c.apiIndex, authenticators); err != nil {
-		return err
+	for _, authenticator := range c.Authenticators {
+		if authenticator.APIKey != nil {
+			c.apiKey = authenticator
+		}
 	}
-	if err := resolveServerAuthentication(c); err != nil {
-		return err
-	}
-	return validatePermissiveJWTIssuerBindings(c.Servers, authenticators)
-}
-
-func resolveServerAuthentication(c *resolvedConfig) error {
 	for i := range c.servers {
-		server := &c.servers[i]
-		name := fmt.Sprintf(serverFieldPathFormat, i)
-		if server.Authentication != nil {
-			selected, err := validateSelection(name+".authentication", server.Authentication.AnyOf, server.Authentication.AllOf, c.authenticatorIndex)
-			if err != nil {
-				return err
-			}
-			server.selectedAuthenticators = make(map[string]struct{}, len(selected))
-			jwtCount, mtlsCount := 0, 0
-			for _, selectedName := range selected {
-				authenticator := c.authenticatorIndex[selectedName]
-				server.authenticators = append(server.authenticators, authenticator)
-				server.selectedAuthenticators[selectedName] = struct{}{}
-				server.hasJWT = server.hasJWT || authenticator.JWT != nil
-				server.hasAPIKey = server.hasAPIKey || authenticator.APIKey != nil
-				if authenticator.MTLS != nil {
-					mtlsCount++
-					server.mtls = authenticator
-				}
-			}
-			if mtlsCount > 1 {
-				return fmt.Errorf("%s.authentication cannot contain more than one mTLS authenticator", name)
-			}
-			if mtlsCount > 0 && server.TLSConfig == nil {
-				return fmt.Errorf("%s.authentication requires tls_config for mTLS", name)
-			}
-			for _, selectedName := range server.Authentication.AllOf {
-				if c.authenticatorIndex[selectedName].JWT != nil {
-					jwtCount++
-				}
-			}
-			if jwtCount > 1 {
-				return fmt.Errorf("%s.authentication.all_of cannot contain more than one JWT authenticator", name)
-			}
-			if err := validateUniqueIssuerBindings(name+".authentication", selected, c.authenticatorIndex); err != nil {
-				return err
-			}
-		}
-		if server.Authorization != nil {
-			if server.Authentication == nil {
-				return fmt.Errorf("%s.authorization requires authentication", name)
-			}
-			selected, err := validateSelection(name+".authorization", server.Authorization.AnyOf, server.Authorization.AllOf, c.policyIndex)
-			if err != nil {
-				return err
-			}
-			for _, policyName := range selected {
-				server.policies = append(server.policies, c.policyIndex[policyName])
-			}
-		}
-		if err := validateRouteAttributeSources(name, *server.Server, server.apis, c.authenticatorIndex); err != nil {
+		if err := resolveServerAccess(c, i); err != nil {
 			return err
 		}
-		if err := validateFaultAttributeSources(name, *server); err != nil {
+		if err := validateFaultAttributeSources(fmt.Sprintf(serverFieldPathFormat, i), c.servers[i]); err != nil {
 			return err
 		}
 	}
@@ -490,21 +433,3 @@ func (c resolvedConfig) authenticatorUsed(name string) bool {
 }
 
 func (s resolvedServer) usesMTLS() bool { return s.mtls.MTLS != nil }
-
-func (s resolvedServer) mixedAnyOf() bool {
-	if s.Authentication == nil || s.Authentication.AnyOf == nil {
-		return false
-	}
-	types := 0
-	for _, used := range []bool{s.hasJWT, s.hasAPIKey, s.usesMTLS()} {
-		if used {
-			types++
-		}
-	}
-	return types > 1
-}
-
-func (s resolvedServer) selectsAuthenticator(name string) bool {
-	_, selected := s.selectedAuthenticators[name]
-	return selected
-}

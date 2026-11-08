@@ -1,3 +1,3 @@
 // Package api defines the gateway configuration contract independently of its implementations.
-// types.go contains only configuration structs; Duration supplies their YAML duration encoding.
+// Duration and AttributeCondition provide the YAML encodings for configuration values.
 package api

@@ -137,24 +137,28 @@ func validateFaultHeaderReferences(apis []gatewayapi.API, apiKeyHeader string) e
 }
 
 func validateFaultAttributeSources(serverName string, server resolvedServer) error {
-	for _, api := range server.apis {
+	for _, binding := range server.bindings {
+		api := binding.api
 		if api.FaultInjection == nil || api.FaultInjection.Match == nil {
 			continue
 		}
 		for _, attribute := range slices.Sorted(maps.Keys(api.FaultInjection.Match.Attributes)) {
-			provided := false
-			for _, authenticator := range server.authenticators {
-				source, exists := authenticator.Attributes[attribute]
-				if !exists {
-					continue
-				}
-				if source.Header != nil {
-					return fmt.Errorf("%s API %q fault_injection.match.attributes.%s requires an identity attribute, not a request header source", serverName, api.Name, attribute)
-				}
-				provided = true
-			}
-			if !provided {
+			missing := func() error {
 				return fmt.Errorf("%s authentication does not provide fault_injection.match.attributes.%s for API %q", serverName, attribute, api.Name)
+			}
+			if len(binding.access) == 0 {
+				return missing()
+			}
+			for _, access := range binding.access {
+				for _, authenticator := range access.authenticators {
+					source, exists := authenticator.Attributes[attribute]
+					if !exists {
+						return missing()
+					}
+					if source.Header != nil {
+						return fmt.Errorf("%s API %q fault_injection.match.attributes.%s requires an identity attribute, not a request header source", serverName, api.Name, attribute)
+					}
+				}
 			}
 		}
 	}

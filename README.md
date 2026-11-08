@@ -28,8 +28,7 @@ go get github.com/rhobs/auth-gateway
 The public configuration structs live in `pkg/api/types.go`. `pkg/gateway`
 loads and validates the API and generates Envoy files, Kubernetes resources,
 and collector configuration. Feature code and unit tests share matching file
-names, with one fixture tree under `pkg/gateway/testdata`. The old `config`
-import path remains a temporary facade until its callers are migrated.
+names, with one fixture tree under `pkg/gateway/testdata`.
 
 Load and generate files or a Kubernetes manifest from Go:
 
@@ -48,7 +47,9 @@ func main() {
 	cfg, err := gateway.Load(strings.NewReader(`version: 1
 servers:
   - hostname: status.example.com
-    apis: [status]
+    apis:
+      - name: status
+        public: true
 apis:
   - name: status
     upstream: {address: httpbin, port: 8080}
@@ -104,9 +105,13 @@ an exact path, prefix, or regular expression. A matching path with an
 unsupported method returns `405`; an unknown host or path returns `404`.
 HTTPS uses SNI to select a certificate and then checks the request host.
 
-JWTs, API keys, and client certificates can authenticate HTTPS requests.
-Authorization grants name the authenticator, APIs, and allowed attribute
-values. Routes forward source attributes to upstream headers, and metrics use
+Each server/API binding explicitly selects public access or protected entries.
+Original request headers select one tenant access entry; that entry selects
+JWT or API-key authentication and grants tied to the verifying authenticator.
+JWT entries can trust multiple providers. Optional attribute equality binds a
+requested tenant header to a verified credential value. mTLS uses dedicated
+HTTPS servers with mandatory client certificates and no API-level authentication.
+Unmatched or unauthorized requests are denied before the backend. Routes forward source attributes to upstream headers, and metrics use
 the same source values. Supply an additional source attribute when an upstream
 needs a different value. See the [JWT guide](docs/auth/jwt.md),
 [API-key guide](docs/auth/api-key.md), [mTLS guide](docs/auth/mtls.md), and
@@ -126,7 +131,7 @@ Deployment has no checksum annotation.
 
 ## Local playground
 
-The Docker Compose demo exercises public, JWT, API-key, and mixed-auth servers
+The Docker Compose demo exercises public, JWT, API-key, and tenant-selected access
 with mock OAuth, httpbin, metrics, and traces. Start with
 [playground/README.md](playground/README.md).
 

@@ -82,13 +82,6 @@ authenticators:
       trusted_ca: {filename: /etc/auth-gateway/runtime-client-ca.crt}
     attributes:
       tenant_id: {uri_san: true}
-authorization_policies:
-  - name: writers
-    grants:
-      - authenticator: client-cert
-        apis: [ingest]
-        attributes:
-          tenant_id: [spiffe://clients.example.test/client-a]
 apis:
   - name: ingest
     upstream: {address: httpbin, port: 8080}
@@ -104,9 +97,16 @@ servers:
     tls_config:
       certificate: /etc/auth-gateway/runtime-server.crt
       private_key: /etc/auth-gateway/runtime-server.key
-    authentication: {any_of: [client-cert]}
-    authorization: {any_of: [writers]}
-    apis: [ingest]
+      mtls: {authenticator: client-cert}
+    apis:
+      - name: ingest
+        access:
+          - name: writers
+            authorization:
+              grants:
+                - authenticator: client-cert
+                  attributes:
+                    tenant_id: ['spiffe://clients.example.test/client-a']
 `
 	c, err := Load(strings.NewReader(input))
 	if err != nil {

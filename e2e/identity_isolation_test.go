@@ -3,150 +3,142 @@
 package e2e
 
 import (
-	"crypto/tls"
+	"bytes"
+	"encoding/base64"
 	"net/http"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
 	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
+	gatewayconfig "github.com/rhobs/auth-gateway/pkg/gateway"
 )
 
-var identityIsolationNamespace = e2eNamespace("auth-gateway-identity-e2e")
+const accessJourneyHost = "access.auth-gateway.test"
 
-var _ = Describe("Mixed identity isolation", Label("gateway", "identity-isolation", "authentication", "authorization", "namespace-"+identityIsolationNamespace), Ordered, ContinueOnFailure, func() {
-	var gateway *mtlsE2E
+var identityIsolationNamespace = e2eNamespace("auth-gateway-tenant-access-e2e")
 
+var _ = Describe("Tenant and resource isolation", Label("gateway", "identity-isolation", "authentication", "authorization", "namespace-"+identityIsolationNamespace), Ordered, ContinueOnFailure, func() {
+	var gateway *apiKeyE2E
+	var token func(string, any, string) string
 	BeforeAll(func(ctx SpecContext) {
 		DeferCleanup(func() { deleteNamespaceInBackground(identityIsolationNamespace) })
 		var err error
-		gateway, err = setupMTLSGatewayWithShape(ctx, identityIsolationNamespace, func(c *gatewayapi.Config) {
-			c.Authenticators[0].Attributes["writer_id"] = gatewayapi.AttributeSource{ClaimPath: []string{"sub"}}
-			c.Authenticators[0].Attributes["requested_tenant"] = gatewayapi.AttributeSource{Header: new("X-JWT-Tenant")}
-			c.AuthorizationPolicies[0].Grants[0].Attributes = map[string][]string{"writer_id": {"writer-a"}}
-			for _, index := range []int{1, 2} {
-				c.Servers[index].Authorization.AnyOf = []string{"jwt-writers"}
+		credentials := append(baselineAPIKeyCredentials(), gatewayapi.APIKeyCredential{Key: "journey-key", Attributes: map[string]string{"tenant_id": "key-a", "role": "writer", "writer_id": "key-writer"}})
+		gateway, err = setupAPIKeyGatewayWithShape(ctx, identityIsolationNamespace, false, credentials, apiKeySharedSecretKey, func(c *gatewayapi.Config) {
+			fixture, err := env.Fixture("tenant-access.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			journey, err := gatewayconfig.Load(bytes.NewReader(fixture))
+			Expect(err).NotTo(HaveOccurred())
+			for index := range c.Authenticators {
+				c.Authenticators[index].Attributes = journey.Authenticators[index].Attributes
 			}
-			certificateRoute := c.APIs[0].Routes[0]
-			certificateRoute.Path.Exact = "/certificate-attribute"
-			certificateRoute.Processing = &gatewayapi.RouteProcessing{RequestHeaders: []gatewayapi.RequestHeaderMapping{
-				{Name: "X-Certificate-DNS", FromAttribute: "dns_id"},
-			}}
-			c.APIs[0].Routes = append(c.APIs[0].Routes, certificateRoute)
-			headerRoute := c.APIs[0].Routes[0]
-			headerRoute.Path.Exact = "/header-attribute"
-			headerRoute.Processing = &gatewayapi.RouteProcessing{RequestHeaders: []gatewayapi.RequestHeaderMapping{
-				{Name: "X-Scope-OrgID", FromAttribute: "tenant_id"},
-				{Name: "X-Requested-Tenant", FromAttribute: "requested_tenant"},
-			}}
-			c.APIs[0].Routes = append(c.APIs[0].Routes, headerRoute)
-			c.AuthorizationPolicies[3].Grants[0].APIs = []string{"ingest", "probe"}
-			certificateKeyServer := c.Servers[1]
-			certificateKeyServer.Hostname = "cert-key.mtls.auth-gateway.test"
-			certificateKeyServer.Authentication = &gatewayapi.Authentication{AnyOf: []string{"partner-key", "client-cert"}}
-			certificateKeyServer.Authorization = &gatewayapi.Authorization{AnyOf: []string{"trusted-clients", "key-writers"}}
-			c.Servers = append(c.Servers, certificateKeyServer)
+			c.APIs = append(c.APIs, journey.APIs...)
+			c.Servers = append(c.Servers, journey.Servers...)
 		})
 		Expect(err).NotTo(HaveOccurred())
+		token = func(issuer string, tenant any, role string) string {
+			claims := map[string]any{"aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix(), "sub": "journey-writer"}
+			if issuer == "issuer-one" {
+				claims["organization"], claims["role"] = map[string]any{"id": tenant}, role
+			} else {
+				claims["account"], claims["permissions"] = map[string]any{"tenant": tenant}, map[string]any{"role": role}
+			}
+			return (&jwtE2E{keys: gateway.keys}).token(issuer, claims, nil)
+		}
 	}, NodeTimeout(12*time.Minute))
-	BeforeEach(func(ctx SpecContext) {
-		gateway.address = env.ForwardWithCleanup(ctx, identityIsolationNamespace, "service/auth-gateway", 443)
-	})
 
-	It("does not combine a JWT grant with another identity's tenant", func(ctx SpecContext) {
-		for _, host := range []string{mtlsJWTCertHost, mtlsMixedHost} {
-			expectMTLSDenied(ctx, gateway, "certificate without a JWT grant", host, &gateway.allowed, "", "", mtlsRequestHeaders(), http.StatusForbidden)
-		}
-		for _, test := range []struct {
-			name         string
-			organization any
-		}{
-			{name: "missing tenant"},
-			{name: "missing nested tenant", organization: map[string]any{}},
-			{name: "empty tenant", organization: map[string]any{"id": ""}},
-			{name: "non-string tenant", organization: map[string]any{"id": []string{mtlsAllowedURI}}},
+	It("supports concrete JWT tenants, shared JWT tenants, API keys, and multiple read issuers", func(ctx SpecContext) {
+		for _, test := range []struct{ name, tenant, verified, method, path, token, key string }{
+			{"external writer", "external-a", "external-org", http.MethodPost, "/write", token("issuer-two", "external-org", "writer"), ""},
+			{"internal writer A", "client-a", "client-a", http.MethodPost, "/write", token("issuer-one", "client-a", "writer"), ""},
+			{"internal writer B", "client-b", "client-b", http.MethodPost, "/write", token("issuer-one", "client-b", "writer"), ""},
+			{"key writer", "key-a", "key-a", http.MethodPost, "/write", "invalid.jwt", "journey-key"},
+			{"internal reader", "client-a", "", http.MethodGet, "/read", token("issuer-one", "client-a", "reader"), ""},
+			{"external reader", "client-b", "", http.MethodGet, "/read", token("issuer-two", "client-b", "viewer"), ""},
 		} {
-			claims := map[string]any{"sub": "writer-a", "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix()}
-			if test.organization != nil {
-				claims["organization"] = test.organization
+			payload, cluster := "", "api-journey-read"
+			if test.method == http.MethodPost {
+				payload, cluster = apiKeyRequestBody, "api-journey-write"
 			}
-			token := (&jwtE2E{keys: gateway.keys}).token("issuer-one", claims, nil)
-			for _, host := range []string{mtlsJWTCertHost, mtlsMixedHost} {
-				for _, certificate := range []*tls.Certificate{nil, &gateway.allowed} {
-					expectMTLSDenied(ctx, gateway, test.name, host, certificate, token, mtlsAllowedKey, mtlsRequestHeaders(), http.StatusForbidden)
-				}
-			}
-		}
-	}, NodeTimeout(90*time.Second))
-
-	It("does not borrow an attribute undeclared by the selected JWT identity", func(ctx SpecContext) {
-		claims := map[string]any{
-			"sub": "writer-a", "organization": map[string]any{"id": mtlsSecondURI},
-			"aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix(),
-		}
-		token := (&jwtE2E{keys: gateway.keys}).token("issuer-one", claims, nil)
-		expectDeniedBeforeUpstream(ctx, gateway.adminAddr, "api-ingest", "certificate-only attribute with JWT", http.StatusForbidden, func() (int, []byte, error) {
-			return gateway.request(ctx, mtlsMixedHost, &gateway.allowed, token, mtlsAllowedKey,
-				http.MethodPost, "/certificate-attribute", mtlsPayload, http.Header{"X-Certificate-DNS": []string{"caller-controlled"}})
-		})
-	}, NodeTimeout(60*time.Second))
-
-	It("forwards the selected JWT's tenant when credentials conflict", func(ctx SpecContext) {
-		claims := map[string]any{
-			"sub": "writer-a", "organization": map[string]any{"id": mtlsSecondURI},
-			"aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix(),
-		}
-		token := (&jwtE2E{keys: gateway.keys}).token("issuer-one", claims, nil)
-		status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, "api-ingest", "JWT before certificate and key", 1, func() (int, []byte, error) {
-			return gateway.request(ctx, mtlsMixedHost, &gateway.allowed, token, mtlsAllowedKey,
-				http.MethodPost, "/ingest", mtlsPayload, mtlsRequestHeaders())
-		})
-		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectMTLSEcho(body, mtlsSecondURI)
-	}, NodeTimeout(60*time.Second))
-
-	It("uses only the selected JWT's request-header attribute", func(ctx SpecContext) {
-		claims := map[string]any{
-			"sub": "writer-a", "organization": map[string]any{"id": mtlsSecondURI},
-			"aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix(),
-		}
-		token := (&jwtE2E{keys: gateway.keys}).token("issuer-one", claims, nil)
-		for _, test := range []struct {
-			name   string
-			value  *string
-			status int
-			delta  uint64
-		}{
-			{name: "missing JWT header", status: http.StatusForbidden},
-			{name: "empty JWT header", value: new(""), status: http.StatusForbidden},
-			{name: "selected JWT header", value: new("jwt-tenant"), status: http.StatusOK, delta: 1},
-		} {
-			headers := mtlsRequestHeaders()
-			if test.value != nil {
-				headers.Set("X-JWT-Tenant", *test.value)
-			}
-			status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, "api-ingest", test.name, test.delta, func() (int, []byte, error) {
-				return gateway.request(ctx, mtlsMixedHost, &gateway.allowed, token, mtlsAllowedKey,
-					http.MethodPost, "/header-attribute", mtlsPayload, headers)
+			headers := http.Header{"X-Tenant": []string{test.tenant}, "X-Environment": []string{"production"}, "X-Scope-OrgID": []string{"spoofed"}, "X-Verified-Tenant": []string{"spoofed"}}
+			status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, cluster, test.name, 1, func() (int, []byte, error) {
+				return gateway.request(ctx, accessJourneyHost, false, test.method, test.path, payload, test.token, test.key, headers)
 			})
-			Expect(status).To(Equal(test.status), test.name+": "+string(body))
-			if status != http.StatusOK {
-				continue
+			Expect(status).To(Equal(http.StatusOK), test.name+": "+string(body))
+			echo, err := decodeHTTPBinEcho(body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(echo.Method).To(Equal(test.method))
+			Expect(echo.URL).To(HaveSuffix("/anything"))
+			if payload == "" {
+				Expect(echo.Data).To(BeEmpty())
+			} else {
+				Expect(echo.Data).To(Equal("data:application/octet-stream;base64," + base64.StdEncoding.EncodeToString([]byte(payload))))
 			}
-			expectMTLSEcho(body, mtlsSecondURI)
-			Expect(headerValue(jwtEchoHeaders(body), "X-Requested-Tenant")).To(Equal("jwt-tenant"))
+			Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(Equal(test.tenant))
+			Expect(headerValue(echo.Headers, "X-Verified-Tenant")).To(Equal(test.verified))
+			Expect(headerValue(echo.Headers, "X-Tenant")).To(Equal(test.tenant))
+			for _, name := range []string{"Authorization", "X-Partner-Key", "X-Auth-Gateway-API-Key-Client", "X-Auth-Gateway-Request-Validation-Pending"} {
+				Expect(headerValue(echo.Headers, name)).To(BeEmpty(), name)
+			}
 		}
-	}, NodeTimeout(60*time.Second))
+	}, NodeTimeout(2*time.Minute))
 
-	It("keeps a selected certificate's missing tenant from falling through to an API key", func(ctx SpecContext) {
-		const host = "cert-key.mtls.auth-gateway.test"
-		status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, "api-ingest", "API key without certificate", 1, func() (int, []byte, error) {
-			return gateway.request(ctx, host, nil, "", mtlsAllowedKey, http.MethodPost, "/ingest", mtlsPayload, mtlsRequestHeaders())
-		})
-		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectMTLSEcho(body, mtlsAllowedURI)
-		for _, key := range []string{"", mtlsAllowedKey} {
-			expectMTLSDenied(ctx, gateway, "SAN-less certificate", host, &gateway.noSAN, "", key, mtlsRequestHeaders(), http.StatusForbidden)
+	It("denies tenant impersonation, provider confusion, and permissions for another resource", func(ctx SpecContext) {
+		for _, test := range []struct {
+			name, tenant, issuer, credentialTenant, role, method, path string
+			status                                                     int
+		}{
+			{"cross-tenant writer", "client-b", "issuer-one", "client-a", "writer", http.MethodPost, "/write", http.StatusForbidden},
+			{"wrong external organization", "external-a", "issuer-two", "client-a", "writer", http.MethodPost, "/write", http.StatusForbidden},
+			{"unselected writer provider", "client-a", "issuer-two", "client-a", "writer", http.MethodPost, "/write", http.StatusUnauthorized},
+			{"writer cannot read", "client-a", "issuer-one", "client-a", "writer", http.MethodGet, "/read", http.StatusForbidden},
+			{"reader cannot write", "client-a", "issuer-one", "client-a", "reader", http.MethodPost, "/write", http.StatusForbidden},
+			{"other provider's reader role", "client-a", "issuer-two", "client-a", "reader", http.MethodGet, "/read", http.StatusForbidden},
+			{"other listed read tenant", "client-b", "issuer-two", "client-a", "viewer", http.MethodGet, "/read", http.StatusForbidden},
+			{"unlisted tenant", "client-c", "issuer-one", "client-c", "writer", http.MethodPost, "/write", http.StatusForbidden},
+		} {
+			cluster := "api-journey-read"
+			if test.method == http.MethodPost {
+				cluster = "api-journey-write"
+			}
+			expectDeniedBeforeUpstream(ctx, gateway.adminAddr, cluster, test.name, test.status, func() (int, []byte, error) {
+				return gateway.request(ctx, accessJourneyHost, false, test.method, test.path, apiKeyRequestBody, token(test.issuer, test.credentialTenant, test.role), "journey-key", http.Header{"X-Tenant": []string{test.tenant}, "X-Environment": []string{"production"}, "X-Scope-OrgID": []string{test.tenant}})
+			})
 		}
+	}, NodeTimeout(2*time.Minute))
+
+	It("rejects missing selectors and ambiguous selected headers before authenticating", func(ctx SpecContext) {
+		valid := token("issuer-one", "client-a", "writer")
+		for _, test := range []struct {
+			name     string
+			headers  http.Header
+			jwt, key string
+			status   int
+		}{
+			{"missing environment", http.Header{"X-Tenant": []string{"client-a"}}, valid, "", http.StatusForbidden},
+			{"wrong environment", http.Header{"X-Tenant": []string{"client-a"}, "X-Environment": []string{"staging"}}, valid, "", http.StatusForbidden},
+			{"duplicate environment", http.Header{"X-Tenant": []string{"client-a"}, "X-Environment": []string{"production", "staging"}}, valid, "", http.StatusBadRequest},
+			{"duplicate Authorization", http.Header{"X-Tenant": []string{"client-a"}, "X-Environment": []string{"production"}, "Authorization": []string{"Bearer " + valid, "Bearer invalid"}}, "", "", http.StatusBadRequest},
+			{"duplicate API key", http.Header{"X-Tenant": []string{"key-a"}, "X-Environment": []string{"production"}, "X-Partner-Key": []string{"journey-key", "invalid"}}, "", "", http.StatusBadRequest},
+		} {
+			expectDeniedBeforeUpstream(ctx, gateway.adminAddr, "api-journey-write", test.name, test.status, func() (int, []byte, error) {
+				return gateway.request(ctx, accessJourneyHost, false, http.MethodPost, "/write", apiKeyRequestBody, test.jwt, test.key, test.headers)
+			})
+		}
+	}, NodeTimeout(2*time.Minute))
+
+	It("keeps public APIs explicit on the same host", func(ctx SpecContext) {
+		status, body, err := gateway.request(ctx, accessJourneyHost, false, http.MethodGet, "/health", "", "broken.jwt", "invalid-key", nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(status).To(Equal(http.StatusOK), string(body))
+		echo, err := decodeHTTPBinEcho(body)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(echo.Method).To(Equal(http.MethodGet))
+		Expect(echo.URL).To(HaveSuffix("/anything"))
+		Expect(echo.Data).To(BeEmpty())
+		Expect(headerValue(echo.Headers, "Authorization")).To(BeEmpty())
+		Expect(headerValue(echo.Headers, "X-Partner-Key")).To(BeEmpty())
 	}, NodeTimeout(60*time.Second))
 })
