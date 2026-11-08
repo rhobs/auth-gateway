@@ -2,195 +2,35 @@ package config
 
 import (
 	"fmt"
-	"maps"
-	"net/url"
-	"regexp"
 	"slices"
-	"strconv"
 	"strings"
-
-	"k8s.io/apimachinery/pkg/util/validation"
 )
 
-const (
-	invalidJWTTextCharacters           = "\r\n\t"
-	attributeNameValidationErrorFormat = "%s.attributes contains invalid attribute name %q"
-	defaultAPIKeyHeader                = "X-API-Key"
-	authorizationHeaderName            = "authorization"
-)
+const authenticatorFieldPathFormat = "authenticators[%d]"
 
-var attributeNamePattern = regexp.MustCompile("^[a-z][a-z0-9_-]{0,63}$")
-
-func validateUniqueIssuerBindings(name string, selected []string, authenticators map[string]Authenticator) error {
-	seen := make(map[string]string, len(selected))
-	for _, authenticatorName := range selected {
-		jwt := authenticators[authenticatorName].JWT
-		if jwt == nil {
-			continue
-		}
-		issuer := jwt.Issuer
-		if previous, exists := seen[issuer]; exists {
-			return fmt.Errorf("%s binds authenticators %q and %q with the same issuer %q", name, previous, authenticatorName, issuer)
-		}
-		seen[issuer] = authenticatorName
-	}
-	return nil
+// Authenticator defines one named credential validator.
+type Authenticator struct {
+	Name       string                     `yaml:"name"`
+	JWT        *JWTAuthenticator          `yaml:"jwt,omitempty"`
+	APIKey     *APIKeyAuthenticator       `yaml:"api_key,omitempty"`
+	MTLS       *MTLSAuthenticator         `yaml:"mtls,omitempty"`
+	Attributes map[string]AttributeSource `yaml:"attributes,omitempty"`
 }
 
-func validatePermissiveJWTIssuerBindings(servers []Server, authenticators map[string]Authenticator) error {
-	selected := make([]string, 0, len(authenticators))
-	seen := make(map[string]struct{}, len(authenticators))
-	mixedServer := -1
-	for index, server := range servers {
-		if server.TLSConfig != nil || server.Authentication == nil {
-			continue
-		}
-		names := selectedAuthenticatorNames(server)
-		hasOther, hasJWT := false, false
-		for _, name := range names {
-			if authenticators[name].JWT != nil {
-				hasJWT = true
-				if _, exists := seen[name]; !exists {
-					selected = append(selected, name)
-					seen[name] = struct{}{}
-				}
-			} else {
-				hasOther = true
-			}
-		}
-		if server.Authentication.AnyOf != nil && hasOther && hasJWT {
-			mixedServer = index
-		}
-	}
-	if mixedServer < 0 {
+// Authentication selects credential validators for a server.
+type Authentication struct {
+	AnyOf []string `yaml:"any_of,omitempty"`
+	AllOf []string `yaml:"all_of,omitempty"`
+}
+
+func selectedAuthenticatorNames(server Server) []string {
+	if server.Authentication == nil {
 		return nil
 	}
-	return validateUniqueIssuerBindings(fmt.Sprintf("servers[%d].authentication.any_of", mixedServer), selected, authenticators)
-}
-
-func validateAPIKeyAuthenticator(name string, apiKey APIKeyAuthenticator, requireSecret bool) error {
-	if (requireSecret || apiKey.Secret != "") && len(validation.IsDNS1123Subdomain(apiKey.Secret)) != 0 {
-		return fmt.Errorf("%s.secret must be a Kubernetes Secret name", name)
+	if server.Authentication.AnyOf != nil {
+		return server.Authentication.AnyOf
 	}
-	if !validHeaderFieldName(apiKey.Header) || strings.Contains(apiKey.Header, "_") || forbiddenIdentityHeader(strings.ToLower(apiKey.Header)) {
-		return fmt.Errorf("%s.header must be a safe HTTP credential header name", name)
-	}
-	return nil
-}
-
-func validateJWTAuthenticator(name string, jwt JWTAuthenticator) error {
-	if jwt.Issuer == "" || strings.TrimSpace(jwt.Issuer) != jwt.Issuer || strings.ContainsAny(jwt.Issuer, invalidJWTTextCharacters) {
-		return fmt.Errorf("%s.issuer must be a nonempty issuer identifier without surrounding whitespace", name)
-	}
-	parsed, err := url.Parse(jwt.JWKS.URI)
-	if err != nil || !strings.EqualFold(parsed.Scheme, httpsProtocolToken) || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" || parsed.Opaque != "" {
-		return fmt.Errorf("%s.jwks.uri must be an absolute HTTPS URL without user information or a fragment", name)
-	}
-	if !validHost(strings.ToLower(parsed.Hostname())) || strings.HasSuffix(parsed.Host, ":") {
-		return fmt.Errorf("%s.jwks.uri must use a valid DNS name or IP address and optional port", name)
-	}
-	if port := parsed.Port(); port != "" {
-		value, err := strconv.Atoi(port)
-		if err != nil || value < 1 || value > 65535 {
-			return fmt.Errorf("%s.jwks.uri must use a valid port", name)
-		}
-	}
-	seenAudiences := make(map[string]struct{}, len(jwt.Audiences))
-	for _, audience := range jwt.Audiences {
-		if audience == "" || strings.TrimSpace(audience) != audience || strings.ContainsAny(audience, invalidJWTTextCharacters) {
-			return fmt.Errorf("%s.audiences must not contain empty values or surrounding whitespace", name)
-		}
-		if _, exists := seenAudiences[audience]; exists {
-			return fmt.Errorf("%s.audiences contains duplicate value %q", name, audience)
-		}
-		seenAudiences[audience] = struct{}{}
-	}
-	return nil
-}
-
-func validateAuthenticatorAttributes(name string, authenticator Authenticator, apiKeyHeader string) error {
-	for _, attribute := range slices.Sorted(maps.Keys(authenticator.Attributes)) {
-		if !attributeNamePattern.MatchString(attribute) {
-			return fmt.Errorf(attributeNameValidationErrorFormat, name, attribute)
-		}
-		source := authenticator.Attributes[attribute]
-		field := name + ".attributes." + attribute
-		if authenticator.JWT != nil {
-			if source.Credential != nil || source.URISAN != nil || source.DNSSAN != nil || (source.ClaimPath == nil) == (source.Header == nil) {
-				return fmt.Errorf("%s must set exactly one of claim_path or header", field)
-			}
-		} else if authenticator.APIKey != nil {
-			if source.ClaimPath != nil || source.URISAN != nil || source.DNSSAN != nil || (source.Credential == nil) == (source.Header == nil) {
-				return fmt.Errorf("%s must set exactly one of credential: true or header", field)
-			}
-		} else {
-			sources := 0
-			for _, present := range []bool{source.Header != nil, source.URISAN != nil, source.DNSSAN != nil} {
-				if present {
-					sources++
-				}
-			}
-			if source.ClaimPath != nil || source.Credential != nil || sources != 1 {
-				return fmt.Errorf("%s must set exactly one of uri_san: true, dns_san: true, or header", field)
-			}
-		}
-		if source.ClaimPath != nil {
-			if len(source.ClaimPath) == 0 {
-				return fmt.Errorf("%s.claim_path must contain at least one literal object key", field)
-			}
-			if slices.Contains(source.ClaimPath, "") {
-				return fmt.Errorf("%s.claim_path keys must not be empty", field)
-			}
-		}
-		if source.Credential != nil && !*source.Credential {
-			return fmt.Errorf("%s.credential must be true", field)
-		}
-		if source.URISAN != nil && !*source.URISAN {
-			return fmt.Errorf("%s.uri_san must be true", field)
-		}
-		if source.DNSSAN != nil && !*source.DNSSAN {
-			return fmt.Errorf("%s.dns_san must be true", field)
-		}
-		if source.Header != nil {
-			header := *source.Header
-			lower := strings.ToLower(header)
-			if !validHeaderFieldName(header) || strings.Contains(header, "_") || forbiddenIdentityHeader(lower) {
-				return fmt.Errorf("%s.header must be a safe HTTP request header name", field)
-			}
-			if strings.EqualFold(header, apiKeyHeader) {
-				return fmt.Errorf("%s.header is reserved for API-key credentials", field)
-			}
-		}
-	}
-	return nil
-}
-
-func validateRouteProcessing(name string, processing *RouteProcessing) error {
-	if processing == nil {
-		return nil
-	}
-	if len(processing.RequestHeaders) == 0 {
-		return fmt.Errorf("%s.request_headers must contain at least one header mapping", name)
-	}
-	seen := make(map[string]struct{}, len(processing.RequestHeaders))
-	for i, mapping := range processing.RequestHeaders {
-		mappingName := fmt.Sprintf("%s.request_headers[%d]", name, i)
-		if !validHeaderFieldName(mapping.Name) {
-			return fmt.Errorf("%s.name must be a valid HTTP header field name", mappingName)
-		}
-		lowerName := strings.ToLower(mapping.Name)
-		if forbiddenIdentityHeader(lowerName) {
-			return fmt.Errorf("%s.name %q is reserved for credentials, routing, connection, or message framing", mappingName, mapping.Name)
-		}
-		if _, exists := seen[lowerName]; exists {
-			return fmt.Errorf("%s.name %q is duplicated", mappingName, mapping.Name)
-		}
-		seen[lowerName] = struct{}{}
-		if !attributeNamePattern.MatchString(mapping.FromAttribute) {
-			return fmt.Errorf("%s.from_attribute must be a valid attribute name", mappingName)
-		}
-	}
-	return nil
+	return server.Authentication.AllOf
 }
 
 func validateSelection[V any](name string, anyOf, allOf []string, known map[string]V) ([]string, error) {
@@ -229,63 +69,113 @@ func validateUniqueReferences[V any](name string, values []string, known map[str
 	return nil
 }
 
-func validateRouteAttributeSources(serverName string, server Server, bound []API, authenticators map[string]Authenticator) error {
-	for _, api := range bound {
-		for routeIndex, route := range api.Routes {
-			if route.Processing == nil {
-				continue
-			}
-			if server.Authentication == nil {
-				return fmt.Errorf("%s processing on API %q route %d requires authentication", serverName, api.Name, routeIndex)
-			}
-			selected := selectedAuthenticatorNames(server)
-			for _, header := range route.Processing.RequestHeaders {
-				provided := false
-				for _, name := range selected {
-					if authenticators[name].providesAttribute(header.FromAttribute) {
-						provided = true
-						break
-					}
-				}
-				if !provided {
-					return fmt.Errorf("%s authentication does not provide processing attribute %q", serverName, header.FromAttribute)
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func validHeaderFieldName(name string) bool {
-	if name == "" {
-		return false
-	}
-	for i := 0; i < len(name); i++ {
-		ch := name[i]
-		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') {
-			continue
-		}
-		switch ch {
-		case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
-			continue
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-func forbiddenIdentityHeader(name string) bool {
-	if isRequestControlHeader(name) {
-		return true
-	}
-	switch name {
-	case authorizationHeaderName, "proxy-authorization", "cookie", "host", "connection", "keep-alive", "proxy-connection",
-		"transfer-encoding", "content-length", "trailer", "te", "upgrade", "forwarded", "x-forwarded-for",
-		"x-forwarded-host", "x-forwarded-proto", "x-forwarded-port", "x-envoy-original-path", "x-envoy-original-host",
-		"x-envoy-upstream-cluster", "x-envoy-decorator-operation":
-		return true
+func authenticatorPriority(authenticator Authenticator) int {
+	switch {
+	case authenticator.JWT != nil:
+		return 3
+	case authenticator.MTLS != nil:
+		return 2
 	default:
-		return strings.HasPrefix(name, "proxy-") || strings.HasPrefix(name, "x-auth-gateway-")
+		return 1
 	}
+}
+
+func (authenticator Authenticator) withDefaults() Authenticator {
+	if authenticator.JWT != nil {
+		authenticator.JWT.JWKS = authenticator.JWT.JWKS.withDefaults()
+	}
+	if authenticator.APIKey != nil {
+		apiKey := authenticator.APIKey.withDefaults()
+		authenticator.APIKey = &apiKey
+	}
+	return authenticator
+}
+
+func (c Config) validateAuthenticators() (map[string]Authenticator, string, error) {
+	authenticators := make(map[string]Authenticator, len(c.Authenticators))
+	apiKeyCount := 0
+	apiKeyHeader := ""
+	for i, authenticator := range c.Authenticators {
+		name := fmt.Sprintf(authenticatorFieldPathFormat, i)
+		if err := validateGatewayName(name, authenticator.Name); err != nil {
+			return nil, "", err
+		}
+		if _, exists := authenticators[authenticator.Name]; exists {
+			return nil, "", fmt.Errorf("duplicate authenticator name %q", authenticator.Name)
+		}
+		types := 0
+		for _, present := range []bool{authenticator.JWT != nil, authenticator.APIKey != nil, authenticator.MTLS != nil} {
+			if present {
+				types++
+			}
+		}
+		if types != 1 {
+			return nil, "", fmt.Errorf("%s must set exactly one of jwt, api_key, or mtls", name)
+		}
+		if authenticator.JWT != nil {
+			if err := validateJWTAuthenticator(name+".jwt", *authenticator.JWT); err != nil {
+				return nil, "", err
+			}
+			if err := authenticator.JWT.JWKS.validate(name+".jwt.jwks", c.Kubernetes != nil); err != nil {
+				return nil, "", err
+			}
+		} else if authenticator.APIKey != nil {
+			apiKeyCount++
+			if apiKeyCount > 1 {
+				return nil, "", fmt.Errorf("%s.api_key: only one API-key authenticator is supported", name)
+			}
+			if err := validateAPIKeyAuthenticator(name+".api_key", *authenticator.APIKey, c.Kubernetes != nil); err != nil {
+				return nil, "", err
+			}
+			apiKeyHeader = authenticator.APIKey.Header
+		} else {
+			if authenticator.MTLS.TrustedCA == nil {
+				return nil, "", fmt.Errorf("%s.mtls.trusted_ca is required", name)
+			}
+			if err := validateTrustedCA(name+".mtls.trusted_ca", authenticator.MTLS.TrustedCA, c.Kubernetes != nil); err != nil {
+				return nil, "", err
+			}
+		}
+		authenticators[authenticator.Name] = authenticator
+	}
+	return authenticators, apiKeyHeader, nil
+}
+
+func (c Config) hasAuthenticationConfig() bool {
+	if len(c.Authenticators) != 0 || len(c.AuthorizationPolicies) != 0 {
+		return true
+	}
+	for _, server := range c.Servers {
+		if server.Authentication != nil || server.Authorization != nil {
+			return true
+		}
+	}
+	for _, api := range c.APIs {
+		for _, route := range api.Routes {
+			if route.Processing != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (authenticator Authenticator) clone() Authenticator {
+	if authenticator.Attributes != nil {
+		attributes := make(map[string]AttributeSource, len(authenticator.Attributes))
+		for name, source := range authenticator.Attributes {
+			attributes[name] = source.clone()
+		}
+		authenticator.Attributes = attributes
+	}
+	authenticator.JWT = cloneConfigPointer(authenticator.JWT)
+	authenticator.APIKey = clonePointer(authenticator.APIKey)
+	authenticator.MTLS = cloneConfigPointer(authenticator.MTLS)
+	return authenticator
+}
+
+func (a Authentication) clone() Authentication {
+	a.AnyOf = slices.Clone(a.AnyOf)
+	a.AllOf = slices.Clone(a.AllOf)
+	return a
 }

@@ -1,6 +1,5 @@
 package config
 
-// The Envoy file layout is fixed by paths embedded in the generated bootstrap.
 const (
 	// EnvoyConfigDirectory is `/etc/auth-gateway`, containing the bootstrap and server TLS resources.
 	EnvoyConfigDirectory = "/etc/auth-gateway"
@@ -8,7 +7,6 @@ const (
 	APIKeyConfigDirectory = EnvoyConfigDirectory + "/api-keys"
 	// TrustedCADirectory is `/etc/auth-gateway-ca`, the root for CA ConfigMap files.
 	TrustedCADirectory = "/etc/auth-gateway-ca"
-
 	// EnvoyBootstrapPath is `/etc/auth-gateway/envoy.yaml`, the generated Envoy bootstrap path.
 	EnvoyBootstrapPath = EnvoyConfigDirectory + "/" + envoyConfigFilename
 	// APIKeyECDSPath is `/etc/auth-gateway/api-keys/api-keys.yaml`, the API-key ECDS resource path.

@@ -2,165 +2,14 @@ package config
 
 import (
 	"fmt"
-	"maps"
-	"slices"
 	"strings"
 
-	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
-	rbac "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
-	setfilterstatecommon "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
-	setfilterstate "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	expr "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
 )
 
-const (
-	jwtMetadataExpressionPrefix = `metadata.filter_metadata["envoy.filters.http.jwt_authn"]`
-	selectedAuthenticatorKey    = "auth_gateway.authenticator"
-	celAndSeparator             = " && "
-)
+const celAndSeparator = " && "
 
-func (c effectiveConfig) toServerAttributeInitializationConfig(server resolvedServer) *setfilterstate.Config {
-	config := &setfilterstate.Config{}
-	selectIdentity := server.mixedAnyOf()
-	authenticators := slices.Clone(server.authenticators)
-	if selectIdentity || server.usesMTLS() {
-		slices.SortStableFunc(authenticators, func(a, b Authenticator) int {
-			return authenticatorPriority(a) - authenticatorPriority(b)
-		})
-	}
-	if selectIdentity {
-		// Finish identity selection before any identity can supply attributes.
-		for _, authenticator := range authenticators {
-			expression := "((" + authenticatorVerifiedExpression(authenticator) + ") ? " + celStringLiteral(authenticator.Name) + " : \"\")"
-			config.OnRequestHeaders = append(config.OnRequestHeaders, filterStateValue(selectedAuthenticatorKey, expression))
-		}
-	}
-	for _, authenticator := range authenticators {
-		appendAttributeInitialization(config, authenticator, selectIdentity)
-	}
-	return config
-}
-
-func appendAttributeInitialization(config *setfilterstate.Config, authenticator Authenticator, selectIdentity bool) {
-	for _, attribute := range slices.Sorted(maps.Keys(authenticator.Attributes)) {
-		source := authenticator.Attributes[attribute]
-		var expression string
-		switch {
-		case source.Header != nil:
-			expression = headerAttributeExpression(authenticator, *source.Header)
-		case authenticator.JWT != nil:
-			expression = jwtClaimExpression(append([]string{authenticator.Name}, source.ClaimPath...))
-		case authenticator.MTLS != nil:
-			expression = mtlsSANAttributeExpression(source)
-		default:
-			expression = apiKeyAttributeExpression(attribute)
-		}
-		if selectIdentity {
-			key := celStringLiteral(selectedAuthenticatorKey)
-			expression = "(" + key + " in filter_state && filter_state[" + key + "] == " + celBytesLiteral(authenticator.Name) + ") ? (" + expression + ") : \"\""
-		}
-		config.OnRequestHeaders = append(config.OnRequestHeaders, filterStateValue(filterStateKey(attribute), expression))
-	}
-}
-
-func authenticatorPriority(authenticator Authenticator) int {
-	switch {
-	case authenticator.JWT != nil:
-		return 3
-	case authenticator.MTLS != nil:
-		return 2
-	default:
-		return 1
-	}
-}
-
-func (c effectiveConfig) toAttributeInitializationConfig() *setfilterstate.Config {
-	config := &setfilterstate.Config{}
-	for _, authenticator := range c.Authenticators {
-		if !c.authenticatorUsed(authenticator.Name) || authenticator.JWT == nil {
-			continue
-		}
-		appendAttributeInitialization(config, authenticator, false)
-	}
-	return config
-}
-
-func filterStateValue(key, expression string) *setfilterstatecommon.FilterStateValue {
-	return &setfilterstatecommon.FilterStateValue{
-		Key:        &setfilterstatecommon.FilterStateValue_ObjectKey{ObjectKey: key},
-		FactoryKey: "envoy.string",
-		Value: &setfilterstatecommon.FilterStateValue_FormatString{FormatString: &core.SubstitutionFormatString{
-			Format: &core.SubstitutionFormatString_TextFormatSource{TextFormatSource: &core.DataSource{
-				Specifier: &core.DataSource_InlineString{InlineString: "%CEL(" + expression + ")%"},
-			}},
-			OmitEmptyValues: true,
-		}},
-		SkipIfEmpty: true,
-	}
-}
-
-func jwtClaimExpression(claimPath []string) string {
-	current := jwtMetadataExpressionPrefix
-	checks := make([]string, 0, len(claimPath))
-	for _, key := range claimPath {
-		literal := celStringLiteral(key)
-		checks = append(checks, literal+" in "+current)
-		current += "[" + literal + "]"
-	}
-	return "((" + strings.Join(checks, celAndSeparator) + ") && type(" + current + ") == string && " + current + " != \"\") ? " + current + " : \"\""
-}
-
-func headerAttributeExpression(authenticator Authenticator, header string) string {
-	verified := authenticatorVerifiedExpression(authenticator)
-	current, checks := metadataStringPathExpression(requestHeaderMetadataNamespace, []string{strings.ToLower(header)})
-	return "((" + verified + " && " + checks + " && " + current + " != \"\") ? " + current + " : \"\")"
-}
-
-func authenticatorVerifiedExpression(authenticator Authenticator) string {
-	if authenticator.JWT != nil {
-		current, checks := metadataStringPathExpression(jwtAuthnFilterName, []string{authenticator.Name, jwtIssuerClaimName})
-		return checks + " && " + current + " == " + celStringLiteral(authenticator.JWT.Issuer)
-	}
-	if authenticator.MTLS != nil {
-		return mtlsPresentExpression()
-	}
-	current, checks := metadataStringPathExpression(apiKeyMetadataNamespace, []string{apiKeyMetadataKey})
-	return checks + " && " + current + " != \"\""
-}
-
-func mtlsPresentExpression() string {
-	current, checks := metadataStringPathExpression(mtlsMetadataNamespace, []string{mtlsFingerprintMetadataKey})
-	return checks + " && size(" + current + ") >= 64"
-}
-
-func mtlsSANAttributeExpression(source AttributeSource) string {
-	key := mtlsDNSMetadataKey
-	if source.URISAN != nil {
-		key = mtlsURIMetadataKey
-	}
-	current, checks := metadataStringPathExpression(mtlsMetadataNamespace, []string{key})
-	return "((" + mtlsPresentExpression() + " && " + checks + " && " + current + " != \"\") ? " + current + " : \"\")"
-}
-
-func metadataStringPathExpression(namespace string, path []string) (string, string) {
-	current := "metadata.filter_metadata"
-	keys := append([]string{namespace}, path...)
-	checks := make([]string, 0, len(keys)+1)
-	for _, key := range keys {
-		literal := celStringLiteral(key)
-		checks = append(checks, literal+" in "+current)
-		current += "[" + literal + "]"
-	}
-	checks = append(checks, "type("+current+") == string")
-	return current, strings.Join(checks, celAndSeparator)
-}
-
-func apiKeyAttributeExpression(attribute string) string {
-	namespace := `metadata.filter_metadata["` + apiKeyMetadataNamespace + `"]`
-	key := celStringLiteral(apiKeyAttributeMetadataKey(attribute))
-	current := namespace + "[" + key + "]"
-	return "((\"" + apiKeyMetadataNamespace + "\" in metadata.filter_metadata" + celAndSeparator + key + " in " + namespace + ") && type(" + current + ") == string && " + current + " != \"\") ? " + current + " : \"\""
-}
+type celExpressionBuilder struct{ next int64 }
 
 func celStringLiteral(value string) string {
 	var out strings.Builder
@@ -222,8 +71,6 @@ func celBytesLiteral(value string) string {
 	return out.String()
 }
 
-type celExpressionBuilder struct{ next int64 }
-
 func (b *celExpressionBuilder) id() int64 {
 	b.next++
 	return b.next
@@ -241,36 +88,4 @@ func (b *celExpressionBuilder) metadataValue(namespace string, keys []string) *e
 		value = b.call("_[_]", value, literal)
 	}
 	return value
-}
-
-func sharedAttributeConditions(authenticators ...Authenticator) ([]*rbac.Principal, *expr.Expr) {
-	builder := &celExpressionBuilder{}
-	var principals []*rbac.Principal
-	var equality []*expr.Expr
-	for first := range authenticators {
-		for second := first + 1; second < len(authenticators); second++ {
-			for _, attribute := range slices.Sorted(maps.Keys(authenticators[second].Attributes)) {
-				if _, shared := authenticators[first].Attributes[attribute]; !shared {
-					continue
-				}
-				firstNamespace, firstPath := attributeMetadataPath(authenticators[first], attribute)
-				secondNamespace, secondPath := attributeMetadataPath(authenticators[second], attribute)
-				valueMatcher := nonemptyScalarValueMatcher()
-				principals = append(principals,
-					dynamicMetadataPrincipal(firstNamespace, firstPath, valueMatcher),
-					dynamicMetadataPrincipal(secondNamespace, secondPath, valueMatcher))
-				equality = append(equality, builder.call("_==_",
-					builder.metadataValue(firstNamespace, firstPath),
-					builder.metadataValue(secondNamespace, secondPath)))
-			}
-		}
-	}
-	if len(equality) == 0 {
-		return principals, nil
-	}
-	condition := equality[0]
-	for _, next := range equality[1:] {
-		condition = builder.call("_&&_", condition, next)
-	}
-	return principals, condition
 }

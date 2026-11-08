@@ -1,54 +1,20 @@
 package config
 
 import (
-	"bytes"
-	"errors"
 	"fmt"
-	"maps"
 	"math"
 	"net"
-	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
-
-	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
-	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
-	endpoint "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
-	metrics "github.com/envoyproxy/go-control-plane/envoy/config/metrics/v3"
-	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
-	traceconfig "github.com/envoyproxy/go-control-plane/envoy/config/trace/v3"
-	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
-	upstreamhttp "github.com/envoyproxy/go-control-plane/envoy/extensions/upstreams/http/v3"
-	envoytype "github.com/envoyproxy/go-control-plane/envoy/type/v3"
-	"go.yaml.in/yaml/v3"
-	"google.golang.org/protobuf/types/known/anypb"
-	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/structpb"
-	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 const (
-	// DefaultEnvoyImage is the default image used for generated Kubernetes Envoy containers.
-	DefaultEnvoyImage = "envoyproxy/envoy:v1.39.1"
-	// DefaultOTelCollectorImage is the default image used for the telemetry sidecar.
-	DefaultOTelCollectorImage       = "otel/opentelemetry-collector-contrib:0.135.0"
-	defaultOTelMetricsPort          = 8889
-	defaultOTelTracePort            = 4317
 	defaultTraceSamplingPercentage  = 100
-	defaultOTelTraceReceiverAddress = "127.0.0.1"
-	envoyTraceClusterName           = "otel-traces"
-	envoyOTelTracerName             = "envoy.tracers.opentelemetry"
-	collectorConfigFilename         = "config.yaml"
-	collectorConfigDirectory        = "/etc/collector"
 	metricsPortName                 = "metrics"
 	tracesPortName                  = "traces"
 	metricsConfigVolumeName         = "metrics-config"
 	listenerPortConflictErrorFormat = "listener.port must not conflict with admin port %d or the metrics collector port %d"
-	defaultRequestMetricCounterName = "auth_gateway_http_requests_total"
-	requestMetricsFilterName        = "envoy.filters.http.lua"
-	requestMetricStatusLabelName    = "http_status_code"
 )
 
 // ObservabilityConfig groups gateway-wide telemetry settings.
@@ -74,109 +40,6 @@ type ObservabilityTracing struct {
 	Insecure           *bool    `yaml:"insecure,omitempty"`
 }
 
-// APIMetrics enables one request counter and optionally binds labels to working attributes.
-type APIMetrics struct {
-	Labels map[string]string `yaml:"labels,omitempty"`
-}
-
-// KubernetesMetrics configures resources for the collector container.
-type KubernetesMetrics struct {
-	Resources KubernetesResourceRequirements `yaml:"resources,omitempty"`
-}
-
-type otelCollectorConfig struct {
-	Receivers  otelCollectorReceivers  `yaml:"receivers"`
-	Processors otelCollectorProcessors `yaml:"processors"`
-	Exporters  otelCollectorExporters  `yaml:"exporters"`
-	Service    otelCollectorService    `yaml:"service"`
-}
-
-type otelCollectorReceivers struct {
-	OTLP       *otelOTLPReceiver       `yaml:"otlp,omitempty"`
-	Prometheus *otelPrometheusReceiver `yaml:"prometheus,omitempty"`
-}
-
-type otelOTLPReceiver struct {
-	Protocols otelOTLPReceiverProtocols `yaml:"protocols"`
-}
-
-type otelOTLPReceiverProtocols struct {
-	GRPC otelOTLPGRPCReceiver `yaml:"grpc"`
-}
-
-type otelOTLPGRPCReceiver struct {
-	Endpoint string `yaml:"endpoint"`
-}
-
-type otelPrometheusReceiver struct {
-	Config otelPrometheusReceiverConfig `yaml:"config"`
-}
-
-type otelPrometheusReceiverConfig struct {
-	ScrapeConfigs []otelPrometheusScrapeConfig `yaml:"scrape_configs"`
-}
-
-type otelPrometheusScrapeConfig struct {
-	JobName        string                       `yaml:"job_name"`
-	ScrapeInterval string                       `yaml:"scrape_interval"`
-	ScrapeTimeout  string                       `yaml:"scrape_timeout"`
-	MetricsPath    string                       `yaml:"metrics_path"`
-	StaticConfigs  []otelPrometheusStaticConfig `yaml:"static_configs"`
-}
-
-type otelPrometheusStaticConfig struct {
-	Targets []string `yaml:"targets"`
-}
-
-type otelCollectorProcessors struct {
-	Batch     *otelBatchProcessor     `yaml:"batch,omitempty"`
-	Transform *otelTransformProcessor `yaml:"transform,omitempty"`
-}
-
-type otelBatchProcessor struct{}
-
-type otelTransformProcessor struct {
-	MetricStatements []otelTransformMetricStatements `yaml:"metric_statements"`
-}
-
-type otelTransformMetricStatements struct {
-	Context    string   `yaml:"context"`
-	Statements []string `yaml:"statements"`
-}
-
-type otelCollectorExporters struct {
-	OTLP       *otelOTLPExporter       `yaml:"otlp,omitempty"`
-	Prometheus *otelPrometheusExporter `yaml:"prometheus,omitempty"`
-}
-
-type otelOTLPExporter struct {
-	Endpoint string         `yaml:"endpoint"`
-	TLS      *otelTLSConfig `yaml:"tls,omitempty"`
-}
-
-type otelTLSConfig struct {
-	Insecure bool `yaml:"insecure"`
-}
-
-type otelPrometheusExporter struct {
-	Endpoint string `yaml:"endpoint"`
-}
-
-type otelCollectorService struct {
-	Pipelines otelCollectorPipelines `yaml:"pipelines"`
-}
-
-type otelCollectorPipelines struct {
-	Metrics *otelCollectorPipeline `yaml:"metrics,omitempty"`
-	Traces  *otelCollectorPipeline `yaml:"traces,omitempty"`
-}
-
-type otelCollectorPipeline struct {
-	Receivers  []string `yaml:"receivers"`
-	Processors []string `yaml:"processors"`
-	Exporters  []string `yaml:"exporters"`
-}
-
 func validateOTelTraceEndpoint(endpoint string) error {
 	host, portText, err := net.SplitHostPort(endpoint)
 	if err != nil || !validHost(host) {
@@ -190,90 +53,6 @@ func validateOTelTraceEndpoint(endpoint string) error {
 		return fmt.Errorf("observability.tracing.endpoint must not contain control characters")
 	}
 	return nil
-}
-
-// GenerateOTelCollectorConfig builds the OpenTelemetry Collector configuration
-// for the gateway's metrics and tracing settings. It returns nil when both are
-// disabled.
-func GenerateOTelCollectorConfig(c Config) ([]byte, error) {
-	effective, err := resolveConfig(c)
-	if err != nil {
-		return nil, err
-	}
-	return generateOTelCollectorConfig(effective.Observability.Metrics, effective.Observability.Tracing)
-}
-
-func generateOTelCollectorConfig(metrics ObservabilityMetrics, tracing ObservabilityTracing) ([]byte, error) {
-	metricsEnabled := metrics.enabled()
-	tracingEnabled := tracing.enabled()
-	if !metricsEnabled && !tracingEnabled {
-		return nil, nil
-	}
-
-	collectorConfig := otelCollectorConfig{}
-	if metricsEnabled {
-		collectorConfig.Receivers.Prometheus = &otelPrometheusReceiver{
-			Config: otelPrometheusReceiverConfig{
-				ScrapeConfigs: []otelPrometheusScrapeConfig{{
-					JobName:        "auth-gateway",
-					ScrapeInterval: prometheusDuration(*metrics.ScrapeInterval),
-					ScrapeTimeout:  prometheusDuration(*metrics.ScrapeTimeout),
-					MetricsPath:    "/stats/prometheus",
-					StaticConfigs: []otelPrometheusStaticConfig{{
-						Targets: []string{fmt.Sprintf("127.0.0.1:%d", envoyAdminPort)},
-					}},
-				}},
-			},
-		}
-		collectorConfig.Processors.Transform = &otelTransformProcessor{
-			MetricStatements: []otelTransformMetricStatements{{
-				Context:    "metric",
-				Statements: []string{`replace_pattern(name, "^envoy_http_lua_", "")`},
-			}},
-		}
-		collectorConfig.Exporters.Prometheus = &otelPrometheusExporter{
-			Endpoint: fmt.Sprintf("0.0.0.0:%d", defaultOTelMetricsPort),
-		}
-		collectorConfig.Service.Pipelines.Metrics = &otelCollectorPipeline{
-			Receivers:  []string{"prometheus"},
-			Processors: []string{"transform"},
-			Exporters:  []string{"prometheus"},
-		}
-	}
-	if tracingEnabled {
-		collectorConfig.Receivers.OTLP = &otelOTLPReceiver{
-			Protocols: otelOTLPReceiverProtocols{
-				GRPC: otelOTLPGRPCReceiver{Endpoint: fmt.Sprintf("%s:%d", defaultOTelTraceReceiverAddress, defaultOTelTracePort)},
-			},
-		}
-		collectorConfig.Processors.Batch = &otelBatchProcessor{}
-		collectorConfig.Exporters.OTLP = &otelOTLPExporter{Endpoint: tracing.Endpoint}
-		if *tracing.Insecure {
-			collectorConfig.Exporters.OTLP.TLS = &otelTLSConfig{Insecure: true}
-		}
-		collectorConfig.Service.Pipelines.Traces = &otelCollectorPipeline{
-			Receivers:  []string{"otlp"},
-			Processors: []string{"batch"},
-			Exporters:  []string{"otlp"},
-		}
-	}
-
-	var output bytes.Buffer
-	encoder := yaml.NewEncoder(&output)
-	encoder.SetIndent(2)
-	encodeErr := encoder.Encode(collectorConfig)
-	closeErr := encoder.Close()
-	if err := errors.Join(encodeErr, closeErr); err != nil {
-		return nil, fmt.Errorf("marshal OpenTelemetry Collector configuration: %w", err)
-	}
-	return output.Bytes(), nil
-}
-
-func prometheusDuration(d Duration) string {
-	if time.Duration(d)%time.Second == 0 {
-		return fmt.Sprintf("%ds", time.Duration(d)/time.Second)
-	}
-	return fmt.Sprintf("%dms", time.Duration(d)/time.Millisecond)
 }
 
 func metricsResourceName(name string) string {
@@ -312,22 +91,6 @@ func (t ObservabilityTracing) clone() ObservabilityTracing {
 	t.SamplingPercentage = clonePointer(t.SamplingPercentage)
 	t.Insecure = clonePointer(t.Insecure)
 	return t
-}
-
-func (m KubernetesMetrics) clone() KubernetesMetrics {
-	m.Resources = m.Resources.clone()
-	return m
-}
-
-func (m APIMetrics) clone() APIMetrics {
-	m.Labels = maps.Clone(m.Labels)
-	return m
-}
-
-func (m KubernetesMetrics) withDefaults() KubernetesMetrics {
-	m.Resources.Requests = copyResourcesOrDefault(m.Resources.Requests, map[string]string{kubernetesCPUResourceName: "20m", kubernetesMemoryResourceName: "64Mi"})
-	m.Resources.Limits = copyResourcesOrDefault(m.Resources.Limits, map[string]string{kubernetesMemoryResourceName: "256Mi"})
-	return m
 }
 
 func (m ObservabilityMetrics) enabled() bool {
@@ -378,10 +141,6 @@ func (t ObservabilityTracing) validate() error {
 	return nil
 }
 
-func (m KubernetesMetrics) validate() error {
-	return validateKubernetesResourceRequirements(kubernetesMetricsResourcesFieldPath, m.Resources)
-}
-
 func validateObservabilityListenerPort(port *uint32, metricsEnabled, tracingEnabled bool) error {
 	if *port == envoyAdminPort {
 		return fmt.Errorf(listenerPortConflictErrorFormat, envoyAdminPort, defaultOTelMetricsPort)
@@ -393,242 +152,4 @@ func validateObservabilityListenerPort(port *uint32, metricsEnabled, tracingEnab
 		return fmt.Errorf("listener.port must not conflict with the OTLP trace collector port %d", defaultOTelTracePort)
 	}
 	return nil
-}
-
-func validateOTelCollectorImage(image string, collectorEnabled bool) error {
-	if collectorEnabled && (strings.TrimSpace(image) == "" || strings.ContainsAny(image, imageWhitespaceCharacters)) {
-		return fmt.Errorf("kubernetes.otel_collector_image must be an image reference")
-	}
-	return nil
-}
-
-func validateOTelMetricsServicePort(field string, port int32, metricsEnabled bool) error {
-	if metricsEnabled && port == defaultOTelMetricsPort {
-		return fmt.Errorf("kubernetes.%s must not conflict with the metrics port", field)
-	}
-	return nil
-}
-
-var prometheusNamePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
-
-func validateCustomMetricName(value *string) error {
-	if value != nil && (!prometheusNamePattern.MatchString(*value) || strings.HasPrefix(*value, "__")) {
-		return fmt.Errorf("observability.metrics.custom_metric_name must start with an ASCII letter or underscore, use only ASCII letters, numbers, and underscores, and not start with __")
-	}
-	return nil
-}
-
-func validateAPIMetrics(name string, value *APIMetrics) error {
-	if value == nil {
-		return nil
-	}
-	for _, label := range slices.Sorted(maps.Keys(value.Labels)) {
-		if !prometheusNamePattern.MatchString(label) || strings.HasPrefix(label, "__") ||
-			label == apiMetadataName || label == requestMetricStatusLabelName || label == "envoy_http_conn_manager_prefix" {
-			return fmt.Errorf("%s.labels contains invalid or reserved Prometheus label name %q", name, label)
-		}
-		if !attributeNamePattern.MatchString(value.Labels[label]) {
-			return fmt.Errorf("%s.labels.%s must reference a valid attribute name", name, label)
-		}
-	}
-	return nil
-}
-
-func validateMetricAttributeReferences(apis []API, authenticators map[string]Authenticator) error {
-	known := make(map[string]struct{})
-	for _, authenticator := range authenticators {
-		for attribute := range authenticator.Attributes {
-			known[attribute] = struct{}{}
-		}
-	}
-	for i, api := range apis {
-		if api.Metrics == nil {
-			continue
-		}
-		for _, label := range slices.Sorted(maps.Keys(api.Metrics.Labels)) {
-			attribute := api.Metrics.Labels[label]
-			if _, exists := known[attribute]; !exists {
-				return fmt.Errorf("apis[%d].metrics.labels.%s references unknown authenticator attribute %q", i, label, attribute)
-			}
-		}
-	}
-	return nil
-}
-
-func hasRequestMetricLabels(apis []API) bool {
-	for _, api := range apis {
-		if api.Metrics != nil && len(api.Metrics.Labels) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func requestMetricLabelNames(apis []API) []string {
-	labels := make(map[string]struct{})
-	for _, api := range apis {
-		if api.Metrics == nil {
-			continue
-		}
-		for label := range api.Metrics.Labels {
-			labels[label] = struct{}{}
-		}
-	}
-	return slices.Sorted(maps.Keys(labels))
-}
-
-func (api API) toRequestMetricsRouteMetadata() *structpb.Struct {
-	labels := make(map[string]*structpb.Value, len(api.Metrics.Labels))
-	for label, attribute := range api.Metrics.Labels {
-		labels[label] = structpb.NewStringValue(attribute)
-	}
-	return &structpb.Struct{Fields: map[string]*structpb.Value{
-		apiMetadataName: structpb.NewStringValue(api.Name),
-		"labels":        structpb.NewStructValue(&structpb.Struct{Fields: labels}),
-	}}
-}
-
-func requestMetricsStatsConfig(apis []API, counterName string) *metrics.StatsConfig {
-	fields := append([]string{apiMetadataName, requestMetricStatusLabelName}, requestMetricLabelNames(apis)...)
-	prefix := `^http\.` + regexp.QuoteMeta(httpManagerStatPrefix) + `\.lua\.` + regexp.QuoteMeta(counterName)
-	tags := make([]*metrics.TagSpecifier, 0, len(fields))
-	for _, field := range fields {
-		escaped := regexp.QuoteMeta(field)
-		tags = append(tags, &metrics.TagSpecifier{
-			TagName:  field,
-			TagValue: &metrics.TagSpecifier_Regex{Regex: prefix + `(\|` + escaped + `=([^|]+))`},
-		})
-		prefix += `\|` + escaped + `=[^|]+`
-	}
-	return &metrics.StatsConfig{StatsTags: tags}
-}
-
-func requestMetricsLuaScript(apis []API, counterName string) string {
-	labels := requestMetricLabelNames(apis)
-	quoted := make([]string, len(labels))
-	for i, label := range labels {
-		quoted[i] = strconv.Quote(label)
-	}
-	return "local labels = {" + strings.Join(quoted, ", ") + "}\n" +
-		"local counter_name = " + strconv.Quote(counterName) + "\n\n" + requestMetricsLuaBody
-}
-
-const requestMetricsLuaBody = `local function safe_label(value)
-  if type(value) ~= "string" or #value == 0 or #value > 128 then
-    return "__unattributed__"
-  end
-  for i = 1, #value do
-    local byte = string.byte(value, i)
-    if byte < 32 or byte > 126 or byte == 124 then
-      return "__unattributed__"
-    end
-  end
-  return value
-end
-
-function envoy_on_response(response_handle)
-  local metadata = response_handle:metadata()
-  if metadata == nil then
-    return
-  end
-  local api = metadata:get("api")
-  if type(api) ~= "string" or api == "" then
-    return
-  end
-  local status = response_handle:headers():get(":status")
-  if type(status) ~= "string" or not string.match(status, "^%d%d%d$") then
-    return
-  end
-
-  local bindings = metadata:get("labels") or {}
-  local filter_state = response_handle:streamInfo():filterState()
-  local name = counter_name .. "|api=" .. api .. "|http_status_code=" .. status
-  for _, label in ipairs(labels) do
-    local attribute = bindings[label]
-    local value = nil
-    if type(attribute) == "string" then
-      value = filter_state:get("auth_gateway.attributes." .. attribute)
-    end
-    name = name .. "|" .. label .. "=" .. safe_label(value)
-  end
-  response_handle:stats():counter(name):inc()
-end
-`
-
-func (c Config) hasRequestMetrics() bool {
-	for _, api := range c.APIs {
-		if api.Metrics != nil {
-			return true
-		}
-	}
-	return false
-}
-
-func (c Config) requestMetricName() string {
-	if c.Observability.Metrics.CustomMetricName != nil {
-		return *c.Observability.Metrics.CustomMetricName
-	}
-	return defaultRequestMetricCounterName
-}
-
-func (config ObservabilityTracing) toEnvoyTracingConfig() (*hcm.HttpConnectionManager_Tracing, error) {
-	if !config.enabled() {
-		return nil, nil
-	}
-	providerConfig, err := packEnvoy(&traceconfig.OpenTelemetryConfig{
-		GrpcService: &core.GrpcService{TargetSpecifier: &core.GrpcService_EnvoyGrpc_{EnvoyGrpc: &core.GrpcService_EnvoyGrpc{
-			ClusterName: envoyTraceClusterName,
-		}}},
-		ServiceName: config.ServiceName,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("encode OpenTelemetry tracing provider: %w", err)
-	}
-	percentage := *config.SamplingPercentage
-	return &hcm.HttpConnectionManager_Tracing{
-		ClientSampling:    &envoytype.Percent{Value: percentage},
-		RandomSampling:    &envoytype.Percent{Value: percentage},
-		OverallSampling:   &envoytype.Percent{Value: percentage},
-		SpawnUpstreamSpan: wrapperspb.Bool(true),
-		Provider: &traceconfig.Tracing_Http{
-			Name:       envoyOTelTracerName,
-			ConfigType: &traceconfig.Tracing_Http_TypedConfig{TypedConfig: providerConfig},
-		},
-	}, nil
-}
-
-func hasRequestMetricRoutes(hosts []*route.VirtualHost) bool {
-	for _, host := range hosts {
-		for _, route := range host.Routes {
-			if route.Metadata != nil && route.Metadata.FilterMetadata[requestMetricsFilterName] != nil {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func otelTraceCluster() (*cluster.Cluster, error) {
-	protocolOptions, err := packEnvoy(&upstreamhttp.HttpProtocolOptions{UpstreamProtocolOptions: &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig_{ExplicitHttpConfig: &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig{
-		ProtocolConfig: &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig_Http2ProtocolOptions{Http2ProtocolOptions: &core.Http2ProtocolOptions{}},
-	}}})
-	if err != nil {
-		return nil, fmt.Errorf("encode OTLP upstream HTTP/2 options: %w", err)
-	}
-	return &cluster.Cluster{
-		Name:                          envoyTraceClusterName,
-		ConnectTimeout:                durationpb.New(5 * time.Second),
-		ClusterDiscoveryType:          &cluster.Cluster_Type{Type: cluster.Cluster_STATIC},
-		TypedExtensionProtocolOptions: map[string]*anypb.Any{upstreamHTTPProtocolOptionsTypeURL: protocolOptions},
-		LoadAssignment: &endpoint.ClusterLoadAssignment{
-			ClusterName: envoyTraceClusterName,
-			Endpoints: []*endpoint.LocalityLbEndpoints{{
-				LbEndpoints: []*endpoint.LbEndpoint{{
-					HostIdentifier: &endpoint.LbEndpoint_Endpoint{Endpoint: &endpoint.Endpoint{
-						Address: socket(defaultOTelTraceReceiverAddress, defaultOTelTracePort),
-					}},
-				}},
-			}},
-		},
-	}, nil
 }

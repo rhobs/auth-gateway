@@ -172,3 +172,31 @@ func TestValidateKubernetesTLSMounts(t *testing.T) {
 		})
 	}
 }
+
+func TestServerTLSDefaults(t *testing.T) {
+	tests := []struct {
+		name        string
+		tls         ServerTLS
+		certificate string
+		privateKey  string
+	}{
+		{name: "file only", certificate: defaultServerTLSCertificate, privateKey: defaultServerTLSPrivateKey},
+		{name: "named Secret", tls: ServerTLS{Secret: "other-tls"}, certificate: "/etc/other-tls/tls.crt", privateKey: "/etc/other-tls/tls.key"},
+		{name: "explicit paths", tls: ServerTLS{Secret: "other-tls", Certificate: "/certs/server.pem", PrivateKey: "/certs/key.pem"}, certificate: "/certs/server.pem", privateKey: "/certs/key.pem"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c := loadConfigCase(t, "public-routing")
+			c.Kubernetes = nil
+			c.Servers[0].TLSConfig = &test.tls
+			defaulted := c.withDefaults()
+			if err := defaulted.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			got := defaulted.Servers[0].TLSConfig
+			if got.Certificate != test.certificate || got.PrivateKey != test.privateKey {
+				t.Fatalf("TLS paths = %s, %s, want %s, %s", got.Certificate, got.PrivateKey, test.certificate, test.privateKey)
+			}
+		})
+	}
+}

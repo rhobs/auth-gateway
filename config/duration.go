@@ -4,9 +4,19 @@ import (
 	"fmt"
 	"time"
 
-	"go.yaml.in/yaml/v3"
+	yaml "go.yaml.in/yaml/v3"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
+
+type durationYAMLError struct {
+	line   int
+	column int
+	err    error
+}
+
+// Duration is a Go duration encoded as a YAML string, such as 250ms or 5s.
+// Zero is accepted only by settings that explicitly allow it.
+type Duration time.Duration
 
 // NewDuration returns a pointer to a Duration with the given value.
 func NewDuration(value time.Duration) *Duration {
@@ -66,12 +76,6 @@ func validateDuration(name string, value *Duration, allowZero bool) error {
 		return fmt.Errorf("%s %w", name, err)
 	}
 	return nil
-}
-
-type durationYAMLError struct {
-	line   int
-	column int
-	err    error
 }
 
 func (e *durationYAMLError) Error() string { return fmt.Sprintf("line %d: %v", e.line, e.err) }

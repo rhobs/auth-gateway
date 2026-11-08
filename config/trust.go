@@ -1,22 +1,31 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
-	"net"
 	"path"
 	"strings"
 
-	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
-	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
-	matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
-	caDirectory            = TrustedCADirectory
-	systemCABundle         = "/etc/ssl/certs/ca-certificates.crt"
-	tlsTransportSocketName = "envoy.transport_sockets.tls"
+	caCertificateFilename = "ca.crt"
+	caDirectory           = TrustedCADirectory
 )
+
+// TrustedCA selects a replacement trust bundle. Omission uses the system bundle.
+type TrustedCA struct {
+	Filename  string       `yaml:"filename,omitempty"`
+	ConfigMap *CAConfigMap `yaml:"config_map,omitempty"`
+}
+
+// CAConfigMap references one key of an existing ConfigMap in the gateway namespace.
+type CAConfigMap struct {
+	Name string `yaml:"name"`
+	Key  string `yaml:"key"`
+}
 
 func validateTrustedCA(name string, ca *TrustedCA, kubernetes bool) error {
 	if ca == nil {
@@ -43,37 +52,24 @@ func validateTrustedCA(name string, ca *TrustedCA, kubernetes bool) error {
 	return nil
 }
 
-func verifiedTLS(identity string, ca *TrustedCA, alpn []string) (*core.TransportSocket, error) {
-	sanType := tls.SubjectAltNameMatcher_DNS
-	sni := identity
-	if ip := net.ParseIP(identity); ip != nil {
-		sanType = tls.SubjectAltNameMatcher_IP_ADDRESS
-		sni = ""
-		identity = ip.String()
+func (ca TrustedCA) clone() TrustedCA {
+	ca.ConfigMap = clonePointer(ca.ConfigMap)
+	return ca
+}
+
+func (ref CAConfigMap) id() string {
+	digest := sha256.Sum256([]byte(ref.Name + "\x00" + ref.Key))
+	return hex.EncodeToString(digest[:16])
+}
+
+// FilePath returns the absolute Envoy path used for this CA ConfigMap entry.
+func (ref CAConfigMap) FilePath() string {
+	return path.Join(TrustedCADirectory, ref.id(), caCertificateFilename)
+}
+
+func (ca TrustedCA) filename() string {
+	if ca.ConfigMap != nil {
+		return ca.ConfigMap.FilePath()
 	}
-	caFilename := systemCABundle
-	if ca != nil {
-		caFilename = ca.filename()
-	}
-	packed, err := packEnvoy(&tls.UpstreamTlsContext{
-		Sni: sni,
-		CommonTlsContext: &tls.CommonTlsContext{
-			TlsParams: &tls.TlsParameters{
-				TlsMinimumProtocolVersion: tls.TlsParameters_TLSv1_2,
-				TlsMaximumProtocolVersion: tls.TlsParameters_TLSv1_3,
-			},
-			AlpnProtocols: alpn,
-			ValidationContextType: &tls.CommonTlsContext_ValidationContext{ValidationContext: &tls.CertificateValidationContext{
-				TrustedCa: fileDataSource(caFilename),
-				MatchTypedSubjectAltNames: []*tls.SubjectAltNameMatcher{{
-					SanType: sanType,
-					Matcher: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: identity}},
-				}},
-			}},
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &core.TransportSocket{Name: tlsTransportSocketName, ConfigType: &core.TransportSocket_TypedConfig{TypedConfig: packed}}, nil
+	return ca.Filename
 }
