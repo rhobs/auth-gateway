@@ -2,8 +2,15 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
+
+	rbac "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
+	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	headertometadata "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_to_metadata/v3"
+	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+	matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 )
 
 const authenticatorFieldPathFormat = "authenticators[%d]"
@@ -91,75 +98,6 @@ func (authenticator Authenticator) withDefaults() Authenticator {
 	return authenticator
 }
 
-func (c Config) validateAuthenticators() (map[string]Authenticator, string, error) {
-	authenticators := make(map[string]Authenticator, len(c.Authenticators))
-	apiKeyCount := 0
-	apiKeyHeader := ""
-	for i, authenticator := range c.Authenticators {
-		name := fmt.Sprintf(authenticatorFieldPathFormat, i)
-		if err := validateGatewayName(name, authenticator.Name); err != nil {
-			return nil, "", err
-		}
-		if _, exists := authenticators[authenticator.Name]; exists {
-			return nil, "", fmt.Errorf("duplicate authenticator name %q", authenticator.Name)
-		}
-		types := 0
-		for _, present := range []bool{authenticator.JWT != nil, authenticator.APIKey != nil, authenticator.MTLS != nil} {
-			if present {
-				types++
-			}
-		}
-		if types != 1 {
-			return nil, "", fmt.Errorf("%s must set exactly one of jwt, api_key, or mtls", name)
-		}
-		if authenticator.JWT != nil {
-			if err := validateJWTAuthenticator(name+".jwt", *authenticator.JWT); err != nil {
-				return nil, "", err
-			}
-			if err := authenticator.JWT.JWKS.validate(name+".jwt.jwks", c.Kubernetes != nil); err != nil {
-				return nil, "", err
-			}
-		} else if authenticator.APIKey != nil {
-			apiKeyCount++
-			if apiKeyCount > 1 {
-				return nil, "", fmt.Errorf("%s.api_key: only one API-key authenticator is supported", name)
-			}
-			if err := validateAPIKeyAuthenticator(name+".api_key", *authenticator.APIKey, c.Kubernetes != nil); err != nil {
-				return nil, "", err
-			}
-			apiKeyHeader = authenticator.APIKey.Header
-		} else {
-			if authenticator.MTLS.TrustedCA == nil {
-				return nil, "", fmt.Errorf("%s.mtls.trusted_ca is required", name)
-			}
-			if err := validateTrustedCA(name+".mtls.trusted_ca", authenticator.MTLS.TrustedCA, c.Kubernetes != nil); err != nil {
-				return nil, "", err
-			}
-		}
-		authenticators[authenticator.Name] = authenticator
-	}
-	return authenticators, apiKeyHeader, nil
-}
-
-func (c Config) hasAuthenticationConfig() bool {
-	if len(c.Authenticators) != 0 || len(c.AuthorizationPolicies) != 0 {
-		return true
-	}
-	for _, server := range c.Servers {
-		if server.Authentication != nil || server.Authorization != nil {
-			return true
-		}
-	}
-	for _, api := range c.APIs {
-		for _, route := range api.Routes {
-			if route.Processing != nil {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func (authenticator Authenticator) clone() Authenticator {
 	if authenticator.Attributes != nil {
 		attributes := make(map[string]AttributeSource, len(authenticator.Attributes))
@@ -178,4 +116,80 @@ func (a Authentication) clone() Authentication {
 	a.AnyOf = slices.Clone(a.AnyOf)
 	a.AllOf = slices.Clone(a.AllOf)
 	return a
+}
+
+func (authenticator Authenticator) providesAttribute(name string) bool {
+	_, exists := authenticator.Attributes[name]
+	return exists
+}
+
+func (authenticator Authenticator) credentialAttributeNames() []string {
+	var names []string
+	for name, source := range authenticator.Attributes {
+		if source.Credential != nil && *source.Credential {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+func (authenticator Authenticator) toRequestMetadataFilter(headers []string, includeMTLS bool) (*hcm.HttpFilter, error) {
+	var rules []*headertometadata.Config_Rule
+	if authenticator.APIKey != nil {
+		attributeNames := authenticator.credentialAttributeNames()
+		rules = append(rules, &headertometadata.Config_Rule{
+			Header: apiKeyClientHeader, Remove: len(attributeNames) == 0,
+			OnHeaderPresent: &headertometadata.Config_KeyValuePair{
+				MetadataNamespace: apiKeyMetadataNamespace, Key: apiKeyMetadataKey,
+				Value: apiKeyVerifiedIdentity,
+			},
+		})
+		for index, attribute := range attributeNames {
+			rules = append(rules, &headertometadata.Config_Rule{
+				Header: apiKeyClientHeader, Remove: index == len(attributeNames)-1,
+				OnHeaderPresent: &headertometadata.Config_KeyValuePair{
+					MetadataNamespace: apiKeyMetadataNamespace,
+					Key:               apiKeyAttributeMetadataKey(attribute),
+					RegexValueRewrite: &matcher.RegexMatchAndSubstitute{
+						Pattern:      &matcher.RegexMatcher{Regex: apiKeyAttributePattern(attribute)},
+						Substitution: `\1`,
+					},
+				},
+			})
+		}
+	}
+	if includeMTLS {
+		rules = append(rules, mtlsPeerMetadataRules()...)
+	}
+	for _, header := range headers {
+		rules = append(rules, &headertometadata.Config_Rule{
+			Header: header,
+			OnHeaderPresent: &headertometadata.Config_KeyValuePair{
+				MetadataNamespace: requestHeaderMetadataNamespace,
+				Key:               header,
+			},
+		})
+	}
+	config, err := packEnvoy(&headertometadata.Config{RequestRules: rules})
+	if err != nil {
+		return nil, err
+	}
+	return &hcm.HttpFilter{Name: headerToMetadataFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: config}}, nil
+}
+
+func (authenticator Authenticator) toJWTMarkerPrincipal() *rbac.Principal {
+	return &rbac.Principal{Identifier: &rbac.Principal_Header{Header: &route.HeaderMatcher{
+		Name:                 jwtVerifiedHeaderName(authenticator.Name),
+		HeaderMatchSpecifier: &route.HeaderMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: authenticator.JWT.Issuer}}},
+	}}}
+}
+
+func (authenticator Authenticator) toKeyGrantPrincipal(grant AuthorizationGrant) *rbac.Principal {
+	conditions := []*rbac.Principal{apiKeyIdentityPrincipal()}
+	for _, attribute := range slices.Sorted(maps.Keys(grant.Attributes)) {
+		namespace, path := attributeMetadataPath(authenticator, attribute)
+		conditions = append(conditions, dynamicMetadataPrincipal(namespace, path, allowedStringValueMatcher(grant.Attributes[attribute])))
+	}
+	return andPrincipals(conditions...)
 }

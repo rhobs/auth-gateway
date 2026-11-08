@@ -16,8 +16,8 @@ const (
 	httpManagerStatPrefix     = "ingress"
 )
 
-func (c effectiveConfig) toHTTPFilterChain(hosts []indexedVirtualHost) (*listener.FilterChain, error) {
-	manager, err := c.toHTTPManager(hosts)
+func toHTTPFilterChain(c effectiveConfig, hosts []indexedVirtualHost) (*listener.FilterChain, error) {
+	manager, err := toHTTPManager(c, hosts)
 	if err != nil {
 		return nil, err
 	}
@@ -31,14 +31,14 @@ func (c effectiveConfig) toHTTPFilterChain(hosts []indexedVirtualHost) (*listene
 	}}}, nil
 }
 
-func (c effectiveConfig) toHTTPManager(hosts []indexedVirtualHost) (*hcm.HttpConnectionManager, error) {
+func toHTTPManager(c effectiveConfig, hosts []indexedVirtualHost) (*hcm.HttpConnectionManager, error) {
 	accessLogs, err := errorAccessLogs()
 	if err != nil {
 		return nil, err
 	}
 	virtualHosts := routeVirtualHosts(hosts)
 	protected := hasProtectedHosts(hosts)
-	filters, err := c.toHTTPFilters(hosts, protected)
+	filters, err := toHTTPFilters(c, hosts, protected)
 	if err != nil {
 		return nil, err
 	}

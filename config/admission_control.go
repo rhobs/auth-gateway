@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"math"
+
 	xdsmatcher "github.com/cncf/xds/go/xds/type/matcher/v3"
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
@@ -10,7 +12,6 @@ import (
 	envoytype "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
-	"math"
 )
 
 // AdmissionControlConfig optionally sheds requests based on one API's success rate.
@@ -81,7 +82,7 @@ func admissionChainName(apiName string) string {
 	return "admission-" + apiName
 }
 
-func (c effectiveConfig) admissionHTTPFilter(hosts []indexedVirtualHost) (*hcm.HttpFilter, error) {
+func admissionHTTPFilter(c effectiveConfig, hosts []indexedVirtualHost) (*hcm.HttpFilter, error) {
 	// Named factories share one API's history across its routes and host bindings.
 	chains := make(compositeFilterChains)
 	for _, host := range hosts {

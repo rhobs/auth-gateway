@@ -30,7 +30,7 @@ func TestJWTHeaderOnlyGrantRequiresNamedVerifiedIssuer(t *testing.T) {
 		slices.Index(names, "envoy.filters.http.set_filter_state") >= 0 {
 		t.Fatalf("header-only grant needs capture but no working attributes: %v", names)
 	}
-	grant := resolveTestConfig(t, c).toGrantPrincipal(c.AuthorizationPolicies[0].Grants[0]).GetAndIds().GetIds()
+	grant := toGrantPrincipal(resolveTestConfig(t, c), c.AuthorizationPolicies[0].Grants[0]).GetAndIds().GetIds()
 	if len(grant) != 2 {
 		t.Fatalf("header-only JWT grant principals = %#v", grant)
 	}
@@ -48,7 +48,7 @@ func TestJWTHeaderOnlyGrantRequiresNamedVerifiedIssuer(t *testing.T) {
 
 func TestJWTAuthorizationReadsOriginalClaimsFromNamedProvider(t *testing.T) {
 	c := resolveTestConfig(t, loadConfigCase(t, "jwt-auth-multiple-issuers"))
-	rules := c.toServerRBACRules(c.servers[0])
+	rules := toServerRBACRules(c, c.servers[0])
 	policy := rules.Policies["api-metrics"]
 	if policy == nil || len(policy.Principals) != 1 {
 		t.Fatalf("API authorization policy = %#v", policy)
@@ -89,7 +89,7 @@ func TestJWTAuthorizationReadsOriginalClaimsFromNamedProvider(t *testing.T) {
 		t.Fatalf("raw provider grants = %v", gotValues)
 	}
 
-	config, err := c.toJWTFilterConfig()
+	config, err := toJWTFilterConfig(c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestJWTAuthorizationMatchesAnyAllowedListClaimValue(t *testing.T) {
 	grant := c.AuthorizationPolicies[0].Grants[0]
 	grant.Attributes = map[string][]string{"my_list": {"y", "z"}}
 
-	principal := resolveTestConfig(t, c).toGrantPrincipal(grant)
+	principal := toGrantPrincipal(resolveTestConfig(t, c), grant)
 	claim := principal.GetSourcedMetadata()
 	if claim == nil {
 		t.Fatalf("grant principal = %#v, want a JWT metadata matcher", principal)
@@ -145,7 +145,7 @@ func TestJWTAuthorizationMatchesAnyAllowedListClaimValue(t *testing.T) {
 func TestJWTAuthorizationPolicyCombinationsAreAPIScoped(t *testing.T) {
 	c := loadConfigCase(t, "jwt-auth-with-attributes")
 	effective := resolveTestConfig(t, c)
-	rules := effective.toServerRBACRules(effective.servers[0])
+	rules := toServerRBACRules(effective, effective.servers[0])
 	if rules.Policies["api-metrics-write"] == nil || rules.Policies["api-logs"] == nil {
 		t.Fatalf("any_of policies did not generate both granted API rules: %#v", rules.Policies)
 	}
@@ -156,7 +156,7 @@ func TestJWTAuthorizationPolicyCombinationsAreAPIScoped(t *testing.T) {
 
 	c.Servers[0].Authorization = &Authorization{AllOf: []string{"metrics-writers", "logs-writers"}}
 	effective = resolveTestConfig(t, c)
-	rules = effective.toServerRBACRules(effective.servers[0])
+	rules = toServerRBACRules(effective, effective.servers[0])
 	if rules.Policies["api-metrics-write"] != nil || rules.Policies["api-logs"] != nil {
 		t.Fatalf("all_of policies for disjoint APIs granted access: %#v", rules.Policies)
 	}

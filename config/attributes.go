@@ -105,15 +105,6 @@ func validateRouteAttributeSources(serverName string, server Server, bound []API
 	return nil
 }
 
-func (c Config) validateAuthenticatorAttributes(apiKeyHeader string) error {
-	for i, authenticator := range c.Authenticators {
-		if err := validateAuthenticatorAttributes(fmt.Sprintf(authenticatorFieldPathFormat, i), authenticator, apiKeyHeader); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func attributeMetadataPath(authenticator Authenticator, attribute string) (string, []string) {
 	source := authenticator.Attributes[attribute]
 	if source.Header != nil {
@@ -138,20 +129,4 @@ func (a AttributeSource) clone() AttributeSource {
 	a.URISAN = clonePointer(a.URISAN)
 	a.DNSSAN = clonePointer(a.DNSSAN)
 	return a
-}
-
-func (authenticator Authenticator) providesAttribute(name string) bool {
-	_, exists := authenticator.Attributes[name]
-	return exists
-}
-
-func (authenticator Authenticator) credentialAttributeNames() []string {
-	var names []string
-	for name, source := range authenticator.Attributes {
-		if source.Credential != nil && *source.Credential {
-			names = append(names, name)
-		}
-	}
-	slices.Sort(names)
-	return names
 }

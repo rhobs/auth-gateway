@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	headertometadata "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_to_metadata/v3"
-	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
-	matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 )
 
 const (
@@ -29,50 +27,6 @@ func requestHeaderSources(c effectiveConfig, serverIndexes []int) []string {
 		}
 	}
 	return slices.Sorted(maps.Keys(headers))
-}
-
-func (authenticator Authenticator) toRequestMetadataFilter(headers []string, includeMTLS bool) (*hcm.HttpFilter, error) {
-	var rules []*headertometadata.Config_Rule
-	if authenticator.APIKey != nil {
-		attributeNames := authenticator.credentialAttributeNames()
-		rules = append(rules, &headertometadata.Config_Rule{
-			Header: apiKeyClientHeader, Remove: len(attributeNames) == 0,
-			OnHeaderPresent: &headertometadata.Config_KeyValuePair{
-				MetadataNamespace: apiKeyMetadataNamespace, Key: apiKeyMetadataKey,
-				Value: apiKeyVerifiedIdentity,
-			},
-		})
-		for index, attribute := range attributeNames {
-			rules = append(rules, &headertometadata.Config_Rule{
-				Header: apiKeyClientHeader, Remove: index == len(attributeNames)-1,
-				OnHeaderPresent: &headertometadata.Config_KeyValuePair{
-					MetadataNamespace: apiKeyMetadataNamespace,
-					Key:               apiKeyAttributeMetadataKey(attribute),
-					RegexValueRewrite: &matcher.RegexMatchAndSubstitute{
-						Pattern:      &matcher.RegexMatcher{Regex: apiKeyAttributePattern(attribute)},
-						Substitution: `\1`,
-					},
-				},
-			})
-		}
-	}
-	if includeMTLS {
-		rules = append(rules, mtlsPeerMetadataRules()...)
-	}
-	for _, header := range headers {
-		rules = append(rules, &headertometadata.Config_Rule{
-			Header: header,
-			OnHeaderPresent: &headertometadata.Config_KeyValuePair{
-				MetadataNamespace: requestHeaderMetadataNamespace,
-				Key:               header,
-			},
-		})
-	}
-	config, err := packEnvoy(&headertometadata.Config{RequestRules: rules})
-	if err != nil {
-		return nil, err
-	}
-	return &hcm.HttpFilter{Name: headerToMetadataFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: config}}, nil
 }
 
 func apiKeyAttributePattern(attribute string) string {

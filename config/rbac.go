@@ -22,7 +22,7 @@ const (
 	mtlsSharedAttributesFilterName = "auth_gateway.mtls.shared_attributes"
 )
 
-func (c effectiveConfig) toServerAuthenticationRBACRules(server resolvedServer) (*rbac.RBAC, error) {
+func toServerAuthenticationRBACRules(c effectiveConfig, server resolvedServer) (*rbac.RBAC, error) {
 	var principal *rbac.Principal
 	if server.hasAPIKey {
 		principal = apiKeyIdentityPrincipal()
@@ -76,7 +76,7 @@ func (c effectiveConfig) toServerAuthenticationRBACRules(server resolvedServer) 
 	return &rbac.RBAC{Action: rbac.RBAC_ALLOW, Policies: map[string]*rbac.Policy{"authenticated": policy}}, nil
 }
 
-func (c effectiveConfig) toServerMTLSSharedAttributeRBACRules(server resolvedServer) *rbac.RBAC {
+func toServerMTLSSharedAttributeRBACRules(c effectiveConfig, server resolvedServer) *rbac.RBAC {
 	if !server.usesMTLS() || server.Authentication == nil || len(server.Authentication.AllOf) < 2 {
 		return nil
 	}
@@ -97,7 +97,7 @@ func addServerAuthenticationConfig(c effectiveConfig, host *route.VirtualHost, i
 	if !server.hasAPIKey && !server.usesMTLS() {
 		return nil
 	}
-	rules, err := c.toServerAuthenticationRBACRules(server)
+	rules, err := toServerAuthenticationRBACRules(c, server)
 	if err != nil {
 		return fmt.Errorf("servers[%d] authentication rules: %w", index, err)
 	}
@@ -110,7 +110,7 @@ func addServerAuthenticationConfig(c effectiveConfig, host *route.VirtualHost, i
 }
 
 func addServerMTLSSharedAttributeConfig(c effectiveConfig, host *route.VirtualHost, index int, server resolvedServer) error {
-	rules := c.toServerMTLSSharedAttributeRBACRules(server)
+	rules := toServerMTLSSharedAttributeRBACRules(c, server)
 	if rules == nil {
 		return nil
 	}
@@ -138,7 +138,7 @@ func appendRequiredHeaderRBAC(filters []*hcm.HttpFilter) ([]*hcm.HttpFilter, err
 	return append(filters, &hcm.HttpFilter{Name: requiredHeaderFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: headerRBACConfig}}), nil
 }
 
-func (c effectiveConfig) toServerRBACRules(server resolvedServer) *rbac.RBAC {
+func toServerRBACRules(c effectiveConfig, server resolvedServer) *rbac.RBAC {
 	policies := map[string]*rbac.Policy{
 		localResponsePolicyName: {
 			Permissions: []*rbac.Permission{apiPermission(localResponseAPIName)},
@@ -151,7 +151,7 @@ func (c effectiveConfig) toServerRBACRules(server resolvedServer) *rbac.RBAC {
 			if len(server.Authorization.AnyOf) > 0 {
 				var grants []*rbac.Principal
 				for _, policy := range server.policies {
-					grants = append(grants, c.grantPrincipalsForAPI(server, apiName, policy)...)
+					grants = append(grants, grantPrincipalsForAPI(c, server, apiName, policy)...)
 				}
 				if len(grants) > 0 {
 					principal = &rbac.Principal{Identifier: &rbac.Principal_OrIds{OrIds: &rbac.Principal_Set{Ids: grants}}}
@@ -160,7 +160,7 @@ func (c effectiveConfig) toServerRBACRules(server resolvedServer) *rbac.RBAC {
 				var policyPrincipals []*rbac.Principal
 				allowed := true
 				for _, policy := range server.policies {
-					grants := c.grantPrincipalsForAPI(server, apiName, policy)
+					grants := grantPrincipalsForAPI(c, server, apiName, policy)
 					if len(grants) == 0 {
 						allowed = false
 						break
@@ -179,11 +179,11 @@ func (c effectiveConfig) toServerRBACRules(server resolvedServer) *rbac.RBAC {
 	return &rbac.RBAC{Action: rbac.RBAC_ALLOW, Policies: policies}
 }
 
-func (c effectiveConfig) grantPrincipalsForAPI(server resolvedServer, apiName string, policy AuthorizationPolicy) []*rbac.Principal {
+func grantPrincipalsForAPI(c effectiveConfig, server resolvedServer, apiName string, policy AuthorizationPolicy) []*rbac.Principal {
 	var grants []*rbac.Principal
 	for _, grant := range policy.Grants {
 		if slices.Contains(grant.APIs, apiName) && (!c.usesAPIKeys() && !c.usesMTLS() || server.selectsAuthenticator(grant.Authenticator)) {
-			grants = append(grants, c.toGrantPrincipalForServer(server, grant))
+			grants = append(grants, toGrantPrincipalForServer(c, server, grant))
 		}
 	}
 	return grants
@@ -261,8 +261,8 @@ func authorizationHTTPFilter() (*hcm.HttpFilter, error) {
 	return &hcm.HttpFilter{Name: authorizationFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: rbacConfig}}, nil
 }
 
-func (c effectiveConfig) serverAuthorizationPerRouteConfig(server resolvedServer) (*anypb.Any, error) {
-	return packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: c.toServerRBACRules(server)}})
+func serverAuthorizationPerRouteConfig(c effectiveConfig, server resolvedServer) (*anypb.Any, error) {
+	return packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: toServerRBACRules(c, server)}})
 }
 
 func requiredHeaderPerRouteConfig(routeName string, mappings []RequestHeaderMapping) (*anypb.Any, error) {

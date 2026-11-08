@@ -90,19 +90,3 @@ func requestMetricLabelNames(apis []API) []string {
 	}
 	return slices.Sorted(maps.Keys(labels))
 }
-
-func (c Config) hasRequestMetrics() bool {
-	for _, api := range c.APIs {
-		if api.Metrics != nil {
-			return true
-		}
-	}
-	return false
-}
-
-func (c Config) requestMetricName() string {
-	if c.Observability.Metrics.CustomMetricName != nil {
-		return *c.Observability.Metrics.CustomMetricName
-	}
-	return defaultRequestMetricCounterName
-}

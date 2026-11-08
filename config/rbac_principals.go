@@ -18,15 +18,8 @@ func apiKeyMetadataPrincipal(keys []string, value *matcher.ValueMatcher) *rbac.P
 	return dynamicMetadataPrincipal(apiKeyMetadataNamespace, keys, value)
 }
 
-func (authenticator Authenticator) toJWTMarkerPrincipal() *rbac.Principal {
-	return &rbac.Principal{Identifier: &rbac.Principal_Header{Header: &route.HeaderMatcher{
-		Name:                 jwtVerifiedHeaderName(authenticator.Name),
-		HeaderMatchSpecifier: &route.HeaderMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: authenticator.JWT.Issuer}}},
-	}}}
-}
-
-func (c effectiveConfig) toGrantPrincipalForServer(server resolvedServer, grant AuthorizationGrant) *rbac.Principal {
-	principal := c.toGrantPrincipal(grant)
+func toGrantPrincipalForServer(c effectiveConfig, server resolvedServer, grant AuthorizationGrant) *rbac.Principal {
+	principal := toGrantPrincipal(c, grant)
 	if !server.mixedAnyOf() {
 		return principal
 	}
@@ -59,15 +52,6 @@ func nonemptyScalarValueMatcher() *matcher.ValueMatcher {
 	return &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_SafeRegex{SafeRegex: &matcher.RegexMatcher{
 		Regex: headerValuePattern,
 	}}}}}
-}
-
-func (authenticator Authenticator) toKeyGrantPrincipal(grant AuthorizationGrant) *rbac.Principal {
-	conditions := []*rbac.Principal{apiKeyIdentityPrincipal()}
-	for _, attribute := range slices.Sorted(maps.Keys(grant.Attributes)) {
-		namespace, path := attributeMetadataPath(authenticator, attribute)
-		conditions = append(conditions, dynamicMetadataPrincipal(namespace, path, allowedStringValueMatcher(grant.Attributes[attribute])))
-	}
-	return andPrincipals(conditions...)
 }
 
 func sharedAttributeConditions(authenticators ...Authenticator) ([]*rbac.Principal, *expr.Expr) {
@@ -109,7 +93,7 @@ func apiPermission(api string) *rbac.Permission {
 	}}}}
 }
 
-func (c effectiveConfig) toGrantPrincipal(grant AuthorizationGrant) *rbac.Principal {
+func toGrantPrincipal(c effectiveConfig, grant AuthorizationGrant) *rbac.Principal {
 	authenticator := c.authenticatorIndex[grant.Authenticator]
 	if authenticator.APIKey != nil {
 		return authenticator.toKeyGrantPrincipal(grant)

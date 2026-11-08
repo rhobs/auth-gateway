@@ -56,60 +56,6 @@ type KubernetesResourceRequirements struct {
 	Limits   map[string]string `yaml:"limits,omitempty"`
 }
 
-func (c Config) validateKubernetes(metricsEnabled, tracingEnabled bool) error {
-	k := c.Kubernetes
-	if strings.TrimSpace(k.Image) == "" || strings.ContainsAny(k.Image, imageWhitespaceCharacters) {
-		return fmt.Errorf("kubernetes.image must be an image reference")
-	}
-	if err := validateOTelCollectorImage(k.OTelCollectorImage, metricsEnabled || tracingEnabled); err != nil {
-		return err
-	}
-	if k.Replicas != nil && *k.Replicas < 0 {
-		return fmt.Errorf("kubernetes.replicas must not be negative")
-	}
-	if err := c.validateKubernetesServicePorts(metricsEnabled); err != nil {
-		return err
-	}
-	if k.EnvoyConcurrency != nil && *k.EnvoyConcurrency == 0 {
-		return fmt.Errorf("kubernetes.envoy_concurrency must be positive")
-	}
-	if err := validateKubernetesResourceRequirements(kubernetesResourcesFieldPath, k.Resources); err != nil {
-		return err
-	}
-	return k.Metrics.validate()
-}
-
-func (c Config) validateKubernetesServicePorts(metricsEnabled bool) error {
-	k := c.Kubernetes
-	if *k.ServicePort < 1 || *k.ServicePort > 65535 {
-		if c.hasHTTP() {
-			return fmt.Errorf("kubernetes.service_port must be between 1 and 65535")
-		}
-	}
-	if c.hasHTTP() {
-		if err := validateOTelMetricsServicePort("service_port", *k.ServicePort, metricsEnabled); err != nil {
-			return err
-		}
-	}
-	if c.hasHTTPS() {
-		if err := c.validateTLSMounts(); err != nil {
-			return err
-		}
-		if *k.HTTPSServicePort < 1 || *k.HTTPSServicePort > 65535 {
-			return fmt.Errorf("kubernetes.https_service_port must be between 1 and 65535")
-		}
-		if err := validateOTelMetricsServicePort("https_service_port", *k.HTTPSServicePort, metricsEnabled); err != nil {
-			return err
-		}
-		if c.hasHTTP() && *k.HTTPSServicePort == *k.ServicePort {
-			return fmt.Errorf("kubernetes.service_port and kubernetes.https_service_port must differ")
-		}
-	} else if k.HTTPSServicePort != nil {
-		return fmt.Errorf("kubernetes.https_service_port requires an HTTPS server")
-	}
-	return nil
-}
-
 func (k Kubernetes) withDefaults(hasHTTPS bool) Kubernetes {
 	if k.Image == "" {
 		k.Image = DefaultEnvoyImage

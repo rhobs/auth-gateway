@@ -65,7 +65,7 @@ func serverVirtualHost(c effectiveConfig, index int, server resolvedServer) (*ro
 	if err := addServerMTLSSharedAttributeConfig(c, host, index, server); err != nil {
 		return nil, err
 	}
-	rbacConfig, err := c.serverAuthorizationPerRouteConfig(server)
+	rbacConfig, err := serverAuthorizationPerRouteConfig(c, server)
 	if err != nil {
 		return nil, fmt.Errorf("servers[%d] RBAC rules: %w", index, err)
 	}
@@ -207,17 +207,6 @@ func apiFallbackRoutes(fallbacks []methodFallback, includeMetadata bool) []*rout
 func apiRouteMetadata(apiName string) *core.Metadata {
 	api, _ := structpb.NewStruct(map[string]any{apiMetadataName: apiName})
 	return &core.Metadata{FilterMetadata: map[string]*structpb.Struct{authorizationFilterName: api}}
-}
-
-func (path PathMatch) toRouteMatch() *route.RouteMatch {
-	switch {
-	case path.Exact != "":
-		return &route.RouteMatch{PathSpecifier: &route.RouteMatch_Path{Path: path.Exact}}
-	case path.Prefix != "":
-		return &route.RouteMatch{PathSpecifier: &route.RouteMatch_Prefix{Prefix: path.Prefix}}
-	default:
-		return &route.RouteMatch{PathSpecifier: &route.RouteMatch_SafeRegex{SafeRegex: envoySafeRegex(path.Regex)}}
-	}
 }
 
 func methodHeader(method string) *route.HeaderMatcher {

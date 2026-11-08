@@ -120,7 +120,7 @@ func addServerAPIKeyConfig(c effectiveConfig, host *route.VirtualHost, index int
 	if !server.hasAPIKey {
 		return nil
 	}
-	perRoute, err := c.toAPIKeyPerRouteConfig(server)
+	perRoute, err := toAPIKeyPerRouteConfig(c, server)
 	if err != nil {
 		return fmt.Errorf("servers[%d] API-key matcher: %w", index, err)
 	}

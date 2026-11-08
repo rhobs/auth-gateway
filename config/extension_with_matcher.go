@@ -10,10 +10,10 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
-func (c effectiveConfig) toAPIKeyPerRouteConfig(server resolvedServer) (*anypb.Any, error) {
+func toAPIKeyPerRouteConfig(c effectiveConfig, server resolvedServer) (*anypb.Any, error) {
 	config := &matching.ExtensionWithMatcherPerRoute{}
 	if server.mixedAnyOf() {
-		matcher, err := c.toAPIKeySkipMatcher(server)
+		matcher, err := toAPIKeySkipMatcher(c, server)
 		if err != nil {
 			return nil, err
 		}
@@ -26,7 +26,7 @@ func (c effectiveConfig) toAPIKeyPerRouteConfig(server resolvedServer) (*anypb.A
 	return packEnvoy(&route.FilterConfig{Config: perRoute})
 }
 
-func (c effectiveConfig) toAPIKeySkipMatcher(server resolvedServer) (*xdsmatcher.Matcher, error) {
+func toAPIKeySkipMatcher(c effectiveConfig, server resolvedServer) (*xdsmatcher.Matcher, error) {
 	action, err := apiKeySkipAction()
 	if err != nil {
 		return nil, err

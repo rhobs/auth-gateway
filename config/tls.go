@@ -59,34 +59,12 @@ func serverTLSSecretConfigSource(index int) *core.ConfigSource {
 	return fileConfigSource(path.Join(configDirectory, serverTLSResourceFilename(index)))
 }
 
-func (config ServerTLS) toEnvoySecret(index int) *tls.Secret {
-	return &tls.Secret{
-		Name: serverTLSSecretName(index),
-		Type: &tls.Secret_TlsCertificate{TlsCertificate: &tls.TlsCertificate{
-			CertificateChain: fileDataSource(config.Certificate),
-			PrivateKey:       fileDataSource(config.PrivateKey),
-			WatchedDirectory: &core.WatchedDirectory{Path: path.Dir(config.Certificate)},
-		}},
-	}
-}
-
 func clientCASecretName(index int) string {
 	return "gateway_client_ca_" + strconv.Itoa(index)
 }
 
 func clientCAResourceFilename(index int) string {
 	return "client-ca-" + strconv.Itoa(index) + ".yaml"
-}
-
-func (m MTLSAuthenticator) toEnvoySecret(index int) *tls.Secret {
-	filename := m.TrustedCA.filename()
-	return &tls.Secret{
-		Name: clientCASecretName(index),
-		Type: &tls.Secret_ValidationContext{ValidationContext: &tls.CertificateValidationContext{
-			TrustedCa:        fileDataSource(filename),
-			WatchedDirectory: &core.WatchedDirectory{Path: path.Dir(filename)},
-		}},
-	}
 }
 
 func verifiedTLS(identity string, ca *TrustedCA, alpn []string) (*core.TransportSocket, error) {

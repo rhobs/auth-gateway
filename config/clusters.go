@@ -8,24 +8,12 @@ import (
 	"time"
 
 	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
-	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	endpoint "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 const envoyTraceClusterName = "otel-traces"
-
-func (c *CircuitBreakerConfig) toCircuitBreakers() *cluster.CircuitBreakers {
-	return &cluster.CircuitBreakers{Thresholds: []*cluster.CircuitBreakers_Thresholds{{
-		Priority:           core.RoutingPriority_DEFAULT,
-		MaxConnections:     wrapperspb.UInt32(*c.MaxConnections),
-		MaxPendingRequests: wrapperspb.UInt32(*c.MaxPendingRequests),
-		MaxRequests:        wrapperspb.UInt32(*c.MaxRequests),
-		MaxRetries:         wrapperspb.UInt32(*c.MaxRetries),
-	}}}
-}
 
 func jwksClusterName(name string) string { return "jwks-" + name }
 

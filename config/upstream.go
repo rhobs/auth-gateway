@@ -3,6 +3,10 @@ package config
 import (
 	"fmt"
 	"time"
+
+	cluster "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 const (
@@ -107,4 +111,14 @@ func (u Upstream) validate(name string, kubernetes bool) error {
 		return validateTrustedCA(name+".tls_config.trusted_ca", u.TLSConfig.TrustedCA, kubernetes)
 	}
 	return nil
+}
+
+func (c *CircuitBreakerConfig) toCircuitBreakers() *cluster.CircuitBreakers {
+	return &cluster.CircuitBreakers{Thresholds: []*cluster.CircuitBreakers_Thresholds{{
+		Priority:           core.RoutingPriority_DEFAULT,
+		MaxConnections:     wrapperspb.UInt32(*c.MaxConnections),
+		MaxPendingRequests: wrapperspb.UInt32(*c.MaxPendingRequests),
+		MaxRequests:        wrapperspb.UInt32(*c.MaxRequests),
+		MaxRetries:         wrapperspb.UInt32(*c.MaxRetries),
+	}}}
 }

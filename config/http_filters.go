@@ -7,32 +7,32 @@ import (
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 )
 
-func (c effectiveConfig) toHTTPFilters(hosts []indexedVirtualHost, protected bool) ([]*hcm.HttpFilter, error) {
-	filters, err := c.requestControlFilters(routeVirtualHosts(hosts))
+func toHTTPFilters(c effectiveConfig, hosts []indexedVirtualHost, protected bool) ([]*hcm.HttpFilter, error) {
+	filters, err := requestControlFilters(c, routeVirtualHosts(hosts))
 	if err != nil {
 		return nil, err
 	}
 	if protected {
-		filters, err = c.protectedHTTPFilters(filters, hosts)
+		filters, err = protectedHTTPFilters(c, filters, hosts)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if (c.usesAPIKeys() || c.usesJWT() || c.usesMTLS()) && !protected {
-		cleanup, err := c.toCredentialCleanupFilter()
+		cleanup, err := toCredentialCleanupFilter(c)
 		if err != nil {
 			return nil, err
 		}
 		filters = append(filters, cleanup)
 	}
-	fault, err := c.faultHTTPFilter(hosts)
+	fault, err := faultHTTPFilter(c, hosts)
 	if err != nil {
 		return nil, err
 	}
 	if fault != nil {
 		filters = append(filters, fault)
 	}
-	admission, err := c.admissionHTTPFilter(hosts)
+	admission, err := admissionHTTPFilter(c, hosts)
 	if err != nil {
 		return nil, err
 	}
@@ -46,8 +46,8 @@ func (c effectiveConfig) toHTTPFilters(hosts []indexedVirtualHost, protected boo
 	return append(filters, terminalRouter), nil
 }
 
-func (c effectiveConfig) requestControlFilters(hosts []*route.VirtualHost) ([]*hcm.HttpFilter, error) {
-	controls, err := c.requestControlHeaderFilter()
+func requestControlFilters(c effectiveConfig, hosts []*route.VirtualHost) ([]*hcm.HttpFilter, error) {
+	controls, err := requestControlHeaderFilter(c)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +55,7 @@ func (c effectiveConfig) requestControlFilters(hosts []*route.VirtualHost) ([]*h
 	if !hasRequestMetricRoutes(hosts) {
 		return filters, nil
 	}
-	metric, err := c.requestMetricsHTTPFilter()
+	metric, err := requestMetricsHTTPFilter(c)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func (c effectiveConfig) requestControlFilters(hosts []*route.VirtualHost) ([]*h
 	return filters, nil
 }
 
-func (c effectiveConfig) protectedHTTPFilters(filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
+func protectedHTTPFilters(c effectiveConfig, filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
 	usesJWT, usesKey, usesMTLS := false, false, false
 	serverIndexes := make([]int, 0, len(hosts))
 	for _, host := range hosts {
@@ -73,20 +73,20 @@ func (c effectiveConfig) protectedHTTPFilters(filters []*hcm.HttpFilter, hosts [
 		usesMTLS = usesMTLS || c.servers[host.serverIndex].usesMTLS()
 	}
 	var err error
-	filters, err = c.authenticationHTTPFilters(filters, serverIndexes, usesJWT, usesKey, usesMTLS)
+	filters, err = authenticationHTTPFilters(c, filters, serverIndexes, usesJWT, usesKey, usesMTLS)
 	if err != nil {
 		return nil, err
 	}
 	if needsWorkingAttributes(c) {
-		filters, err = c.attributeHTTPFilters(filters, hosts)
+		filters, err = attributeHTTPFilters(c, filters, hosts)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return c.authorizationHTTPFilters(filters)
+	return authorizationHTTPFilters(c, filters)
 }
 
-func (c effectiveConfig) authenticationHTTPFilters(filters []*hcm.HttpFilter, serverIndexes []int, usesJWT, usesKey, usesMTLS bool) ([]*hcm.HttpFilter, error) {
+func authenticationHTTPFilters(c effectiveConfig, filters []*hcm.HttpFilter, serverIndexes []int, usesJWT, usesKey, usesMTLS bool) ([]*hcm.HttpFilter, error) {
 	if usesMTLS {
 		peer, err := mtlsPeerHeadersFilter()
 		if err != nil {
@@ -95,7 +95,7 @@ func (c effectiveConfig) authenticationHTTPFilters(filters []*hcm.HttpFilter, se
 		filters = append(filters, peer)
 	}
 	if usesJWT {
-		jwtFilter, err := c.jwtHTTPFilter(serverIndexes)
+		jwtFilter, err := jwtHTTPFilter(c, serverIndexes)
 		if err != nil {
 			return nil, err
 		}
@@ -141,7 +141,7 @@ func (c effectiveConfig) authenticationHTTPFilters(filters []*hcm.HttpFilter, se
 	return filters, nil
 }
 
-func (c effectiveConfig) authorizationHTTPFilters(filters []*hcm.HttpFilter) ([]*hcm.HttpFilter, error) {
+func authorizationHTTPFilters(c effectiveConfig, filters []*hcm.HttpFilter) ([]*hcm.HttpFilter, error) {
 	authorization, err := authorizationHTTPFilter()
 	if err != nil {
 		return nil, err
@@ -154,7 +154,7 @@ func (c effectiveConfig) authorizationHTTPFilters(filters []*hcm.HttpFilter) ([]
 		}
 	}
 	if c.usesAPIKeys() || c.usesJWT() || c.usesMTLS() {
-		cleanup, err := c.toCredentialCleanupFilter()
+		cleanup, err := toCredentialCleanupFilter(c)
 		if err != nil {
 			return nil, err
 		}

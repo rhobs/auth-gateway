@@ -90,7 +90,7 @@ func TestAPIKeyRawAuthorizationAndSharedAttributeEquality(t *testing.T) {
 			t.Fatalf("shared attribute was not restricted to a nonempty scalar: %#v", principal)
 		}
 	}
-	grant := resolveTestConfig(t, c).toGrantPrincipal(c.AuthorizationPolicies[1].Grants[0])
+	grant := toGrantPrincipal(resolveTestConfig(t, c), c.AuthorizationPolicies[1].Grants[0])
 	parts := grant.GetAndIds().GetIds()
 	if len(parts) != 2 || parts[1].GetSourcedMetadata().GetMetadataMatcher().GetFilter() != apiKeyMetadataNamespace ||
 		!slices.Equal(metadataMatcherPath(parts[1].GetSourcedMetadata().GetMetadataMatcher().GetPath()), []string{"attribute.tenant_id"}) {
@@ -98,7 +98,7 @@ func TestAPIKeyRawAuthorizationAndSharedAttributeEquality(t *testing.T) {
 	}
 	c.Servers[1].Authorization.AnyOf = []string{"jwt-writers", "key-writers"}
 	effective := resolveTestConfig(t, c)
-	grants := effective.toServerRBACRules(effective.servers[1]).Policies["api-ingest"].Principals[0].GetOrIds().GetIds()
+	grants := toServerRBACRules(effective, effective.servers[1]).Policies["api-ingest"].Principals[0].GetOrIds().GetIds()
 	if len(grants) != 1 || grants[0].GetAndIds() == nil {
 		t.Fatalf("key-only host used an unselected JWT grant: %#v", grants)
 	}
@@ -196,7 +196,7 @@ func TestMixedAllOfComparesHeaderAndVerifiedAttributeSources(t *testing.T) {
 func testServerAuthenticationRules(t *testing.T, c Config, serverIndex int) *rbac.RBAC {
 	t.Helper()
 	effective := resolveTestConfig(t, c)
-	rules, err := effective.toServerAuthenticationRBACRules(effective.servers[serverIndex])
+	rules, err := toServerAuthenticationRBACRules(effective, effective.servers[serverIndex])
 	if err != nil {
 		t.Fatal(err)
 	}

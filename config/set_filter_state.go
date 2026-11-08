@@ -26,7 +26,7 @@ func attributeInitializationFilterName(index int) string {
 	return "auth_gateway.attributes.server-" + strconv.Itoa(index)
 }
 
-func (c effectiveConfig) toServerAttributeInitializationConfig(server resolvedServer) *setfilterstate.Config {
+func toServerAttributeInitializationConfig(c effectiveConfig, server resolvedServer) *setfilterstate.Config {
 	config := &setfilterstate.Config{}
 	selectIdentity := server.mixedAnyOf()
 	authenticators := slices.Clone(server.authenticators)
@@ -70,7 +70,7 @@ func appendAttributeInitialization(config *setfilterstate.Config, authenticator 
 	}
 }
 
-func (c effectiveConfig) toAttributeInitializationConfig() *setfilterstate.Config {
+func toAttributeInitializationConfig(c effectiveConfig) *setfilterstate.Config {
 	config := &setfilterstate.Config{}
 	for _, authenticator := range c.Authenticators {
 		if !c.authenticatorUsed(authenticator.Name) || authenticator.JWT == nil {
@@ -158,21 +158,21 @@ func apiKeyAttributeExpression(attribute string) string {
 	return "((\"" + apiKeyMetadataNamespace + "\" in metadata.filter_metadata" + celAndSeparator + key + " in " + namespace + ") && type(" + current + ") == string && " + current + " != \"\") ? " + current + " : \"\""
 }
 
-func (c effectiveConfig) attributeHTTPFilters(filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
+func attributeHTTPFilters(c effectiveConfig, filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
 	if c.usesAPIKeys() || c.usesMTLS() {
-		return c.apiKeyAttributeFilters(filters, hosts)
+		return apiKeyAttributeFilters(c, filters, hosts)
 	}
-	attributeConfig, err := packEnvoy(c.toAttributeInitializationConfig())
+	attributeConfig, err := packEnvoy(toAttributeInitializationConfig(c))
 	if err != nil {
 		return nil, fmt.Errorf("encode attribute initialization filter: %w", err)
 	}
 	return append(filters, &hcm.HttpFilter{Name: attributeFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: attributeConfig}}), nil
 }
 
-func (c effectiveConfig) apiKeyAttributeFilters(filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
+func apiKeyAttributeFilters(c effectiveConfig, filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
 	for _, indexedHost := range hosts {
 		serverIndex := indexedHost.serverIndex
-		attributes := c.toServerAttributeInitializationConfig(c.servers[serverIndex])
+		attributes := toServerAttributeInitializationConfig(c, c.servers[serverIndex])
 		if len(attributes.OnRequestHeaders) == 0 {
 			continue
 		}

@@ -1,5 +1,12 @@
 package config
 
+import (
+	"path"
+
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+)
+
 const (
 	mtlsMetadataNamespace      = "auth_gateway.mtls"
 	mtlsFingerprintMetadataKey = "fingerprint"
@@ -26,4 +33,15 @@ func requiresClientCertificate(server Server) bool {
 func (m MTLSAuthenticator) clone() MTLSAuthenticator {
 	m.TrustedCA = cloneConfigPointer(m.TrustedCA)
 	return m
+}
+
+func (m MTLSAuthenticator) toEnvoySecret(index int) *tls.Secret {
+	filename := m.TrustedCA.filename()
+	return &tls.Secret{
+		Name: clientCASecretName(index),
+		Type: &tls.Secret_ValidationContext{ValidationContext: &tls.CertificateValidationContext{
+			TrustedCa:        fileDataSource(filename),
+			WatchedDirectory: &core.WatchedDirectory{Path: path.Dir(filename)},
+		}},
+	}
 }

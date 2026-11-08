@@ -5,6 +5,9 @@ import (
 	"path"
 	"slices"
 	"strings"
+
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	tls "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 )
 
 const (
@@ -50,102 +53,6 @@ func (s ServerTLS) withDefaults() ServerTLS {
 		s.PrivateKey = privateKey
 	}
 	return s
-}
-
-func (c Config) validateServers(apis map[string]API) ([]resolvedServer, error) {
-	if len(c.Servers) == 0 {
-		return nil, fmt.Errorf("servers must contain at least one server")
-	}
-	servers := make([]resolvedServer, len(c.Servers))
-	hosts := make(map[string]int, len(c.Servers))
-	for i, server := range c.Servers {
-		name := fmt.Sprintf(serverFieldPathFormat, i)
-		if !validDNSHost(server.Hostname) {
-			return nil, fmt.Errorf("%s.hostname must be an exact DNS hostname", name)
-		}
-		if previous, exists := hosts[server.Hostname]; exists {
-			return nil, fmt.Errorf("%s.hostname %q is already used by servers[%d]", name, server.Hostname, previous)
-		}
-		hosts[server.Hostname] = i
-		if server.TLSConfig != nil {
-			if err := validateServerTLS(name+".tls_config", *server.TLSConfig); err != nil {
-				return nil, err
-			}
-		}
-		bound, err := server.boundAPIs(apis)
-		if err != nil {
-			return nil, fmt.Errorf("%s.apis: %w", name, err)
-		}
-		routes := make(map[string]struct{})
-		for _, api := range bound {
-			for _, route := range api.Routes {
-				for _, method := range route.Methods {
-					if err := addRouteKey(routes, route.Path, method); err != nil {
-						return nil, fmt.Errorf("%s.apis: %w", name, err)
-					}
-				}
-			}
-		}
-		servers[i] = resolvedServer{Server: &c.Servers[i], apis: bound}
-	}
-	return servers, nil
-}
-
-func (c Config) tlsMounts() []serverTLSMount {
-	var mounts []serverTLSMount
-	seen := make(map[ServerTLS]struct{})
-	for i, server := range c.Servers {
-		if server.TLSConfig == nil {
-			continue
-		}
-		binding := *server.TLSConfig
-		if _, exists := seen[binding]; exists {
-			continue
-		}
-		seen[binding] = struct{}{}
-		mounts = append(mounts, serverTLSMount{serverIndex: i, config: binding})
-	}
-	return mounts
-}
-
-func (c Config) validateTLSMounts() error {
-	mounts := c.tlsMounts()
-	for i, mount := range mounts {
-		name := fmt.Sprintf("servers[%d].tls_config", mount.serverIndex)
-		if mount.config.Secret == "" {
-			return fmt.Errorf("%s.secret is required when generating Kubernetes resources", name)
-		}
-		directory := path.Dir(mount.config.Certificate)
-		for _, reserved := range []string{configDirectory, collectorConfigDirectory, caDirectory} {
-			if directoriesOverlap(directory, reserved) {
-				return fmt.Errorf("%s certificate directory %q overlaps configuration directory %q", name, directory, reserved)
-			}
-		}
-		for _, previous := range mounts[:i] {
-			if directoriesOverlap(directory, path.Dir(previous.config.Certificate)) {
-				return fmt.Errorf("%s certificate directory overlaps servers[%d].tls_config", name, previous.serverIndex)
-			}
-		}
-	}
-	return nil
-}
-
-func (c Config) hasHTTP() bool {
-	for _, server := range c.Servers {
-		if server.TLSConfig == nil {
-			return true
-		}
-	}
-	return false
-}
-
-func (c Config) hasHTTPS() bool {
-	for _, server := range c.Servers {
-		if server.TLSConfig != nil {
-			return true
-		}
-	}
-	return false
 }
 
 func (s Server) boundAPIs(apis map[string]API) ([]API, error) {
@@ -201,4 +108,15 @@ func (s Server) clone() Server {
 
 func (s ServerTLS) clone() ServerTLS {
 	return s
+}
+
+func (config ServerTLS) toEnvoySecret(index int) *tls.Secret {
+	return &tls.Secret{
+		Name: serverTLSSecretName(index),
+		Type: &tls.Secret_TlsCertificate{TlsCertificate: &tls.TlsCertificate{
+			CertificateChain: fileDataSource(config.Certificate),
+			PrivateKey:       fileDataSource(config.PrivateKey),
+			WatchedDirectory: &core.WatchedDirectory{Path: path.Dir(config.Certificate)},
+		}},
+	}
 }

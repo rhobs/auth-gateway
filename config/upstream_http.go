@@ -8,14 +8,6 @@ import (
 
 const upstreamHTTPProtocolOptionsTypeURL = "envoy.extensions.upstreams.http.v3.HttpProtocolOptions"
 
-func (h HTTP2Options) envoy() *core.Http2ProtocolOptions {
-	return &core.Http2ProtocolOptions{
-		MaxConcurrentStreams:        optionalUint32(h.MaxConcurrentStreams),
-		InitialStreamWindowSize:     optionalUint32(h.InitialStreamWindowSize),
-		InitialConnectionWindowSize: optionalUint32(h.InitialConnectionWindowSize),
-	}
-}
-
 func upstreamHTTPProtocolOptions(upstream Upstream) (*anypb.Any, error) {
 	protocol := &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig{ProtocolConfig: &upstreamhttp.HttpProtocolOptions_ExplicitHttpConfig_HttpProtocolOptions{HttpProtocolOptions: &core.Http1ProtocolOptions{}}}
 	if upstream.HTTPProtocol == http2Protocol {

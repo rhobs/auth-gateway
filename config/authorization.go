@@ -26,33 +26,6 @@ type Authorization struct {
 	AllOf []string `yaml:"all_of,omitempty"`
 }
 
-func (c Config) validateAuthorizationPolicies() (map[string]AuthorizationPolicy, error) {
-	policies := make(map[string]AuthorizationPolicy, len(c.AuthorizationPolicies))
-	for i, policy := range c.AuthorizationPolicies {
-		name := fmt.Sprintf("authorization_policies[%d]", i)
-		if err := validateGatewayName(name, policy.Name); err != nil {
-			return nil, err
-		}
-		if _, exists := policies[policy.Name]; exists {
-			return nil, fmt.Errorf("duplicate authorization policy name %q", policy.Name)
-		}
-		policies[policy.Name] = policy
-	}
-	return policies, nil
-}
-
-func (c Config) validateAuthorizationPolicyGrants(apis map[string]API, authenticators map[string]Authenticator) error {
-	for i, policy := range c.AuthorizationPolicies {
-		for j, grant := range policy.Grants {
-			name := fmt.Sprintf("authorization_policies[%d].grants[%d]", i, j)
-			if err := validateAuthorizationGrant(name, grant, apis, authenticators); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 func validateAuthorizationGrant(name string, grant AuthorizationGrant, apis map[string]API, authenticators map[string]Authenticator) error {
 	authenticator, exists := authenticators[grant.Authenticator]
 	if !exists {

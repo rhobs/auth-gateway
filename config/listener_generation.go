@@ -21,7 +21,7 @@ func generateFilterChains(c effectiveConfig) ([]*listener.FilterChain, error) {
 			httpHosts = append(httpHosts, indexedHost)
 			continue
 		}
-		chain, err := c.toHTTPFilterChain([]indexedVirtualHost{indexedHost})
+		chain, err := toHTTPFilterChain(c, []indexedVirtualHost{indexedHost})
 		if err != nil {
 			return nil, fmt.Errorf("servers[%d]: %w", i, err)
 		}
@@ -34,7 +34,7 @@ func generateFilterChains(c effectiveConfig) ([]*listener.FilterChain, error) {
 		filterChains = append(filterChains, chain)
 	}
 	if len(httpHosts) > 0 {
-		chain, err := c.toHTTPFilterChain(httpHosts)
+		chain, err := toHTTPFilterChain(c, httpHosts)
 		if err != nil {
 			return nil, err
 		}

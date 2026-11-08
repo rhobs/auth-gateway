@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+
+	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 )
 
 // HTTP2Options bounds streams and flow-control windows on one HTTP/2 connection.
@@ -37,4 +39,12 @@ func (h HTTP2Options) validate(name string) error {
 		return fmt.Errorf("%s: %w", name, err)
 	}
 	return nil
+}
+
+func (h HTTP2Options) envoy() *core.Http2ProtocolOptions {
+	return &core.Http2ProtocolOptions{
+		MaxConcurrentStreams:        optionalUint32(h.MaxConcurrentStreams),
+		InitialStreamWindowSize:     optionalUint32(h.InitialStreamWindowSize),
+		InitialConnectionWindowSize: optionalUint32(h.InitialConnectionWindowSize),
+	}
 }

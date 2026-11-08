@@ -77,7 +77,7 @@ func hasRequestMetricRoutes(hosts []*route.VirtualHost) bool {
 	return false
 }
 
-func (c effectiveConfig) requestMetricsHTTPFilter() (*hcm.HttpFilter, error) {
+func requestMetricsHTTPFilter(c effectiveConfig) (*hcm.HttpFilter, error) {
 	metricConfig, err := packEnvoy(&lua.Lua{DefaultSourceCode: &core.DataSource{
 		Specifier: &core.DataSource_InlineString{InlineString: requestMetricsLuaScript(c.APIs, c.requestMetricName())},
 	}})

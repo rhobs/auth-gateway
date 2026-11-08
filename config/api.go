@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // API describes one upstream and its routes.
@@ -14,27 +16,6 @@ type API struct {
 	FaultInjection   *FaultInjectionConfig   `yaml:"fault_injection,omitempty"`
 	CircuitBreakers  *CircuitBreakerConfig   `yaml:"circuit_breakers,omitempty"`
 	Timeouts         *RouteTimeouts          `yaml:"timeouts,omitempty"`
-}
-
-func (c Config) validateAPIs() (map[string]API, error) {
-	if len(c.APIs) == 0 {
-		return nil, fmt.Errorf("at least one API must be configured")
-	}
-	names := make(map[string]API, len(c.APIs))
-	for i, api := range c.APIs {
-		name := fmt.Sprintf("apis[%d]", i)
-		if err := validateGatewayName(name, api.Name); err != nil {
-			return nil, err
-		}
-		if _, exists := names[api.Name]; exists {
-			return nil, fmt.Errorf("duplicate API name %q", api.Name)
-		}
-		names[api.Name] = api
-		if err := validateAPI(name, api, c.Kubernetes != nil); err != nil {
-			return nil, err
-		}
-	}
-	return names, nil
 }
 
 func validateAPI(name string, api API, hasKubernetes bool) error {
@@ -88,4 +69,15 @@ func (a API) clone() API {
 	}
 	a.Timeouts = cloneConfigPointer(a.Timeouts)
 	return a
+}
+
+func (api API) toRequestMetricsRouteMetadata() *structpb.Struct {
+	labels := make(map[string]*structpb.Value, len(api.Metrics.Labels))
+	for label, attribute := range api.Metrics.Labels {
+		labels[label] = structpb.NewStringValue(attribute)
+	}
+	return &structpb.Struct{Fields: map[string]*structpb.Value{
+		apiMetadataName: structpb.NewStringValue(api.Name),
+		"labels":        structpb.NewStructValue(&structpb.Struct{Fields: labels}),
+	}}
 }

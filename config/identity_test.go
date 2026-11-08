@@ -40,7 +40,7 @@ func TestMixedAnyOfSelectsIdentityBeforeInitializingAttributes(t *testing.T) {
 			c := loadConfigCase(t, "mtls-auth")
 			c.Servers[1].Authentication = &Authentication{AnyOf: test.selected}
 			effective := resolveTestConfig(t, c)
-			initialization := effective.toServerAttributeInitializationConfig(effective.servers[1])
+			initialization := toServerAttributeInitializationConfig(effective, effective.servers[1])
 			if len(initialization.OnRequestHeaders) <= len(test.want) {
 				t.Fatal("mixed any_of is missing identity selection or attributes")
 			}
@@ -60,7 +60,7 @@ func TestMixedAnyOfSelectsIdentityBeforeInitializingAttributes(t *testing.T) {
 
 func TestMixedAnyOfGuardsEveryAttributeWithSelectedIdentity(t *testing.T) {
 	c := resolveTestConfig(t, loadConfigCase(t, "mtls-auth"))
-	initialization := c.toServerAttributeInitializationConfig(c.servers[1])
+	initialization := toServerAttributeInitializationConfig(c, c.servers[1])
 	want := []struct{ authenticator, attribute, source string }{
 		{"partner-key", "requested_tenant", `["auth_gateway.request_headers"]["x-tenant"]`},
 		{"partner-key", "tenant_id", `["auth_gateway.api_key"]["attribute.tenant_id"]`},
@@ -97,7 +97,7 @@ func TestAllOfKeepsAttributeSourcesSeparateFromAnyOfSelection(t *testing.T) {
 				if server.Authentication == nil || server.Authentication.AllOf == nil {
 					continue
 				}
-				initialization := c.toServerAttributeInitializationConfig(server)
+				initialization := toServerAttributeInitializationConfig(c, server)
 				for _, update := range initialization.OnRequestHeaders {
 					if update.GetObjectKey() == "auth_gateway.authenticator" || strings.Contains(update.GetFormatString().GetTextFormatSource().GetInlineString(), `filter_state["auth_gateway.authenticator"]`) {
 						t.Fatal("all_of initialization uses a single any_of identity")

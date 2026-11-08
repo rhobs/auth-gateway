@@ -363,7 +363,7 @@ func TestHTTPManagerPreservesServerHostPairing(t *testing.T) {
 		},
 	}
 
-	if _, err := c.toHTTPManager([]indexedVirtualHost{
+	if _, err := toHTTPManager(c, []indexedVirtualHost{
 		{serverIndex: 0, host: publicHost},
 		{serverIndex: 1, host: keyHost},
 	}); err != nil {
@@ -380,7 +380,7 @@ func TestHTTPManagerPreservesServerHostPairing(t *testing.T) {
 func TestAPIKeyAttributeFilterInitializesMissingHostConfigMap(t *testing.T) {
 	c := resolveTestConfig(t, loadConfigCase(t, "api-key-auth"))
 	host := &route.VirtualHost{Name: "key.gateway.test"}
-	if _, err := c.apiKeyAttributeFilters(nil, []indexedVirtualHost{{serverIndex: 1, host: host}}); err != nil {
+	if _, err := apiKeyAttributeFilters(c, nil, []indexedVirtualHost{{serverIndex: 1, host: host}}); err != nil {
 		t.Fatal(err)
 	}
 	if host.TypedPerFilterConfig[attributeInitializationFilterName(1)] == nil {

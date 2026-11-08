@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 )
 
 const authorizationHeaderName = "authorization"
@@ -141,22 +143,6 @@ func validateAPIRoute(name string, route Route, routes map[string]struct{}) erro
 		seenMethods[method] = struct{}{}
 		if err := addRouteKey(routes, route.Path, method); err != nil {
 			return err
-		}
-	}
-	return nil
-}
-
-func (c Config) validateAPIKeyHeaderUse(apiKeyHeader string) error {
-	for i, api := range c.APIs {
-		for j, route := range api.Routes {
-			if route.Processing == nil {
-				continue
-			}
-			for k, header := range route.Processing.RequestHeaders {
-				if strings.EqualFold(header.Name, apiKeyHeader) {
-					return fmt.Errorf("apis[%d].routes[%d].processing.request_headers[%d].name is reserved for API-key credentials", i, j, k)
-				}
-			}
 		}
 	}
 	return nil
@@ -331,4 +317,15 @@ func (r RegexRewrite) clone() RegexRewrite {
 func (p RouteProcessing) clone() RouteProcessing {
 	p.RequestHeaders = slices.Clone(p.RequestHeaders)
 	return p
+}
+
+func (path PathMatch) toRouteMatch() *route.RouteMatch {
+	switch {
+	case path.Exact != "":
+		return &route.RouteMatch{PathSpecifier: &route.RouteMatch_Path{Path: path.Exact}}
+	case path.Prefix != "":
+		return &route.RouteMatch{PathSpecifier: &route.RouteMatch_Prefix{Prefix: path.Prefix}}
+	default:
+		return &route.RouteMatch{PathSpecifier: &route.RouteMatch_SafeRegex{SafeRegex: envoySafeRegex(path.Regex)}}
+	}
 }
