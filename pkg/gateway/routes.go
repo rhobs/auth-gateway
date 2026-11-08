@@ -41,7 +41,7 @@ func validDNSHost(value string) bool {
 	return net.ParseIP(value) == nil && len(validation.IsDNS1123Subdomain(value)) == 0
 }
 
-func validateServersConfig(c gatewayapi.Config, apis map[string]gatewayapi.API) ([]resolvedServer, error) {
+func validateServers(c gatewayapi.Config, apis map[string]gatewayapi.API) ([]resolvedServer, error) {
 	if len(c.Servers) == 0 {
 		return nil, fmt.Errorf("servers must contain at least one server")
 	}
@@ -309,7 +309,7 @@ func routeVirtualHosts(hosts []indexedVirtualHost) []*route.VirtualHost {
 
 func serverVirtualHost(c resolvedConfig, index int, server resolvedServer) (*route.VirtualHost, error) {
 	bound := server.apis
-	routes, err := apiRoutesWithRequestHeaderMutations(bound, hasAuthenticationConfigConfig(c.Config))
+	routes, err := apiRoutesWithRequestHeaderMutations(bound, hasAuthenticationConfig(c.Config))
 	if err != nil {
 		return nil, fmt.Errorf("servers[%d] routes: %w", index, err)
 	}

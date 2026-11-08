@@ -10,7 +10,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/rhobs/auth-gateway/config"
+	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
+	gatewayconfig "github.com/rhobs/auth-gateway/pkg/gateway"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -117,12 +118,12 @@ func setupTracingGateway(ctx SpecContext) *tracingE2E {
 
 	fixture, err := env.Fixture("tracing.yaml")
 	Expect(err).NotTo(HaveOccurred())
-	gatewayConfig, err := config.Load(bytes.NewReader(fixture))
+	gatewayConfig, err := gatewayconfig.Load(bytes.NewReader(fixture))
 	Expect(err).NotTo(HaveOccurred())
 	gatewayConfig.Kubernetes.Namespace = tracingNamespace
 	gatewayConfig.APIs[0].Upstream.Address = "httpbin." + tracingSupportNamespace + ".svc.cluster.local"
 	gatewayConfig.Observability.Tracing.Endpoint = "trace-sink." + tracingSupportNamespace + ".svc.cluster.local:4317"
-	secret, err := config.APIKeySecret(tracingNamespace, gatewayConfig.Authenticators[0], []config.APIKeyCredential{{
+	secret, err := gatewayconfig.APIKeySecret(tracingNamespace, gatewayConfig.Authenticators[0], []gatewayapi.APIKeyCredential{{
 		Key: tracingAPIKey, Attributes: map[string]string{"tenant_id": "trace-client"},
 	}})
 	Expect(err).NotTo(HaveOccurred())
@@ -130,7 +131,7 @@ func setupTracingGateway(ctx SpecContext) *tracingE2E {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(env.Apply(ctx, tracingNamespace, secretManifest)).To(Succeed())
 
-	resources, err := config.GenerateKubernetes(gatewayConfig)
+	resources, err := gatewayconfig.GenerateKubernetes(gatewayConfig)
 	Expect(err).NotTo(HaveOccurred())
 	manifest, err := resources.YAML()
 	Expect(err).NotTo(HaveOccurred())
@@ -180,7 +181,7 @@ service:
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
 						Name:            "collector",
-						Image:           config.DefaultOTelCollectorImage,
+						Image:           gatewayconfig.DefaultOTelCollectorImage,
 						ImagePullPolicy: corev1.PullIfNotPresent,
 						Args:            []string{"--config=/etc/collector/config.yaml"},
 						Ports:           []corev1.ContainerPort{{Name: "otlp-grpc", ContainerPort: 4317, Protocol: corev1.ProtocolTCP}},

@@ -49,7 +49,7 @@ type serverTLSMount struct {
 	config      gatewayapi.ServerTLS
 }
 
-func tlsMountsConfig(c gatewayapi.Config) []serverTLSMount {
+func tlsMounts(c gatewayapi.Config) []serverTLSMount {
 	var mounts []serverTLSMount
 	seen := make(map[gatewayapi.ServerTLS]struct{})
 	for i, server := range c.Servers {
@@ -66,8 +66,8 @@ func tlsMountsConfig(c gatewayapi.Config) []serverTLSMount {
 	return mounts
 }
 
-func validateTLSMountsConfig(c gatewayapi.Config) error {
-	mounts := tlsMountsConfig(c)
+func validateTLSMounts(c gatewayapi.Config) error {
+	mounts := tlsMounts(c)
 	for i, mount := range mounts {
 		name := fmt.Sprintf("servers[%d].tls_config", mount.serverIndex)
 		if mount.config.Secret == "" {
@@ -297,7 +297,7 @@ func verifiedTLS(identity string, ca *gatewayapi.TrustedCA, alpn []string) (*cor
 }
 
 func generateListenerFilters(c resolvedConfig) ([]*listener.ListenerFilter, error) {
-	if !hasHTTPSConfig(c.Config) {
+	if !hasHTTPS(c.Config) {
 		return nil, nil
 	}
 	inspectorConfig, err := packEnvoy(&inspector.TlsInspector{})

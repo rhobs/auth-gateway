@@ -5,7 +5,7 @@ test:
 	go test ./...
 
 lint:
-	@unformatted=$$(gofmt -l config pkg e2e playground); \
+	@unformatted=$$(gofmt -l pkg e2e playground); \
 	if [ -n "$$unformatted" ]; then printf '%s\n' "$$unformatted"; exit 1; fi
 	sh scripts/check-markdown-links.sh
 	go tool -modfile=tools/go.mod golangci-lint run

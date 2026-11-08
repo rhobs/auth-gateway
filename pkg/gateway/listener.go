@@ -23,7 +23,7 @@ const (
 	httpManagerStatPrefix     = "ingress"
 )
 
-func hasHTTPConfig(c gatewayapi.Config) bool {
+func hasHTTP(c gatewayapi.Config) bool {
 	for _, server := range c.Servers {
 		if server.TLSConfig == nil {
 			return true
@@ -32,7 +32,7 @@ func hasHTTPConfig(c gatewayapi.Config) bool {
 	return false
 }
 
-func hasHTTPSConfig(c gatewayapi.Config) bool {
+func hasHTTPS(c gatewayapi.Config) bool {
 	for _, server := range c.Servers {
 		if server.TLSConfig != nil {
 			return true
@@ -127,8 +127,8 @@ func validateObservabilityListenerPort(port *uint32, metricsEnabled, tracingEnab
 	return nil
 }
 
-func toHTTPFilterChain(c resolvedConfig, hosts []indexedVirtualHost) (*listener.FilterChain, error) {
-	manager, err := toHTTPManager(c, hosts)
+func httpFilterChain(c resolvedConfig, hosts []indexedVirtualHost) (*listener.FilterChain, error) {
+	manager, err := httpManager(c, hosts)
 	if err != nil {
 		return nil, err
 	}
@@ -142,14 +142,14 @@ func toHTTPFilterChain(c resolvedConfig, hosts []indexedVirtualHost) (*listener.
 	}}}, nil
 }
 
-func toHTTPManager(c resolvedConfig, hosts []indexedVirtualHost) (*hcm.HttpConnectionManager, error) {
+func httpManager(c resolvedConfig, hosts []indexedVirtualHost) (*hcm.HttpConnectionManager, error) {
 	accessLogs, err := errorAccessLogs()
 	if err != nil {
 		return nil, err
 	}
 	virtualHosts := routeVirtualHosts(hosts)
 	protected := hasProtectedHosts(hosts)
-	filters, err := toHTTPFilters(c, hosts, protected)
+	filters, err := httpFilters(c, hosts, protected)
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +225,7 @@ func generateFilterChains(c resolvedConfig) ([]*listener.FilterChain, error) {
 			httpHosts = append(httpHosts, indexedHost)
 			continue
 		}
-		chain, err := toHTTPFilterChain(c, []indexedVirtualHost{indexedHost})
+		chain, err := httpFilterChain(c, []indexedVirtualHost{indexedHost})
 		if err != nil {
 			return nil, fmt.Errorf("servers[%d]: %w", i, err)
 		}
@@ -238,11 +238,11 @@ func generateFilterChains(c resolvedConfig) ([]*listener.FilterChain, error) {
 		filterChains = append(filterChains, chain)
 	}
 	if len(httpHosts) > 0 {
-		chain, err := toHTTPFilterChain(c, httpHosts)
+		chain, err := httpFilterChain(c, httpHosts)
 		if err != nil {
 			return nil, err
 		}
-		if hasHTTPSConfig(c.Config) {
+		if hasHTTPS(c.Config) {
 			chain.FilterChainMatch = &listener.FilterChainMatch{TransportProtocol: "raw_buffer"}
 		}
 		filterChains = append([]*listener.FilterChain{chain}, filterChains...)

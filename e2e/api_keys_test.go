@@ -19,7 +19,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/rhobs/auth-gateway/config"
+	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
+	gatewayconfig "github.com/rhobs/auth-gateway/pkg/gateway"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
@@ -42,7 +43,7 @@ var (
 )
 
 type apiKeyE2E struct {
-	config    config.Config
+	config    gatewayapi.Config
 	keys      map[string]*rsa.PrivateKey
 	rootCAs   *x509.CertPool
 	httpAddr  string
@@ -50,7 +51,7 @@ type apiKeyE2E struct {
 	httpsStop func()
 	adminAddr string
 	keyHeader string
-	resources *config.KubernetesResources
+	resources *gatewayconfig.KubernetesResources
 }
 
 var _ = Describe("API-key request decisions", Label("gateway", "api-key", "authentication", "authorization", "namespace-"+apiKeyBehaviorNS), Ordered, ContinueOnFailure, func() {
@@ -219,7 +220,7 @@ var _ = Describe("API-key Secret projection", Label("gateway", "api-key", "authe
 		oldUID, err := gatewayPodUID(ctx, apiKeyProjectionNS)
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(gateway.applySecret(ctx, []config.APIKeyCredential{
+		Expect(gateway.applySecret(ctx, []gatewayapi.APIKeyCredential{
 			{Key: "key-b", Attributes: map[string]string{"tenant_id": "client-b", "writer_id": "writer-b"}},
 		})).To(Succeed())
 		var status int
@@ -257,9 +258,9 @@ var _ = Describe("API-key namespace isolation", Label("gateway", "api-key", "aut
 	BeforeAll(func(ctx SpecContext) {
 		DeferCleanup(func() { deleteNamespaceInBackground(apiKeyIsolatedNS) })
 		var err error
-		gateway, err = setupAPIKeyGatewayWithShape(ctx, apiKeyIsolatedNS, true, []config.APIKeyCredential{
+		gateway, err = setupAPIKeyGatewayWithShape(ctx, apiKeyIsolatedNS, true, []gatewayapi.APIKeyCredential{
 			{Key: "isolated-key", Attributes: map[string]string{"tenant_id": "client-b", "writer_id": "writer-b"}},
-		}, "isolated-key", func(c *config.Config) {
+		}, "isolated-key", func(c *gatewayapi.Config) {
 			c.Authenticators[0].APIKey.Header = ""
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -276,11 +277,11 @@ var _ = Describe("API-key namespace isolation", Label("gateway", "api-key", "aut
 	}, NodeTimeout(60*time.Second))
 })
 
-func setupAPIKeyGateway(ctx SpecContext, namespace string, keyOnly bool, credentials []config.APIKeyCredential, warmupKey string) (*apiKeyE2E, error) {
+func setupAPIKeyGateway(ctx SpecContext, namespace string, keyOnly bool, credentials []gatewayapi.APIKeyCredential, warmupKey string) (*apiKeyE2E, error) {
 	return setupAPIKeyGatewayWithShape(ctx, namespace, keyOnly, credentials, warmupKey, nil)
 }
 
-func setupAPIKeyGatewayWithShape(ctx SpecContext, namespace string, keyOnly bool, credentials []config.APIKeyCredential, warmupKey string, shape func(*config.Config)) (*apiKeyE2E, error) {
+func setupAPIKeyGatewayWithShape(ctx SpecContext, namespace string, keyOnly bool, credentials []gatewayapi.APIKeyCredential, warmupKey string, shape func(*gatewayapi.Config)) (*apiKeyE2E, error) {
 	if err := resetE2ENamespace(ctx, namespace); err != nil {
 		return nil, err
 	}
@@ -357,7 +358,7 @@ func setupAPIKeyGatewayWithShape(ctx SpecContext, namespace string, keyOnly bool
 	if err := gateway.applySecret(ctx, credentials); err != nil {
 		return nil, err
 	}
-	resources, err := config.GenerateKubernetes(c)
+	resources, err := gatewayconfig.GenerateKubernetes(c)
 	if err != nil {
 		return nil, err
 	}
@@ -403,25 +404,25 @@ func setupAPIKeyGatewayWithShape(ctx SpecContext, namespace string, keyOnly bool
 	return gateway, nil
 }
 
-func baselineAPIKeyCredentials() []config.APIKeyCredential {
-	return []config.APIKeyCredential{
+func baselineAPIKeyCredentials() []gatewayapi.APIKeyCredential {
+	return []gatewayapi.APIKeyCredential{
 		{Key: apiKeySharedSecretKey, Attributes: map[string]string{"tenant_id": "client-a", "writer_id": "writer-a"}},
 		{Key: "key-denied", Attributes: map[string]string{"tenant_id": "denied", "writer_id": "writer-a"}},
 	}
 }
 
-func apiKeyConfig(namespace string, keyOnly bool) (config.Config, error) {
+func apiKeyConfig(namespace string, keyOnly bool) (gatewayapi.Config, error) {
 	fixture, err := env.Fixture("api-key-gateway.yaml")
 	if err != nil {
-		return config.Config{}, err
+		return gatewayapi.Config{}, err
 	}
-	c, err := config.Load(bytes.NewReader(fixture))
+	c, err := gatewayconfig.Load(bytes.NewReader(fixture))
 	if err != nil {
-		return config.Config{}, err
+		return gatewayapi.Config{}, err
 	}
 	c.Kubernetes.Namespace = namespace
 	if keyOnly {
-		keyAuthenticators := make([]config.Authenticator, 0, 1)
+		keyAuthenticators := make([]gatewayapi.Authenticator, 0, 1)
 		for _, authenticator := range c.Authenticators {
 			if authenticator.APIKey != nil {
 				keyAuthenticators = append(keyAuthenticators, authenticator)
@@ -444,12 +445,12 @@ func apiKeyConfig(namespace string, keyOnly bool) (config.Config, error) {
 	return c, nil
 }
 
-func (g *apiKeyE2E) applySecret(ctx context.Context, credentials []config.APIKeyCredential) error {
+func (g *apiKeyE2E) applySecret(ctx context.Context, credentials []gatewayapi.APIKeyCredential) error {
 	key, found := findAPIKeyAuthenticator(g.config.Authenticators)
 	if !found {
 		return fmt.Errorf("API-key gateway configuration has no API-key authenticator")
 	}
-	secret, err := config.APIKeySecret(g.config.Kubernetes.Namespace, key, credentials)
+	secret, err := gatewayconfig.APIKeySecret(g.config.Kubernetes.Namespace, key, credentials)
 	if err != nil {
 		return err
 	}
@@ -474,13 +475,13 @@ func (g *apiKeyE2E) tokenForIssuer(issuer, tenant, writer string) string {
 	return (&jwtE2E{keys: g.keys}).token(issuer, claims, nil)
 }
 
-func findAPIKeyAuthenticator(authenticators []config.Authenticator) (config.Authenticator, bool) {
+func findAPIKeyAuthenticator(authenticators []gatewayapi.Authenticator) (gatewayapi.Authenticator, bool) {
 	for _, authenticator := range authenticators {
 		if authenticator.APIKey != nil {
 			return authenticator, true
 		}
 	}
-	return config.Authenticator{}, false
+	return gatewayapi.Authenticator{}, false
 }
 
 func (g *apiKeyE2E) request(ctx context.Context, host string, useTLS bool, method, requestPath, body, token, key string, headers http.Header) (int, []byte, error) {

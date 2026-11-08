@@ -11,7 +11,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/rhobs/auth-gateway/config"
+	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
 )
 
 var apiKeyAttributesNS = e2eNamespace("auth-gateway-api-key-attributes-e2e")
@@ -28,21 +28,21 @@ var _ = Describe("API-key credential attributes", Label("gateway", "api-key", "a
 		}
 		values["attribute03"] = "tenant_id=spoof%3Bwriter_id=spoof"
 		values["attribute07"] = `literal\1$1+%25`
-		credentials := []config.APIKeyCredential{{Key: "attribute-key", Attributes: values}}
+		credentials := []gatewayapi.APIKeyCredential{{Key: "attribute-key", Attributes: values}}
 		for _, index := range []int{0, 9, 19} {
 			missing := maps.Clone(values)
 			delete(missing, fmt.Sprintf("attribute%02d", index))
-			credentials = append(credentials, config.APIKeyCredential{
+			credentials = append(credentials, gatewayapi.APIKeyCredential{
 				Key: fmt.Sprintf("missing-%02d", index), Attributes: missing,
 			})
 		}
 		var err error
-		gateway, err = setupAPIKeyGatewayWithShape(ctx, apiKeyAttributesNS, true, credentials, "attribute-key", func(c *config.Config) {
+		gateway, err = setupAPIKeyGatewayWithShape(ctx, apiKeyAttributesNS, true, credentials, "attribute-key", func(c *gatewayapi.Config) {
 			for index := range 20 {
 				name := fmt.Sprintf("attribute%02d", index)
-				c.Authenticators[0].Attributes[name] = config.AttributeSource{Credential: new(true)}
+				c.Authenticators[0].Attributes[name] = gatewayapi.AttributeSource{Credential: new(true)}
 				processing := c.APIs[0].Routes[0].Processing
-				processing.RequestHeaders = append(processing.RequestHeaders, config.RequestHeaderMapping{
+				processing.RequestHeaders = append(processing.RequestHeaders, gatewayapi.RequestHeaderMapping{
 					Name: fmt.Sprintf("X-Attribute%02d", index), FromAttribute: name,
 				})
 			}

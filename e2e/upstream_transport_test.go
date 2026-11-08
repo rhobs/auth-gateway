@@ -15,7 +15,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/rhobs/auth-gateway/config"
+	gatewayconfig "github.com/rhobs/auth-gateway/pkg/gateway"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -56,12 +56,12 @@ var _ = Describe("Upstream TLS and HTTP/2", Label("gateway", "upstream-transport
 
 		fixture, err := env.Fixture("upstream-transport.yaml")
 		Expect(err).NotTo(HaveOccurred())
-		gatewayConfig, err := config.Load(bytes.NewReader(fixture))
+		gatewayConfig, err := gatewayconfig.Load(bytes.NewReader(fixture))
 		Expect(err).NotTo(HaveOccurred())
 		gatewayConfig.Kubernetes.Namespace = upstreamTransportNamespace
 		gatewayConfig.APIs[0].Upstream.TLSConfig.ServerName = upstreamTransportSAN
 		gatewayConfig.APIs[1].Upstream.TLSConfig.ServerName = "wrong-name." + upstreamTransportNamespace + ".svc.cluster.local"
-		resources, err := config.GenerateKubernetes(gatewayConfig)
+		resources, err := gatewayconfig.GenerateKubernetes(gatewayConfig)
 		Expect(err).NotTo(HaveOccurred())
 		manifest, err := resources.YAML()
 		Expect(err).NotTo(HaveOccurred())
@@ -339,7 +339,7 @@ static_resources:
 		Data:       map[string]string{"ca.pem": string(caBundle)},
 	}
 	container := corev1.Container{
-		Name: "envoy", Image: config.DefaultEnvoyImage, ImagePullPolicy: corev1.PullIfNotPresent,
+		Name: "envoy", Image: gatewayconfig.DefaultEnvoyImage, ImagePullPolicy: corev1.PullIfNotPresent,
 		Args: []string{"-c", "/etc/transport-config/envoy.yaml", "--log-level", "error"},
 		Ports: []corev1.ContainerPort{
 			{Name: "tls", ContainerPort: 8443},

@@ -121,7 +121,7 @@ func validatePinnedEnvoyFiles(t *testing.T, c gatewayapi.Config, files Generated
 		}
 		runtimeWrite(t, filepath.Join(configDir, "api-keys", apiKeySecretFilename), data)
 	}
-	for _, mount := range tlsMountsConfig(c) {
+	for _, mount := range tlsMounts(c) {
 		writeRuntimeMountedFile(t, configDir, externalFiles, mount.config.Certificate, certificate)
 		writeRuntimeMountedFile(t, configDir, externalFiles, mount.config.PrivateKey, key)
 	}

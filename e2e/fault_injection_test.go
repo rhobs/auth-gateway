@@ -11,7 +11,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/rhobs/auth-gateway/config"
+	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
+	gatewayconfig "github.com/rhobs/auth-gateway/pkg/gateway"
 	"sigs.k8s.io/yaml"
 )
 
@@ -20,7 +21,7 @@ const faultInjectionHost = "fault.auth-gateway.test"
 var faultInjectionNamespace = e2eNamespace("fault-injection-e2e")
 
 var _ = Describe("Fault injection", Label("gateway", "fault-injection", "namespace-"+faultInjectionNamespace), Ordered, func() {
-	var gatewayConfig config.Config
+	var gatewayConfig gatewayapi.Config
 	var gatewayAddress, adminAddress, metricsAddress string
 
 	BeforeAll(func(ctx SpecContext) {
@@ -33,10 +34,10 @@ var _ = Describe("Fault injection", Label("gateway", "fault-injection", "namespa
 
 		fixture, err := env.Fixture("fault-injection.yaml")
 		Expect(err).NotTo(HaveOccurred())
-		gatewayConfig, err = config.Load(bytes.NewReader(fixture))
+		gatewayConfig, err = gatewayconfig.Load(bytes.NewReader(fixture))
 		Expect(err).NotTo(HaveOccurred())
 		gatewayConfig.Kubernetes.Namespace = faultInjectionNamespace
-		secret, err := config.APIKeySecret(faultInjectionNamespace, gatewayConfig.Authenticators[0], []config.APIKeyCredential{
+		secret, err := gatewayconfig.APIKeySecret(faultInjectionNamespace, gatewayConfig.Authenticators[0], []gatewayapi.APIKeyCredential{
 			{Key: "key-a", Attributes: map[string]string{"tenant_id": "tenant-a", "writer_id": "writer-a"}},
 			{Key: "key-b", Attributes: map[string]string{"tenant_id": "tenant-b", "writer_id": "writer-a"}},
 			{Key: "key-c", Attributes: map[string]string{"tenant_id": "tenant-c", "writer_id": "writer-a"}},
@@ -226,8 +227,8 @@ var _ = Describe("Fault injection", Label("gateway", "fault-injection", "namespa
 	}, NodeTimeout(7*time.Minute))
 })
 
-func applyFaultInjectionGateway(ctx context.Context, gatewayConfig config.Config) error {
-	resources, err := config.GenerateKubernetes(gatewayConfig)
+func applyFaultInjectionGateway(ctx context.Context, gatewayConfig gatewayapi.Config) error {
+	resources, err := gatewayconfig.GenerateKubernetes(gatewayConfig)
 	if err != nil {
 		return err
 	}

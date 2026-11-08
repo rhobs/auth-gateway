@@ -9,7 +9,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/rhobs/auth-gateway/config"
+	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
 )
 
 var identityIsolationNamespace = e2eNamespace("auth-gateway-identity-e2e")
@@ -20,22 +20,22 @@ var _ = Describe("Mixed identity isolation", Label("gateway", "identity-isolatio
 	BeforeAll(func(ctx SpecContext) {
 		DeferCleanup(func() { deleteNamespaceInBackground(identityIsolationNamespace) })
 		var err error
-		gateway, err = setupMTLSGatewayWithShape(ctx, identityIsolationNamespace, func(c *config.Config) {
-			c.Authenticators[0].Attributes["writer_id"] = config.AttributeSource{ClaimPath: []string{"sub"}}
-			c.Authenticators[0].Attributes["requested_tenant"] = config.AttributeSource{Header: new("X-JWT-Tenant")}
+		gateway, err = setupMTLSGatewayWithShape(ctx, identityIsolationNamespace, func(c *gatewayapi.Config) {
+			c.Authenticators[0].Attributes["writer_id"] = gatewayapi.AttributeSource{ClaimPath: []string{"sub"}}
+			c.Authenticators[0].Attributes["requested_tenant"] = gatewayapi.AttributeSource{Header: new("X-JWT-Tenant")}
 			c.AuthorizationPolicies[0].Grants[0].Attributes = map[string][]string{"writer_id": {"writer-a"}}
 			for _, index := range []int{1, 2} {
 				c.Servers[index].Authorization.AnyOf = []string{"jwt-writers"}
 			}
 			certificateRoute := c.APIs[0].Routes[0]
 			certificateRoute.Path.Exact = "/certificate-attribute"
-			certificateRoute.Processing = &config.RouteProcessing{RequestHeaders: []config.RequestHeaderMapping{
+			certificateRoute.Processing = &gatewayapi.RouteProcessing{RequestHeaders: []gatewayapi.RequestHeaderMapping{
 				{Name: "X-Certificate-DNS", FromAttribute: "dns_id"},
 			}}
 			c.APIs[0].Routes = append(c.APIs[0].Routes, certificateRoute)
 			headerRoute := c.APIs[0].Routes[0]
 			headerRoute.Path.Exact = "/header-attribute"
-			headerRoute.Processing = &config.RouteProcessing{RequestHeaders: []config.RequestHeaderMapping{
+			headerRoute.Processing = &gatewayapi.RouteProcessing{RequestHeaders: []gatewayapi.RequestHeaderMapping{
 				{Name: "X-Scope-OrgID", FromAttribute: "tenant_id"},
 				{Name: "X-Requested-Tenant", FromAttribute: "requested_tenant"},
 			}}
@@ -43,8 +43,8 @@ var _ = Describe("Mixed identity isolation", Label("gateway", "identity-isolatio
 			c.AuthorizationPolicies[3].Grants[0].APIs = []string{"ingest", "probe"}
 			certificateKeyServer := c.Servers[1]
 			certificateKeyServer.Hostname = "cert-key.mtls.auth-gateway.test"
-			certificateKeyServer.Authentication = &config.Authentication{AnyOf: []string{"partner-key", "client-cert"}}
-			certificateKeyServer.Authorization = &config.Authorization{AnyOf: []string{"trusted-clients", "key-writers"}}
+			certificateKeyServer.Authentication = &gatewayapi.Authentication{AnyOf: []string{"partner-key", "client-cert"}}
+			certificateKeyServer.Authorization = &gatewayapi.Authorization{AnyOf: []string{"trusted-clients", "key-writers"}}
 			c.Servers = append(c.Servers, certificateKeyServer)
 		})
 		Expect(err).NotTo(HaveOccurred())

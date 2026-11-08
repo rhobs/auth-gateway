@@ -259,7 +259,7 @@ func TestAPIKeyRawAuthorizationAndSharedAttributeEquality(t *testing.T) {
 			t.Fatalf("shared attribute was not restricted to a nonempty scalar: %#v", principal)
 		}
 	}
-	grant := toGrantPrincipal(resolveTestConfig(t, c), c.AuthorizationPolicies[1].Grants[0])
+	grant := grantPrincipal(resolveTestConfig(t, c), c.AuthorizationPolicies[1].Grants[0])
 	parts := grant.GetAndIds().GetIds()
 	if len(parts) != 2 || parts[1].GetSourcedMetadata().GetMetadataMatcher().GetFilter() != apiKeyMetadataNamespace ||
 		!slices.Equal(metadataMatcherPath(parts[1].GetSourcedMetadata().GetMetadataMatcher().GetPath()), []string{"attribute.tenant_id"}) {
@@ -267,7 +267,7 @@ func TestAPIKeyRawAuthorizationAndSharedAttributeEquality(t *testing.T) {
 	}
 	c.Servers[1].Authorization.AnyOf = []string{"jwt-writers", "key-writers"}
 	effective := resolveTestConfig(t, c)
-	grants := toServerRBACRules(effective, effective.servers[1]).Policies["api-ingest"].Principals[0].GetOrIds().GetIds()
+	grants := serverRBACRules(effective, effective.servers[1]).Policies["api-ingest"].Principals[0].GetOrIds().GetIds()
 	if len(grants) != 1 || grants[0].GetAndIds() == nil {
 		t.Fatalf("key-only host used an unselected JWT grant: %#v", grants)
 	}
@@ -322,7 +322,7 @@ func TestJWTHeaderOnlyGrantRequiresNamedVerifiedIssuer(t *testing.T) {
 		slices.Index(names, "envoy.filters.http.set_filter_state") >= 0 {
 		t.Fatalf("header-only grant needs capture but no working attributes: %v", names)
 	}
-	grant := toGrantPrincipal(resolveTestConfig(t, c), c.AuthorizationPolicies[0].Grants[0]).GetAndIds().GetIds()
+	grant := grantPrincipal(resolveTestConfig(t, c), c.AuthorizationPolicies[0].Grants[0]).GetAndIds().GetIds()
 	if len(grant) != 2 {
 		t.Fatalf("header-only JWT grant principals = %#v", grant)
 	}
@@ -340,7 +340,7 @@ func TestJWTHeaderOnlyGrantRequiresNamedVerifiedIssuer(t *testing.T) {
 
 func TestJWTAuthorizationReadsOriginalClaimsFromNamedProvider(t *testing.T) {
 	c := resolveTestConfig(t, loadConfigCase(t, "jwt-auth-multiple-issuers"))
-	rules := toServerRBACRules(c, c.servers[0])
+	rules := serverRBACRules(c, c.servers[0])
 	policy := rules.Policies["api-metrics"]
 	if policy == nil || len(policy.Principals) != 1 {
 		t.Fatalf("API authorization policy = %#v", policy)
@@ -381,7 +381,7 @@ func TestJWTAuthorizationReadsOriginalClaimsFromNamedProvider(t *testing.T) {
 		t.Fatalf("raw provider grants = %v", gotValues)
 	}
 
-	config, err := toJWTFilterConfig(c)
+	config, err := jwtFilterConfig(c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +397,7 @@ func TestJWTAuthorizationMatchesAnyAllowedListClaimValue(t *testing.T) {
 	grant := c.AuthorizationPolicies[0].Grants[0]
 	grant.Attributes = map[string][]string{"my_list": {"y", "z"}}
 
-	principal := toGrantPrincipal(resolveTestConfig(t, c), grant)
+	principal := grantPrincipal(resolveTestConfig(t, c), grant)
 	claim := principal.GetSourcedMetadata()
 	if claim == nil {
 		t.Fatalf("grant principal = %#v, want a JWT metadata matcher", principal)
@@ -437,7 +437,7 @@ func TestJWTAuthorizationMatchesAnyAllowedListClaimValue(t *testing.T) {
 func TestJWTAuthorizationPolicyCombinationsAreAPIScoped(t *testing.T) {
 	c := loadConfigCase(t, "jwt-auth-with-attributes")
 	effective := resolveTestConfig(t, c)
-	rules := toServerRBACRules(effective, effective.servers[0])
+	rules := serverRBACRules(effective, effective.servers[0])
 	if rules.Policies["api-metrics-write"] == nil || rules.Policies["api-logs"] == nil {
 		t.Fatalf("any_of policies did not generate both granted API rules: %#v", rules.Policies)
 	}
@@ -448,7 +448,7 @@ func TestJWTAuthorizationPolicyCombinationsAreAPIScoped(t *testing.T) {
 
 	c.Servers[0].Authorization = &gatewayapi.Authorization{AllOf: []string{"metrics-writers", "logs-writers"}}
 	effective = resolveTestConfig(t, c)
-	rules = toServerRBACRules(effective, effective.servers[0])
+	rules = serverRBACRules(effective, effective.servers[0])
 	if rules.Policies["api-metrics-write"] != nil || rules.Policies["api-logs"] != nil {
 		t.Fatalf("all_of policies for disjoint APIs granted access: %#v", rules.Policies)
 	}

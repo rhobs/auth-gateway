@@ -70,7 +70,7 @@ var (
 	prometheusNamePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 )
 
-func hasRequestMetricsConfig(c gatewayapi.Config) bool {
+func hasRequestMetrics(c gatewayapi.Config) bool {
 	for _, api := range c.APIs {
 		if api.Metrics != nil {
 			return true
@@ -79,7 +79,7 @@ func hasRequestMetricsConfig(c gatewayapi.Config) bool {
 	return false
 }
 
-func requestMetricNameConfig(c gatewayapi.Config) string {
+func requestMetricName(c gatewayapi.Config) string {
 	if c.Observability.Metrics.CustomMetricName != nil {
 		return *c.Observability.Metrics.CustomMetricName
 	}
@@ -214,7 +214,7 @@ func hasRequestMetricRoutes(hosts []*route.VirtualHost) bool {
 
 func requestMetricsHTTPFilter(c resolvedConfig) (*hcm.HttpFilter, error) {
 	metricConfig, err := packEnvoy(&lua.Lua{DefaultSourceCode: &core.DataSource{
-		Specifier: &core.DataSource_InlineString{InlineString: requestMetricsLuaScript(c.APIs, requestMetricNameConfig(c.Config))},
+		Specifier: &core.DataSource_InlineString{InlineString: requestMetricsLuaScript(c.APIs, requestMetricName(c.Config))},
 	}})
 	if err != nil {
 		return nil, fmt.Errorf("encode request metrics Lua filter: %w", err)

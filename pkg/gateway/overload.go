@@ -78,7 +78,7 @@ func fixedHeapResourceMonitor(maxHeapBytes uint64) (*overload.ResourceMonitor, e
 	return &overload.ResourceMonitor{Name: heapMonitor, ConfigType: &overload.ResourceMonitor_TypedConfig{TypedConfig: heapConfig}}, nil
 }
 
-func toOverloadManagerOverloadConfig(o gatewayapi.OverloadConfig) (*overload.OverloadManager, error) {
+func overloadManagerOverloadConfig(o gatewayapi.OverloadConfig) (*overload.OverloadManager, error) {
 	heapMonitorConfig, err := fixedHeapResourceMonitor(o.MaxHeapBytes)
 	if err != nil {
 		return nil, err

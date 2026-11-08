@@ -21,7 +21,7 @@ func TestJWTExpressionsUseEnvoyCELVariablesAndGuardMissingAttributes(t *testing.
 func testServerAuthenticationRules(t *testing.T, c gatewayapi.Config, serverIndex int) *rbac.RBAC {
 	t.Helper()
 	effective := resolveTestConfig(t, c)
-	rules, err := toServerAuthenticationRBACRules(effective, effective.servers[serverIndex])
+	rules, err := serverAuthenticationRBACRules(effective, effective.servers[serverIndex])
 	if err != nil {
 		t.Fatal(err)
 	}

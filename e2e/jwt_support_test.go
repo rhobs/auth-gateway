@@ -24,7 +24,8 @@ import (
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
-	"github.com/rhobs/auth-gateway/config"
+	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
+	gatewayconfig "github.com/rhobs/auth-gateway/pkg/gateway"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -59,7 +60,7 @@ type jwtE2E struct {
 	adminAddr   string
 	metricsAddr string
 	certs       *jwtTestCertificates
-	resources   *config.KubernetesResources
+	resources   *gatewayconfig.KubernetesResources
 }
 
 var (
@@ -68,8 +69,8 @@ var (
 	jwtGateway        *jwtE2E
 )
 
-func jwtTrustedCA() *config.TrustedCA {
-	return &config.TrustedCA{ConfigMap: &config.CAConfigMap{Name: "jwt-jwks-ca", Key: "ca.pem"}}
+func jwtTrustedCA() *gatewayapi.TrustedCA {
+	return &gatewayapi.TrustedCA{ConfigMap: &gatewayapi.CAConfigMap{Name: "jwt-jwks-ca", Key: "ca.pem"}}
 }
 
 func setupJWTGateway(ctx SpecContext, namespace, fixtureName string) (*jwtE2E, error) {
@@ -119,7 +120,7 @@ func setupJWTGateway(ctx SpecContext, namespace, fixtureName string) (*jwtE2E, e
 	if err != nil {
 		return nil, err
 	}
-	gatewayConfig, err := config.Load(bytes.NewReader(fixture))
+	gatewayConfig, err := gatewayconfig.Load(bytes.NewReader(fixture))
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +129,7 @@ func setupJWTGateway(ctx SpecContext, namespace, fixtureName string) (*jwtE2E, e
 		gatewayConfig.Authenticators[i].JWT.JWKS.URI = "https://jwks." + namespace + ".svc.cluster.local/" + gatewayConfig.Authenticators[i].Name
 		gatewayConfig.Authenticators[i].JWT.JWKS.TrustedCA = jwtTrustedCA()
 	}
-	resources, err := config.GenerateKubernetes(gatewayConfig)
+	resources, err := gatewayconfig.GenerateKubernetes(gatewayConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +294,7 @@ static_resources:
 	configMap := &corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: "jwt-jwks-config", Namespace: namespace}, Data: map[string]string{"envoy.yaml": envoyConfig, "issuer-one.json": string(issuerOneJWKS), "issuer-two.json": string(issuerTwoJWKS)}}
 	secret := &corev1.Secret{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"}, ObjectMeta: metav1.ObjectMeta{Name: "jwt-jwks-tls", Namespace: namespace}, Type: corev1.SecretTypeTLS, Data: map[string][]byte{corev1.TLSCertKey: certificates.chainPEM, corev1.TLSPrivateKeyKey: certificates.keyPEM}}
 	container := corev1.Container{
-		Name: "envoy", Image: config.DefaultEnvoyImage,
+		Name: "envoy", Image: gatewayconfig.DefaultEnvoyImage,
 		Args:  []string{"-c", "/etc/jwks/envoy.yaml", "--log-level", "error"},
 		Ports: []corev1.ContainerPort{{Name: "https", ContainerPort: 8443}},
 		VolumeMounts: []corev1.VolumeMount{

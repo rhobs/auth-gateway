@@ -37,13 +37,13 @@ func generateBootstrap(c resolvedConfig) (*bootstrap.Bootstrap, error) {
 		},
 	}
 	if c.Overload != nil {
-		bootstrapConfig.OverloadManager, err = toOverloadManagerOverloadConfig(*c.Overload)
+		bootstrapConfig.OverloadManager, err = overloadManagerOverloadConfig(*c.Overload)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if hasRequestMetricsConfig(c.Config) {
-		bootstrapConfig.StatsConfig = requestMetricsStatsConfig(c.APIs, requestMetricNameConfig(c.Config))
+	if hasRequestMetrics(c.Config) {
+		bootstrapConfig.StatsConfig = requestMetricsStatsConfig(c.APIs, requestMetricName(c.Config))
 	}
 	return bootstrapConfig, nil
 }

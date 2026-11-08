@@ -175,7 +175,7 @@ func addServerJWTRequirement(c resolvedConfig, host *route.VirtualHost, index in
 	return nil
 }
 
-func toJWTFilterConfig(c resolvedConfig, serverIndexes ...int) (*jwt.JwtAuthentication, error) {
+func jwtFilterConfig(c resolvedConfig, serverIndexes ...int) (*jwt.JwtAuthentication, error) {
 	config := &jwt.JwtAuthentication{Providers: map[string]*jwt.JwtProvider{}, RequirementMap: map[string]*jwt.JwtRequirement{}, StripFailureResponse: true}
 	if len(serverIndexes) == 0 {
 		for index := range c.servers {
@@ -244,9 +244,9 @@ func jwtHTTPFilter(c resolvedConfig, serverIndexes []int) (*hcm.HttpFilter, erro
 	var jwtConfig *jwt.JwtAuthentication
 	var err error
 	if c.usesAPIKeys() || c.usesMTLS() {
-		jwtConfig, err = toJWTFilterConfig(c, serverIndexes...)
+		jwtConfig, err = jwtFilterConfig(c, serverIndexes...)
 	} else {
-		jwtConfig, err = toJWTFilterConfig(c)
+		jwtConfig, err = jwtFilterConfig(c)
 	}
 	if err != nil {
 		return nil, err

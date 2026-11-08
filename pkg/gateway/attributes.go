@@ -309,7 +309,7 @@ func filterStateKey(attribute string) string {
 	return managedAttributePrefix + attribute
 }
 
-func toServerAttributeInitializationConfig(c resolvedConfig, server resolvedServer) *setfilterstate.Config {
+func serverAttributeInitializationConfig(c resolvedConfig, server resolvedServer) *setfilterstate.Config {
 	config := &setfilterstate.Config{}
 	selectIdentity := server.mixedAnyOf()
 	authenticators := slices.Clone(server.authenticators)
@@ -353,7 +353,7 @@ func appendAttributeInitialization(config *setfilterstate.Config, authenticator 
 	}
 }
 
-func toAttributeInitializationConfig(c resolvedConfig) *setfilterstate.Config {
+func attributeInitializationConfig(c resolvedConfig) *setfilterstate.Config {
 	config := &setfilterstate.Config{}
 	for _, authenticator := range c.Authenticators {
 		if !c.authenticatorUsed(authenticator.Name) || authenticator.JWT == nil {
@@ -382,7 +382,7 @@ func attributeHTTPFilters(c resolvedConfig, filters []*hcm.HttpFilter, hosts []i
 	if c.usesAPIKeys() || c.usesMTLS() {
 		return apiKeyAttributeFilters(c, filters, hosts)
 	}
-	attributeConfig, err := packEnvoy(toAttributeInitializationConfig(c))
+	attributeConfig, err := packEnvoy(attributeInitializationConfig(c))
 	if err != nil {
 		return nil, fmt.Errorf("encode attribute initialization filter: %w", err)
 	}
@@ -392,7 +392,7 @@ func attributeHTTPFilters(c resolvedConfig, filters []*hcm.HttpFilter, hosts []i
 func apiKeyAttributeFilters(c resolvedConfig, filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
 	for _, indexedHost := range hosts {
 		serverIndex := indexedHost.serverIndex
-		attributes := toServerAttributeInitializationConfig(c, c.servers[serverIndex])
+		attributes := serverAttributeInitializationConfig(c, c.servers[serverIndex])
 		if len(attributes.OnRequestHeaders) == 0 {
 			continue
 		}

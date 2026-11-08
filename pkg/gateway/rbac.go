@@ -201,7 +201,7 @@ func cloneAuthorization(a gatewayapi.Authorization) gatewayapi.Authorization {
 	return a
 }
 
-func validateAuthenticatorsConfig(c gatewayapi.Config) (map[string]gatewayapi.Authenticator, string, error) {
+func validateAuthenticators(c gatewayapi.Config) (map[string]gatewayapi.Authenticator, string, error) {
 	authenticators := make(map[string]gatewayapi.Authenticator, len(c.Authenticators))
 	apiKeyCount := 0
 	apiKeyHeader := ""
@@ -251,7 +251,7 @@ func validateAuthenticatorsConfig(c gatewayapi.Config) (map[string]gatewayapi.Au
 	return authenticators, apiKeyHeader, nil
 }
 
-func hasAuthenticationConfigConfig(c gatewayapi.Config) bool {
+func hasAuthenticationConfig(c gatewayapi.Config) bool {
 	if len(c.Authenticators) != 0 || len(c.AuthorizationPolicies) != 0 {
 		return true
 	}
@@ -270,7 +270,7 @@ func hasAuthenticationConfigConfig(c gatewayapi.Config) bool {
 	return false
 }
 
-func validateAuthorizationPoliciesConfig(c gatewayapi.Config) (map[string]gatewayapi.AuthorizationPolicy, error) {
+func validateAuthorizationPolicies(c gatewayapi.Config) (map[string]gatewayapi.AuthorizationPolicy, error) {
 	policies := make(map[string]gatewayapi.AuthorizationPolicy, len(c.AuthorizationPolicies))
 	for i, policy := range c.AuthorizationPolicies {
 		name := fmt.Sprintf("authorization_policies[%d]", i)
@@ -285,7 +285,7 @@ func validateAuthorizationPoliciesConfig(c gatewayapi.Config) (map[string]gatewa
 	return policies, nil
 }
 
-func validateAuthorizationPolicyGrantsConfig(c gatewayapi.Config, apis map[string]gatewayapi.API, authenticators map[string]gatewayapi.Authenticator) error {
+func validateAuthorizationPolicyGrants(c gatewayapi.Config, apis map[string]gatewayapi.API, authenticators map[string]gatewayapi.Authenticator) error {
 	for i, policy := range c.AuthorizationPolicies {
 		for j, grant := range policy.Grants {
 			name := fmt.Sprintf("authorization_policies[%d].grants[%d]", i, j)
@@ -307,7 +307,7 @@ func mtlsValidatedPrincipal() (*rbac.Principal, error) {
 	}}}, nil
 }
 
-func toServerAuthenticationRBACRules(c resolvedConfig, server resolvedServer) (*rbac.RBAC, error) {
+func serverAuthenticationRBACRules(c resolvedConfig, server resolvedServer) (*rbac.RBAC, error) {
 	var principal *rbac.Principal
 	if server.hasAPIKey {
 		principal = apiKeyIdentityPrincipal()
@@ -361,7 +361,7 @@ func toServerAuthenticationRBACRules(c resolvedConfig, server resolvedServer) (*
 	return &rbac.RBAC{Action: rbac.RBAC_ALLOW, Policies: map[string]*rbac.Policy{"authenticated": policy}}, nil
 }
 
-func toServerMTLSSharedAttributeRBACRules(c resolvedConfig, server resolvedServer) *rbac.RBAC {
+func serverMTLSSharedAttributeRBACRules(c resolvedConfig, server resolvedServer) *rbac.RBAC {
 	if !server.usesMTLS() || server.Authentication == nil || len(server.Authentication.AllOf) < 2 {
 		return nil
 	}
@@ -382,7 +382,7 @@ func addServerAuthenticationConfig(c resolvedConfig, host *route.VirtualHost, in
 	if !server.hasAPIKey && !server.usesMTLS() {
 		return nil
 	}
-	rules, err := toServerAuthenticationRBACRules(c, server)
+	rules, err := serverAuthenticationRBACRules(c, server)
 	if err != nil {
 		return fmt.Errorf("servers[%d] authentication rules: %w", index, err)
 	}
@@ -395,7 +395,7 @@ func addServerAuthenticationConfig(c resolvedConfig, host *route.VirtualHost, in
 }
 
 func addServerMTLSSharedAttributeConfig(c resolvedConfig, host *route.VirtualHost, index int, server resolvedServer) error {
-	rules := toServerMTLSSharedAttributeRBACRules(c, server)
+	rules := serverMTLSSharedAttributeRBACRules(c, server)
 	if rules == nil {
 		return nil
 	}
@@ -423,7 +423,7 @@ func appendRequiredHeaderRBAC(filters []*hcm.HttpFilter) ([]*hcm.HttpFilter, err
 	return append(filters, &hcm.HttpFilter{Name: requiredHeaderFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: headerRBACConfig}}), nil
 }
 
-func toServerRBACRules(c resolvedConfig, server resolvedServer) *rbac.RBAC {
+func serverRBACRules(c resolvedConfig, server resolvedServer) *rbac.RBAC {
 	policies := map[string]*rbac.Policy{
 		localResponsePolicyName: {
 			Permissions: []*rbac.Permission{apiPermission(localResponseAPIName)},
@@ -468,7 +468,7 @@ func grantPrincipalsForAPI(c resolvedConfig, server resolvedServer, apiName stri
 	var grants []*rbac.Principal
 	for _, grant := range policy.Grants {
 		if slices.Contains(grant.APIs, apiName) && (!c.usesAPIKeys() && !c.usesMTLS() || server.selectsAuthenticator(grant.Authenticator)) {
-			grants = append(grants, toGrantPrincipalForServer(c, server, grant))
+			grants = append(grants, grantPrincipalForServer(c, server, grant))
 		}
 	}
 	return grants
@@ -547,7 +547,7 @@ func authorizationHTTPFilter() (*hcm.HttpFilter, error) {
 }
 
 func serverAuthorizationPerRouteConfig(c resolvedConfig, server resolvedServer) (*anypb.Any, error) {
-	return packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: toServerRBACRules(c, server)}})
+	return packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: serverRBACRules(c, server)}})
 }
 
 func requiredHeaderPerRouteConfig(routeName string, mappings []gatewayapi.RequestHeaderMapping) (*anypb.Any, error) {
@@ -586,8 +586,8 @@ func apiKeyMetadataPrincipal(keys []string, value *matcher.ValueMatcher) *rbac.P
 	return dynamicMetadataPrincipal(apiKeyMetadataNamespace, keys, value)
 }
 
-func toGrantPrincipalForServer(c resolvedConfig, server resolvedServer, grant gatewayapi.AuthorizationGrant) *rbac.Principal {
-	principal := toGrantPrincipal(c, grant)
+func grantPrincipalForServer(c resolvedConfig, server resolvedServer, grant gatewayapi.AuthorizationGrant) *rbac.Principal {
+	principal := grantPrincipal(c, grant)
 	if !server.mixedAnyOf() {
 		return principal
 	}
@@ -661,7 +661,7 @@ func apiPermission(api string) *rbac.Permission {
 	}}}}
 }
 
-func toGrantPrincipal(c resolvedConfig, grant gatewayapi.AuthorizationGrant) *rbac.Principal {
+func grantPrincipal(c resolvedConfig, grant gatewayapi.AuthorizationGrant) *rbac.Principal {
 	authenticator := c.authenticatorIndex[grant.Authenticator]
 	if authenticator.APIKey != nil {
 		return keyGrantPrincipal(authenticator, grant)

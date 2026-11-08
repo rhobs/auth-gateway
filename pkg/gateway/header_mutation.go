@@ -41,7 +41,7 @@ var (
 	}
 )
 
-func toCredentialCleanupConfig(c resolvedConfig) *headermutation.HeaderMutation {
+func credentialCleanupConfig(c resolvedConfig) *headermutation.HeaderMutation {
 	removed := map[string]struct{}{authorizationHeaderName: {}, apiKeyClientHeader: {}}
 	if c.usesMTLS() {
 		for _, name := range []string{mtlsPendingHeaderName, mtlsFingerprintHeaderName, mtlsURIHeaderName, mtlsDNSHeaderName} {
@@ -63,9 +63,9 @@ func toCredentialCleanupConfig(c resolvedConfig) *headermutation.HeaderMutation 
 	return &headermutation.HeaderMutation{Mutations: &headermutation.Mutations{RequestMutations: mutations}}
 }
 
-// toCredentialCleanupFilter builds the Envoy filter that removes gateway credentials and JWT verification markers before requests reach upstreams.
-func toCredentialCleanupFilter(c resolvedConfig) (*hcm.HttpFilter, error) {
-	cleanup, err := packEnvoy(toCredentialCleanupConfig(c))
+// credentialCleanupFilter builds the Envoy filter that removes gateway credentials and JWT verification markers before requests reach upstreams.
+func credentialCleanupFilter(c resolvedConfig) (*hcm.HttpFilter, error) {
+	cleanup, err := packEnvoy(credentialCleanupConfig(c))
 	if err != nil {
 		return nil, fmt.Errorf("encode credential cleanup filter: %w", err)
 	}

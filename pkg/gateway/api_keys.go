@@ -101,7 +101,7 @@ func resolveAPIKeyAuthenticator(authenticator gatewayapi.Authenticator, requireS
 	return authenticator, nil
 }
 
-func validateAPIKeyHeaderUseConfig(c gatewayapi.Config, apiKeyHeader string) error {
+func validateAPIKeyHeaderUse(c gatewayapi.Config, apiKeyHeader string) error {
 	for i, api := range c.APIs {
 		for j, route := range api.Routes {
 			if route.Processing == nil {
@@ -214,7 +214,7 @@ func addServerAPIKeyConfig(c resolvedConfig, host *route.VirtualHost, index int,
 	if !server.hasAPIKey {
 		return nil
 	}
-	perRoute, err := toAPIKeyPerRouteConfig(c, server)
+	perRoute, err := apiKeyPerRouteConfig(c, server)
 	if err != nil {
 		return fmt.Errorf("servers[%d] API-key matcher: %w", index, err)
 	}

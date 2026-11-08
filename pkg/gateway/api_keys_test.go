@@ -464,7 +464,7 @@ func TestHTTPManagerPreservesServerHostPairing(t *testing.T) {
 		},
 	}
 
-	if _, err := toHTTPManager(c, []indexedVirtualHost{
+	if _, err := httpManager(c, []indexedVirtualHost{
 		{serverIndex: 0, host: publicHost},
 		{serverIndex: 1, host: keyHost},
 	}); err != nil {

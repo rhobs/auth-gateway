@@ -47,10 +47,10 @@ func compositePerRouteConfig(m *xdsmatcher.Matcher) (*anypb.Any, error) {
 	return packEnvoy(&composite.CompositePerRoute{Matcher: m})
 }
 
-func toAPIKeyPerRouteConfig(c resolvedConfig, server resolvedServer) (*anypb.Any, error) {
+func apiKeyPerRouteConfig(c resolvedConfig, server resolvedServer) (*anypb.Any, error) {
 	config := &matching.ExtensionWithMatcherPerRoute{}
 	if server.mixedAnyOf() {
-		matcher, err := toAPIKeySkipMatcher(c, server)
+		matcher, err := apiKeySkipMatcher(c, server)
 		if err != nil {
 			return nil, err
 		}
@@ -63,7 +63,7 @@ func toAPIKeyPerRouteConfig(c resolvedConfig, server resolvedServer) (*anypb.Any
 	return packEnvoy(&route.FilterConfig{Config: perRoute})
 }
 
-func toAPIKeySkipMatcher(c resolvedConfig, server resolvedServer) (*xdsmatcher.Matcher, error) {
+func apiKeySkipMatcher(c resolvedConfig, server resolvedServer) (*xdsmatcher.Matcher, error) {
 	action, err := apiKeySkipAction()
 	if err != nil {
 		return nil, err
@@ -114,7 +114,7 @@ func extensionWithMatcherTypeName() string {
 	return string((&matching.ExtensionWithMatcher{}).ProtoReflect().Descriptor().FullName())
 }
 
-func toHTTPFilters(c resolvedConfig, hosts []indexedVirtualHost, protected bool) ([]*hcm.HttpFilter, error) {
+func httpFilters(c resolvedConfig, hosts []indexedVirtualHost, protected bool) ([]*hcm.HttpFilter, error) {
 	filters, err := requestControlFilters(c, routeVirtualHosts(hosts))
 	if err != nil {
 		return nil, err
@@ -126,7 +126,7 @@ func toHTTPFilters(c resolvedConfig, hosts []indexedVirtualHost, protected bool)
 		}
 	}
 	if (c.usesAPIKeys() || c.usesJWT() || c.usesMTLS()) && !protected {
-		cleanup, err := toCredentialCleanupFilter(c)
+		cleanup, err := credentialCleanupFilter(c)
 		if err != nil {
 			return nil, err
 		}
@@ -261,7 +261,7 @@ func authorizationHTTPFilters(c resolvedConfig, filters []*hcm.HttpFilter) ([]*h
 		}
 	}
 	if c.usesAPIKeys() || c.usesJWT() || c.usesMTLS() {
-		cleanup, err := toCredentialCleanupFilter(c)
+		cleanup, err := credentialCleanupFilter(c)
 		if err != nil {
 			return nil, err
 		}

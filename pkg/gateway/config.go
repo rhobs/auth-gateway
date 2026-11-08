@@ -179,7 +179,7 @@ func Load(r io.Reader) (gatewayapi.Config, error) {
 	}
 
 	c = withDefaultsConfig(c)
-	if _, err := validateDefaultedConfig(c, false); err != nil {
+	if _, err := validateDefaulted(c, false); err != nil {
 		return gatewayapi.Config{}, err
 	}
 	return c, nil
@@ -188,11 +188,11 @@ func Load(r io.Reader) (gatewayapi.Config, error) {
 // Validate checks whether c follows the public configuration contract.
 // Use it when building a Config in Go instead of loading YAML with Load.
 func Validate(c gatewayapi.Config) error {
-	_, err := validateDefaultedConfig(withDefaultsConfig(c), false)
+	_, err := validateDefaulted(withDefaultsConfig(c), false)
 	return err
 }
 
-func validateBaseSettingsConfig(c gatewayapi.Config, metricsEnabled, tracingEnabled bool) error {
+func validateBaseSettings(c gatewayapi.Config, metricsEnabled, tracingEnabled bool) error {
 	if c.Version != configVersion {
 		return fmt.Errorf("version must be %d", configVersion)
 	}
@@ -244,7 +244,7 @@ func withDefaultsConfig(c gatewayapi.Config) gatewayapi.Config {
 		c.APIs[i].CircuitBreakers = withDefaultsCircuitBreakerConfig(c.APIs[i].CircuitBreakers)
 	}
 	if c.Kubernetes != nil {
-		kubernetes := withDefaultsKubernetes(*c.Kubernetes, hasHTTPSConfig(c))
+		kubernetes := withDefaultsKubernetes(*c.Kubernetes, hasHTTPS(c))
 		c.Kubernetes = &kubernetes
 	}
 	return c
@@ -262,7 +262,7 @@ func cloneConfig(c gatewayapi.Config) gatewayapi.Config {
 	return c
 }
 
-func validateAPIsConfig(c gatewayapi.Config) (map[string]gatewayapi.API, error) {
+func validateAPIs(c gatewayapi.Config) (map[string]gatewayapi.API, error) {
 	if len(c.APIs) == 0 {
 		return nil, fmt.Errorf("at least one API must be configured")
 	}
@@ -284,11 +284,11 @@ func validateAPIsConfig(c gatewayapi.Config) (map[string]gatewayapi.API, error) 
 }
 
 func resolveConfig(input gatewayapi.Config) (resolvedConfig, error) {
-	return validateDefaultedConfig(withDefaultsConfig(input), true)
+	return validateDefaulted(withDefaultsConfig(input), true)
 }
 
-// validateDefaultedConfig expects defaults to have already been applied.
-func validateDefaultedConfig(c gatewayapi.Config, resolveTimeouts bool) (resolvedConfig, error) {
+// validateDefaulted expects defaults to have already been applied.
+func validateDefaulted(c gatewayapi.Config, resolveTimeouts bool) (resolvedConfig, error) {
 	effective := resolvedConfig{Config: c}
 	if err := validateConfig(&effective); err != nil {
 		return resolvedConfig{}, err
@@ -327,15 +327,15 @@ func validateDefaultedConfig(c gatewayapi.Config, resolveTimeouts bool) (resolve
 func validateConfig(c *resolvedConfig) error {
 	metricsEnabled := c.Kubernetes != nil && enabledObservabilityMetrics(c.Observability.Metrics)
 	tracingEnabled := enabledObservabilityTracing(c.Observability.Tracing)
-	if err := validateBaseSettingsConfig(c.Config, metricsEnabled, tracingEnabled); err != nil {
+	if err := validateBaseSettings(c.Config, metricsEnabled, tracingEnabled); err != nil {
 		return err
 	}
 	var err error
-	c.apiIndex, err = validateAPIsConfig(c.Config)
+	c.apiIndex, err = validateAPIs(c.Config)
 	if err != nil {
 		return err
 	}
-	c.servers, err = validateServersConfig(c.Config, c.apiIndex)
+	c.servers, err = validateServers(c.Config, c.apiIndex)
 	if err != nil {
 		return err
 	}
@@ -343,7 +343,7 @@ func validateConfig(c *resolvedConfig) error {
 		return err
 	}
 	if c.Kubernetes != nil {
-		if err := validateKubernetesConfig(c.Config, metricsEnabled, tracingEnabled); err != nil {
+		if err := validateKubernetes(c.Config, metricsEnabled, tracingEnabled); err != nil {
 			return err
 		}
 	}
@@ -354,7 +354,7 @@ func validateConfig(c *resolvedConfig) error {
 }
 
 func resolveAuthentication(c *resolvedConfig) error {
-	authenticators, apiKeyHeader, err := validateAuthenticatorsConfig(c.Config)
+	authenticators, apiKeyHeader, err := validateAuthenticators(c.Config)
 	if err != nil {
 		return err
 	}
@@ -362,7 +362,7 @@ func resolveAuthentication(c *resolvedConfig) error {
 		return err
 	}
 	if apiKeyHeader != "" {
-		if err := validateAPIKeyHeaderUseConfig(c.Config, apiKeyHeader); err != nil {
+		if err := validateAPIKeyHeaderUse(c.Config, apiKeyHeader); err != nil {
 			return err
 		}
 	}
@@ -372,13 +372,13 @@ func resolveAuthentication(c *resolvedConfig) error {
 	if err := validateMetricAttributeReferences(c.APIs, authenticators); err != nil {
 		return err
 	}
-	policies, err := validateAuthorizationPoliciesConfig(c.Config)
+	policies, err := validateAuthorizationPolicies(c.Config)
 	if err != nil {
 		return err
 	}
 	c.authenticatorIndex = authenticators
 	c.policyIndex = policies
-	if err := validateAuthorizationPolicyGrantsConfig(c.Config, c.apiIndex, authenticators); err != nil {
+	if err := validateAuthorizationPolicyGrants(c.Config, c.apiIndex, authenticators); err != nil {
 		return err
 	}
 	if err := resolveServerAuthentication(c); err != nil {

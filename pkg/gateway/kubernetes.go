@@ -65,7 +65,7 @@ type KubernetesResources struct {
 	Service corev1.Service
 }
 
-func validateKubernetesConfig(c gatewayapi.Config, metricsEnabled, tracingEnabled bool) error {
+func validateKubernetes(c gatewayapi.Config, metricsEnabled, tracingEnabled bool) error {
 	k := c.Kubernetes
 	if strings.TrimSpace(k.Image) == "" || strings.ContainsAny(k.Image, imageWhitespaceCharacters) {
 		return fmt.Errorf("kubernetes.image must be an image reference")
@@ -76,7 +76,7 @@ func validateKubernetesConfig(c gatewayapi.Config, metricsEnabled, tracingEnable
 	if k.Replicas != nil && *k.Replicas < 0 {
 		return fmt.Errorf("kubernetes.replicas must not be negative")
 	}
-	if err := validateKubernetesServicePortsConfig(c, metricsEnabled); err != nil {
+	if err := validateKubernetesServicePorts(c, metricsEnabled); err != nil {
 		return err
 	}
 	if k.EnvoyConcurrency != nil && *k.EnvoyConcurrency == 0 {
@@ -88,20 +88,20 @@ func validateKubernetesConfig(c gatewayapi.Config, metricsEnabled, tracingEnable
 	return validateKubernetesMetrics(k.Metrics)
 }
 
-func validateKubernetesServicePortsConfig(c gatewayapi.Config, metricsEnabled bool) error {
+func validateKubernetesServicePorts(c gatewayapi.Config, metricsEnabled bool) error {
 	k := c.Kubernetes
 	if *k.ServicePort < 1 || *k.ServicePort > 65535 {
-		if hasHTTPConfig(c) {
+		if hasHTTP(c) {
 			return fmt.Errorf("kubernetes.service_port must be between 1 and 65535")
 		}
 	}
-	if hasHTTPConfig(c) {
+	if hasHTTP(c) {
 		if err := validateOTelMetricsServicePort("service_port", *k.ServicePort, metricsEnabled); err != nil {
 			return err
 		}
 	}
-	if hasHTTPSConfig(c) {
-		if err := validateTLSMountsConfig(c); err != nil {
+	if hasHTTPS(c) {
+		if err := validateTLSMounts(c); err != nil {
 			return err
 		}
 		if *k.HTTPSServicePort < 1 || *k.HTTPSServicePort > 65535 {
@@ -110,7 +110,7 @@ func validateKubernetesServicePortsConfig(c gatewayapi.Config, metricsEnabled bo
 		if err := validateOTelMetricsServicePort("https_service_port", *k.HTTPSServicePort, metricsEnabled); err != nil {
 			return err
 		}
-		if hasHTTPConfig(c) && *k.HTTPSServicePort == *k.ServicePort {
+		if hasHTTP(c) && *k.HTTPSServicePort == *k.ServicePort {
 			return fmt.Errorf("kubernetes.service_port and kubernetes.https_service_port must differ")
 		}
 	} else if k.HTTPSServicePort != nil {
@@ -339,13 +339,13 @@ func newGatewayServiceAccount(c gatewayapi.Config) corev1.ServiceAccount {
 func newGatewayService(c gatewayapi.Config, metricsEnabled bool) corev1.Service {
 	k := c.Kubernetes
 	servicePorts := make([]corev1.ServicePort, 0, 3)
-	if hasHTTPConfig(c) {
+	if hasHTTP(c) {
 		servicePorts = append(servicePorts, corev1.ServicePort{
 			Name: httpPortName, Port: *k.ServicePort,
 			TargetPort: intstr.FromString(httpPortName), Protocol: corev1.ProtocolTCP,
 		})
 	}
-	if hasHTTPSConfig(c) {
+	if hasHTTPS(c) {
 		servicePorts = append(servicePorts, corev1.ServicePort{
 			Name: httpsPortName, Port: *k.HTTPSServicePort,
 			TargetPort: intstr.FromString(httpPortName), Protocol: corev1.ProtocolTCP,
@@ -565,7 +565,7 @@ func addAPIKeySecretVolume(deployment *appsv1.Deployment, c resolvedConfig) {
 }
 
 func addServerTLSVolumes(deployment *appsv1.Deployment, c gatewayapi.Config) {
-	for _, mount := range tlsMountsConfig(c) {
+	for _, mount := range tlsMounts(c) {
 		tlsConfig := mount.config
 		certificateFilename := path.Base(tlsConfig.Certificate)
 		privateKeyFilename := path.Base(tlsConfig.PrivateKey)
