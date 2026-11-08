@@ -1,0 +1,26 @@
+version: 1
+authenticators:
+  - name: internal-jwt
+    jwt:
+      issuer: https://sso.example.com/realms/observability
+      jwks:
+        uri: https://sso.example.com/realms/observability/jwks
+servers:
+  - hostname: write.example.com
+    tls_config:
+      secret: gateway-tls
+    authentication:
+      any_of: [internal-jwt]
+    apis: [metrics]
+apis:
+  - name: metrics
+    upstream:
+      address: metrics-backend.example.com
+      port: 9090
+    routes:
+      - methods: [GET]
+        path:
+          exact: /metrics
+kubernetes:
+  name: auth-gateway
+  namespace: observability

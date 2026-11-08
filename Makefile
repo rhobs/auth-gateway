@@ -5,7 +5,7 @@ test:
 	go test ./...
 
 lint:
-	@unformatted=$$(gofmt -l config e2e playground); \
+	@unformatted=$$(gofmt -l config pkg internal e2e playground); \
 	if [ -n "$$unformatted" ]; then printf '%s\n' "$$unformatted"; exit 1; fi
 	sh scripts/check-markdown-links.sh
 	go tool -modfile=tools/go.mod golangci-lint run
@@ -16,10 +16,10 @@ tools:
 	$(MAKE) -C e2e cmctl kind-tool
 
 test-runtime:
-	go test -tags=envoyruntime ./config -run 'TestPinnedImagesValidateGoldenFiles|TestEnvoyReloadsFileBasedResources|TestEnvoyReloadsClientCAForNewConnections|TestEnvoyAdmissionControlIsolatesAPIs|TestEnvoyAPIKeyAttributeLayouts' -count=1
+	go test -tags=envoyruntime ./pkg/envoy -run 'TestPinnedImagesValidateGoldenFiles|TestEnvoyReloadsFileBasedResources|TestEnvoyReloadsClientCAForNewConnections|TestEnvoyAdmissionControlIsolatesAPIs|TestEnvoyAPIKeyAttributeLayouts' -count=1
 
 update-golden:
-	go test ./config -update
+	go test ./pkg/envoy ./pkg/kubernetes -update
 
 e2e:
 	$(MAKE) -C e2e test

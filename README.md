@@ -25,6 +25,11 @@ Install the module:
 go get github.com/rhobs/auth-gateway
 ```
 
+The public configuration structs live in `pkg/api/types.go`. `pkg/config` loads
+and validates them, `pkg/envoy` renders Envoy files, `pkg/kubernetes` builds
+Kubernetes resources, and `pkg/otel` renders collector configuration. The old
+`config` import path remains a temporary facade for callers awaiting migration.
+
 Load and generate files or a Kubernetes manifest from Go:
 
 ```go
@@ -35,7 +40,9 @@ import (
 	"log"
 	"strings"
 
-	"github.com/rhobs/auth-gateway/config"
+	"github.com/rhobs/auth-gateway/pkg/config"
+	"github.com/rhobs/auth-gateway/pkg/envoy"
+	"github.com/rhobs/auth-gateway/pkg/kubernetes"
 )
 
 func main() {
@@ -57,11 +64,11 @@ kubernetes:
 		log.Fatal(err)
 	}
 
-	files, err := config.Generate(gateway)
+	files, err := envoy.Generate(gateway)
 	if err != nil {
 		log.Fatal(err)
 	}
-	resources, err := config.GenerateKubernetes(gateway)
+	resources, err := kubernetes.Generate(gateway)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -74,8 +81,8 @@ kubernetes:
 }
 ```
 
-`config.Generate` returns Envoy files with their required paths. It does not
-need Kubernetes settings. `config.GenerateKubernetes` requires a `kubernetes`
+`envoy.Generate` returns Envoy files with their required paths. It does not
+need Kubernetes settings. `kubernetes.Generate` requires a `kubernetes`
 section and returns typed resources. Neither call contacts a cluster or creates
 the referenced namespace, TLS Secrets, API-key Secret, or CA ConfigMaps. Create
 those resources first, then apply the manifest.

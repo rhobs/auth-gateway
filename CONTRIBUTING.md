@@ -44,12 +44,16 @@ replace the full suite before handoff.
 
 ## Test ownership
 
-| Location                           | Contract                                                                                          |
-|------------------------------------|---------------------------------------------------------------------------------------------------|
-| `config/*_test.go`                 | YAML loading, defaults, validation, Envoy and Kubernetes output, and generated references.        |
-| `config/runtime*_test.go`          | Generated-file validation, valid file-based Envoy reloads, and per-API admission isolation.         |
-| `e2e/internal/framework/*_test.go` | Reusable Kubernetes test infrastructure.                                                          |
-| `e2e/*_test.go`                    | Observable routing, authentication, authorization, processing, TLS, reload, and metrics behavior. |
+| Location | Contract |
+|----------|----------|
+| `pkg/api/*_test.go` | Configuration value encoding. |
+| `pkg/config/*_test.go` | YAML loading, defaults, validation, and reference resolution. |
+| `pkg/envoy/*_test.go` | Envoy extensions, filter composition, generated files, and references. |
+| `pkg/kubernetes/*_test.go` | Kubernetes resources and generated manifest references. |
+| `pkg/otel/*_test.go` | Collector configuration. |
+| `pkg/envoy/runtime*_test.go` | Pinned image validation, file reloads, and admission isolation. |
+| `e2e/internal/framework/*_test.go` | Reusable Kubernetes test infrastructure. |
+| `e2e/*_test.go` | Observable routing, authentication, authorization, processing, TLS, reload, and metrics behavior. |
 
 Give each test one contract and an observable result. Use valid baselines,
 explicit YAML or fixtures, and independent expected values. For validation,

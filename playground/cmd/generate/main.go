@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/rhobs/auth-gateway/config"
+	"github.com/rhobs/auth-gateway/pkg/config"
+	"github.com/rhobs/auth-gateway/pkg/envoy"
+	"github.com/rhobs/auth-gateway/pkg/otel"
 )
 
 func main() {
@@ -40,11 +42,11 @@ func generate(configPath, outputDirectory string) error {
 		return fmt.Errorf("close config %q: %w", configPath, closeErr)
 	}
 
-	envoyFiles, err := config.Generate(gatewayConfig)
+	envoyFiles, err := envoy.Generate(gatewayConfig)
 	if err != nil {
 		return fmt.Errorf("generate Envoy files: %w", err)
 	}
-	collectorConfig, err := config.GenerateOTelCollectorConfig(gatewayConfig)
+	collectorConfig, err := otel.Generate(gatewayConfig)
 	if err != nil {
 		return fmt.Errorf("generate collector config: %w", err)
 	}

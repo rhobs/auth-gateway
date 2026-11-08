@@ -1,0 +1,30 @@
+version: 1
+servers:
+  - hostname: fault.example.com
+    apis: [injected, healthy]
+apis:
+  - name: injected
+    metrics: {}
+    fault_injection:
+      enabled: true
+      abort:
+        http_status: 503
+        percentage: 25
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [GET, POST]
+        path:
+          prefix: /injected/
+  - name: healthy
+    upstream:
+      address: httpbin
+      port: 8080
+    routes:
+      - methods: [GET]
+        path:
+          prefix: /healthy/
+kubernetes:
+  name: auth-gateway
+  namespace: gateway-test
