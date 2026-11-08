@@ -34,15 +34,12 @@ import (
 )
 
 const (
-	jwtPlainHost          = "plain.jwt.auth-gateway.test"
-	jwtPlainNoPolicyHost  = "no-policy.jwt.auth-gateway.test"
-	jwtPlainAnyPolicyHost = "any-policy.jwt.auth-gateway.test"
-	jwtPlainAllPolicyHost = "all-policy.jwt.auth-gateway.test"
-	jwtHeadersHost        = "headers.jwt.auth-gateway.test"
-	jwtManagedHeaderHost  = "managed.jwt.auth-gateway.test"
-	jwtHTTPHost           = "writer.jwt.auth-gateway.test"
-	jwtHTTPSHost          = "writer-tls.jwt.auth-gateway.test"
-	jwtIssuerOneHost      = "issuer-one-only.jwt.auth-gateway.test"
+	jwtPlainHost         = "plain.jwt.auth-gateway.test"
+	jwtHeadersHost       = "headers.jwt.auth-gateway.test"
+	jwtManagedHeaderHost = "managed.jwt.auth-gateway.test"
+	jwtHTTPHost          = "writer.jwt.auth-gateway.test"
+	jwtHTTPSHost         = "writer-tls.jwt.auth-gateway.test"
+	jwtIssuerOneHost     = "issuer-one-only.jwt.auth-gateway.test"
 )
 
 var (

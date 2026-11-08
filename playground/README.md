@@ -17,13 +17,13 @@ The Envoy bootstrap comes from [config.yaml](config.yaml), without Kubernetes re
 
 [credentials.yaml](credentials.yaml) is a complete Envoy API-key ECDS resource with demo keys. Compose mounts this file directly where Envoy reads its API keys. Edit it to test different local demo keys and attribute values, then run `make start` to restart Envoy.
 
-The four local servers share port 8080. `unprotected.localhost` exposes the browser-friendly public route. The `api-key.localhost`, `jwt.localhost`, and `mixed.localhost` servers expose the protected write routes:
+The four local servers share port 8080. `unprotected.localhost` exposes the browser-friendly public route. The `api-key.localhost`, `jwt.localhost`, and `tenants.localhost` servers expose the protected write routes:
 
 - `GET /anything` on `unprotected.localhost` forwards to `https://httpbin.org/anything`.
 - `POST /metrics/api/v1/receive` rewrites to `/anything`.
 - `POST /logs/otlp/v1/logs` rewrites to `/anything/v1/logs`.
 
-The `metrics-write` and `logs` APIs have separate authorization grants. The metrics JWT and `metrics-demo-key` work only for `metrics-write`; the logs JWT and `logs-demo-key` work only for `logs`. `jwt.localhost` accepts either issuer, `api-key.localhost` accepts API keys, and `mixed.localhost` accepts either a JWT or an API key. A credential for the other API is denied with 403. `unprotected.localhost` needs no credential.
+The `metrics-write` and `logs` APIs have separate authorization grants. The metrics JWT and `metrics-demo-key` work only for `metrics-write`; the logs JWT and `logs-demo-key` work only for `logs`. `jwt.localhost` selects the metrics issuer for metrics and the logs issuer for logs. `api-key.localhost` accepts API keys. `tenants.localhost` selects JWTs for `X-Tenant: internal` and keys for `X-Tenant: partner`, without fallback between methods. A credential for the other API is denied with 401 (untrusted issuer) or 403 (no grant). `unprotected.localhost` needs no credential.
 
 Both protected write routes set `X-Authenticated-User` from the verified `user_id` attribute. httpbin echoes `metrics-writer` for metrics credentials and `logs-writer` for logs credentials. The gateway replaces any caller-supplied value for this header and strips the original API key or bearer token before forwarding.
 
@@ -64,12 +64,13 @@ curl --request POST \
 
 curl --request POST \
   --header 'X-API-Key: logs-demo-key' \
+  --header 'X-Tenant: partner' \
   --header 'Content-Type: application/json' \
   --data '{"resourceLogs":[]}' \
-  http://mixed.localhost:8080/logs/otlp/v1/logs
+  http://tenants.localhost:8080/logs/otlp/v1/logs
 ```
 
-To see the different issuers and keys rejected by route authorization, use the metrics token or key on `/logs/otlp/v1/logs`, or the logs token or key on `/metrics/api/v1/receive`. Those requests should return 403.
+To see the different issuers and keys rejected by route authorization, use the metrics token or key on `/logs/otlp/v1/logs`, or the logs token or key on `/metrics/api/v1/receive`. Keys without a grant return 403; JWTs from an issuer untrusted by the selected API return 401. On `tenants.localhost`, also supply its required tenant selector; missing or unknown tenants return 403.
 
 Prometheus is available at `http://127.0.0.1:9090`; the collector endpoint is `http://127.0.0.1:8889/metrics`. The collector scrapes Envoy's built-in stats and custom request counter every five seconds, then removes Envoy's `envoy_http_lua_` prefix from Lua metric names. This config sets `observability.metrics.custom_metric_name` to `gateway_http_requests_total`, so Prometheus sees `gateway_http_requests_total` with `api`, `http_status_code`, and `user_id` labels. `auth_gateway_http_requests_total` is the default counter name when `observability.metrics.custom_metric_name` is omitted, so it has no series in this playground. Try `gateway_http_requests_total{api="metrics-write"}` and `gateway_http_requests_total{api="logs",user_id="logs-writer"}` in the Prometheus expression browser. Envoy's admin port remains loopback-only; the collector shares Envoy's network namespace to scrape it. The metrics database is temporary and is removed when the stack is stopped. Set `PROMETHEUS_HOST_PORT` to change the local Prometheus port and `OTEL_METRICS_HOST_PORT` to change the collector port.
 

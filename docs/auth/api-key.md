@@ -3,7 +3,7 @@
 ## Authentication
 
 Clients send a key in the configured credential header (default `X-API-Key`).
-Define one named API-key authenticator per gateway configuration. All servers
+Define one named API-key authenticator per gateway configuration. All access entries
 selecting it share the same credential set:
 
 ```yaml
@@ -68,26 +68,22 @@ stringData:
       - '@type': type.googleapis.com/envoy.config.core.v3.TypedExtensionConfig
         name: envoy.filters.http.api_key_auth
         typed_config:
-          '@type': type.googleapis.com/envoy.extensions.common.matching.v3.ExtensionWithMatcher
-          extension_config:
-            name: envoy.filters.http.api_key_auth
-            typed_config:
-              '@type': type.googleapis.com/envoy.extensions.filters.http.api_key_auth.v3.ApiKeyAuth
-              credentials:
-                - client: tenant_id=client-123;upstream_tenant=team-a;writer_id=writer-17
-                  key: example-partner-key
-              forwarding:
-                header: x-auth-gateway-api-key-client
-                hide_credentials: true
-              key_sources:
-                - cookie: ""
-                  header: x-partner-key
-                  query: ""
+          '@type': type.googleapis.com/envoy.extensions.filters.http.api_key_auth.v3.ApiKeyAuth
+          credentials:
+            - client: tenant_id=client-123;upstream_tenant=team-a;writer_id=writer-17
+              key: example-partner-key
+          forwarding:
+            header: x-auth-gateway-api-key-client
+            hide_credentials: true
+          key_sources:
+            - cookie: ""
+              header: x-partner-key
+              query: ""
 ```
 
 The example `key_sources.header` matches `api_key.header: X-Partner-Key`.
-Credential values cannot contain semicolons and must be at most 8191 bytes
-each, matching Envoy's metadata extraction limit. Other allowed characters,
+Keys cannot contain commas. Credential attribute values cannot contain
+semicolons and must be at most 8191 bytes each, matching Envoy's metadata extraction limit. Other allowed characters,
 including equals signs and percent-encoded text, keep their original values.
 Missing bindings leave the corresponding attributes unset. Replace the
 example key with a unique value for each client.
@@ -111,41 +107,42 @@ X-Tenant: client-123
 Content-Length: 0
 ```
 
-The key must be valid even when a grant checks only a header-backed attribute.
-A missing or empty `X-Tenant` leaves `requested_tenant` unset. Updating the
+The selected key must be valid and its credential attributes must satisfy the
+grant. A missing or unmatched `X-Tenant` is denied before the backend. Updating the
 Secret replaces the accepted key set without restarting the gateway. Setting
 `credentials: []` in a valid credential document revokes every key. Deleting or
 corrupting the Secret is not a revocation method.
 
 ## Authorization and forwarding
 
-This grant requires the original values bound to the key and the original
-`X-Tenant` value. Select the authenticator and policy on the same server:
+This entry selects a requested tenant and requires the original values bound
+to its key. Optional equality can bind a shared tenant list to the particular
+verified credential tenant:
 
 ```yaml
-authorization_policies:
-  - name: partner-metrics-writers
-    grants:
-      - authenticator: partner-key
-        apis: [metrics-write]
-        attributes:
-          tenant_id: [client-123]
-          writer_id: [writer-17]
-          requested_tenant: [client-123]
-
 servers:
   - hostname: partner.auth.example.com
-    authentication:
-      any_of: [partner-key]
-    authorization:
-      any_of: [partner-metrics-writers]
-    apis: [metrics-write]
+    apis:
+      - name: metrics-write
+        access:
+          - tenant: client-123
+            match:
+              headers:
+                X-Tenant: {exact: client-123}
+            authentication:
+              api_key: {authenticator: partner-key}
+            authorization:
+              grants:
+                - authenticator: partner-key
+                  attributes:
+                    tenant_id: {equals_attribute: requested_tenant}
+                    writer_id: [writer-17]
 ```
 
-All listed attributes must match. The header is caller-supplied, so include
-a credential-bound condition when access must also be tied to the issued
-key. A missing or unlisted value is denied before the backend receives the
-request.
+All listed conditions must match. A client cannot request another tenant just
+by changing a header. An invalid JWT does not affect a selected API-key entry,
+and a valid JWT cannot replace a missing key. Known credential headers are
+removed before forwarding.
 
 When the upstream needs a different tenant value, supply an additional
 credential attribute. The credential document above includes

@@ -153,50 +153,6 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 		Expect(accessLog.Path).To(Equal("/protected"))
 	}, NodeTimeout(60*time.Second))
 
-	It("denies a valid JWT on a protected server with no selected policy", func(ctx SpecContext) {
-		claims := map[string]any{
-			"x":   map[string]any{"my_list": []string{"y"}},
-			"aud": "gateway-test",
-			"exp": time.Now().Add(5 * time.Minute).Unix(),
-		}
-		token := jwtPlainGateway.token("issuer-one", claims, nil)
-		expectDeniedBeforeUpstream(ctx, jwtPlainGateway.adminAddr, "api-metrics", "valid JWT without an authorization policy", http.StatusForbidden, func() (int, []byte, error) {
-			return jwtPlainGateway.request(ctx, jwtPlainGateway.httpAddr, jwtPlainNoPolicyHost, false, token, false)
-		})
-	}, NodeTimeout(60*time.Second))
-
-	It("applies any_of and all_of policy decisions to the same authenticated request", func(ctx SpecContext) {
-		for _, test := range []struct {
-			name     string
-			host     string
-			values   []string
-			status   int
-			upstream uint64
-		}{
-			{name: "any_of accepts one policy grant", host: jwtPlainAnyPolicyHost, values: []string{"y"}, status: http.StatusOK, upstream: 1},
-			{name: "all_of rejects a policy veto", host: jwtPlainAllPolicyHost, values: []string{"y"}, status: http.StatusForbidden},
-			{name: "all_of accepts both policy grants", host: jwtPlainAllPolicyHost, values: []string{"y", "z"}, status: http.StatusOK, upstream: 1},
-		} {
-			claims := map[string]any{
-				"x":   map[string]any{"my_list": test.values},
-				"aud": "gateway-test",
-				"exp": time.Now().Add(5 * time.Minute).Unix(),
-			}
-			token := jwtPlainGateway.token("issuer-one", claims, nil)
-			status, body := expectUpstreamRequestDelta(ctx, jwtPlainGateway.adminAddr, "api-metrics", test.name, test.upstream, func() (int, []byte, error) {
-				return jwtPlainGateway.request(ctx, jwtPlainGateway.httpAddr, test.host, false, token, false)
-			})
-			Expect(status).To(Equal(test.status), test.name+": "+string(body))
-			if test.status != http.StatusOK {
-				continue
-			}
-			echo, err := decodeHTTPBinEcho(body)
-			Expect(err).NotTo(HaveOccurred(), test.name)
-			Expect(echo.Method).To(Equal(http.MethodGet), test.name)
-			Expect(echo.URL).To(HaveSuffix("/anything"), test.name)
-			Expect(headerValue(echo.Headers, "Authorization")).To(BeEmpty(), test.name)
-		}
-	}, SpecTimeout(90*time.Second))
 })
 
 var _ = Describe("Direct JWT headers", Label("gateway", "jwt", "authentication", "authorization", "namespace-"+jwtHeadersNamespace), Ordered, func() {
@@ -359,7 +315,7 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 			Expect(echo.Method).To(Equal(http.MethodGet), test.name)
 			Expect(echo.URL).To(HaveSuffix("/anything"), test.name)
 
-			expectDeniedBeforeUpstream(ctx, adminAddress, test.deniedCluster, test.name+" denied API", http.StatusForbidden, func() (int, []byte, error) {
+			expectDeniedBeforeUpstream(ctx, adminAddress, test.deniedCluster, test.name+" denied API", http.StatusUnauthorized, func() (int, []byte, error) {
 				return jwtGateway.requestPath(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, test.deniedPath, token, false)
 			})
 		}
@@ -464,7 +420,7 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		for _, test := range []struct {
 			issuer, tenant, host string
 			status               int
-		}{{"issuer-two", "customer-a", jwtHTTPHost, http.StatusForbidden}, {"issuer-two", "customer-b", jwtIssuerOneHost, http.StatusUnauthorized}} {
+		}{{"issuer-two", "customer-a", jwtHTTPHost, http.StatusUnauthorized}, {"issuer-two", "customer-b", jwtIssuerOneHost, http.StatusUnauthorized}} {
 			claims := jwtTestClaims(test.tenant)
 			token := jwtGateway.token(test.issuer, claims, nil)
 			status, body, err := jwtGateway.request(ctx, jwtGateway.httpAddr, test.host, false, token, false)

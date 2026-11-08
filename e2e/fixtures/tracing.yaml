@@ -1,3 +1,4 @@
+---
 version: 1
 node:
   id: tracing-e2e
@@ -13,38 +14,41 @@ observability:
     sampling_percentage: 100
     insecure: true
 authenticators:
-  - name: tracing-key
-    api_key:
-      secret: auth-gateway-tracing-keys
-      header: X-Trace-Key
-    attributes:
-      tenant_id: {credential: true}
-authorization_policies:
-  - name: tracing-requests
-    grants:
-      - authenticator: tracing-key
-        apis: [tracing]
-        attributes:
-          tenant_id: [trace-client]
+- name: tracing-key
+  api_key:
+    secret: auth-gateway-tracing-keys
+    header: X-Trace-Key
+  attributes:
+    tenant_id:
+      credential: true
 apis:
-  - name: tracing
-    metrics: {}
-    upstream:
-      address: httpbin
-      port: 8080
-    routes:
-      - methods: [GET]
-        path:
-          exact: /trace
-        rewrite:
-          path: /anything/trace
+- name: tracing
+  metrics: {}
+  upstream:
+    address: httpbin
+    port: 8080
+  routes:
+  - methods:
+    - GET
+    path:
+      exact: "/trace"
+    rewrite:
+      path: "/anything/trace"
 servers:
-  - hostname: tracing.auth-gateway.test
-    authentication:
-      any_of: [tracing-key]
-    authorization:
-      any_of: [tracing-requests]
-    apis: [tracing]
+- hostname: tracing.auth-gateway.test
+  apis:
+  - name: tracing
+    access:
+    - name: default
+      authentication:
+        api_key:
+          authenticator: tracing-key
+      authorization:
+        grants:
+        - authenticator: tracing-key
+          attributes:
+            tenant_id:
+            - trace-client
 kubernetes:
   name: auth-gateway
   namespace: auth-gateway-tracing-e2e

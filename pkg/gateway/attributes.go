@@ -5,7 +5,6 @@ import (
 	"maps"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -25,7 +24,6 @@ const (
 	apiKeyMaxAttributeBytes     = 8*1024 - 1
 	headerToMetadataFilterName  = "envoy.filters.http.header_to_metadata"
 	jwtMetadataExpressionPrefix = `metadata.filter_metadata["envoy.filters.http.jwt_authn"]`
-	selectedAuthenticatorKey    = "auth_gateway.authenticator"
 	attributeFilterName         = "envoy.filters.http.set_filter_state"
 	managedAttributePrefix      = "auth_gateway.attributes."
 )
@@ -85,33 +83,6 @@ func validateAuthenticatorAttributes(name string, authenticator gatewayapi.Authe
 			}
 			if strings.EqualFold(header, apiKeyHeader) {
 				return fmt.Errorf("%s.header is reserved for API-key credentials", field)
-			}
-		}
-	}
-	return nil
-}
-
-func validateRouteAttributeSources(serverName string, server gatewayapi.Server, bound []gatewayapi.API, authenticators map[string]gatewayapi.Authenticator) error {
-	for _, api := range bound {
-		for routeIndex, route := range api.Routes {
-			if route.Processing == nil {
-				continue
-			}
-			if server.Authentication == nil {
-				return fmt.Errorf("%s processing on API %q route %d requires authentication", serverName, api.Name, routeIndex)
-			}
-			selected := selectedAuthenticatorNames(server)
-			for _, header := range route.Processing.RequestHeaders {
-				provided := false
-				for _, name := range selected {
-					if providesAttributeAuthenticator(authenticators[name], header.FromAttribute) {
-						provided = true
-						break
-					}
-				}
-				if !provided {
-					return fmt.Errorf("%s authentication does not provide processing attribute %q", serverName, header.FromAttribute)
-				}
 			}
 		}
 	}
@@ -234,10 +205,6 @@ func mtlsPeerMetadataRules() []*headertometadata.Config_Rule {
 	return rules
 }
 
-func attributeInitializationFilterName(index int) string {
-	return "auth_gateway.attributes.server-" + strconv.Itoa(index)
-}
-
 func jwtClaimExpression(claimPath []string) string {
 	current := jwtMetadataExpressionPrefix
 	checks := make([]string, 0, len(claimPath))
@@ -309,29 +276,7 @@ func filterStateKey(attribute string) string {
 	return managedAttributePrefix + attribute
 }
 
-func serverAttributeInitializationConfig(c resolvedConfig, server resolvedServer) *setfilterstate.Config {
-	config := &setfilterstate.Config{}
-	selectIdentity := server.mixedAnyOf()
-	authenticators := slices.Clone(server.authenticators)
-	if selectIdentity || server.usesMTLS() {
-		slices.SortStableFunc(authenticators, func(a, b gatewayapi.Authenticator) int {
-			return authenticatorPriority(a) - authenticatorPriority(b)
-		})
-	}
-	if selectIdentity {
-		// Finish identity selection before any identity can supply attributes.
-		for _, authenticator := range authenticators {
-			expression := "((" + authenticatorVerifiedExpression(authenticator) + ") ? " + celStringLiteral(authenticator.Name) + " : \"\")"
-			config.OnRequestHeaders = append(config.OnRequestHeaders, filterStateValue(selectedAuthenticatorKey, expression))
-		}
-	}
-	for _, authenticator := range authenticators {
-		appendAttributeInitialization(config, authenticator, selectIdentity)
-	}
-	return config
-}
-
-func appendAttributeInitialization(config *setfilterstate.Config, authenticator gatewayapi.Authenticator, selectIdentity bool) {
+func appendAttributeInitialization(config *setfilterstate.Config, authenticator gatewayapi.Authenticator) {
 	for _, attribute := range slices.Sorted(maps.Keys(authenticator.Attributes)) {
 		source := authenticator.Attributes[attribute]
 		var expression string
@@ -345,23 +290,9 @@ func appendAttributeInitialization(config *setfilterstate.Config, authenticator 
 		default:
 			expression = apiKeyAttributeExpression(attribute)
 		}
-		if selectIdentity {
-			key := celStringLiteral(selectedAuthenticatorKey)
-			expression = "(" + key + " in filter_state && filter_state[" + key + "] == " + celBytesLiteral(authenticator.Name) + ") ? (" + expression + ") : \"\""
-		}
+
 		config.OnRequestHeaders = append(config.OnRequestHeaders, filterStateValue(filterStateKey(attribute), expression))
 	}
-}
-
-func attributeInitializationConfig(c resolvedConfig) *setfilterstate.Config {
-	config := &setfilterstate.Config{}
-	for _, authenticator := range c.Authenticators {
-		if !c.authenticatorUsed(authenticator.Name) || authenticator.JWT == nil {
-			continue
-		}
-		appendAttributeInitialization(config, authenticator, false)
-	}
-	return config
 }
 
 func filterStateValue(key, expression string) *setfilterstatecommon.FilterStateValue {
@@ -378,45 +309,22 @@ func filterStateValue(key, expression string) *setfilterstatecommon.FilterStateV
 	}
 }
 
-func attributeHTTPFilters(c resolvedConfig, filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
-	if c.usesAPIKeys() || c.usesMTLS() {
-		return apiKeyAttributeFilters(c, filters, hosts)
-	}
-	attributeConfig, err := packEnvoy(attributeInitializationConfig(c))
+func attributeHTTPFilter() (*hcm.HttpFilter, error) {
+	packed, err := packEnvoy(&setfilterstate.Config{})
 	if err != nil {
-		return nil, fmt.Errorf("encode attribute initialization filter: %w", err)
+		return nil, err
 	}
-	return append(filters, &hcm.HttpFilter{Name: attributeFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: attributeConfig}}), nil
+	return &hcm.HttpFilter{Name: attributeFilterName, Disabled: true, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: packed}}, nil
 }
 
-func apiKeyAttributeFilters(c resolvedConfig, filters []*hcm.HttpFilter, hosts []indexedVirtualHost) ([]*hcm.HttpFilter, error) {
-	for _, indexedHost := range hosts {
-		serverIndex := indexedHost.serverIndex
-		attributes := serverAttributeInitializationConfig(c, c.servers[serverIndex])
-		if len(attributes.OnRequestHeaders) == 0 {
-			continue
-		}
-		packed, err := packEnvoy(attributes)
-		if err != nil {
-			return nil, fmt.Errorf("servers[%d] attribute initialization: %w", serverIndex, err)
-		}
-		name := attributeInitializationFilterName(serverIndex)
-		filters = append(filters, &hcm.HttpFilter{Name: name, Disabled: true, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: packed}})
-		enableConfig, err := packEnvoy(&setfilterstate.Config{})
-		if err != nil {
-			return nil, fmt.Errorf("servers[%d] enable attributes: %w", serverIndex, err)
-		}
-		enabled, err := packEnvoy(&route.FilterConfig{Config: enableConfig})
-		if err != nil {
-			return nil, fmt.Errorf("servers[%d] enable attributes: %w", serverIndex, err)
-		}
-		if indexedHost.host == nil {
-			return nil, fmt.Errorf("servers[%d] enable attributes: virtual host is nil", serverIndex)
-		}
-		if indexedHost.host.TypedPerFilterConfig == nil {
-			indexedHost.host.TypedPerFilterConfig = make(map[string]*anypb.Any)
-		}
-		indexedHost.host.TypedPerFilterConfig[name] = enabled
+func attributePerRouteConfig(access resolvedAccess) (*anypb.Any, error) {
+	config := &setfilterstate.Config{}
+	for _, authenticator := range access.authenticators {
+		appendAttributeInitialization(config, authenticator)
 	}
-	return filters, nil
+	packed, err := packEnvoy(config)
+	if err != nil {
+		return nil, err
+	}
+	return packEnvoy(&route.FilterConfig{Config: packed})
 }

@@ -132,8 +132,11 @@ data:
                                         - remove: x-envoy-upstream-rq-timeout-alt-response
                                         - remove: x-envoy-retriable-status-codes
                                         - remove: x-envoy-retriable-header-names
+                                        - remove: x-auth-gateway-request-validation-pending
                                         - remove: x-auth-gateway-api-key-client
-                                        - remove: x-auth-gateway-jwt-verified-issuer-one
+                                        - remove: x-auth-gateway-mtls-fingerprint
+                                        - remove: x-auth-gateway-mtls-uri-san
+                                        - remove: x-auth-gateway-mtls-dns-san
                             - name: envoy.filters.http.lua
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
@@ -182,6 +185,25 @@ data:
                                           end
                                           response_handle:stats():counter(name):inc()
                                         end
+                            - name: auth_gateway.request_validation.begin
+                              typed_config:
+                                '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
+                                mutations:
+                                    request_mutations:
+                                        - append:
+                                            append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                                            header:
+                                                key: x-auth-gateway-request-validation-pending
+                                                value: "true"
+                            - name: auth_gateway.request_validation
+                              typed_config:
+                                '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+                            - name: auth_gateway.request_validation.complete
+                              typed_config:
+                                '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
+                                mutations:
+                                    request_mutations:
+                                        - remove: x-auth-gateway-request-validation-pending
                             - name: envoy.filters.http.jwt_authn
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
@@ -189,9 +211,6 @@ data:
                                     issuer-one:
                                         audiences:
                                             - gateway-test
-                                        claim_to_headers:
-                                            - claim_name: iss
-                                              header_name: x-auth-gateway-jwt-verified-issuer-one
                                         from_headers:
                                             - name: Authorization
                                               value_prefix: 'Bearer '
@@ -205,9 +224,7 @@ data:
                                                 uri: https://issuer-one.jwt.test/jwks
                                         require_expiration: true
                                 requirement_map:
-                                    server-0:
-                                        allow_missing_or_failed: {}
-                                    server-1:
+                                    server-0-api-0-access-0:
                                         provider_name: issuer-one
                                 strip_failure_response: true
                             - config_discovery:
@@ -218,7 +235,7 @@ data:
                                             path: /etc/auth-gateway/api-keys
                                     resource_api_version: V3
                                 type_urls:
-                                    - envoy.extensions.common.matching.v3.ExtensionWithMatcher
+                                    - envoy.extensions.filters.http.api_key_auth.v3.ApiKeyAuth
                               disabled: true
                               name: envoy.filters.http.api_key_auth
                             - name: envoy.filters.http.header_to_metadata
@@ -243,92 +260,14 @@ data:
                                       on_header_present:
                                         key: x-tenant
                                         metadata_namespace: auth_gateway.request_headers
-                            - name: auth_gateway.authentication
-                              typed_config:
-                                '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
                             - disabled: true
-                              name: auth_gateway.attributes.server-0
+                              name: envoy.filters.http.set_filter_state
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
-                                on_request_headers:
-                                    - factory_key: envoy.string
-                                      format_string:
-                                        omit_empty_values: true
-                                        text_format_source:
-                                            inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "identity" in metadata.filter_metadata["auth_gateway.api_key"] && type(metadata.filter_metadata["auth_gateway.api_key"]["identity"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["identity"] != "") ? "partner-key" : ""))%'
-                                      object_key: auth_gateway.authenticator
-                                      skip_if_empty: true
-                                    - factory_key: envoy.string
-                                      format_string:
-                                        omit_empty_values: true
-                                        text_format_source:
-                                            inline_string: '%CEL((("envoy.filters.http.jwt_authn" in metadata.filter_metadata && "issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "iss" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"] == "https://issuer-one.jwt.test") ? "issuer-one" : ""))%'
-                                      object_key: auth_gateway.authenticator
-                                      skip_if_empty: true
-                                    - factory_key: envoy.string
-                                      format_string:
-                                        omit_empty_values: true
-                                        text_format_source:
-                                            inline_string: '%CEL(("auth_gateway.authenticator" in filter_state && filter_state["auth_gateway.authenticator"] == b"partner-key") ? ((("auth_gateway.api_key" in metadata.filter_metadata && "identity" in metadata.filter_metadata["auth_gateway.api_key"] && type(metadata.filter_metadata["auth_gateway.api_key"]["identity"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["identity"] != "" && "auth_gateway.request_headers" in metadata.filter_metadata && "x-tenant" in metadata.filter_metadata["auth_gateway.request_headers"] && type(metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"]) == string && metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] != "") ? metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] : "")) : "")%'
-                                      object_key: auth_gateway.attributes.requested_tenant
-                                      skip_if_empty: true
-                                    - factory_key: envoy.string
-                                      format_string:
-                                        omit_empty_values: true
-                                        text_format_source:
-                                            inline_string: '%CEL(("auth_gateway.authenticator" in filter_state && filter_state["auth_gateway.authenticator"] == b"partner-key") ? ((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.tenant_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] : "") : "")%'
-                                      object_key: auth_gateway.attributes.tenant_id
-                                      skip_if_empty: true
-                                    - factory_key: envoy.string
-                                      format_string:
-                                        omit_empty_values: true
-                                        text_format_source:
-                                            inline_string: '%CEL(("auth_gateway.authenticator" in filter_state && filter_state["auth_gateway.authenticator"] == b"issuer-one") ? ((("envoy.filters.http.jwt_authn" in metadata.filter_metadata && "issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "iss" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"] == "https://issuer-one.jwt.test" && "auth_gateway.request_headers" in metadata.filter_metadata && "x-tenant" in metadata.filter_metadata["auth_gateway.request_headers"] && type(metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"]) == string && metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] != "") ? metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] : "")) : "")%'
-                                      object_key: auth_gateway.attributes.requested_tenant
-                                      skip_if_empty: true
-                                    - factory_key: envoy.string
-                                      format_string:
-                                        omit_empty_values: true
-                                        text_format_source:
-                                            inline_string: '%CEL(("auth_gateway.authenticator" in filter_state && filter_state["auth_gateway.authenticator"] == b"issuer-one") ? ((("issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "organization" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && "id" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] : "") : "")%'
-                                      object_key: auth_gateway.attributes.tenant_id
-                                      skip_if_empty: true
-                            - disabled: true
-                              name: auth_gateway.attributes.server-1
-                              typed_config:
-                                '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
-                                on_request_headers:
-                                    - factory_key: envoy.string
-                                      format_string:
-                                        omit_empty_values: true
-                                        text_format_source:
-                                            inline_string: '%CEL((("envoy.filters.http.jwt_authn" in metadata.filter_metadata && "issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "iss" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"] == "https://issuer-one.jwt.test" && "auth_gateway.request_headers" in metadata.filter_metadata && "x-tenant" in metadata.filter_metadata["auth_gateway.request_headers"] && type(metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"]) == string && metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] != "") ? metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] : ""))%'
-                                      object_key: auth_gateway.attributes.requested_tenant
-                                      skip_if_empty: true
-                                    - factory_key: envoy.string
-                                      format_string:
-                                        omit_empty_values: true
-                                        text_format_source:
-                                            inline_string: '%CEL((("issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "organization" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && "id" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] : "")%'
-                                      object_key: auth_gateway.attributes.tenant_id
-                                      skip_if_empty: true
-                                    - factory_key: envoy.string
-                                      format_string:
-                                        omit_empty_values: true
-                                        text_format_source:
-                                            inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "identity" in metadata.filter_metadata["auth_gateway.api_key"] && type(metadata.filter_metadata["auth_gateway.api_key"]["identity"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["identity"] != "" && "auth_gateway.request_headers" in metadata.filter_metadata && "x-tenant" in metadata.filter_metadata["auth_gateway.request_headers"] && type(metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"]) == string && metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] != "") ? metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] : ""))%'
-                                      object_key: auth_gateway.attributes.requested_tenant
-                                      skip_if_empty: true
-                                    - factory_key: envoy.string
-                                      format_string:
-                                        omit_empty_values: true
-                                        text_format_source:
-                                            inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.tenant_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] : "")%'
-                                      object_key: auth_gateway.attributes.tenant_id
-                                      skip_if_empty: true
                             - name: envoy.filters.http.rbac
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+                                rules: {}
                             - name: auth_gateway.required_headers
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
@@ -339,7 +278,7 @@ data:
                                     request_mutations:
                                         - remove: authorization
                                         - remove: x-auth-gateway-api-key-client
-                                        - remove: x-auth-gateway-jwt-verified-issuer-one
+                                        - remove: x-auth-gateway-request-validation-pending
                                         - remove: x-partner-key
                             - name: envoy.filters.http.header_mutation
                               typed_config:
@@ -350,6 +289,21 @@ data:
                             - name: envoy.filters.http.router
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                        local_reply_config:
+                            mappers:
+                                - filter:
+                                    and_filter:
+                                        filters:
+                                            - status_code_filter:
+                                                comparison:
+                                                    value:
+                                                        default_value: 403
+                                            - header_filter:
+                                                header:
+                                                    name: x-auth-gateway-request-validation-pending
+                                                    string_match:
+                                                        exact: "true"
+                                  status_code: 400
                         max_request_headers_kb: 32
                         normalize_path: true
                         path_with_escaped_slashes_action: UNESCAPE_AND_FORWARD
@@ -360,14 +314,17 @@ data:
                             name: ingestion
                             virtual_hosts:
                                 - domains:
-                                    - either.header.gateway.test
-                                  name: either.header.gateway.test
+                                    - jwt.headers.test
+                                  name: jwt.headers.test
                                   routes:
                                     - match:
                                         headers:
                                             - name: :method
                                               string_match:
                                                 exact: POST
+                                            - name: x-tenant
+                                              string_match:
+                                                exact: client-a
                                         path: /ingest
                                       metadata:
                                         filter_metadata:
@@ -377,7 +334,7 @@ data:
                                                     tenant: requested_tenant
                                             envoy.filters.http.rbac:
                                                 api: ingest
-                                      name: api-0-ingest-route-0-method-0
+                                      name: api-0-ingest-route-0-method-0-access-0-match-0
                                       route:
                                         cluster: api-ingest
                                         idle_timeout: 60s
@@ -385,8 +342,104 @@ data:
                                             max_stream_duration: 30s
                                         path_rewrite: /anything
                                         timeout: 30s
-                                      stat_prefix: api-0-ingest-route-0-method-0
+                                      stat_prefix: api-0-ingest-route-0-method-0-access-0-match-0
                                       typed_per_filter_config:
+                                        auth_gateway.request_validation:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                            rbac:
+                                                rules:
+                                                    action: DENY
+                                                    policies:
+                                                        invalid-request-headers:
+                                                            condition:
+                                                                call_expr:
+                                                                    args:
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - const_expr:
+                                                                                            string_value: x-tenant
+                                                                                          id: "3"
+                                                                                        - id: "2"
+                                                                                          select_expr:
+                                                                                            field: headers
+                                                                                            operand:
+                                                                                                id: "1"
+                                                                                                ident_expr:
+                                                                                                    name: request
+                                                                                    function: '@in'
+                                                                                  id: "4"
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - const_expr:
+                                                                                            string_value: ','
+                                                                                          id: "7"
+                                                                                    function: contains
+                                                                                    target:
+                                                                                        call_expr:
+                                                                                            args:
+                                                                                                - id: "2"
+                                                                                                  select_expr:
+                                                                                                    field: headers
+                                                                                                    operand:
+                                                                                                        id: "1"
+                                                                                                        ident_expr:
+                                                                                                            name: request
+                                                                                                - const_expr:
+                                                                                                    string_value: x-tenant
+                                                                                                  id: "3"
+                                                                                            function: _[_]
+                                                                                        id: "5"
+                                                                                  id: "6"
+                                                                            function: _&&_
+                                                                          id: "8"
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - const_expr:
+                                                                                            string_value: authorization
+                                                                                          id: "11"
+                                                                                        - id: "10"
+                                                                                          select_expr:
+                                                                                            field: headers
+                                                                                            operand:
+                                                                                                id: "9"
+                                                                                                ident_expr:
+                                                                                                    name: request
+                                                                                    function: '@in'
+                                                                                  id: "12"
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - const_expr:
+                                                                                            string_value: ','
+                                                                                          id: "15"
+                                                                                    function: contains
+                                                                                    target:
+                                                                                        call_expr:
+                                                                                            args:
+                                                                                                - id: "10"
+                                                                                                  select_expr:
+                                                                                                    field: headers
+                                                                                                    operand:
+                                                                                                        id: "9"
+                                                                                                        ident_expr:
+                                                                                                            name: request
+                                                                                                - const_expr:
+                                                                                                    string_value: authorization
+                                                                                                  id: "11"
+                                                                                            function: _[_]
+                                                                                        id: "13"
+                                                                                  id: "14"
+                                                                            function: _&&_
+                                                                          id: "16"
+                                                                    function: _||_
+                                                                id: "17"
+                                                            permissions:
+                                                                - any: true
+                                                            principals:
+                                                                - any: true
                                         auth_gateway.required_headers:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                             rbac:
@@ -410,6 +463,469 @@ data:
                                                         header:
                                                             key: X-Scope-OrgID
                                                             value: '%FILTER_STATE(auth_gateway.attributes.requested_tenant:PLAIN)%'
+                                        envoy.filters.http.jwt_authn:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
+                                            requirement_name: server-0-api-0-access-0
+                                        envoy.filters.http.rbac:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                            rbac:
+                                                rules:
+                                                    policies:
+                                                        grant-0:
+                                                            condition:
+                                                                call_expr:
+                                                                    args:
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - call_expr:
+                                                                                            args:
+                                                                                                - call_expr:
+                                                                                                    args:
+                                                                                                        - id: "2"
+                                                                                                          select_expr:
+                                                                                                            field: filter_metadata
+                                                                                                            operand:
+                                                                                                                id: "1"
+                                                                                                                ident_expr:
+                                                                                                                    name: metadata
+                                                                                                        - const_expr:
+                                                                                                            string_value: envoy.filters.http.jwt_authn
+                                                                                                          id: "3"
+                                                                                                    function: _[_]
+                                                                                                  id: "4"
+                                                                                                - const_expr:
+                                                                                                    string_value: issuer-one
+                                                                                                  id: "5"
+                                                                                            function: _[_]
+                                                                                          id: "6"
+                                                                                        - const_expr:
+                                                                                            string_value: organization
+                                                                                          id: "7"
+                                                                                    function: _[_]
+                                                                                  id: "8"
+                                                                                - const_expr:
+                                                                                    string_value: id
+                                                                                  id: "9"
+                                                                            function: _[_]
+                                                                          id: "10"
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - id: "12"
+                                                                                          select_expr:
+                                                                                            field: filter_metadata
+                                                                                            operand:
+                                                                                                id: "11"
+                                                                                                ident_expr:
+                                                                                                    name: metadata
+                                                                                        - const_expr:
+                                                                                            string_value: auth_gateway.request_headers
+                                                                                          id: "13"
+                                                                                    function: _[_]
+                                                                                  id: "14"
+                                                                                - const_expr:
+                                                                                    string_value: x-tenant
+                                                                                  id: "15"
+                                                                            function: _[_]
+                                                                          id: "16"
+                                                                    function: _==_
+                                                                id: "17"
+                                                            permissions:
+                                                                - any: true
+                                                            principals:
+                                                                - and_ids:
+                                                                    ids:
+                                                                        - sourced_metadata:
+                                                                            metadata_matcher:
+                                                                                filter: envoy.filters.http.jwt_authn
+                                                                                path:
+                                                                                    - key: issuer-one
+                                                                                    - key: iss
+                                                                                value:
+                                                                                    string_match:
+                                                                                        exact: https://issuer-one.jwt.test
+                                                                        - sourced_metadata:
+                                                                            metadata_matcher:
+                                                                                filter: envoy.filters.http.jwt_authn
+                                                                                path:
+                                                                                    - key: issuer-one
+                                                                                    - key: organization
+                                                                                    - key: id
+                                                                                value:
+                                                                                    string_match:
+                                                                                        safe_regex:
+                                                                                            regex: ^[^\x00-\x1f\x7f]+$
+                                                                        - sourced_metadata:
+                                                                            metadata_matcher:
+                                                                                filter: auth_gateway.request_headers
+                                                                                path:
+                                                                                    - key: x-tenant
+                                                                                value:
+                                                                                    string_match:
+                                                                                        safe_regex:
+                                                                                            regex: ^[^\x00-\x1f\x7f]+$
+                                        envoy.filters.http.set_filter_state:
+                                            '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                            config:
+                                                '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
+                                                on_request_headers:
+                                                    - factory_key: envoy.string
+                                                      format_string:
+                                                        omit_empty_values: true
+                                                        text_format_source:
+                                                            inline_string: '%CEL((("envoy.filters.http.jwt_authn" in metadata.filter_metadata && "issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "iss" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"] == "https://issuer-one.jwt.test" && "auth_gateway.request_headers" in metadata.filter_metadata && "x-tenant" in metadata.filter_metadata["auth_gateway.request_headers"] && type(metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"]) == string && metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] != "") ? metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] : ""))%'
+                                                      object_key: auth_gateway.attributes.requested_tenant
+                                                      skip_if_empty: true
+                                                    - factory_key: envoy.string
+                                                      format_string:
+                                                        omit_empty_values: true
+                                                        text_format_source:
+                                                            inline_string: '%CEL((("issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "organization" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && "id" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] : "")%'
+                                                      object_key: auth_gateway.attributes.tenant_id
+                                                      skip_if_empty: true
+                                    - match:
+                                        headers:
+                                            - name: :method
+                                              string_match:
+                                                exact: POST
+                                            - name: x-tenant
+                                              string_match:
+                                                exact: client-b
+                                        path: /ingest
+                                      metadata:
+                                        filter_metadata:
+                                            envoy.filters.http.lua:
+                                                api: ingest
+                                                labels:
+                                                    tenant: requested_tenant
+                                            envoy.filters.http.rbac:
+                                                api: ingest
+                                      name: api-0-ingest-route-0-method-0-access-0-match-1
+                                      route:
+                                        cluster: api-ingest
+                                        idle_timeout: 60s
+                                        max_stream_duration:
+                                            max_stream_duration: 30s
+                                        path_rewrite: /anything
+                                        timeout: 30s
+                                      stat_prefix: api-0-ingest-route-0-method-0-access-0-match-1
+                                      typed_per_filter_config:
+                                        auth_gateway.request_validation:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                            rbac:
+                                                rules:
+                                                    action: DENY
+                                                    policies:
+                                                        invalid-request-headers:
+                                                            condition:
+                                                                call_expr:
+                                                                    args:
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - const_expr:
+                                                                                            string_value: x-tenant
+                                                                                          id: "3"
+                                                                                        - id: "2"
+                                                                                          select_expr:
+                                                                                            field: headers
+                                                                                            operand:
+                                                                                                id: "1"
+                                                                                                ident_expr:
+                                                                                                    name: request
+                                                                                    function: '@in'
+                                                                                  id: "4"
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - const_expr:
+                                                                                            string_value: ','
+                                                                                          id: "7"
+                                                                                    function: contains
+                                                                                    target:
+                                                                                        call_expr:
+                                                                                            args:
+                                                                                                - id: "2"
+                                                                                                  select_expr:
+                                                                                                    field: headers
+                                                                                                    operand:
+                                                                                                        id: "1"
+                                                                                                        ident_expr:
+                                                                                                            name: request
+                                                                                                - const_expr:
+                                                                                                    string_value: x-tenant
+                                                                                                  id: "3"
+                                                                                            function: _[_]
+                                                                                        id: "5"
+                                                                                  id: "6"
+                                                                            function: _&&_
+                                                                          id: "8"
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - const_expr:
+                                                                                            string_value: authorization
+                                                                                          id: "11"
+                                                                                        - id: "10"
+                                                                                          select_expr:
+                                                                                            field: headers
+                                                                                            operand:
+                                                                                                id: "9"
+                                                                                                ident_expr:
+                                                                                                    name: request
+                                                                                    function: '@in'
+                                                                                  id: "12"
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - const_expr:
+                                                                                            string_value: ','
+                                                                                          id: "15"
+                                                                                    function: contains
+                                                                                    target:
+                                                                                        call_expr:
+                                                                                            args:
+                                                                                                - id: "10"
+                                                                                                  select_expr:
+                                                                                                    field: headers
+                                                                                                    operand:
+                                                                                                        id: "9"
+                                                                                                        ident_expr:
+                                                                                                            name: request
+                                                                                                - const_expr:
+                                                                                                    string_value: authorization
+                                                                                                  id: "11"
+                                                                                            function: _[_]
+                                                                                        id: "13"
+                                                                                  id: "14"
+                                                                            function: _&&_
+                                                                          id: "16"
+                                                                    function: _||_
+                                                                id: "17"
+                                                            permissions:
+                                                                - any: true
+                                                            principals:
+                                                                - any: true
+                                        auth_gateway.required_headers:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                            rbac:
+                                                rules:
+                                                    policies:
+                                                        required-attributes:
+                                                            permissions:
+                                                                - any: true
+                                                            principals:
+                                                                - filter_state:
+                                                                    key: auth_gateway.attributes.requested_tenant
+                                                                    string_match:
+                                                                        safe_regex:
+                                                                            regex: ^[^\x00-\x1f\x7f]+$
+                                        envoy.filters.http.header_mutation:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
+                                            mutations:
+                                                request_mutations:
+                                                    - append:
+                                                        append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                                                        header:
+                                                            key: X-Scope-OrgID
+                                                            value: '%FILTER_STATE(auth_gateway.attributes.requested_tenant:PLAIN)%'
+                                        envoy.filters.http.jwt_authn:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
+                                            requirement_name: server-0-api-0-access-0
+                                        envoy.filters.http.rbac:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                            rbac:
+                                                rules:
+                                                    policies:
+                                                        grant-0:
+                                                            condition:
+                                                                call_expr:
+                                                                    args:
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - call_expr:
+                                                                                            args:
+                                                                                                - call_expr:
+                                                                                                    args:
+                                                                                                        - id: "2"
+                                                                                                          select_expr:
+                                                                                                            field: filter_metadata
+                                                                                                            operand:
+                                                                                                                id: "1"
+                                                                                                                ident_expr:
+                                                                                                                    name: metadata
+                                                                                                        - const_expr:
+                                                                                                            string_value: envoy.filters.http.jwt_authn
+                                                                                                          id: "3"
+                                                                                                    function: _[_]
+                                                                                                  id: "4"
+                                                                                                - const_expr:
+                                                                                                    string_value: issuer-one
+                                                                                                  id: "5"
+                                                                                            function: _[_]
+                                                                                          id: "6"
+                                                                                        - const_expr:
+                                                                                            string_value: organization
+                                                                                          id: "7"
+                                                                                    function: _[_]
+                                                                                  id: "8"
+                                                                                - const_expr:
+                                                                                    string_value: id
+                                                                                  id: "9"
+                                                                            function: _[_]
+                                                                          id: "10"
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - id: "12"
+                                                                                          select_expr:
+                                                                                            field: filter_metadata
+                                                                                            operand:
+                                                                                                id: "11"
+                                                                                                ident_expr:
+                                                                                                    name: metadata
+                                                                                        - const_expr:
+                                                                                            string_value: auth_gateway.request_headers
+                                                                                          id: "13"
+                                                                                    function: _[_]
+                                                                                  id: "14"
+                                                                                - const_expr:
+                                                                                    string_value: x-tenant
+                                                                                  id: "15"
+                                                                            function: _[_]
+                                                                          id: "16"
+                                                                    function: _==_
+                                                                id: "17"
+                                                            permissions:
+                                                                - any: true
+                                                            principals:
+                                                                - and_ids:
+                                                                    ids:
+                                                                        - sourced_metadata:
+                                                                            metadata_matcher:
+                                                                                filter: envoy.filters.http.jwt_authn
+                                                                                path:
+                                                                                    - key: issuer-one
+                                                                                    - key: iss
+                                                                                value:
+                                                                                    string_match:
+                                                                                        exact: https://issuer-one.jwt.test
+                                                                        - sourced_metadata:
+                                                                            metadata_matcher:
+                                                                                filter: envoy.filters.http.jwt_authn
+                                                                                path:
+                                                                                    - key: issuer-one
+                                                                                    - key: organization
+                                                                                    - key: id
+                                                                                value:
+                                                                                    string_match:
+                                                                                        safe_regex:
+                                                                                            regex: ^[^\x00-\x1f\x7f]+$
+                                                                        - sourced_metadata:
+                                                                            metadata_matcher:
+                                                                                filter: auth_gateway.request_headers
+                                                                                path:
+                                                                                    - key: x-tenant
+                                                                                value:
+                                                                                    string_match:
+                                                                                        safe_regex:
+                                                                                            regex: ^[^\x00-\x1f\x7f]+$
+                                        envoy.filters.http.set_filter_state:
+                                            '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                            config:
+                                                '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
+                                                on_request_headers:
+                                                    - factory_key: envoy.string
+                                                      format_string:
+                                                        omit_empty_values: true
+                                                        text_format_source:
+                                                            inline_string: '%CEL((("envoy.filters.http.jwt_authn" in metadata.filter_metadata && "issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "iss" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"] == "https://issuer-one.jwt.test" && "auth_gateway.request_headers" in metadata.filter_metadata && "x-tenant" in metadata.filter_metadata["auth_gateway.request_headers"] && type(metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"]) == string && metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] != "") ? metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] : ""))%'
+                                                      object_key: auth_gateway.attributes.requested_tenant
+                                                      skip_if_empty: true
+                                                    - factory_key: envoy.string
+                                                      format_string:
+                                                        omit_empty_values: true
+                                                        text_format_source:
+                                                            inline_string: '%CEL((("issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "organization" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && "id" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["organization"]["id"] : "")%'
+                                                      object_key: auth_gateway.attributes.tenant_id
+                                                      skip_if_empty: true
+                                    - direct_response:
+                                        status: 403
+                                      match:
+                                        headers:
+                                            - name: :method
+                                              string_match:
+                                                exact: POST
+                                        path: /ingest
+                                      metadata:
+                                        filter_metadata:
+                                            envoy.filters.http.lua:
+                                                api: ingest
+                                                labels:
+                                                    tenant: requested_tenant
+                                            envoy.filters.http.rbac:
+                                                api: ingest
+                                      name: api-0-ingest-route-0-method-0-access-denied
+                                      stat_prefix: api-0-ingest-route-0-method-0-access-denied
+                                      typed_per_filter_config:
+                                        auth_gateway.request_validation:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                            rbac:
+                                                rules:
+                                                    action: DENY
+                                                    policies:
+                                                        invalid-request-headers:
+                                                            condition:
+                                                                call_expr:
+                                                                    args:
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - const_expr:
+                                                                                    string_value: x-tenant
+                                                                                  id: "3"
+                                                                                - id: "2"
+                                                                                  select_expr:
+                                                                                    field: headers
+                                                                                    operand:
+                                                                                        id: "1"
+                                                                                        ident_expr:
+                                                                                            name: request
+                                                                            function: '@in'
+                                                                          id: "4"
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - const_expr:
+                                                                                    string_value: ','
+                                                                                  id: "7"
+                                                                            function: contains
+                                                                            target:
+                                                                                call_expr:
+                                                                                    args:
+                                                                                        - id: "2"
+                                                                                          select_expr:
+                                                                                            field: headers
+                                                                                            operand:
+                                                                                                id: "1"
+                                                                                                ident_expr:
+                                                                                                    name: request
+                                                                                        - const_expr:
+                                                                                            string_value: x-tenant
+                                                                                          id: "3"
+                                                                                    function: _[_]
+                                                                                id: "5"
+                                                                          id: "6"
+                                                                    function: _&&_
+                                                                id: "8"
+                                                            permissions:
+                                                                - any: true
+                                                            principals:
+                                                                - any: true
                                     - direct_response:
                                         status: 405
                                       match:
@@ -424,6 +940,9 @@ data:
                                           header:
                                             key: allow
                                             value: POST
+                                      typed_per_filter_config:
+                                        envoy.filters.http.rbac:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                     - direct_response:
                                         status: 404
                                       match:
@@ -433,142 +952,29 @@ data:
                                             envoy.filters.http.rbac:
                                                 api: __local
                                       name: not-found
+                                      typed_per_filter_config:
+                                        envoy.filters.http.rbac:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                   typed_per_filter_config:
-                                    auth_gateway.attributes.server-0:
-                                        '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
-                                        config:
-                                            '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
-                                    auth_gateway.authentication:
-                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
-                                        rbac:
-                                            rules:
-                                                policies:
-                                                    authenticated:
-                                                        permissions:
-                                                            - any: true
-                                                        principals:
-                                                            - or_ids:
-                                                                ids:
-                                                                    - sourced_metadata:
-                                                                        metadata_matcher:
-                                                                            filter: auth_gateway.api_key
-                                                                            path:
-                                                                                - key: identity
-                                                                            value:
-                                                                                string_match:
-                                                                                    exact: verified
-                                                                    - header:
-                                                                        name: x-auth-gateway-jwt-verified-issuer-one
-                                                                        string_match:
-                                                                            exact: https://issuer-one.jwt.test
-                                    envoy.filters.http.api_key_auth:
-                                        '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
-                                        config:
-                                            '@type': type.googleapis.com/envoy.extensions.common.matching.v3.ExtensionWithMatcherPerRoute
-                                            xds_matcher:
-                                                matcher_list:
-                                                    matchers:
-                                                        - on_match:
-                                                            action:
-                                                                name: skip
-                                                                typed_config:
-                                                                    '@type': type.googleapis.com/envoy.extensions.filters.common.matcher.action.v3.SkipFilter
-                                                          predicate:
-                                                            single_predicate:
-                                                                input:
-                                                                    name: envoy.matching.inputs.request_headers
-                                                                    typed_config:
-                                                                        '@type': type.googleapis.com/envoy.type.matcher.v3.HttpRequestHeaderMatchInput
-                                                                        header_name: x-auth-gateway-jwt-verified-issuer-one
-                                                                value_match:
-                                                                    exact: https://issuer-one.jwt.test
                                     envoy.filters.http.jwt_authn:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
-                                        requirement_name: server-0
+                                        disabled: true
                                     envoy.filters.http.rbac:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                         rbac:
-                                            rules:
-                                                policies:
-                                                    api-ingest:
-                                                        permissions:
-                                                            - sourced_metadata:
-                                                                metadata_matcher:
-                                                                    filter: envoy.filters.http.rbac
-                                                                    path:
-                                                                        - key: api
-                                                                    value:
-                                                                        string_match:
-                                                                            exact: ingest
-                                                                metadata_source: ROUTE
-                                                        principals:
-                                                            - or_ids:
-                                                                ids:
-                                                                    - and_ids:
-                                                                        ids:
-                                                                            - and_ids:
-                                                                                ids:
-                                                                                    - sourced_metadata:
-                                                                                        metadata_matcher:
-                                                                                            filter: auth_gateway.request_headers
-                                                                                            path:
-                                                                                                - key: x-tenant
-                                                                                            value:
-                                                                                                string_match:
-                                                                                                    exact: client-a
-                                                                                    - sourced_metadata:
-                                                                                        metadata_matcher:
-                                                                                            filter: envoy.filters.http.jwt_authn
-                                                                                            path:
-                                                                                                - key: issuer-one
-                                                                                                - key: iss
-                                                                                            value:
-                                                                                                string_match:
-                                                                                                    exact: https://issuer-one.jwt.test
-                                                                            - header:
-                                                                                name: x-auth-gateway-jwt-verified-issuer-one
-                                                                                string_match:
-                                                                                    exact: https://issuer-one.jwt.test
-                                                                    - and_ids:
-                                                                        ids:
-                                                                            - sourced_metadata:
-                                                                                metadata_matcher:
-                                                                                    filter: auth_gateway.api_key
-                                                                                    path:
-                                                                                        - key: identity
-                                                                                    value:
-                                                                                        string_match:
-                                                                                            exact: verified
-                                                                            - sourced_metadata:
-                                                                                metadata_matcher:
-                                                                                    filter: auth_gateway.request_headers
-                                                                                    path:
-                                                                                        - key: x-tenant
-                                                                                    value:
-                                                                                        string_match:
-                                                                                            exact: client-a
-                                                    local-responses:
-                                                        permissions:
-                                                            - sourced_metadata:
-                                                                metadata_matcher:
-                                                                    filter: envoy.filters.http.rbac
-                                                                    path:
-                                                                        - key: api
-                                                                    value:
-                                                                        string_match:
-                                                                            exact: __local
-                                                                metadata_source: ROUTE
-                                                        principals:
-                                                            - any: true
+                                            rules: {}
                                 - domains:
-                                    - both.header.gateway.test
-                                  name: both.header.gateway.test
+                                    - key.headers.test
+                                  name: key.headers.test
                                   routes:
                                     - match:
                                         headers:
                                             - name: :method
                                               string_match:
                                                 exact: POST
+                                            - name: x-tenant
+                                              string_match:
+                                                exact: client-a
                                         path: /ingest
                                       metadata:
                                         filter_metadata:
@@ -578,7 +984,7 @@ data:
                                                     tenant: requested_tenant
                                             envoy.filters.http.rbac:
                                                 api: ingest
-                                      name: api-0-ingest-route-0-method-0
+                                      name: api-0-ingest-route-0-method-0-access-0-match-0
                                       route:
                                         cluster: api-ingest
                                         idle_timeout: 60s
@@ -586,8 +992,104 @@ data:
                                             max_stream_duration: 30s
                                         path_rewrite: /anything
                                         timeout: 30s
-                                      stat_prefix: api-0-ingest-route-0-method-0
+                                      stat_prefix: api-0-ingest-route-0-method-0-access-0-match-0
                                       typed_per_filter_config:
+                                        auth_gateway.request_validation:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                            rbac:
+                                                rules:
+                                                    action: DENY
+                                                    policies:
+                                                        invalid-request-headers:
+                                                            condition:
+                                                                call_expr:
+                                                                    args:
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - const_expr:
+                                                                                            string_value: x-tenant
+                                                                                          id: "3"
+                                                                                        - id: "2"
+                                                                                          select_expr:
+                                                                                            field: headers
+                                                                                            operand:
+                                                                                                id: "1"
+                                                                                                ident_expr:
+                                                                                                    name: request
+                                                                                    function: '@in'
+                                                                                  id: "4"
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - const_expr:
+                                                                                            string_value: ','
+                                                                                          id: "7"
+                                                                                    function: contains
+                                                                                    target:
+                                                                                        call_expr:
+                                                                                            args:
+                                                                                                - id: "2"
+                                                                                                  select_expr:
+                                                                                                    field: headers
+                                                                                                    operand:
+                                                                                                        id: "1"
+                                                                                                        ident_expr:
+                                                                                                            name: request
+                                                                                                - const_expr:
+                                                                                                    string_value: x-tenant
+                                                                                                  id: "3"
+                                                                                            function: _[_]
+                                                                                        id: "5"
+                                                                                  id: "6"
+                                                                            function: _&&_
+                                                                          id: "8"
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - const_expr:
+                                                                                            string_value: x-partner-key
+                                                                                          id: "11"
+                                                                                        - id: "10"
+                                                                                          select_expr:
+                                                                                            field: headers
+                                                                                            operand:
+                                                                                                id: "9"
+                                                                                                ident_expr:
+                                                                                                    name: request
+                                                                                    function: '@in'
+                                                                                  id: "12"
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - const_expr:
+                                                                                            string_value: ','
+                                                                                          id: "15"
+                                                                                    function: contains
+                                                                                    target:
+                                                                                        call_expr:
+                                                                                            args:
+                                                                                                - id: "10"
+                                                                                                  select_expr:
+                                                                                                    field: headers
+                                                                                                    operand:
+                                                                                                        id: "9"
+                                                                                                        ident_expr:
+                                                                                                            name: request
+                                                                                                - const_expr:
+                                                                                                    string_value: x-partner-key
+                                                                                                  id: "11"
+                                                                                            function: _[_]
+                                                                                        id: "13"
+                                                                                  id: "14"
+                                                                            function: _&&_
+                                                                          id: "16"
+                                                                    function: _||_
+                                                                id: "17"
+                                                            permissions:
+                                                                - any: true
+                                                            principals:
+                                                                - any: true
                                         auth_gateway.required_headers:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                             rbac:
@@ -602,6 +1104,13 @@ data:
                                                                     string_match:
                                                                         safe_regex:
                                                                             regex: ^[^\x00-\x1f\x7f]+$
+                                        envoy.filters.http.api_key_auth:
+                                            '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                            config:
+                                                '@type': type.googleapis.com/envoy.extensions.filters.http.api_key_auth.v3.ApiKeyAuthPerRoute
+                                                forwarding:
+                                                    header: x-auth-gateway-api-key-client
+                                                    hide_credentials: true
                                         envoy.filters.http.header_mutation:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
                                             mutations:
@@ -611,6 +1120,436 @@ data:
                                                         header:
                                                             key: X-Scope-OrgID
                                                             value: '%FILTER_STATE(auth_gateway.attributes.requested_tenant:PLAIN)%'
+                                        envoy.filters.http.rbac:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                            rbac:
+                                                rules:
+                                                    policies:
+                                                        grant-0:
+                                                            condition:
+                                                                call_expr:
+                                                                    args:
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - id: "2"
+                                                                                          select_expr:
+                                                                                            field: filter_metadata
+                                                                                            operand:
+                                                                                                id: "1"
+                                                                                                ident_expr:
+                                                                                                    name: metadata
+                                                                                        - const_expr:
+                                                                                            string_value: auth_gateway.api_key
+                                                                                          id: "3"
+                                                                                    function: _[_]
+                                                                                  id: "4"
+                                                                                - const_expr:
+                                                                                    string_value: attribute.tenant_id
+                                                                                  id: "5"
+                                                                            function: _[_]
+                                                                          id: "6"
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - id: "8"
+                                                                                          select_expr:
+                                                                                            field: filter_metadata
+                                                                                            operand:
+                                                                                                id: "7"
+                                                                                                ident_expr:
+                                                                                                    name: metadata
+                                                                                        - const_expr:
+                                                                                            string_value: auth_gateway.request_headers
+                                                                                          id: "9"
+                                                                                    function: _[_]
+                                                                                  id: "10"
+                                                                                - const_expr:
+                                                                                    string_value: x-tenant
+                                                                                  id: "11"
+                                                                            function: _[_]
+                                                                          id: "12"
+                                                                    function: _==_
+                                                                id: "13"
+                                                            permissions:
+                                                                - any: true
+                                                            principals:
+                                                                - and_ids:
+                                                                    ids:
+                                                                        - sourced_metadata:
+                                                                            metadata_matcher:
+                                                                                filter: auth_gateway.api_key
+                                                                                path:
+                                                                                    - key: identity
+                                                                                value:
+                                                                                    string_match:
+                                                                                        exact: verified
+                                                                        - sourced_metadata:
+                                                                            metadata_matcher:
+                                                                                filter: auth_gateway.api_key
+                                                                                path:
+                                                                                    - key: attribute.tenant_id
+                                                                                value:
+                                                                                    string_match:
+                                                                                        safe_regex:
+                                                                                            regex: ^[^\x00-\x1f\x7f]+$
+                                                                        - sourced_metadata:
+                                                                            metadata_matcher:
+                                                                                filter: auth_gateway.request_headers
+                                                                                path:
+                                                                                    - key: x-tenant
+                                                                                value:
+                                                                                    string_match:
+                                                                                        safe_regex:
+                                                                                            regex: ^[^\x00-\x1f\x7f]+$
+                                        envoy.filters.http.set_filter_state:
+                                            '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                            config:
+                                                '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
+                                                on_request_headers:
+                                                    - factory_key: envoy.string
+                                                      format_string:
+                                                        omit_empty_values: true
+                                                        text_format_source:
+                                                            inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "identity" in metadata.filter_metadata["auth_gateway.api_key"] && type(metadata.filter_metadata["auth_gateway.api_key"]["identity"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["identity"] != "" && "auth_gateway.request_headers" in metadata.filter_metadata && "x-tenant" in metadata.filter_metadata["auth_gateway.request_headers"] && type(metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"]) == string && metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] != "") ? metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] : ""))%'
+                                                      object_key: auth_gateway.attributes.requested_tenant
+                                                      skip_if_empty: true
+                                                    - factory_key: envoy.string
+                                                      format_string:
+                                                        omit_empty_values: true
+                                                        text_format_source:
+                                                            inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.tenant_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] : "")%'
+                                                      object_key: auth_gateway.attributes.tenant_id
+                                                      skip_if_empty: true
+                                    - match:
+                                        headers:
+                                            - name: :method
+                                              string_match:
+                                                exact: POST
+                                            - name: x-tenant
+                                              string_match:
+                                                exact: client-b
+                                        path: /ingest
+                                      metadata:
+                                        filter_metadata:
+                                            envoy.filters.http.lua:
+                                                api: ingest
+                                                labels:
+                                                    tenant: requested_tenant
+                                            envoy.filters.http.rbac:
+                                                api: ingest
+                                      name: api-0-ingest-route-0-method-0-access-0-match-1
+                                      route:
+                                        cluster: api-ingest
+                                        idle_timeout: 60s
+                                        max_stream_duration:
+                                            max_stream_duration: 30s
+                                        path_rewrite: /anything
+                                        timeout: 30s
+                                      stat_prefix: api-0-ingest-route-0-method-0-access-0-match-1
+                                      typed_per_filter_config:
+                                        auth_gateway.request_validation:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                            rbac:
+                                                rules:
+                                                    action: DENY
+                                                    policies:
+                                                        invalid-request-headers:
+                                                            condition:
+                                                                call_expr:
+                                                                    args:
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - const_expr:
+                                                                                            string_value: x-tenant
+                                                                                          id: "3"
+                                                                                        - id: "2"
+                                                                                          select_expr:
+                                                                                            field: headers
+                                                                                            operand:
+                                                                                                id: "1"
+                                                                                                ident_expr:
+                                                                                                    name: request
+                                                                                    function: '@in'
+                                                                                  id: "4"
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - const_expr:
+                                                                                            string_value: ','
+                                                                                          id: "7"
+                                                                                    function: contains
+                                                                                    target:
+                                                                                        call_expr:
+                                                                                            args:
+                                                                                                - id: "2"
+                                                                                                  select_expr:
+                                                                                                    field: headers
+                                                                                                    operand:
+                                                                                                        id: "1"
+                                                                                                        ident_expr:
+                                                                                                            name: request
+                                                                                                - const_expr:
+                                                                                                    string_value: x-tenant
+                                                                                                  id: "3"
+                                                                                            function: _[_]
+                                                                                        id: "5"
+                                                                                  id: "6"
+                                                                            function: _&&_
+                                                                          id: "8"
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - const_expr:
+                                                                                            string_value: x-partner-key
+                                                                                          id: "11"
+                                                                                        - id: "10"
+                                                                                          select_expr:
+                                                                                            field: headers
+                                                                                            operand:
+                                                                                                id: "9"
+                                                                                                ident_expr:
+                                                                                                    name: request
+                                                                                    function: '@in'
+                                                                                  id: "12"
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - const_expr:
+                                                                                            string_value: ','
+                                                                                          id: "15"
+                                                                                    function: contains
+                                                                                    target:
+                                                                                        call_expr:
+                                                                                            args:
+                                                                                                - id: "10"
+                                                                                                  select_expr:
+                                                                                                    field: headers
+                                                                                                    operand:
+                                                                                                        id: "9"
+                                                                                                        ident_expr:
+                                                                                                            name: request
+                                                                                                - const_expr:
+                                                                                                    string_value: x-partner-key
+                                                                                                  id: "11"
+                                                                                            function: _[_]
+                                                                                        id: "13"
+                                                                                  id: "14"
+                                                                            function: _&&_
+                                                                          id: "16"
+                                                                    function: _||_
+                                                                id: "17"
+                                                            permissions:
+                                                                - any: true
+                                                            principals:
+                                                                - any: true
+                                        auth_gateway.required_headers:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                            rbac:
+                                                rules:
+                                                    policies:
+                                                        required-attributes:
+                                                            permissions:
+                                                                - any: true
+                                                            principals:
+                                                                - filter_state:
+                                                                    key: auth_gateway.attributes.requested_tenant
+                                                                    string_match:
+                                                                        safe_regex:
+                                                                            regex: ^[^\x00-\x1f\x7f]+$
+                                        envoy.filters.http.api_key_auth:
+                                            '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                            config:
+                                                '@type': type.googleapis.com/envoy.extensions.filters.http.api_key_auth.v3.ApiKeyAuthPerRoute
+                                                forwarding:
+                                                    header: x-auth-gateway-api-key-client
+                                                    hide_credentials: true
+                                        envoy.filters.http.header_mutation:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutationPerRoute
+                                            mutations:
+                                                request_mutations:
+                                                    - append:
+                                                        append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                                                        header:
+                                                            key: X-Scope-OrgID
+                                                            value: '%FILTER_STATE(auth_gateway.attributes.requested_tenant:PLAIN)%'
+                                        envoy.filters.http.rbac:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                            rbac:
+                                                rules:
+                                                    policies:
+                                                        grant-0:
+                                                            condition:
+                                                                call_expr:
+                                                                    args:
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - id: "2"
+                                                                                          select_expr:
+                                                                                            field: filter_metadata
+                                                                                            operand:
+                                                                                                id: "1"
+                                                                                                ident_expr:
+                                                                                                    name: metadata
+                                                                                        - const_expr:
+                                                                                            string_value: auth_gateway.api_key
+                                                                                          id: "3"
+                                                                                    function: _[_]
+                                                                                  id: "4"
+                                                                                - const_expr:
+                                                                                    string_value: attribute.tenant_id
+                                                                                  id: "5"
+                                                                            function: _[_]
+                                                                          id: "6"
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - id: "8"
+                                                                                          select_expr:
+                                                                                            field: filter_metadata
+                                                                                            operand:
+                                                                                                id: "7"
+                                                                                                ident_expr:
+                                                                                                    name: metadata
+                                                                                        - const_expr:
+                                                                                            string_value: auth_gateway.request_headers
+                                                                                          id: "9"
+                                                                                    function: _[_]
+                                                                                  id: "10"
+                                                                                - const_expr:
+                                                                                    string_value: x-tenant
+                                                                                  id: "11"
+                                                                            function: _[_]
+                                                                          id: "12"
+                                                                    function: _==_
+                                                                id: "13"
+                                                            permissions:
+                                                                - any: true
+                                                            principals:
+                                                                - and_ids:
+                                                                    ids:
+                                                                        - sourced_metadata:
+                                                                            metadata_matcher:
+                                                                                filter: auth_gateway.api_key
+                                                                                path:
+                                                                                    - key: identity
+                                                                                value:
+                                                                                    string_match:
+                                                                                        exact: verified
+                                                                        - sourced_metadata:
+                                                                            metadata_matcher:
+                                                                                filter: auth_gateway.api_key
+                                                                                path:
+                                                                                    - key: attribute.tenant_id
+                                                                                value:
+                                                                                    string_match:
+                                                                                        safe_regex:
+                                                                                            regex: ^[^\x00-\x1f\x7f]+$
+                                                                        - sourced_metadata:
+                                                                            metadata_matcher:
+                                                                                filter: auth_gateway.request_headers
+                                                                                path:
+                                                                                    - key: x-tenant
+                                                                                value:
+                                                                                    string_match:
+                                                                                        safe_regex:
+                                                                                            regex: ^[^\x00-\x1f\x7f]+$
+                                        envoy.filters.http.set_filter_state:
+                                            '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                            config:
+                                                '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
+                                                on_request_headers:
+                                                    - factory_key: envoy.string
+                                                      format_string:
+                                                        omit_empty_values: true
+                                                        text_format_source:
+                                                            inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "identity" in metadata.filter_metadata["auth_gateway.api_key"] && type(metadata.filter_metadata["auth_gateway.api_key"]["identity"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["identity"] != "" && "auth_gateway.request_headers" in metadata.filter_metadata && "x-tenant" in metadata.filter_metadata["auth_gateway.request_headers"] && type(metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"]) == string && metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] != "") ? metadata.filter_metadata["auth_gateway.request_headers"]["x-tenant"] : ""))%'
+                                                      object_key: auth_gateway.attributes.requested_tenant
+                                                      skip_if_empty: true
+                                                    - factory_key: envoy.string
+                                                      format_string:
+                                                        omit_empty_values: true
+                                                        text_format_source:
+                                                            inline_string: '%CEL((("auth_gateway.api_key" in metadata.filter_metadata && "attribute.tenant_id" in metadata.filter_metadata["auth_gateway.api_key"]) && type(metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"]) == string && metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] != "") ? metadata.filter_metadata["auth_gateway.api_key"]["attribute.tenant_id"] : "")%'
+                                                      object_key: auth_gateway.attributes.tenant_id
+                                                      skip_if_empty: true
+                                    - direct_response:
+                                        status: 403
+                                      match:
+                                        headers:
+                                            - name: :method
+                                              string_match:
+                                                exact: POST
+                                        path: /ingest
+                                      metadata:
+                                        filter_metadata:
+                                            envoy.filters.http.lua:
+                                                api: ingest
+                                                labels:
+                                                    tenant: requested_tenant
+                                            envoy.filters.http.rbac:
+                                                api: ingest
+                                      name: api-0-ingest-route-0-method-0-access-denied
+                                      stat_prefix: api-0-ingest-route-0-method-0-access-denied
+                                      typed_per_filter_config:
+                                        auth_gateway.request_validation:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                            rbac:
+                                                rules:
+                                                    action: DENY
+                                                    policies:
+                                                        invalid-request-headers:
+                                                            condition:
+                                                                call_expr:
+                                                                    args:
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - const_expr:
+                                                                                    string_value: x-tenant
+                                                                                  id: "3"
+                                                                                - id: "2"
+                                                                                  select_expr:
+                                                                                    field: headers
+                                                                                    operand:
+                                                                                        id: "1"
+                                                                                        ident_expr:
+                                                                                            name: request
+                                                                            function: '@in'
+                                                                          id: "4"
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - const_expr:
+                                                                                    string_value: ','
+                                                                                  id: "7"
+                                                                            function: contains
+                                                                            target:
+                                                                                call_expr:
+                                                                                    args:
+                                                                                        - id: "2"
+                                                                                          select_expr:
+                                                                                            field: headers
+                                                                                            operand:
+                                                                                                id: "1"
+                                                                                                ident_expr:
+                                                                                                    name: request
+                                                                                        - const_expr:
+                                                                                            string_value: x-tenant
+                                                                                          id: "3"
+                                                                                    function: _[_]
+                                                                                id: "5"
+                                                                          id: "6"
+                                                                    function: _&&_
+                                                                id: "8"
+                                                            permissions:
+                                                                - any: true
+                                                            principals:
+                                                                - any: true
                                     - direct_response:
                                         status: 405
                                       match:
@@ -625,6 +1564,9 @@ data:
                                           header:
                                             key: allow
                                             value: POST
+                                      typed_per_filter_config:
+                                        envoy.filters.http.rbac:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                     - direct_response:
                                         status: 404
                                       match:
@@ -634,257 +1576,17 @@ data:
                                             envoy.filters.http.rbac:
                                                 api: __local
                                       name: not-found
+                                      typed_per_filter_config:
+                                        envoy.filters.http.rbac:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                   typed_per_filter_config:
-                                    auth_gateway.attributes.server-1:
-                                        '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
-                                        config:
-                                            '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
-                                    auth_gateway.authentication:
-                                        '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
-                                        rbac:
-                                            rules:
-                                                policies:
-                                                    authenticated:
-                                                        condition:
-                                                            call_expr:
-                                                                args:
-                                                                    - call_expr:
-                                                                        args:
-                                                                            - call_expr:
-                                                                                args:
-                                                                                    - call_expr:
-                                                                                        args:
-                                                                                            - id: "2"
-                                                                                              select_expr:
-                                                                                                field: filter_metadata
-                                                                                                operand:
-                                                                                                    id: "1"
-                                                                                                    ident_expr:
-                                                                                                        name: metadata
-                                                                                            - const_expr:
-                                                                                                string_value: auth_gateway.request_headers
-                                                                                              id: "3"
-                                                                                        function: _[_]
-                                                                                      id: "4"
-                                                                                    - const_expr:
-                                                                                        string_value: x-tenant
-                                                                                      id: "5"
-                                                                                function: _[_]
-                                                                              id: "6"
-                                                                            - call_expr:
-                                                                                args:
-                                                                                    - call_expr:
-                                                                                        args:
-                                                                                            - id: "8"
-                                                                                              select_expr:
-                                                                                                field: filter_metadata
-                                                                                                operand:
-                                                                                                    id: "7"
-                                                                                                    ident_expr:
-                                                                                                        name: metadata
-                                                                                            - const_expr:
-                                                                                                string_value: auth_gateway.request_headers
-                                                                                              id: "9"
-                                                                                        function: _[_]
-                                                                                      id: "10"
-                                                                                    - const_expr:
-                                                                                        string_value: x-tenant
-                                                                                      id: "11"
-                                                                                function: _[_]
-                                                                              id: "12"
-                                                                        function: _==_
-                                                                      id: "13"
-                                                                    - call_expr:
-                                                                        args:
-                                                                            - call_expr:
-                                                                                args:
-                                                                                    - call_expr:
-                                                                                        args:
-                                                                                            - call_expr:
-                                                                                                args:
-                                                                                                    - call_expr:
-                                                                                                        args:
-                                                                                                            - id: "15"
-                                                                                                              select_expr:
-                                                                                                                field: filter_metadata
-                                                                                                                operand:
-                                                                                                                    id: "14"
-                                                                                                                    ident_expr:
-                                                                                                                        name: metadata
-                                                                                                            - const_expr:
-                                                                                                                string_value: envoy.filters.http.jwt_authn
-                                                                                                              id: "16"
-                                                                                                        function: _[_]
-                                                                                                      id: "17"
-                                                                                                    - const_expr:
-                                                                                                        string_value: issuer-one
-                                                                                                      id: "18"
-                                                                                                function: _[_]
-                                                                                              id: "19"
-                                                                                            - const_expr:
-                                                                                                string_value: organization
-                                                                                              id: "20"
-                                                                                        function: _[_]
-                                                                                      id: "21"
-                                                                                    - const_expr:
-                                                                                        string_value: id
-                                                                                      id: "22"
-                                                                                function: _[_]
-                                                                              id: "23"
-                                                                            - call_expr:
-                                                                                args:
-                                                                                    - call_expr:
-                                                                                        args:
-                                                                                            - id: "25"
-                                                                                              select_expr:
-                                                                                                field: filter_metadata
-                                                                                                operand:
-                                                                                                    id: "24"
-                                                                                                    ident_expr:
-                                                                                                        name: metadata
-                                                                                            - const_expr:
-                                                                                                string_value: auth_gateway.api_key
-                                                                                              id: "26"
-                                                                                        function: _[_]
-                                                                                      id: "27"
-                                                                                    - const_expr:
-                                                                                        string_value: attribute.tenant_id
-                                                                                      id: "28"
-                                                                                function: _[_]
-                                                                              id: "29"
-                                                                        function: _==_
-                                                                      id: "30"
-                                                                function: _&&_
-                                                            id: "31"
-                                                        permissions:
-                                                            - any: true
-                                                        principals:
-                                                            - and_ids:
-                                                                ids:
-                                                                    - sourced_metadata:
-                                                                        metadata_matcher:
-                                                                            filter: auth_gateway.api_key
-                                                                            path:
-                                                                                - key: identity
-                                                                            value:
-                                                                                string_match:
-                                                                                    exact: verified
-                                                                    - sourced_metadata:
-                                                                        metadata_matcher:
-                                                                            filter: auth_gateway.request_headers
-                                                                            path:
-                                                                                - key: x-tenant
-                                                                            value:
-                                                                                string_match:
-                                                                                    safe_regex:
-                                                                                        regex: ^[^\x00-\x1f\x7f]+$
-                                                                    - sourced_metadata:
-                                                                        metadata_matcher:
-                                                                            filter: auth_gateway.request_headers
-                                                                            path:
-                                                                                - key: x-tenant
-                                                                            value:
-                                                                                string_match:
-                                                                                    safe_regex:
-                                                                                        regex: ^[^\x00-\x1f\x7f]+$
-                                                                    - sourced_metadata:
-                                                                        metadata_matcher:
-                                                                            filter: envoy.filters.http.jwt_authn
-                                                                            path:
-                                                                                - key: issuer-one
-                                                                                - key: organization
-                                                                                - key: id
-                                                                            value:
-                                                                                string_match:
-                                                                                    safe_regex:
-                                                                                        regex: ^[^\x00-\x1f\x7f]+$
-                                                                    - sourced_metadata:
-                                                                        metadata_matcher:
-                                                                            filter: auth_gateway.api_key
-                                                                            path:
-                                                                                - key: attribute.tenant_id
-                                                                            value:
-                                                                                string_match:
-                                                                                    safe_regex:
-                                                                                        regex: ^[^\x00-\x1f\x7f]+$
-                                    envoy.filters.http.api_key_auth:
-                                        '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
-                                        config:
-                                            '@type': type.googleapis.com/envoy.extensions.common.matching.v3.ExtensionWithMatcherPerRoute
                                     envoy.filters.http.jwt_authn:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
-                                        requirement_name: server-1
+                                        disabled: true
                                     envoy.filters.http.rbac:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                         rbac:
-                                            rules:
-                                                policies:
-                                                    api-ingest:
-                                                        permissions:
-                                                            - sourced_metadata:
-                                                                metadata_matcher:
-                                                                    filter: envoy.filters.http.rbac
-                                                                    path:
-                                                                        - key: api
-                                                                    value:
-                                                                        string_match:
-                                                                            exact: ingest
-                                                                metadata_source: ROUTE
-                                                        principals:
-                                                            - and_ids:
-                                                                ids:
-                                                                    - or_ids:
-                                                                        ids:
-                                                                            - and_ids:
-                                                                                ids:
-                                                                                    - sourced_metadata:
-                                                                                        metadata_matcher:
-                                                                                            filter: auth_gateway.request_headers
-                                                                                            path:
-                                                                                                - key: x-tenant
-                                                                                            value:
-                                                                                                string_match:
-                                                                                                    exact: client-a
-                                                                                    - sourced_metadata:
-                                                                                        metadata_matcher:
-                                                                                            filter: envoy.filters.http.jwt_authn
-                                                                                            path:
-                                                                                                - key: issuer-one
-                                                                                                - key: iss
-                                                                                            value:
-                                                                                                string_match:
-                                                                                                    exact: https://issuer-one.jwt.test
-                                                                            - and_ids:
-                                                                                ids:
-                                                                                    - sourced_metadata:
-                                                                                        metadata_matcher:
-                                                                                            filter: auth_gateway.api_key
-                                                                                            path:
-                                                                                                - key: identity
-                                                                                            value:
-                                                                                                string_match:
-                                                                                                    exact: verified
-                                                                                    - sourced_metadata:
-                                                                                        metadata_matcher:
-                                                                                            filter: auth_gateway.request_headers
-                                                                                            path:
-                                                                                                - key: x-tenant
-                                                                                            value:
-                                                                                                string_match:
-                                                                                                    exact: client-a
-                                                    local-responses:
-                                                        permissions:
-                                                            - sourced_metadata:
-                                                                metadata_matcher:
-                                                                    filter: envoy.filters.http.rbac
-                                                                    path:
-                                                                        - key: api
-                                                                    value:
-                                                                        string_match:
-                                                                            exact: __local
-                                                                metadata_source: ROUTE
-                                                        principals:
-                                                            - any: true
+                                            rules: {}
                         stat_prefix: ingress
                         stream_flush_timeout: 5s
                         stream_idle_timeout: 60s

@@ -43,36 +43,6 @@ func celStringLiteral(value string) string {
 	return out.String()
 }
 
-func celBytesLiteral(value string) string {
-	var out strings.Builder
-	out.WriteString(`b"`)
-	for _, character := range []byte(value) {
-		switch character {
-		case '\\', '"':
-			out.WriteByte('\\')
-			out.WriteByte(character)
-		case '\n':
-			out.WriteString(`\n`)
-		case '\r':
-			out.WriteString(`\r`)
-		case '\t':
-			out.WriteString(`\t`)
-		case '\b':
-			out.WriteString(`\b`)
-		case '\f':
-			out.WriteString(`\f`)
-		default:
-			if character < 0x20 || character > 0x7e {
-				fmt.Fprintf(&out, `\x%02x`, character)
-			} else {
-				out.WriteByte(character)
-			}
-		}
-	}
-	out.WriteByte('"')
-	return out.String()
-}
-
 func (b *celExpressionBuilder) id() int64 {
 	b.next++
 	return b.next
@@ -80,6 +50,23 @@ func (b *celExpressionBuilder) id() int64 {
 
 func (b *celExpressionBuilder) call(name string, args ...*expr.Expr) *expr.Expr {
 	return &expr.Expr{Id: b.id(), ExprKind: &expr.Expr_CallExpr{CallExpr: &expr.Expr_Call{Function: name, Args: args}}}
+}
+
+func (b *celExpressionBuilder) stringValue(value string) *expr.Expr {
+	return &expr.Expr{Id: b.id(), ExprKind: &expr.Expr_ConstExpr{ConstExpr: &expr.Constant{ConstantKind: &expr.Constant_StringValue{StringValue: value}}}}
+}
+
+// CEL joins repeated request-header values with commas.
+func (b *celExpressionBuilder) repeatedHeader(name string) *expr.Expr {
+	request := &expr.Expr{Id: b.id(), ExprKind: &expr.Expr_IdentExpr{IdentExpr: &expr.Expr_Ident{Name: "request"}}}
+	headers := &expr.Expr{Id: b.id(), ExprKind: &expr.Expr_SelectExpr{SelectExpr: &expr.Expr_Select{Operand: request, Field: "headers"}}}
+	key := b.stringValue(name)
+	present := b.call("@in", key, headers)
+	value := b.call("_[_]", headers, key)
+	contains := &expr.Expr{Id: b.id(), ExprKind: &expr.Expr_CallExpr{CallExpr: &expr.Expr_Call{
+		Function: "contains", Target: value, Args: []*expr.Expr{b.stringValue(",")},
+	}}}
+	return b.call("_&&_", present, contains)
 }
 
 func (b *celExpressionBuilder) metadataValue(namespace string, keys []string) *expr.Expr {

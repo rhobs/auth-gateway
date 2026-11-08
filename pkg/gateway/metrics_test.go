@@ -125,7 +125,7 @@ func TestRequestMetricsGenerateTagsAndRouteMetadata(t *testing.T) {
 	}
 
 	routes := manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()
-	metricRoute := namedRoute(routes, apiRouteName(0, "metrics-write", 0, 0))
+	metricRoute := namedRoute(routes, apiRouteName(0, "metrics-write", 0, 0)+"-access-0-match-0")
 	if metricRoute == nil {
 		t.Fatal("metrics-write route is missing")
 	}
@@ -134,7 +134,7 @@ func TestRequestMetricsGenerateTagsAndRouteMetadata(t *testing.T) {
 		metricMetadata.Fields["labels"].GetStructValue().Fields["tenant"].GetStringValue() != "tenant_id" {
 		t.Fatalf("metrics-write route metadata = %#v", metricMetadata)
 	}
-	statusOnlyRoute := namedRoute(routes, apiRouteName(1, "logs", 0, 0))
+	statusOnlyRoute := namedRoute(routes, apiRouteName(1, "logs", 0, 0)+"-access-0-match-0")
 	if statusOnlyRoute == nil {
 		t.Fatal("logs route is missing")
 	}
@@ -194,7 +194,7 @@ func TestRequestMetricsUseAttributesWithoutHeaderProcessing(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
-	want := []string{requestControlsFilterName, requestMetricsFilterName, jwtAuthnFilterName, attributeFilterName, authorizationFilterName, credentialCleanupFilterName, routerFilterName}
+	want := []string{requestControlsFilterName, requestMetricsFilterName, requestValidationFilterName + ".begin", requestValidationFilterName, requestValidationFilterName + ".complete", jwtAuthnFilterName, attributeFilterName, authorizationFilterName, credentialCleanupFilterName, routerFilterName}
 	if got := httpFilterNames(manager); !slices.Equal(got, want) {
 		t.Fatalf("HTTP filters = %v, want %v", got, want)
 	}
@@ -212,7 +212,7 @@ func TestStatusOnlyRequestMetricsOnPublicAPI(t *testing.T) {
 		t.Fatalf("status-only stats tags = %d, want API and status", got)
 	}
 	manager := decodeHTTPManager(t, bootstrap.StaticResources.Listeners[0].FilterChains[0])
-	want := []string{requestControlsFilterName, requestMetricsFilterName, routerFilterName}
+	want := []string{requestControlsFilterName, requestMetricsFilterName, credentialCleanupFilterName, routerFilterName}
 	if got := httpFilterNames(manager); !slices.Equal(got, want) {
 		t.Fatalf("public HTTP filters = %v, want %v", got, want)
 	}
@@ -221,7 +221,11 @@ func TestStatusOnlyRequestMetricsOnPublicAPI(t *testing.T) {
 func TestRequestMetricsOnlyOnSelectedAPIs(t *testing.T) {
 	c := loadConfigCase(t, "jwt-auth-with-attributes")
 	c.APIs[1].Metrics = nil
-	c.Servers[1].APIs = []string{"logs"}
+	for _, binding := range c.Servers[0].APIs {
+		if binding.Name == "logs" {
+			c.Servers[1].APIs = []gatewayapi.APIBinding{binding}
+		}
+	}
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)

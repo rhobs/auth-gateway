@@ -22,13 +22,12 @@ be at least `1ms`.
 | `listener`               | object          | Defaults below | Listener fields use the defaults below if omitted.                       |
 | `overload`               | object          | Disabled       | If present, both capacity limits are required.                           |
 | `authenticators`         | list of objects | Empty          | Names must be unique. Each entry sets exactly one of `jwt`, `api_key`, or `mtls`. |
-| `authorization_policies` | list of objects | Empty          | Policy names must be unique.                                             |
 | `servers`                | list of objects | None           | Required; at least one server.                                           |
 | `apis`                   | list of objects | None           | Required; at least one API.                                              |
 | `observability`          | object          | Defaults below | Optional metrics and tracing settings.                                   |
 | `kubernetes`             | object          | None           | Omit for file-based output; required to generate Kubernetes resources.   |
 
-Names used for APIs, authenticators, authorization policies, and processors
+Names used for APIs, authenticators, and shared access entries
 must be 1 to 53 characters, start with a lowercase ASCII letter, and contain
 only lowercase letters, digits, and hyphens. Names must be unique within their
 own list. Attribute names must be 1 to 64 characters, start with a lowercase
@@ -227,14 +226,14 @@ its abort settings for the next test.
 | `apis[].fault_injection.enabled`           | boolean | `false` | Requires `abort` when enabled.                                    |
 | `apis[].fault_injection.match`             | object  | None    | Optional; if supplied, must contain headers or attributes. Omit to select all requests that pass authentication, authorization, and required-header checks. |
 | `apis[].fault_injection.match.headers`     | map of header name to string | Empty | All headers must match exact values. Names are case-insensitive and cannot contain underscores, duplicate another name ignoring case, or use reserved identity, routing, connection, framing, or credential headers. Route processing cannot overwrite these headers. Values must be nonempty and contain no control characters. |
-| `apis[].fault_injection.match.attributes`  | map of attribute name to list of strings | Empty | All attributes must match at least one listed exact value. Each list must contain distinct nonempty values without control characters. Every bound server must authenticate with a provider for each attribute. Sources must be verified claims, credentials, or certificate SANs; header sources are rejected. |
+| `apis[].fault_injection.match.attributes`  | map of attribute name to list of strings | Empty | All attributes must match at least one listed exact value. Each list must contain distinct nonempty values without control characters. Every provider selected by every protected binding must declare each attribute. Sources must be verified claims, credentials, or certificate SANs; header sources are rejected. |
 | `apis[].fault_injection.abort`             | object  | None    | Required when enabled; HTTP errors only.                          |
 | `apis[].fault_injection.abort.http_status` | uint32  | None    | Required error status from `400` to `599`.                         |
 | `apis[].fault_injection.abort.percentage`  | uint32  | None    | Required whole-number percentage from `1` to `100`.               |
 
 All header and attribute selectors must match. Missing attributes or headers
-do not match, and values are case-sensitive. On a mixed `any_of` server, only
-the selected authenticated identity supplies attributes. The configured
+do not match, and values are case-sensitive. Only the entry's verifying
+provider supplies attributes. The configured
 percentage applies after selection. Clients cannot change the configured
 status or percentage through Envoy fault-control headers.
 
@@ -252,7 +251,7 @@ gateway configuration, then explicitly roll out the Deployment to toggle them.
 
 | Field                                                         | Type            | Default | Constraint                                                                                                                                  |
 |---------------------------------------------------------------|-----------------|---------|---------------------------------------------------------------------------------------------------------------------------------------------|
-| `apis[].routes[].processing.request_headers`                  | list of objects | None    | If `processing` is present, at least one mapping is required. Requires server authentication that provides each referenced attribute.       |
+| `apis[].routes[].processing.request_headers`                  | list of objects | None    | If `processing` is present, at least one mapping is required. Every selected provider must declare each referenced attribute; public bindings cannot use these mappings.       |
 | `apis[].routes[].processing.request_headers[].name`           | string          | None    | Required valid HTTP header name; cannot be a reserved identity, routing, connection, or framing header. Names must be unique ignoring case. |
 | `apis[].routes[].processing.request_headers[].from_attribute` | string          | None    | Required valid attribute name.                                                                                                              |
 
@@ -264,35 +263,49 @@ guides for examples.
 
 ## Servers, authentication, and authorization
 
-| Field                      | Type            | Default | Constraint                                                                                            |
-|----------------------------|-----------------|---------|-------------------------------------------------------------------------------------------------------|
-| `servers[].hostname`       | string          | None    | Required exact DNS hostname; unique among servers.                                                    |
-| `servers[].tls_config`     | object          | None    | Omit for HTTP; set for HTTPS. See [server TLS](#server-tls).                                          |
-| `servers[].authentication` | object          | None    | Omission makes the server public. If present, set exactly one of `any_of` or `all_of`.                |
-| `servers[].authorization`  | object          | None    | Optional policy selection; requires `authentication` and sets exactly one of `any_of` or `all_of`.    |
-| `servers[].apis`           | list of strings | Empty   | API names bound to this server; each name must exist and appear once. An empty list serves no routes. |
+| Field | Type | Default | Constraint |
+|-------|------|---------|------------|
+| `servers[].hostname` | string | None | Required unique exact DNS hostname. |
+| `servers[].tls_config` | object | None | Omit for HTTP; set for HTTPS. See [server TLS](#server-tls). |
+| `servers[].apis` | list of objects | Empty | Ordered API bindings; names must exist and appear once per server. |
+| `servers[].apis[].name` | string | None | Required name of an existing API. |
+| `servers[].apis[].public` | boolean | `false` | Explicit public access; cannot be combined with `access`, server mTLS, or authenticated header forwarding. |
+| `servers[].apis[].access` | list of objects | None | Required nonempty list unless `public: true`. |
 
-For authentication and authorization selections, the chosen list must contain
-at least one existing name and cannot contain duplicates. `any_of` accepts a
-request when one selected method or policy succeeds; `all_of` requires every
-selected entry. An `all_of` selection allows at most one JWT authenticator.
-Selected JWT authenticators must have distinct issuer values. A server can
-select at most one mTLS authenticator and must set `tls_config` when it does.
-Certificate-only and `all_of` mTLS servers require a client certificate during
-the TLS handshake. Mixed `any_of` servers allow a connection without one.
+### Access entries
 
-Mixed `any_of` selects one authenticated identity in JWT, mTLS, then API-key
-priority. Only that identity supplies working attributes. Missing, empty, or
-undeclared attributes stay unset; another credential cannot fill them.
-`all_of` requires every selected identity and matching nonempty original
-values for shared attributes. See the [authentication guide](auth/README.md).
+The following fields live under `servers[].apis[].access[]`. An entry uses
+exactly one of `tenant` (a concrete label) or `name` (a shared label). Labels
+must be unique within a binding; a label does not itself match a request.
 
-| Field                             | Type            | Default | Constraint                                                        |
-|-----------------------------------|-----------------|---------|-------------------------------------------------------------------|
-| `servers[].authentication.any_of` | list of strings | None    | Selects authenticators; mutually exclusive with `all_of`.         |
-| `servers[].authentication.all_of` | list of strings | None    | Selects authenticators; mutually exclusive with `any_of`.         |
-| `servers[].authorization.any_of`  | list of strings | None    | Selects authorization policies; mutually exclusive with `all_of`. |
-| `servers[].authorization.all_of`  | list of strings | None    | Selects authorization policies; mutually exclusive with `any_of`. |
+| Field | Type | Default | Constraint |
+|-------|------|---------|------------|
+| `tenant` | string | None | Nonempty concrete label without commas, controls, or surrounding whitespace. |
+| `name` | string | None | Shared label using the name format above. |
+| `match.headers` | map of header name to matcher | Empty | All configured headers must match. Safe names without underscores, credential or reserved headers, or duplicates ignoring case. |
+| `match.headers.<header>.exact` | string | None | Exactly one of `exact` or `in`; a nonempty value without commas, controls, or surrounding whitespace. |
+| `match.headers.<header>.in` | list of strings | None | Nonempty list of distinct values with the same constraints as `exact`. |
+| `authentication.jwt.providers` | list of strings | None | Nonempty unique JWT authenticator names with distinct issuers within this entry. |
+| `authentication.api_key.authenticator` | string | None | Name of the API-key authenticator. |
+| `authorization.grants` | list of objects | None | Required nonempty grants for this server/API entry. See [authorization grants](#authorization-grants). |
+
+Outside dedicated mTLS servers, `authentication` must select exactly one of
+`jwt` or `api_key`. A JWT entry may trust several providers; each grant remains
+tied to one verifying provider. A key cannot replace an invalid JWT on a JWT
+entry, and a JWT cannot replace a missing key on a key entry.
+
+Selectors cannot overlap within a binding. `X-Tenant` values also cannot
+overlap across entries even when other header selectors differ. An empty
+header match is an explicit catch-all and must be the binding's only entry.
+Header values are case-sensitive. Lists accept one value per request; repeated
+selector or selected credential headers and comma-separated selectors return
+`400`. Missing or unmatched selectors return `403`. Invalid selected
+credentials normally return `401`; a validly signed JWT with an untrusted
+audience returns `403` in the pinned Envoy version. An authenticated request
+without an applicable grant returns `403`. Denials do not reach the upstream.
+
+A public API requires `public: true`; omitted access never makes it public.
+See the [authentication guide](auth/README.md) for examples.
 
 ### Server TLS
 
@@ -301,6 +314,13 @@ values for shared attributes. See the [authentication guide](auth/README.md).
 | `servers[].tls_config.secret`      | string        | None                                                                             | Required for Kubernetes output; must name an existing TLS Secret in the gateway namespace.                                                        |
 | `servers[].tls_config.certificate` | absolute path | `/etc/auth-gateway-tls/tls.crt`, or `/etc/<secret>/tls.crt` when `secret` is set | Must be a clean absolute file path other than `/`; cannot contain CR, LF, or NUL.                                                                 |
 | `servers[].tls_config.private_key` | absolute path | `/etc/auth-gateway-tls/tls.key`, or `/etc/<secret>/tls.key` when `secret` is set | Same directory as `certificate`, with a different file name; must be a clean absolute file path other than `/` and cannot contain CR, LF, or NUL. |
+| `servers[].tls_config.mtls` | object | None | Dedicated mTLS mode for this entire server and all bound APIs; always requires a trusted client certificate during TLS establishment. |
+| `servers[].tls_config.mtls.authenticator` | string | None | Required name of an mTLS authenticator. Every API access entry must omit `authentication`, and all grants must name this authenticator. |
+
+mTLS servers require HTTPS serving certificates and an explicit client CA.
+Public bindings, optional client certificates, and additional authentication on
+any bound API are configuration errors. Another server may expose the same API
+with JWT or API-key entries. See the [mTLS guide](auth/mtls.md).
 
 ### Authenticators
 
@@ -338,16 +358,29 @@ one DNS SAN; a SAN containing a comma is rejected. Header names follow HTTP
 field-name syntax and cannot use reserved identity, routing, connection, or
 framing headers.
 
-### Authorization policies
+### Authorization grants
 
-| Field                                                      | Type                                     | Default | Constraint                                                                                                                                                  |
-|------------------------------------------------------------|------------------------------------------|---------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `authorization_policies[].name`                            | string                                   | None    | Required unique name using the format above.                                                                                                                |
-| `authorization_policies[].grants`                          | list of objects                          | Empty   | Each grant allows one authenticator to access selected APIs and attribute values.                                                                           |
-| `authorization_policies[].grants[].authenticator`          | string                                   | None    | Required name of an existing authenticator.                                                                                                                 |
-| `authorization_policies[].grants[].apis`                   | list of strings                          | None    | Required; at least one unique existing API name.                                                                                                            |
-| `authorization_policies[].grants[].attributes`             | map of attribute name to list of strings | None    | JWT and API-key grants require at least one attribute. mTLS grants may omit this map or set `{}` to trust the CA alone. Each allowlist must contain unique nonempty values without surrounding whitespace. |
-| `authorization_policies[].grants[].attributes.<attribute>` | list of strings                          | None    | Attribute name must be valid and provided by the selected authenticator; at least one unique nonempty allowed value without surrounding whitespace.         |
+These fields live under `servers[].apis[].access[].authorization.grants[]`.
+A grant already belongs to one API on one server. Any matching grant allows
+access; every condition within that grant must succeed.
+
+| Field | Type | Default | Constraint |
+|-------|------|---------|------------|
+| `authenticator` | string | None | Required authenticator enabled by this entry, or the server's dedicated mTLS authenticator. |
+| `attributes` | map of attribute name to condition | None | JWT and key grants require at least one credential-derived condition. mTLS may use `{}` or omit the map to trust the client CA alone. |
+| `attributes.<attribute>` | list of strings or equality object | None | Attribute must be declared by this authenticator and come from a verified claim, key credential, or certificate SAN. |
+| `attributes.<attribute>.equals_attribute` | string | None | Name of another attribute declared by the same authenticator; cannot be combined with literal values. |
+
+A literal list requires at least one distinct nonempty value without controls
+or surrounding whitespace. JWT claims may match as scalar strings or as an
+allowed member of a list. Other sources use exact scalar matching.
+
+`equals_attribute` requires both original values to be nonempty scalar strings
+and exactly equal. Missing, empty, list-valued, and non-string operands fail.
+The right-hand source may be another verified attribute or a request header;
+a header must participate in this entry's `match.headers`. This binds a listed
+requested tenant to the particular verified tenant rather than checking two
+independent allowlists. Attribute values are never normalized or translated.
 
 ## Trusted CA
 
@@ -477,7 +510,7 @@ contain exactly one document and use only the fields below. An empty
 | Field                      | Type                            | Default | Constraint                                                                                                                                                                                         |
 |----------------------------|---------------------------------|---------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `credentials`              | list of objects                 | None    | Required; `[]` is valid.                                                                                                                                                                           |
-| `credentials[].key`        | string                          | None    | Required; unique nonempty HTTP header value without surrounding whitespace or control characters.                                                                                                  |
+| `credentials[].key`        | string                          | None    | Required; unique nonempty HTTP header value without commas, surrounding whitespace, or control characters.                                                                                                  |
 | `credentials[].attributes` | map of attribute name to string | Empty   | Attribute names must be declared as `credential: true` by the API-key authenticator. Values must be nonempty HTTP header values of at most 8191 bytes without surrounding whitespace, control characters, or semicolons. |
 
 See the [API-key guide](auth/api-key.md) for the Secret layout and client

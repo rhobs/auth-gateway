@@ -1,76 +1,94 @@
+---
 version: 1
-
 listener:
   port: 8080
-
 servers:
-  - hostname: auth.auth-gateway.test
-    apis: [metrics, upstream-health]
-  - hostname: query.auth-gateway.test
-    apis: [upstream-health]
-  - hostname: empty.auth-gateway.test
-  - hostname: tls.auth-gateway.test
-    tls_config:
-      secret: auth-gateway-tls
-    apis: [metrics, upstream-health]
-  - hostname: query-tls.auth-gateway.test
-    tls_config:
-      secret: query-gateway-tls
-    apis: [upstream-health]
-
-apis:
+- hostname: auth.auth-gateway.test
+  apis:
   - name: metrics
-    upstream:
-      address: httpbin
-      port: 8080
-    routes:
-      - methods: [POST]
-        path:
-          exact: /metrics/api/v1/receive
-        rewrite:
-          path: /anything/api/v1/receive
-      - methods: [GET]
-        path:
-          regex: '^/metrics/api/v1/(query|query_range)$'
-        rewrite:
-          regex:
-            pattern: '^/metrics/(.*)$'
-            substitution: '/anything/\1'
-      - methods: [GET]
-        path:
-          prefix: /logs/otlp/
-        rewrite:
-          prefix: /anything/otlp/
-      - methods: [GET, POST]
-        path:
-          prefix: /multi-method/
-        rewrite:
-          prefix: /anything/multi-method/
-      - methods: [GET]
-        path:
-          prefix: /routes/order/
-        rewrite:
-          prefix: /anything/first/
-      - methods: [GET]
-        path:
-          exact: /routes/order/specific
-        rewrite:
-          path: /anything/second
-      - methods: [POST]
-        path:
-          exact: /anything/no-rewrite
-
+    public: true
   - name: upstream-health
-    upstream:
-      address: httpbin
-      port: 8080
-    routes:
-      - methods: [GET]
-        path:
-          exact: /upstream-health
-        rewrite:
-          path: /anything
-
+    public: true
+- hostname: query.auth-gateway.test
+  apis:
+  - name: upstream-health
+    public: true
+- hostname: empty.auth-gateway.test
+  apis: []
+- hostname: tls.auth-gateway.test
+  tls_config:
+    secret: auth-gateway-tls
+  apis:
+  - name: metrics
+    public: true
+  - name: upstream-health
+    public: true
+- hostname: query-tls.auth-gateway.test
+  tls_config:
+    secret: query-gateway-tls
+  apis:
+  - name: upstream-health
+    public: true
+apis:
+- name: metrics
+  upstream:
+    address: httpbin
+    port: 8080
+  routes:
+  - methods:
+    - POST
+    path:
+      exact: "/metrics/api/v1/receive"
+    rewrite:
+      path: "/anything/api/v1/receive"
+  - methods:
+    - GET
+    path:
+      regex: "^/metrics/api/v1/(query|query_range)$"
+    rewrite:
+      regex:
+        pattern: "^/metrics/(.*)$"
+        substitution: "/anything/\\1"
+  - methods:
+    - GET
+    path:
+      prefix: "/logs/otlp/"
+    rewrite:
+      prefix: "/anything/otlp/"
+  - methods:
+    - GET
+    - POST
+    path:
+      prefix: "/multi-method/"
+    rewrite:
+      prefix: "/anything/multi-method/"
+  - methods:
+    - GET
+    path:
+      prefix: "/routes/order/"
+    rewrite:
+      prefix: "/anything/first/"
+  - methods:
+    - GET
+    path:
+      exact: "/routes/order/specific"
+    rewrite:
+      path: "/anything/second"
+  - methods:
+    - POST
+    path:
+      exact: "/anything/no-rewrite"
+- name: upstream-health
+  upstream:
+    address: httpbin
+    port: 8080
+  routes:
+  - methods:
+    - GET
+    path:
+      exact: "/upstream-health"
+    rewrite:
+      path: "/anything"
 kubernetes:
   name: auth-gateway
   namespace: auth-gateway-e2e

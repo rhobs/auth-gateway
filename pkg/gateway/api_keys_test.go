@@ -10,12 +10,9 @@ import (
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
-	matching "github.com/envoyproxy/go-control-plane/envoy/extensions/common/matching/v3"
+
 	apikey "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/api_key_auth/v3"
-	headermutation "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_mutation/v3"
-	headertometadata "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_to_metadata/v3"
-	jwt "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/jwt_authn/v3"
-	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+
 	matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
 	"go.yaml.in/yaml/v3"
@@ -47,100 +44,6 @@ func TestLoadAPIKeyCredentials(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := LoadAPIKeyCredentials(strings.NewReader(test.yaml)); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("LoadAPIKeyCredentials error = %v, want %q", err, test.want)
-			}
-		})
-	}
-}
-
-func TestLoadAPIKeyAuthenticatorUsesDefaultHeader(t *testing.T) {
-	input := `version: 1
-authenticators:
-  - name: partner-key
-    api_key:
-      secret: shared-keys
-    attributes:
-      tenant_id: {credential: true}
-apis:
-  - name: ingest
-    upstream:
-      address: httpbin
-      port: 8080
-    routes:
-      - methods: [POST]
-        path:
-          exact: /ingest
-servers:
-  - hostname: key.gateway.test
-    authentication:
-      any_of: [partner-key]
-    apis: [ingest]
-`
-	c, err := Load(strings.NewReader(input))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if key := c.Authenticators[0].APIKey; key == nil || key.Secret != "shared-keys" || key.Header != "X-API-Key" ||
-		!slices.Equal(credentialAttributeNamesAuthenticator(c.Authenticators[0]), []string{"tenant_id"}) {
-		t.Fatalf("loaded API-key authenticator = %#v", key)
-	}
-	unknownField := `version: 1
-authenticators:
-  - name: partner-key
-    api_key:
-      secret: shared-keys
-      credentials: []
-`
-	if _, err := Load(strings.NewReader(unknownField)); err == nil || !strings.Contains(err.Error(), "field credentials not found") {
-		t.Fatalf("inline credentials were accepted: %v", err)
-	}
-}
-
-func TestValidateAPIKeyConfiguration(t *testing.T) {
-	tests := []struct {
-		name string
-		want string
-		edit func(*gatewayapi.Config)
-	}{
-		{name: "missing Secret name", want: "authenticators[1].api_key.secret", edit: func(c *gatewayapi.Config) { c.Authenticators[1].APIKey.Secret = "" }},
-		{name: "invalid Secret name", want: "authenticators[1].api_key.secret", edit: func(c *gatewayapi.Config) { c.Authenticators[1].APIKey.Secret = "Bad_Name" }},
-		{name: "reserved header", want: "authenticators[1].api_key.header", edit: func(c *gatewayapi.Config) { c.Authenticators[1].APIKey.Header = "Authorization" }},
-		{name: "internal header", want: "authenticators[1].api_key.header", edit: func(c *gatewayapi.Config) { c.Authenticators[1].APIKey.Header = "X-Auth-Gateway-Identity" }},
-		{name: "underscore header", want: "authenticators[1].api_key.header", edit: func(c *gatewayapi.Config) { c.Authenticators[1].APIKey.Header = "X_Partner_Key" }},
-		{name: "invalid attribute", want: "authenticators[1].attributes", edit: func(c *gatewayapi.Config) {
-			source := c.Authenticators[1].Attributes["tenant_id"]
-			delete(c.Authenticators[1].Attributes, "tenant_id")
-			c.Authenticators[1].Attributes["Tenant.ID"] = source
-		}},
-		{name: "undeclared grant attribute", want: "authorization_policies[1].grants[0].attributes references", edit: func(c *gatewayapi.Config) {
-			c.AuthorizationPolicies[1].Grants[0].Attributes["undeclared"] = []string{"value"}
-		}},
-		{name: "credential header as route output", want: "apis[0].routes[0].processing.request_headers[0].name", edit: func(c *gatewayapi.Config) {
-			c.APIs[0].Routes[0].Processing.RequestHeaders[0].Name = "x-partner-key"
-		}},
-		{name: "second key authenticator", want: "only one API-key authenticator", edit: func(c *gatewayapi.Config) {
-			c.Authenticators = append(c.Authenticators, gatewayapi.Authenticator{Name: "other-key", APIKey: &gatewayapi.APIKeyAuthenticator{Secret: "other-keys"}})
-		}},
-		{name: "ambiguous authenticator type", want: "authenticators[0] must set exactly one", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[0].APIKey = &gatewayapi.APIKeyAuthenticator{Secret: "shared-keys"}
-		}},
-		{name: "two JWTs in all_of", want: "servers[3].authentication.all_of", edit: func(c *gatewayapi.Config) {
-			copy := *c.Authenticators[0].JWT
-			copy.Issuer = "https://issuer-two.jwt.test"
-			c.Authenticators = append(c.Authenticators, gatewayapi.Authenticator{Name: "issuer-two", JWT: &copy})
-			c.Servers[3].Authentication.AllOf = []string{"issuer-one", "issuer-two", "partner-key"}
-		}},
-		{name: "duplicate issuer on a shared permissive chain", want: "same issuer", edit: func(c *gatewayapi.Config) {
-			copy := *c.Authenticators[0].JWT
-			c.Authenticators = append(c.Authenticators, gatewayapi.Authenticator{Name: "issuer-two", JWT: &copy})
-			c.Servers[1].Authentication.AnyOf = []string{"partner-key", "issuer-two"}
-		}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			c := loadConfigCase(t, "api-key-auth")
-			test.edit(&c)
-			if err := Validate(c); err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("Validate error = %v, want %q", err, test.want)
 			}
 		})
 	}
@@ -213,130 +116,16 @@ func decodeAPIKeySecret(t *testing.T, data []byte) *apikey.ApiKeyAuth {
 	if extension.Name != apiKeyFilterName {
 		t.Fatalf("ECDS resource name = %q", extension.Name)
 	}
-	var wrapped matching.ExtensionWithMatcher
-	if err := extension.TypedConfig.UnmarshalTo(&wrapped); err != nil {
-		t.Fatal(err)
-	}
-	if wrapped.ExtensionConfig == nil || wrapped.ExtensionConfig.Name != apiKeyFilterName {
-		t.Fatalf("wrapped API-key config = %#v", wrapped.ExtensionConfig)
-	}
 	var native apikey.ApiKeyAuth
-	if err := wrapped.ExtensionConfig.TypedConfig.UnmarshalTo(&native); err != nil {
+	if err := extension.TypedConfig.UnmarshalTo(&native); err != nil {
 		t.Fatal(err)
 	}
 	return &native
 }
 
-func TestAPIKeyPipelineUsesFileECDSAndHostScopedFilters(t *testing.T) {
-	c := loadConfigCase(t, "api-key-auth")
-	files, err := Generate(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
-	wantOrder := []string{
-		jwtAuthnFilterName, apiKeyFilterName, headerToMetadataFilterName, authenticationFilterName,
-		attributeInitializationFilterName(1), attributeInitializationFilterName(2),
-		authorizationFilterName, requiredHeaderFilterName, credentialCleanupFilterName,
-		headerMutationFilterName, routerFilterName,
-	}
-	got := httpFilterNames(manager)
-	start := slices.Index(got, jwtAuthnFilterName)
-	if start < 0 {
-		t.Fatal("JWT authentication filter is missing")
-	}
-	if !slices.Equal(got[start:], wantOrder) {
-		t.Fatalf("HTTP authentication filter order = %v, want %v", got[start:], wantOrder)
-	}
-	keyFilter := apiKeyHTTPFilter(t, manager, apiKeyFilterName)
-	discovery := keyFilter.GetConfigDiscovery()
-	if !keyFilter.Disabled || discovery == nil || keyFilter.GetTypedConfig() != nil ||
-		discovery.GetConfigSource().GetPathConfigSource().GetPath() != APIKeyECDSPath ||
-		discovery.GetConfigSource().GetPathConfigSource().GetWatchedDirectory().GetPath() != APIKeyConfigDirectory ||
-		!slices.Equal(discovery.GetTypeUrls(), []string{"envoy.extensions.common.matching.v3.ExtensionWithMatcher"}) {
-		t.Fatalf("API-key ECDS filter = %#v", keyFilter)
-	}
-	metadataFilter := apiKeyHTTPFilter(t, manager, headerToMetadataFilterName)
-	var metadata headertometadata.Config
-	if err := metadataFilter.GetTypedConfig().UnmarshalTo(&metadata); err != nil {
-		t.Fatal(err)
-	}
-	rules := metadata.GetRequestRules()
-	if len(rules) != 3 || rules[0].Header != apiKeyClientHeader || rules[0].Remove ||
-		rules[0].GetOnHeaderPresent().GetMetadataNamespace() != apiKeyMetadataNamespace ||
-		rules[0].GetOnHeaderPresent().GetKey() != apiKeyMetadataKey ||
-		rules[0].GetOnHeaderPresent().GetValue() != "verified" ||
-		rules[0].GetOnHeaderPresent().GetType() != headertometadata.Config_STRING ||
-		rules[0].GetOnHeaderPresent().GetEncode() != headertometadata.Config_NONE {
-		t.Fatalf("API-key identity extraction = %#v", rules)
-	}
-	for index, attribute := range []string{"tenant_id", "writer_id"} {
-		rule := rules[index+1]
-		value := rule.GetOnHeaderPresent()
-		if rule.Header != apiKeyClientHeader || rule.Remove != (index == 1) ||
-			value.GetMetadataNamespace() != apiKeyMetadataNamespace ||
-			value.GetKey() != apiKeyAttributeMetadataKey(attribute) ||
-			value.GetRegexValueRewrite().GetPattern().GetRegex() != `^(?:(?:[^;]*;)*`+attribute+`=([^;]*)(?:;[^;]*)*|.*)$` ||
-			value.GetRegexValueRewrite().GetSubstitution() != `\1` {
-			t.Fatalf("API-key attribute %q extraction = %#v", attribute, rule)
-		}
-	}
-	cleanupFilter := apiKeyHTTPFilter(t, manager, credentialCleanupFilterName)
-	if cleanupFilter.Disabled {
-		t.Fatal("credential removal was disabled on public routes")
-	}
-	var cleanup headermutation.HeaderMutation
-	if err := cleanupFilter.GetTypedConfig().UnmarshalTo(&cleanup); err != nil {
-		t.Fatal(err)
-	}
-	removed := make(map[string]bool)
-	for _, mutation := range cleanup.GetMutations().GetRequestMutations() {
-		removed[mutation.GetRemove()] = true
-	}
-	for _, name := range []string{"authorization", "x-partner-key", apiKeyClientHeader, jwtVerifiedHeaderName("issuer-one")} {
-		if !removed[name] {
-			t.Fatalf("credential cleanup does not remove %q: %v", name, removed)
-		}
-	}
-
-	hosts := manager.GetRouteConfig().GetVirtualHosts()
-	if len(hosts) != 3 || hosts[0].TypedPerFilterConfig[apiKeyFilterName] != nil ||
-		hosts[0].TypedPerFilterConfig[authenticationFilterName] != nil {
-		t.Fatalf("public host selected a credential filter: %#v", hosts[0].TypedPerFilterConfig)
-	}
-	keyRoute := apiKeyPerHostMatcher(t, hosts[1])
-	if keyRoute.XdsMatcher != nil || hosts[1].TypedPerFilterConfig[jwtAuthnFilterName] != nil {
-		t.Fatalf("key-only host has unexpected JWT or skip rules: %#v", hosts[1].TypedPerFilterConfig)
-	}
-	mixedRoute := apiKeyPerHostMatcher(t, hosts[2])
-	matchers := mixedRoute.GetXdsMatcher().GetMatcherList().GetMatchers()
-	if len(matchers) != 1 || matchers[0].GetPredicate().GetSinglePredicate().GetInput().GetName() != "envoy.matching.inputs.request_headers" {
-		t.Fatalf("JWT-first API-key skip matcher = %#v", mixedRoute.GetXdsMatcher())
-	}
-	var marker jwt.JwtAuthentication
-	if err := apiKeyHTTPFilter(t, manager, jwtAuthnFilterName).GetTypedConfig().UnmarshalTo(&marker); err != nil {
-		t.Fatal(err)
-	}
-	if marker.RequirementMap[serverJWTRequirementName(2)].GetAllowMissingOrFailed() == nil ||
-		len(marker.Providers["issuer-one"].ClaimToHeaders) != 1 ||
-		marker.Providers["issuer-one"].ClaimToHeaders[0].HeaderName != jwtVerifiedHeaderName("issuer-one") {
-		t.Fatalf("mixed any_of JWT marker and requirement = %#v", &marker)
-	}
-	bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
-	tlsManager := decodeHTTPManager(t, bootstrap.StaticResources.Listeners[0].FilterChains[1])
-	var strict jwt.JwtAuthentication
-	if err := apiKeyHTTPFilter(t, tlsManager, jwtAuthnFilterName).GetTypedConfig().UnmarshalTo(&strict); err != nil {
-		t.Fatal(err)
-	}
-	if strict.RequirementMap[serverJWTRequirementName(3)].GetProviderName() != "issuer-one" ||
-		apiKeyPerHostMatcher(t, tlsManager.GetRouteConfig().GetVirtualHosts()[0]).XdsMatcher != nil {
-		t.Fatal("all_of server did not require JWT and API key without a skip matcher")
-	}
-}
-
 func TestPublicOnlyChainRemovesConfiguredCredentials(t *testing.T) {
 	c := loadConfigCase(t, "api-key-auth")
-	c.Servers = []gatewayapi.Server{c.Servers[0], c.Servers[3]}
+	c.Servers = []gatewayapi.Server{c.Servers[0]}
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)
@@ -346,37 +135,6 @@ func TestPublicOnlyChainRemovesConfiguredCredentials(t *testing.T) {
 	if got, want := httpFilterNames(manager), []string{requestControlsFilterName, credentialCleanupFilterName, routerFilterName}; !slices.Equal(got, want) {
 		t.Fatalf("public-only HTTP filter order = %v, want %v", got, want)
 	}
-}
-
-func apiKeyHTTPFilter(t *testing.T, manager *hcm.HttpConnectionManager, name string) *hcm.HttpFilter {
-	t.Helper()
-	for _, filter := range manager.HttpFilters {
-		if filter.Name == name {
-			return filter
-		}
-	}
-	t.Fatalf("HTTP filter %q is missing", name)
-	return nil
-}
-
-func apiKeyPerHostMatcher(t *testing.T, host *route.VirtualHost) *matching.ExtensionWithMatcherPerRoute {
-	t.Helper()
-	packed := host.TypedPerFilterConfig[apiKeyFilterName]
-	if packed == nil {
-		t.Fatalf("host %q did not enable the API-key filter", host.Name)
-	}
-	var enabled route.FilterConfig
-	if err := packed.UnmarshalTo(&enabled); err != nil {
-		t.Fatal(err)
-	}
-	if enabled.Config == nil || enabled.Disabled {
-		t.Fatalf("host %q API-key enable config = %#v", host.Name, &enabled)
-	}
-	var perRoute matching.ExtensionWithMatcherPerRoute
-	if err := enabled.Config.UnmarshalTo(&perRoute); err != nil {
-		t.Fatal(err)
-	}
-	return &perRoute
 }
 
 func TestAPIKeyCredentialAttributeByteLimit(t *testing.T) {
@@ -452,30 +210,6 @@ func apiKeyAttributesConfig(t *testing.T, count int) gatewayapi.Config {
 		c.APIs[0].Routes[0].Processing.RequestHeaders = c.APIs[0].Routes[0].Processing.RequestHeaders[:count]
 	}
 	return c
-}
-
-func TestHTTPManagerPreservesServerHostPairing(t *testing.T) {
-	c := resolveTestConfig(t, loadConfigCase(t, "api-key-auth"))
-	publicHost := &route.VirtualHost{Name: "unmatched.public.gateway.test"}
-	keyHost := &route.VirtualHost{
-		Name: "key.gateway.test",
-		TypedPerFilterConfig: map[string]*anypb.Any{
-			authorizationFilterName: &anypb.Any{},
-		},
-	}
-
-	if _, err := httpManager(c, []indexedVirtualHost{
-		{serverIndex: 0, host: publicHost},
-		{serverIndex: 1, host: keyHost},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if publicHost.TypedPerFilterConfig != nil {
-		t.Fatalf("unmatched public host received per-filter config: %#v", publicHost.TypedPerFilterConfig)
-	}
-	if keyHost.TypedPerFilterConfig[attributeInitializationFilterName(1)] == nil {
-		t.Fatal("API-key attribute initialization was not attached to its server host")
-	}
 }
 
 func metadataMatcherPath(segments []*matcher.MetadataMatcher_PathSegment) []string {
@@ -561,22 +295,33 @@ func TestAPIKeySecretRejectsInvalidCredentials(t *testing.T) {
 func TestFileBasedAPIKeyDoesNotNeedKubernetesSecret(t *testing.T) {
 	input := `version: 1
 authenticators:
-  - name: local-key
-    api_key: {}
+- name: local-key
+  api_key: {}
+  attributes:
+    tenant_id: {credential: true}
 apis:
-  - name: ingest
-    upstream:
-      address: httpbin
-      port: 8080
-    routes:
-      - methods: [POST]
-        path:
-          exact: /ingest
+- name: ingest
+  upstream:
+    address: httpbin
+    port: 8080
+  routes:
+  - methods:
+    - POST
+    path:
+      exact: "/ingest"
 servers:
-  - hostname: key.gateway.test
-    authentication:
-      any_of: [local-key]
-    apis: [ingest]
+- hostname: key.local.test
+  apis:
+  - name: ingest
+    access:
+    - name: writers
+      authentication:
+        api_key: {authenticator: local-key}
+      authorization:
+        grants:
+        - authenticator: local-key
+          attributes:
+            tenant_id: [client-a]
 `
 	c, err := Load(strings.NewReader(input))
 	if err != nil {
@@ -588,12 +333,12 @@ servers:
 	if _, err := Generate(c); err != nil {
 		t.Fatalf("generate Envoy files: %v", err)
 	}
-	file, err := GenerateAPIKeyECDS(c.Authenticators[0], []gatewayapi.APIKeyCredential{{Key: "example-key"}})
+	file, err := GenerateAPIKeyECDS(c.Authenticators[0], []gatewayapi.APIKeyCredential{{Key: "example-key", Attributes: map[string]string{"tenant_id": "client-a"}}})
 	if err != nil {
 		t.Fatalf("generate API-key ECDS file: %v", err)
 	}
-	if credentials := decodeAPIKeySecret(t, file).Credentials; len(credentials) != 1 || credentials[0].Client != "api-key" {
-		t.Fatalf("API-key client without attributes = %#v", credentials)
+	if credentials := decodeAPIKeySecret(t, file).Credentials; len(credentials) != 1 || credentials[0].Client != "tenant_id=client-a" {
+		t.Fatalf("file-based API-key credential = %#v", credentials)
 	}
 	if _, err := APIKeySecret("gateway-test", c.Authenticators[0], nil); err == nil || !strings.Contains(err.Error(), "authenticator.api_key.secret") {
 		t.Fatalf("Secret without a configured name: %v", err)
@@ -609,5 +354,29 @@ func TestAPIKeyDefaultsDoNotMutateInput(t *testing.T) {
 	}
 	if c.Authenticators[1].APIKey.Header != "" || !slices.Equal(credentialAttributeNamesAuthenticator(c.Authenticators[1]), attributes) {
 		t.Fatalf("generation mutated the API-key authenticator: %#v", c.Authenticators[1].APIKey)
+	}
+}
+
+func TestAPIKeyRouteForwardsVerifiedClientMetadata(t *testing.T) {
+	c := loadConfigCase(t, "access-control")
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
+	selected := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].Routes, "api-0-write-route-0-method-0-access-1-match-0")
+	var wrapper route.FilterConfig
+	if err := selected.TypedPerFilterConfig[apiKeyFilterName].UnmarshalTo(&wrapper); err != nil {
+		t.Fatal(err)
+	}
+	var config apikey.ApiKeyAuthPerRoute
+	if err := wrapper.Config.UnmarshalTo(&config); err != nil {
+		t.Fatal(err)
+	}
+	if config.GetForwarding().GetHeader() != "x-auth-gateway-api-key-client" || !config.GetForwarding().GetHideCredentials() {
+		t.Fatalf("route must forward verified client metadata and hide the key: %v", &config)
+	}
+	if len(config.Credentials) != 0 || len(config.KeySources) != 0 {
+		t.Fatal("route must use the reloadable ECDS credentials and configured source")
 	}
 }

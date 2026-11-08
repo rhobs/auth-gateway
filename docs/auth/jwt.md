@@ -2,12 +2,12 @@
 
 ## Authentication
 
-Envoy reads `Authorization: Bearer <token>` and verifies its signature
-against the configured HTTPS JSON Web Key Set (JWKS). It checks `iss`,
-requires a valid `exp`, and enforces `nbf` when present. Set `audiences`
-to require a matching `aud` value; omit it to skip that check. Define
-one named authenticator per issuer. Declare attributes beside `jwt` to read
-verified claims or incoming request headers:
+Envoy reads one `Authorization: Bearer <token>` header and verifies its
+signature against the configured HTTPS JSON Web Key Set (JWKS). It checks
+`iss`, requires a valid `exp`, and enforces `nbf` when present. Set `audiences`
+to require a matching `aud`; omit it to skip that check.
+
+Define a named authenticator and declare original attribute sources:
 
 ```yaml
 authenticators:
@@ -19,47 +19,43 @@ authenticators:
       audiences: [observability-ingestion]
     attributes:
       tenant_id: {claim_path: [organization, id]}
+      role: {claim_path: [role]}
       upstream_tenant: {claim_path: [organization, upstream_tenant]}
       requested_tenant: {header: X-Tenant}
 ```
 
-JWKS clusters use IPv4-only DNS resolution by default. For IPv6-only egress,
-set `dns_lookup_family: V6_ONLY` under `jwks`. Other supported values are
-`AUTO`, `V4_PREFERRED`, and `ALL`.
+`claim_path` follows literal object keys, including keys containing dots.
+Headers retain their original values until authorization completes. JWKS
+clusters default to IPv4-only DNS; `V6_ONLY`, `AUTO`, `V4_PREFERRED`, and `ALL`
+are also supported in `jwks.dns_lookup_family`.
 
-`claim_path` follows literal object keys in the token payload. Here,
-`tenant_id` comes from `organization.id`, while `requested_tenant` uses the
-original `X-Tenant` request header. Envoy keeps claims from different
-authenticators separate. A missing or empty `X-Tenant` leaves
-`requested_tenant` unset. Select the authenticator on a server as shown below.
+## Tenant access
 
-## Authorization
-
-A grant ties a named JWT authenticator to an API and allowed original
-attribute values. For example, this server requires a valid token from
-`internal-jwt`, the listed tenant claim, and the listed request header:
+This shared write entry accepts two requested tenants. Each token must prove
+access to the particular tenant in its header and have the writer role:
 
 ```yaml
-authorization_policies:
-  - name: metrics-writers
-    grants:
-      - authenticator: internal-jwt
-        apis: [metrics-write]
-        attributes:
-          tenant_id: [client-123]
-          requested_tenant: [client-123]
-
 servers:
   - hostname: write.example.com
-    authentication:
-      any_of: [internal-jwt]
-    authorization:
-      any_of: [metrics-writers]
-    apis: [metrics-write]
+    apis:
+      - name: metrics-write
+        access:
+          - name: internal-writers
+            match:
+              headers:
+                X-Tenant: {in: [client-123, client-456]}
+            authentication:
+              jwt: {providers: [internal-jwt]}
+            authorization:
+              grants:
+                - authenticator: internal-jwt
+                  attributes:
+                    tenant_id: {equals_attribute: requested_tenant}
+                    role: [writer]
 ```
 
 Define `metrics-write` under `apis` as in the [full example](../../config.example.yaml).
-The client sends both the bearer token and header:
+A client sends its bearer token and requested tenant:
 
 ```http
 POST /metrics/api/v1/receive HTTP/1.1
@@ -68,18 +64,28 @@ Authorization: Bearer <token>
 X-Tenant: client-123
 ```
 
-Every attribute listed in the grant must match; a missing or unlisted value
-is denied. The header is caller-supplied, and the grant checks its original
-value alongside the verified claim. A route can use `requested_tenant` in
-`processing.request_headers`, and an API can use it in `metrics.labels`.
-These outputs use source values directly. The original `X-Tenant` header also
-reaches the backend unless it is a managed output header.
+Equality requires nonempty scalar strings. A token for `client-123` cannot
+select `client-456` even though both headers are listed. A concrete entry can
+instead use `X-Tenant: {exact: client-123}` and a literal grant such as
+`tenant_id: [organization-789]` when that organization is explicitly permitted
+to write for the requested tenant.
 
-When an upstream needs a different tenant value, include it as an additional
-claim. For example, a token containing
-`{"organization": {"id": "client-123", "upstream_tenant": "team-a"}}` supplies
-both attributes declared above. Keep the grant on `tenant_id` and select
-`upstream_tenant` in the route's `processing.request_headers`:
+## Multiple providers
+
+A JWT entry can set `providers: [internal-jwt, external-jwt]` to trust either
+named provider. Define both under `authenticators` and give each its own
+`authorization.grants` entry. Issuers must be distinct within an entry.
+Provider-specific claims, tenant checks, and role values stay separate; one
+provider's token cannot borrow another provider's grant. The selected API and
+tenant determine which providers are trusted before token validation.
+
+## Forwarding
+
+Use `from_attribute: requested_tenant` to forward the authorized original
+request tenant as `X-Scope-OrgID`. When an upstream needs another value,
+declare another verified claim source. For example,
+`{"organization":{"id":"client-123","upstream_tenant":"team-a"}}` supplies
+the additional attribute declared above:
 
 ```yaml
 request_headers:
@@ -87,7 +93,7 @@ request_headers:
     from_attribute: upstream_tenant
 ```
 
-The gateway sends `X-Scope-OrgID: team-a` directly from the verified claim.
-An API can also bind a metric label to `upstream_tenant`. Changing the issuer,
-JWKS settings, attribute sources, header or metric bindings, or grants requires
-regenerating the configuration and rolling out the Deployment.
+The gateway sends the source value `team-a` unchanged, replacing any caller
+value. Missing required output values cause a denial before the backend.
+Changing issuers, JWKS settings, access, attribute sources, or output mappings
+requires regeneration and an explicit Deployment rollout.

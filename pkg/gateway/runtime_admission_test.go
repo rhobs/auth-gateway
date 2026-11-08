@@ -139,39 +139,62 @@ func runtimeAdmissionConfig(t *testing.T, port uint32) gatewayapi.Config {
 	t.Helper()
 	input := `version: 1
 servers:
-  - hostname: admission.runtime.test
-    apis: [loki, thanos, disabled]
-apis:
+- hostname: admission.runtime.test
+  apis:
   - name: loki
-    admission_control:
-      enabled: true
-      sampling_window: 60s
-      rps_threshold: 0
-      max_rejection_probability: 80
-    upstream: {address: host.docker.internal, port: 8080}
-    routes:
-      - methods: [POST]
-        path: {exact: /loki/0}
-      - methods: [POST]
-        path: {exact: /loki/1}
+    public: true
   - name: thanos
-    admission_control:
-      enabled: true
-      sampling_window: 60s
-      rps_threshold: 0
-      max_rejection_probability: 80
-    upstream: {address: host.docker.internal, port: 8080}
-    routes:
-      - methods: [POST]
-        path: {exact: /thanos/0}
-      - methods: [POST]
-        path: {exact: /thanos/1}
+    public: true
   - name: disabled
-    admission_control: {enabled: false}
-    upstream: {address: host.docker.internal, port: 8080}
-    routes:
-      - methods: [POST]
-        path: {exact: /disabled}
+    public: true
+apis:
+- name: loki
+  admission_control:
+    enabled: true
+    sampling_window: 60s
+    rps_threshold: 0
+    max_rejection_probability: 80
+  upstream:
+    address: host.docker.internal
+    port: 8080
+  routes:
+  - methods:
+    - POST
+    path:
+      exact: "/loki/0"
+  - methods:
+    - POST
+    path:
+      exact: "/loki/1"
+- name: thanos
+  admission_control:
+    enabled: true
+    sampling_window: 60s
+    rps_threshold: 0
+    max_rejection_probability: 80
+  upstream:
+    address: host.docker.internal
+    port: 8080
+  routes:
+  - methods:
+    - POST
+    path:
+      exact: "/thanos/0"
+  - methods:
+    - POST
+    path:
+      exact: "/thanos/1"
+- name: disabled
+  admission_control:
+    enabled: false
+  upstream:
+    address: host.docker.internal
+    port: 8080
+  routes:
+  - methods:
+    - POST
+    path:
+      exact: "/disabled"
 `
 	c, err := Load(strings.NewReader(input))
 	if err != nil {

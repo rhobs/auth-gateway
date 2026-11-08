@@ -6,7 +6,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
-	"slices"
+
 	"strings"
 	"testing"
 
@@ -74,7 +74,7 @@ func TestGenerateBuildsNamedAPIClustersAndRoutes(t *testing.T) {
 			Rewrite: &gatewayapi.PathRewrite{Path: "/otlp/v1/logs"},
 		}},
 	})
-	config.Servers[0].APIs = append(config.Servers[0].APIs, "logs")
+	config.Servers[0].APIs = append(config.Servers[0].APIs, gatewayapi.APIBinding{Name: "logs", Public: true})
 
 	files, err := Generate(config)
 	if err != nil {
@@ -155,8 +155,8 @@ func TestGenerateBuildsHTTPAndSNISelectedHTTPSChains(t *testing.T) {
 		PrivateKey:  "/etc/gateway-certs/tls.key",
 	}
 	config.Servers = []gatewayapi.Server{
-		{Hostname: "auth.example.com", APIs: []string{"metrics-query"}},
-		{Hostname: "mts.auth.example.com", TLSConfig: tlsConfig, APIs: []string{"metrics-query"}},
+		{Hostname: "auth.example.com", APIs: []gatewayapi.APIBinding{{Name: "metrics-query", Public: true}}},
+		{Hostname: "mts.auth.example.com", TLSConfig: tlsConfig, APIs: []gatewayapi.APIBinding{{Name: "metrics-query", Public: true}}},
 	}
 
 	files, err := Generate(config)
@@ -275,11 +275,11 @@ func TestGenerateScopesAPIExposureToServers(t *testing.T) {
 		}}},
 	)
 	config.Servers = []gatewayapi.Server{
-		{Hostname: "write.example.com", APIs: []string{"metrics"}},
-		{Hostname: "query.example.com", APIs: []string{"query"}},
+		{Hostname: "write.example.com", APIs: []gatewayapi.APIBinding{{Name: "metrics", Public: true}}},
+		{Hostname: "query.example.com", APIs: []gatewayapi.APIBinding{{Name: "query", Public: true}}},
 		{Hostname: "empty.example.com"},
-		{Hostname: "tls-write.example.com", TLSConfig: &gatewayapi.ServerTLS{Secret: "shared-tls"}, APIs: []string{"metrics"}},
-		{Hostname: "tls-query.example.com", TLSConfig: &gatewayapi.ServerTLS{Secret: "shared-tls"}, APIs: []string{"query"}},
+		{Hostname: "tls-write.example.com", TLSConfig: &gatewayapi.ServerTLS{Secret: "shared-tls"}, APIs: []gatewayapi.APIBinding{{Name: "metrics", Public: true}}},
+		{Hostname: "tls-query.example.com", TLSConfig: &gatewayapi.ServerTLS{Secret: "shared-tls"}, APIs: []gatewayapi.APIBinding{{Name: "query", Public: true}}},
 	}
 	files, err := Generate(config)
 	if err != nil {
@@ -368,7 +368,10 @@ func TestGenerateUsesAPIBindingOrder(t *testing.T) {
 		Routes: []gatewayapi.Route{{Methods: []string{"POST"}, Path: gatewayapi.PathMatch{Prefix: "/metrics/"}}},
 	})
 	for _, order := range [][]string{{"broad", "metrics"}, {"metrics", "broad"}} {
-		config.Servers[0].APIs = order
+		config.Servers[0].APIs = nil
+		for _, name := range order {
+			config.Servers[0].APIs = append(config.Servers[0].APIs, gatewayapi.APIBinding{Name: name, Public: true})
+		}
 		files, err := Generate(config)
 		if err != nil {
 			t.Fatal(err)
@@ -421,7 +424,7 @@ func TestGeneratedReferenceFiles(t *testing.T) {
 
 func TestResolvedJWTRequirementsFollowSelectionOrder(t *testing.T) {
 	c := loadConfigCase(t, "jwt-auth-multiple-issuers")
-	c.Servers[0].Authentication.AnyOf = []string{"issuer-two", "issuer-one"}
+	c.Servers[0].APIs[0].Access[0].Authentication.JWT.Providers = []string{"issuer-two", "issuer-one"}
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)
@@ -436,7 +439,7 @@ func TestResolvedJWTRequirementsFollowSelectionOrder(t *testing.T) {
 			break
 		}
 	}
-	requirements := authentication.RequirementMap["server-0"].GetRequiresAny().GetRequirements()
+	requirements := authentication.RequirementMap["server-0-api-0-access-0"].GetRequiresAny().GetRequirements()
 	if len(requirements) != 2 || requirements[0].GetProviderName() != "issuer-two" || requirements[1].GetProviderName() != "issuer-one" {
 		t.Fatalf("JWT requirements = %v, want issuer-two followed by issuer-one", requirements)
 	}
@@ -453,12 +456,14 @@ func TestResolvedReferencesDoNotAliasInput(t *testing.T) {
 			c.Authenticators[0].Attributes["tenant_id"] = gatewayapi.AttributeSource{ClaimPath: []string{"changed"}}
 		}},
 		{name: "grant allowlist", edit: func(c *gatewayapi.Config) {
-			c.AuthorizationPolicies[0].Grants[0].Attributes["tenant_id"][0] = "changed"
+			c.Servers[2].APIs[0].Access[0].Authorization.Grants[0].Attributes["tenant_id"].Values[0] = "changed"
 		}},
 		{name: "server", edit: func(c *gatewayapi.Config) { c.Servers[2].Hostname = "changed.gateway.test" }},
-		{name: "API binding", edit: func(c *gatewayapi.Config) { c.Servers[2].APIs[0] = "public" }},
-		{name: "authenticator binding", edit: func(c *gatewayapi.Config) { slices.Reverse(c.Servers[2].Authentication.AnyOf) }},
-		{name: "policy binding", edit: func(c *gatewayapi.Config) { slices.Reverse(c.Servers[2].Authorization.AnyOf) }},
+		{name: "API binding", edit: func(c *gatewayapi.Config) { c.Servers[2].APIs[0].Name = "public" }},
+		{name: "authenticator binding", edit: func(c *gatewayapi.Config) { c.Servers[2].APIs[0].Access[0].Authentication.JWT.Providers[0] = "changed" }},
+		{name: "policy binding", edit: func(c *gatewayapi.Config) {
+			c.Servers[2].APIs[0].Access[0].Authorization.Grants[0].Authenticator = "changed"
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			c := loadConfigCase(t, "api-key-auth")

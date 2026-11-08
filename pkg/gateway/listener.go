@@ -9,6 +9,7 @@ import (
 	listener "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+	matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
@@ -148,7 +149,7 @@ func httpManager(c resolvedConfig, hosts []indexedVirtualHost) (*hcm.HttpConnect
 		return nil, err
 	}
 	virtualHosts := routeVirtualHosts(hosts)
-	protected := hasProtectedHosts(hosts)
+	protected := hasProtectedHosts(c, hosts)
 	filters, err := httpFilters(c, hosts, protected)
 	if err != nil {
 		return nil, err
@@ -187,28 +188,20 @@ func httpManager(c resolvedConfig, hosts []indexedVirtualHost) (*hcm.HttpConnect
 		AccessLog:   accessLogs,
 		HttpFilters: filters,
 	}
-	for _, host := range hosts {
-		if c.servers[host.serverIndex].usesMTLS() {
-			manager.LocalReplyConfig = mtlsMissingCredentialReply()
-			break
-		}
-	}
+	manager.LocalReplyConfig = requestValidationReply()
 	return manager, nil
 }
 
-func mtlsMissingCredentialReply() *hcm.LocalReplyConfig {
+func requestValidationReply() *hcm.LocalReplyConfig {
 	status := &accesslog.AccessLogFilter{FilterSpecifier: &accesslog.AccessLogFilter_StatusCodeFilter{StatusCodeFilter: &accesslog.StatusCodeFilter{
 		Comparison: &accesslog.ComparisonFilter{Op: accesslog.ComparisonFilter_EQ, Value: &core.RuntimeUInt32{DefaultValue: 403}},
 	}}}
 	pending := &accesslog.AccessLogFilter{FilterSpecifier: &accesslog.AccessLogFilter_HeaderFilter{HeaderFilter: &accesslog.HeaderFilter{
-		Header: mtlsHeaderPrincipal(mtlsPendingHeaderName, "true").GetHeader(),
+		Header: &route.HeaderMatcher{Name: requestValidationPendingHeaderName, HeaderMatchSpecifier: &route.HeaderMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: "true"}}}},
 	}}}
 	return &hcm.LocalReplyConfig{Mappers: []*hcm.ResponseMapper{{
-		Filter: &accesslog.AccessLogFilter{FilterSpecifier: &accesslog.AccessLogFilter_AndFilter{AndFilter: &accesslog.AndFilter{Filters: []*accesslog.AccessLogFilter{
-			status,
-			pending,
-		}}}},
-		StatusCode: wrapperspb.UInt32(401),
+		Filter:     &accesslog.AccessLogFilter{FilterSpecifier: &accesslog.AccessLogFilter_AndFilter{AndFilter: &accesslog.AndFilter{Filters: []*accesslog.AccessLogFilter{status, pending}}}},
+		StatusCode: wrapperspb.UInt32(400),
 	}}}
 }
 
@@ -230,7 +223,7 @@ func generateFilterChains(c resolvedConfig) ([]*listener.FilterChain, error) {
 			return nil, fmt.Errorf("servers[%d]: %w", i, err)
 		}
 		chain.FilterChainMatch = &listener.FilterChainMatch{TransportProtocol: "tls", ServerNames: []string{server.Hostname}}
-		chain.TransportSocket, err = serverTLSTransportSocket(i, server.mtls.MTLS, server.usesMTLS() && requiresClientCertificate(*server.Server))
+		chain.TransportSocket, err = serverTLSTransportSocket(i, server.mtls.MTLS)
 		if err != nil {
 			return nil, fmt.Errorf("servers[%d] downstream TLS context: %w", i, err)
 		}

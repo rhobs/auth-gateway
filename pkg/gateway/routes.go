@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -13,9 +14,13 @@ import (
 	"strings"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	rbac "github.com/envoyproxy/go-control-plane/envoy/config/rbac/v3"
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	jwt "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/jwt_authn/v3"
+	httpRBAC "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/rbac/v3"
 	matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -273,7 +278,8 @@ func cloneRouteProcessing(p gatewayapi.RouteProcessing) gatewayapi.RouteProcessi
 func boundAPIsServer(s gatewayapi.Server, apis map[string]gatewayapi.API) ([]gatewayapi.API, error) {
 	bound := make([]gatewayapi.API, 0, len(s.APIs))
 	seen := make(map[string]struct{}, len(s.APIs))
-	for _, name := range s.APIs {
+	for _, binding := range s.APIs {
+		name := binding.Name
 		api, ok := apis[name]
 		if !ok {
 			return nil, fmt.Errorf("unknown API %q", name)
@@ -289,9 +295,7 @@ func boundAPIsServer(s gatewayapi.Server, apis map[string]gatewayapi.API) ([]gat
 
 func cloneServer(s gatewayapi.Server) gatewayapi.Server {
 	s.TLSConfig = cloneConfigPointer(s.TLSConfig, cloneServerTLS)
-	s.Authentication = cloneConfigPointer(s.Authentication, cloneAuthentication)
-	s.Authorization = cloneConfigPointer(s.Authorization, cloneAuthorization)
-	s.APIs = slices.Clone(s.APIs)
+	s.APIs = cloneSlice(s.APIs, cloneAPIBinding)
 	return s
 }
 
@@ -308,40 +312,148 @@ func routeVirtualHosts(hosts []indexedVirtualHost) []*route.VirtualHost {
 }
 
 func serverVirtualHost(c resolvedConfig, index int, server resolvedServer) (*route.VirtualHost, error) {
-	bound := server.apis
-	routes, err := apiRoutesWithRequestHeaderMutations(bound, hasAuthenticationConfig(c.Config))
+	routes, err := apiRoutesWithRequestHeaderMutations(server.apis, true)
 	if err != nil {
-		return nil, fmt.Errorf("servers[%d] routes: %w", index, err)
-	}
-	if err := addAPIFaultRouteConfigs(routes, bound); err != nil {
-		return nil, fmt.Errorf("servers[%d] routes: %w", index, err)
-	}
-	if err := addAPIAdmissionRouteConfigs(routes, bound); err != nil {
-		return nil, fmt.Errorf("servers[%d] routes: %w", index, err)
-	}
-	host := &route.VirtualHost{Name: server.Hostname, Domains: []string{server.Hostname}, Routes: routes}
-	if server.Authentication == nil {
-		return host, nil
-	}
-	host.TypedPerFilterConfig = make(map[string]*anypb.Any)
-	if err := addServerJWTRequirement(c, host, index, server); err != nil {
 		return nil, err
 	}
-	if err := addServerAPIKeyConfig(c, host, index, server); err != nil {
+	if err := addAPIFaultRouteConfigs(routes, server.apis); err != nil {
 		return nil, err
 	}
-	if err := addServerAuthenticationConfig(c, host, index, server); err != nil {
+	if err := addAPIAdmissionRouteConfigs(routes, server.apis); err != nil {
 		return nil, err
 	}
-	if err := addServerMTLSSharedAttributeConfig(c, host, index, server); err != nil {
-		return nil, err
-	}
-	rbacConfig, err := serverAuthorizationPerRouteConfig(c, server)
+	disabled, err := packEnvoy(&httpRBAC.RBACPerRoute{})
 	if err != nil {
-		return nil, fmt.Errorf("servers[%d] RBAC rules: %w", index, err)
+		return nil, err
 	}
-	host.TypedPerFilterConfig[authorizationFilterName] = rbacConfig
+	defaultAuthorization := disabled
+	if len(server.authenticators) > 0 {
+		defaultAuthorization, err = packEnvoy(&httpRBAC.RBACPerRoute{Rbac: &httpRBAC.RBAC{Rules: &rbac.RBAC{Action: rbac.RBAC_ALLOW}}})
+		if err != nil {
+			return nil, err
+		}
+	}
+	host := &route.VirtualHost{
+		Name: server.Hostname, Domains: []string{server.Hostname},
+		TypedPerFilterConfig: map[string]*anypb.Any{authorizationFilterName: defaultAuthorization},
+	}
+	if c.usesJWT() {
+		disabledJWT, err := packEnvoy(&jwt.PerRouteConfig{RequirementSpecifier: &jwt.PerRouteConfig_Disabled{Disabled: true}})
+		if err != nil {
+			return nil, err
+		}
+		host.TypedPerFilterConfig[jwtAuthnFilterName] = disabledJWT
+	}
+	bindings := make(map[string]resolvedAPIBinding)
+	for _, binding := range server.bindings {
+		bindings[binding.Name] = binding
+	}
+	for _, base := range routes {
+		if base.TypedPerFilterConfig == nil {
+			base.TypedPerFilterConfig = make(map[string]*anypb.Any)
+		}
+		if base.GetRoute() == nil {
+			base.TypedPerFilterConfig[authorizationFilterName] = disabled
+			host.Routes = append(host.Routes, base)
+			continue
+		}
+		apiName := base.Metadata.FilterMetadata[authorizationFilterName].Fields[apiMetadataName].GetStringValue()
+		binding := bindings[apiName]
+		if binding.Public {
+			base.TypedPerFilterConfig[authorizationFilterName] = disabled
+			host.Routes = append(host.Routes, base)
+			continue
+		}
+		selectorHeaders := make(map[string]bool)
+		for accessIndex, access := range binding.access {
+			for header := range access.Match.Headers {
+				selectorHeaders[strings.ToLower(header)] = true
+			}
+			for combinationIndex, headers := range accessHeaderCombinations(access.Match) {
+				generated := proto.Clone(base).(*route.Route)
+				generated.Name = fmt.Sprintf("%s-access-%d-match-%d", base.Name, accessIndex, combinationIndex)
+				generated.StatPrefix = generated.Name
+				generated.Match.Headers = append(generated.Match.Headers, headers...)
+				if err := addAccessRouteConfigs(c, generated, access); err != nil {
+					return nil, fmt.Errorf("servers[%d] route %q: %w", index, generated.Name, err)
+				}
+				host.Routes = append(host.Routes, generated)
+			}
+		}
+		denied := proto.Clone(base).(*route.Route)
+		denied.Name += "-access-denied"
+		denied.StatPrefix = denied.Name
+		denied.Action = &route.Route_DirectResponse{DirectResponse: &route.DirectResponseAction{Status: 403}}
+		validation, err := requestValidationPerRouteConfig(slices.Sorted(maps.Keys(selectorHeaders)))
+		if err != nil {
+			return nil, err
+		}
+		denied.TypedPerFilterConfig = map[string]*anypb.Any{requestValidationFilterName: validation}
+		host.Routes = append(host.Routes, denied)
+	}
 	return host, nil
+}
+
+func accessHeaderCombinations(match gatewayapi.AccessMatch) [][]*route.HeaderMatcher {
+	combinations := [][]*route.HeaderMatcher{nil}
+	for _, name := range slices.Sorted(maps.Keys(match.Headers)) {
+		var expanded [][]*route.HeaderMatcher
+		for _, headers := range combinations {
+			for _, value := range headerMatchValues(match.Headers[name]) {
+				matcher := &route.HeaderMatcher{Name: strings.ToLower(name), HeaderMatchSpecifier: &route.HeaderMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: value}}}}
+				expanded = append(expanded, append(slices.Clone(headers), matcher))
+			}
+		}
+		combinations = expanded
+	}
+	return combinations
+}
+
+func addAccessRouteConfigs(c resolvedConfig, generated *route.Route, access resolvedAccess) error {
+	if generated.TypedPerFilterConfig == nil {
+		generated.TypedPerFilterConfig = make(map[string]*anypb.Any)
+	}
+	authorization, err := authorizationPerRouteConfig(c, access)
+	if err != nil {
+		return err
+	}
+	generated.TypedPerFilterConfig[authorizationFilterName] = authorization
+	headers := slices.Sorted(maps.Keys(access.Match.Headers))
+	if access.Authentication != nil {
+		if access.Authentication.JWT != nil {
+			headers = append(headers, authorizationHeaderName)
+			config, err := jwtPerRouteConfig(access)
+			if err != nil {
+				return err
+			}
+			generated.TypedPerFilterConfig[jwtAuthnFilterName] = config
+		} else {
+			headers = append(headers, c.apiKey.APIKey.Header)
+			config, err := apiKeyPerRouteConfig()
+			if err != nil {
+				return err
+			}
+			generated.TypedPerFilterConfig[apiKeyFilterName] = config
+		}
+	}
+	validation, err := requestValidationPerRouteConfig(headers)
+	if err != nil {
+		return err
+	}
+	generated.TypedPerFilterConfig[requestValidationFilterName] = validation
+	if needsWorkingAttributes(c) {
+		for _, authenticator := range access.authenticators {
+			if len(authenticator.Attributes) != 0 {
+				attributes, err := attributePerRouteConfig(access)
+				if err != nil {
+					return err
+				}
+				generated.TypedPerFilterConfig[attributeFilterName] = attributes
+				break
+			}
+		}
+	}
+	return nil
 }
 
 func apiRoutesWithRequestHeaderMutations(apis []gatewayapi.API, includeMetadata bool) ([]*route.Route, error) {

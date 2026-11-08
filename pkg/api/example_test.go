@@ -18,7 +18,7 @@ func ExampleNewDuration() {
 		},
 		Servers: []api.Server{{
 			Hostname: "metrics.example.com",
-			APIs:     []string{"metrics"},
+			APIs:     []api.APIBinding{{Name: "metrics", Public: true}},
 		}},
 		APIs: []api.API{{
 			Name: "metrics",

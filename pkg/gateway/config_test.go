@@ -46,7 +46,7 @@ func TestValidateRejectsInvalidConfiguration(t *testing.T) {
 			api := c.APIs[0]
 			api.Name = "metrics-copy"
 			c.APIs = append(c.APIs, api)
-			c.Servers[0].APIs = append(c.Servers[0].APIs, api.Name)
+			c.Servers[0].APIs = append(c.Servers[0].APIs, gatewayapi.APIBinding{Name: api.Name, Public: true})
 		}},
 		{name: "no routes", want: "apis[0].routes", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes = nil }},
 		{name: "lowercase method", want: "apis[0].routes[0].methods", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Methods = []string{"post"} }},
@@ -142,20 +142,20 @@ func TestDefaultsCloneInputs(t *testing.T) {
 		*keySource.Credential = false
 		headerSource := defaulted.Authenticators[2].Attributes["requested_tenant"]
 		*headerSource.Header = "changed"
-		defaulted.AuthorizationPolicies[0].Grants[0].APIs[0] = "changed"
-		defaulted.AuthorizationPolicies[0].Grants[0].Attributes["tenant_id"][0] = "changed"
-		defaulted.Servers[0].Authentication.AnyOf[0] = "changed"
-		defaulted.Servers[0].Authorization.AnyOf[0] = "changed"
+		defaulted.Servers[0].APIs[0].Name = "changed"
+		defaulted.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes["tenant_id"].Values[0] = "changed"
+		defaulted.Servers[0].APIs[0].Access[0].Authentication.JWT.Providers[0] = "changed"
+		defaulted.Servers[0].APIs[0].Access[0].Name = "changed"
 		defaulted.APIs[0].Routes[0].Processing.RequestHeaders[0].Name = "changed"
 
 		if c.Authenticators[0].JWT.Audiences[0] == "changed" ||
 			c.Authenticators[0].Attributes["tenant_id"].ClaimPath[0] == "changed" ||
 			!*c.Authenticators[2].Attributes["tenant_id"].Credential ||
 			*c.Authenticators[2].Attributes["requested_tenant"].Header == "changed" ||
-			c.AuthorizationPolicies[0].Grants[0].APIs[0] == "changed" ||
-			c.AuthorizationPolicies[0].Grants[0].Attributes["tenant_id"][0] == "changed" ||
-			c.Servers[0].Authentication.AnyOf[0] == "changed" ||
-			c.Servers[0].Authorization.AnyOf[0] == "changed" ||
+			c.Servers[0].APIs[0].Name == "changed" ||
+			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes["tenant_id"].Values[0] == "changed" ||
+			c.Servers[0].APIs[0].Access[0].Authentication.JWT.Providers[0] == "changed" ||
+			c.Servers[0].APIs[0].Access[0].Name == "changed" ||
 			c.APIs[0].Routes[0].Processing.RequestHeaders[0].Name == "changed" {
 			t.Fatal("defaulting aliases authentication configuration")
 		}
@@ -186,9 +186,9 @@ func TestDefaultsCloneInputs(t *testing.T) {
 		if *defaulted.Kubernetes.HTTPSServicePort != defaultHTTPSServicePort {
 			t.Fatal("HTTPS Service port was not defaulted")
 		}
-		defaulted.Servers[0].APIs[0] = "other"
+		defaulted.Servers[0].APIs[0].Name = "other"
 		defaulted.Servers[0].TLSConfig.Secret = "other-tls"
-		if c.Servers[0].APIs[0] != "metrics" || c.Servers[0].TLSConfig.Secret != "server-tls" {
+		if c.Servers[0].APIs[0].Name != "metrics" || c.Servers[0].TLSConfig.Secret != "server-tls" {
 			t.Fatal("defaulting aliases server fields")
 		}
 	})

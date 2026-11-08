@@ -92,7 +92,8 @@ func TestListenerLimitsOnEveryChainAndFixedControls(t *testing.T) {
 		for _, mutation := range removal.Mutations.RequestMutations {
 			got = append(got, mutation.GetRemove())
 		}
-		if !reflect.DeepEqual(got, requestControlHeaders) {
+		want := append(append([]string{}, requestControlHeaders...), requestValidationPendingHeaderName, apiKeyClientHeader, mtlsFingerprintHeaderName, mtlsURIHeaderName, mtlsDNSHeaderName)
+		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("control removal = %v", got)
 		}
 	}

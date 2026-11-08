@@ -29,9 +29,8 @@ import (
 const (
 	apiKeyPublicHost      = "public.api-key.auth-gateway.test"
 	apiKeyOnlyHost        = "key.api-key.auth-gateway.test"
-	apiKeyAnyHost         = "any.api-key.auth-gateway.test"
-	apiKeyMultiHost       = "multi.api-key.auth-gateway.test"
-	apiKeyAllHost         = "all.api-key.auth-gateway.test"
+	apiKeySharedHost      = "shared.api-key.auth-gateway.test"
+	apiKeyTLSHost         = "key-tls.api-key.auth-gateway.test"
 	apiKeyRequestBody     = "api-key-payload"
 	apiKeySharedSecretKey = "key-a"
 )
@@ -65,8 +64,8 @@ var _ = Describe("API-key request decisions", Label("gateway", "api-key", "authe
 	}, NodeTimeout(12*time.Minute))
 
 	It("uses one Secret across protected servers and forwards verified attributes", func(ctx SpecContext) {
-		for _, host := range []string{apiKeyOnlyHost, apiKeyAnyHost} {
-			status, body, err := gateway.request(ctx, host, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", apiKeySharedSecretKey, nil)
+		for _, host := range []string{apiKeyOnlyHost, apiKeyTLSHost} {
+			status, body, err := gateway.request(ctx, host, host == apiKeyTLSHost, http.MethodPost, "/ingest", apiKeyRequestBody, "", apiKeySharedSecretKey, nil)
 			Expect(err).NotTo(HaveOccurred(), host)
 			Expect(status).To(Equal(http.StatusOK), host+": "+string(body))
 			expectAPIKeyEcho(body, "client-a", "writer-a")
@@ -100,96 +99,32 @@ var _ = Describe("API-key request decisions", Label("gateway", "api-key", "authe
 		}
 	}, NodeTimeout(60*time.Second))
 
-	It("uses a verified JWT first on a mixed any_of server", func(ctx SpecContext) {
-		jwt := gateway.token("client-b", "writer-b")
+	It("uses only the authentication method selected for the tenant", func(ctx SpecContext) {
 		for _, test := range []struct {
-			name   string
-			token  string
-			key    string
-			tenant string
-			writer string
+			name, tenant, token, key, writer string
+			status                           int
 		}{
-			{name: "both credentials", token: jwt, key: apiKeySharedSecretKey, tenant: "client-b", writer: "writer-b"},
-			{name: "valid JWT and invalid key", token: jwt, key: "wrong-key", tenant: "client-b", writer: "writer-b"},
-			{name: "invalid JWT and valid key", token: "broken.jwt", key: apiKeySharedSecretKey, tenant: "client-a", writer: "writer-a"},
+			{name: "JWT tenant", tenant: "client-b", token: gateway.token("client-b", "writer-b"), key: "wrong-key", writer: "writer-b", status: http.StatusOK},
+			{name: "key tenant", tenant: "client-a", token: "broken.jwt", key: apiKeySharedSecretKey, writer: "writer-a", status: http.StatusOK},
+			{name: "JWT missing despite valid key", tenant: "client-b", key: apiKeySharedSecretKey, status: http.StatusUnauthorized},
+			{name: "JWT invalid despite valid key", tenant: "client-b", token: "broken.jwt", key: apiKeySharedSecretKey, status: http.StatusUnauthorized},
+			{name: "key missing despite valid JWT", tenant: "client-a", token: gateway.token("client-a", "writer-a"), status: http.StatusUnauthorized},
+			{name: "JWT has wrong tenant", tenant: "client-b", token: gateway.token("client-a", "writer-a"), key: apiKeySharedSecretKey, status: http.StatusForbidden},
+			{name: "tenant not selected", tenant: "client-c", token: gateway.token("client-b", "writer-b"), key: apiKeySharedSecretKey, status: http.StatusForbidden},
 		} {
-			status, body, err := gateway.request(ctx, apiKeyAnyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, test.token, test.key, nil)
-			Expect(err).NotTo(HaveOccurred(), test.name)
-			Expect(status).To(Equal(http.StatusOK), test.name+": "+string(body))
-			expectAPIKeyEcho(body, test.tenant, test.writer)
-		}
-		expectAPIKeyDenied(ctx, gateway, "valid but unprivileged JWT wins", apiKeyAnyHost, false,
-			gateway.token("denied", "writer-a"), apiKeySharedSecretKey, nil, http.StatusForbidden)
-		expectAPIKeyDenied(ctx, gateway, "no credentials", apiKeyAnyHost, false, "", "", nil, http.StatusUnauthorized)
-		expectAPIKeyDenied(ctx, gateway, "invalid JWT and no key", apiKeyAnyHost, false, "broken.jwt", "", nil, http.StatusUnauthorized)
-		expectAPIKeyDenied(ctx, gateway, "spoofed JWT marker", apiKeyAnyHost, false, "", "", http.Header{
-			"X-Auth-Gateway-JWT-Verified-Issuer-One": []string{"https://issuer-one.jwt.test"},
-		}, http.StatusUnauthorized)
-	}, NodeTimeout(90*time.Second))
-
-	It("accepts either selected JWT issuer or the API key on a three-credential any_of server", func(ctx SpecContext) {
-		for _, test := range []struct {
-			name   string
-			token  string
-			key    string
-			tenant string
-			writer string
-		}{
-			{name: "issuer one", token: gateway.tokenForIssuer("issuer-one", "client-a", "writer-a"), tenant: "client-a", writer: "writer-a"},
-			{name: "issuer two", token: gateway.tokenForIssuer("issuer-two", "client-b", "writer-b"), tenant: "client-b", writer: "writer-b"},
-			{name: "API key only", key: apiKeySharedSecretKey, tenant: "client-a", writer: "writer-a"},
-			{name: "invalid JWT with valid key", token: "broken.jwt", key: apiKeySharedSecretKey, tenant: "client-a", writer: "writer-a"},
-		} {
-			status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, "api-ingest", test.name, 1, func() (int, []byte, error) {
-				return gateway.request(ctx, apiKeyMultiHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, test.token, test.key, nil)
+			var delta uint64
+			if test.status == http.StatusOK {
+				delta = 1
+			}
+			status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, "api-ingest", test.name, delta, func() (int, []byte, error) {
+				return gateway.request(ctx, apiKeySharedHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, test.token, test.key, http.Header{"X-Tenant": []string{test.tenant}})
 			})
-			Expect(status).To(Equal(http.StatusOK), test.name+": "+string(body))
-			expectAPIKeyEcho(body, test.tenant, test.writer)
+			Expect(status).To(Equal(test.status), test.name+": "+string(body))
+			if status == http.StatusOK {
+				expectAPIKeyEcho(body, test.tenant, test.writer)
+			}
 		}
-
-		expectAPIKeyDenied(ctx, gateway, "valid but unselected issuer", apiKeyAnyHost, false,
-			gateway.tokenForIssuer("issuer-two", "client-b", "writer-b"), "", nil, http.StatusUnauthorized)
-		expectAPIKeyDenied(ctx, gateway, "invalid JWT and no key", apiKeyMultiHost, false, "broken.jwt", "", nil, http.StatusUnauthorized)
-		for _, test := range []struct {
-			name   string
-			header string
-			value  string
-		}{
-			{name: "spoofed issuer-one marker", header: "X-Auth-Gateway-JWT-Verified-Issuer-One", value: "https://issuer-one.jwt.test"},
-			{name: "spoofed issuer-two marker", header: "X-Auth-Gateway-JWT-Verified-Issuer-Two", value: "https://issuer-two.jwt.test"},
-		} {
-			expectAPIKeyDenied(ctx, gateway, test.name, apiKeyMultiHost, false, "", "", http.Header{test.header: []string{test.value}}, http.StatusUnauthorized)
-		}
-	}, NodeTimeout(90*time.Second))
-
-	It("requires both credentials and equal nonempty scalar attributes for all_of", func(ctx SpecContext) {
-		jwt := gateway.token("client-a", "writer-a")
-		status, body, err := gateway.request(ctx, apiKeyAllHost, true, http.MethodPost, "/ingest", apiKeyRequestBody, jwt, apiKeySharedSecretKey, nil)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectAPIKeyEcho(body, "client-a", "writer-a")
-
-		for _, test := range []struct {
-			name   string
-			token  string
-			key    string
-			status int
-		}{
-			{name: "JWT missing", key: apiKeySharedSecretKey, status: http.StatusUnauthorized},
-			{name: "key missing", token: jwt, status: http.StatusUnauthorized},
-			{name: "tenant mismatch", token: gateway.token("client-b", "writer-a"), key: apiKeySharedSecretKey, status: http.StatusForbidden},
-			{name: "writer mismatch", token: gateway.token("client-a", "writer-b"), key: apiKeySharedSecretKey, status: http.StatusForbidden},
-			{name: "empty shared claim", token: gateway.token("", "writer-a"), key: apiKeySharedSecretKey, status: http.StatusForbidden},
-		} {
-			expectAPIKeyDenied(ctx, gateway, test.name, apiKeyAllHost, true, test.token, test.key, nil, test.status)
-		}
-		claims := map[string]any{
-			"organization": map[string]any{"id": []string{"client-a"}},
-			"sub":          "writer-a", "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix(),
-		}
-		listToken := (&jwtE2E{keys: gateway.keys}).token("issuer-one", claims, nil)
-		expectAPIKeyDenied(ctx, gateway, "list shared claim", apiKeyAllHost, true, listToken, apiKeySharedSecretKey, nil, http.StatusForbidden)
-	}, NodeTimeout(90*time.Second))
+	}, NodeTimeout(2*time.Minute))
 
 	It("counts source key attributes in response metrics", func(ctx SpecContext) {
 		labels := requestMetricLabels("ingest", http.StatusOK, "client-a", "writer-a")
@@ -236,11 +171,7 @@ var _ = Describe("API-key Secret projection", Label("gateway", "api-key", "authe
 		}).WithContext(ctx).WithTimeout(4*time.Minute).WithPolling(time.Second).Should(BeTrue(), func() string {
 			return fmt.Sprintf("Secret rotation did not replace the accepted key: HTTP %d: %s (error: %v)", status, body, err)
 		})
-		status, body, err = gateway.request(ctx, apiKeyAnyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody, "", "key-b", nil)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(status).To(Equal(http.StatusOK), string(body))
-		expectAPIKeyEcho(body, "client-b", "writer-b")
-		status, body, err = gateway.request(ctx, apiKeyAllHost, true, http.MethodPost, "/ingest", apiKeyRequestBody,
+		status, body, err = gateway.request(ctx, apiKeyTLSHost, true, http.MethodPost, "/ingest", apiKeyRequestBody,
 			gateway.token("client-b", "writer-b"), "key-b", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
@@ -313,7 +244,7 @@ func setupAPIKeyGatewayWithShape(ctx SpecContext, namespace string, keyOnly bool
 			}
 			gateway.keys[authenticator.Name] = key
 		}
-		certificates, err := makeJWTTestCertificates([]string{"jwks." + namespace + ".svc.cluster.local", apiKeyAllHost})
+		certificates, err := makeJWTTestCertificates([]string{"jwks." + namespace + ".svc.cluster.local", apiKeyTLSHost})
 		if err != nil {
 			return nil, err
 		}
@@ -429,7 +360,6 @@ func apiKeyConfig(namespace string, keyOnly bool) (gatewayapi.Config, error) {
 			}
 		}
 		c.Authenticators = keyAuthenticators
-		c.AuthorizationPolicies = c.AuthorizationPolicies[1:]
 		c.Servers = c.Servers[1:2]
 		c.Kubernetes.HTTPSServicePort = nil
 	} else {

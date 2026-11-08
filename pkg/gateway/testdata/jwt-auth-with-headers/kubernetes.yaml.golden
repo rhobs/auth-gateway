@@ -132,7 +132,30 @@ data:
                                         - remove: x-envoy-upstream-rq-timeout-alt-response
                                         - remove: x-envoy-retriable-status-codes
                                         - remove: x-envoy-retriable-header-names
-                                        - remove: x-auth-gateway-jwt-verified-internal-jwt
+                                        - remove: x-auth-gateway-request-validation-pending
+                                        - remove: x-auth-gateway-api-key-client
+                                        - remove: x-auth-gateway-mtls-fingerprint
+                                        - remove: x-auth-gateway-mtls-uri-san
+                                        - remove: x-auth-gateway-mtls-dns-san
+                            - name: auth_gateway.request_validation.begin
+                              typed_config:
+                                '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
+                                mutations:
+                                    request_mutations:
+                                        - append:
+                                            append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                                            header:
+                                                key: x-auth-gateway-request-validation-pending
+                                                value: "true"
+                            - name: auth_gateway.request_validation
+                              typed_config:
+                                '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+                            - name: auth_gateway.request_validation.complete
+                              typed_config:
+                                '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
+                                mutations:
+                                    request_mutations:
+                                        - remove: x-auth-gateway-request-validation-pending
                             - name: envoy.filters.http.jwt_authn
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
@@ -153,30 +176,17 @@ data:
                                                 uri: https://issuer-one.jwt.test/jwks
                                         require_expiration: true
                                 requirement_map:
-                                    server-0:
+                                    server-0-api-0-access-0:
                                         provider_name: internal-jwt
                                 strip_failure_response: true
-                            - name: envoy.filters.http.set_filter_state
+                            - disabled: true
+                              name: envoy.filters.http.set_filter_state
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
-                                on_request_headers:
-                                    - factory_key: envoy.string
-                                      format_string:
-                                        omit_empty_values: true
-                                        text_format_source:
-                                            inline_string: '%CEL((("internal-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "organization" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"] && "id" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["organization"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["organization"]["id"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["organization"]["id"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["organization"]["id"] : "")%'
-                                      object_key: auth_gateway.attributes.tenant_id
-                                      skip_if_empty: true
-                                    - factory_key: envoy.string
-                                      format_string:
-                                        omit_empty_values: true
-                                        text_format_source:
-                                            inline_string: '%CEL((("internal-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["sub"] : "")%'
-                                      object_key: auth_gateway.attributes.writer_id
-                                      skip_if_empty: true
                             - name: envoy.filters.http.rbac
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+                                rules: {}
                             - name: auth_gateway.required_headers
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
@@ -187,7 +197,7 @@ data:
                                     request_mutations:
                                         - remove: authorization
                                         - remove: x-auth-gateway-api-key-client
-                                        - remove: x-auth-gateway-jwt-verified-internal-jwt
+                                        - remove: x-auth-gateway-request-validation-pending
                             - name: envoy.filters.http.header_mutation
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
@@ -198,6 +208,21 @@ data:
                             - name: envoy.filters.http.router
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                        local_reply_config:
+                            mappers:
+                                - filter:
+                                    and_filter:
+                                        filters:
+                                            - status_code_filter:
+                                                comparison:
+                                                    value:
+                                                        default_value: 403
+                                            - header_filter:
+                                                header:
+                                                    name: x-auth-gateway-request-validation-pending
+                                                    string_match:
+                                                        exact: "true"
+                                  status_code: 400
                         max_request_headers_kb: 32
                         normalize_path: true
                         path_with_escaped_slashes_action: UNESCAPE_AND_FORWARD
@@ -221,7 +246,7 @@ data:
                                         filter_metadata:
                                             envoy.filters.http.rbac:
                                                 api: metrics
-                                      name: api-0-metrics-route-0-method-0
+                                      name: api-0-metrics-route-0-method-0-access-0-match-0
                                       route:
                                         cluster: api-metrics
                                         idle_timeout: 60s
@@ -229,8 +254,60 @@ data:
                                             max_stream_duration: 30s
                                         path_rewrite: /anything
                                         timeout: 30s
-                                      stat_prefix: api-0-metrics-route-0-method-0
+                                      stat_prefix: api-0-metrics-route-0-method-0-access-0-match-0
                                       typed_per_filter_config:
+                                        auth_gateway.request_validation:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                            rbac:
+                                                rules:
+                                                    action: DENY
+                                                    policies:
+                                                        invalid-request-headers:
+                                                            condition:
+                                                                call_expr:
+                                                                    args:
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - const_expr:
+                                                                                    string_value: authorization
+                                                                                  id: "3"
+                                                                                - id: "2"
+                                                                                  select_expr:
+                                                                                    field: headers
+                                                                                    operand:
+                                                                                        id: "1"
+                                                                                        ident_expr:
+                                                                                            name: request
+                                                                            function: '@in'
+                                                                          id: "4"
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - const_expr:
+                                                                                    string_value: ','
+                                                                                  id: "7"
+                                                                            function: contains
+                                                                            target:
+                                                                                call_expr:
+                                                                                    args:
+                                                                                        - id: "2"
+                                                                                          select_expr:
+                                                                                            field: headers
+                                                                                            operand:
+                                                                                                id: "1"
+                                                                                                ident_expr:
+                                                                                                    name: request
+                                                                                        - const_expr:
+                                                                                            string_value: authorization
+                                                                                          id: "3"
+                                                                                    function: _[_]
+                                                                                id: "5"
+                                                                          id: "6"
+                                                                    function: _&&_
+                                                                id: "8"
+                                                            permissions:
+                                                                - any: true
+                                                            principals:
+                                                                - any: true
                                         auth_gateway.required_headers:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                             rbac:
@@ -266,6 +343,81 @@ data:
                                                         header:
                                                             key: X-Writer-ID
                                                             value: '%FILTER_STATE(auth_gateway.attributes.writer_id:PLAIN)%'
+                                        envoy.filters.http.jwt_authn:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
+                                            requirement_name: server-0-api-0-access-0
+                                        envoy.filters.http.rbac:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
+                                            rbac:
+                                                rules:
+                                                    policies:
+                                                        grant-0:
+                                                            permissions:
+                                                                - any: true
+                                                            principals:
+                                                                - and_ids:
+                                                                    ids:
+                                                                        - sourced_metadata:
+                                                                            metadata_matcher:
+                                                                                filter: envoy.filters.http.jwt_authn
+                                                                                path:
+                                                                                    - key: internal-jwt
+                                                                                    - key: iss
+                                                                                value:
+                                                                                    string_match:
+                                                                                        exact: https://issuer-one.jwt.test
+                                                                        - sourced_metadata:
+                                                                            metadata_matcher:
+                                                                                filter: envoy.filters.http.jwt_authn
+                                                                                path:
+                                                                                    - key: internal-jwt
+                                                                                    - key: organization
+                                                                                    - key: id
+                                                                                value:
+                                                                                    or_match:
+                                                                                        value_matchers:
+                                                                                            - string_match:
+                                                                                                exact: customer-a
+                                                                                            - list_match:
+                                                                                                one_of:
+                                                                                                    string_match:
+                                                                                                        exact: customer-a
+                                        envoy.filters.http.set_filter_state:
+                                            '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
+                                            config:
+                                                '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
+                                                on_request_headers:
+                                                    - factory_key: envoy.string
+                                                      format_string:
+                                                        omit_empty_values: true
+                                                        text_format_source:
+                                                            inline_string: '%CEL((("internal-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "organization" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"] && "id" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["organization"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["organization"]["id"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["organization"]["id"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["organization"]["id"] : "")%'
+                                                      object_key: auth_gateway.attributes.tenant_id
+                                                      skip_if_empty: true
+                                                    - factory_key: envoy.string
+                                                      format_string:
+                                                        omit_empty_values: true
+                                                        text_format_source:
+                                                            inline_string: '%CEL((("internal-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["sub"] : "")%'
+                                                      object_key: auth_gateway.attributes.writer_id
+                                                      skip_if_empty: true
+                                    - direct_response:
+                                        status: 403
+                                      match:
+                                        headers:
+                                            - name: :method
+                                              string_match:
+                                                exact: GET
+                                        path: /protected
+                                      metadata:
+                                        filter_metadata:
+                                            envoy.filters.http.rbac:
+                                                api: metrics
+                                      name: api-0-metrics-route-0-method-0-access-denied
+                                      stat_prefix: api-0-metrics-route-0-method-0-access-denied
+                                      typed_per_filter_config:
+                                        auth_gateway.request_validation:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                     - direct_response:
                                         status: 405
                                       match:
@@ -280,6 +432,9 @@ data:
                                           header:
                                             key: allow
                                             value: GET
+                                      typed_per_filter_config:
+                                        envoy.filters.http.rbac:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                     - direct_response:
                                         status: 404
                                       match:
@@ -289,58 +444,17 @@ data:
                                             envoy.filters.http.rbac:
                                                 api: __local
                                       name: not-found
+                                      typed_per_filter_config:
+                                        envoy.filters.http.rbac:
+                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                   typed_per_filter_config:
                                     envoy.filters.http.jwt_authn:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
-                                        requirement_name: server-0
+                                        disabled: true
                                     envoy.filters.http.rbac:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                         rbac:
-                                            rules:
-                                                policies:
-                                                    api-metrics:
-                                                        permissions:
-                                                            - sourced_metadata:
-                                                                metadata_matcher:
-                                                                    filter: envoy.filters.http.rbac
-                                                                    path:
-                                                                        - key: api
-                                                                    value:
-                                                                        string_match:
-                                                                            exact: metrics
-                                                                metadata_source: ROUTE
-                                                        principals:
-                                                            - or_ids:
-                                                                ids:
-                                                                    - sourced_metadata:
-                                                                        metadata_matcher:
-                                                                            filter: envoy.filters.http.jwt_authn
-                                                                            path:
-                                                                                - key: internal-jwt
-                                                                                - key: organization
-                                                                                - key: id
-                                                                            value:
-                                                                                or_match:
-                                                                                    value_matchers:
-                                                                                        - string_match:
-                                                                                            exact: customer-a
-                                                                                        - list_match:
-                                                                                            one_of:
-                                                                                                string_match:
-                                                                                                    exact: customer-a
-                                                    local-responses:
-                                                        permissions:
-                                                            - sourced_metadata:
-                                                                metadata_matcher:
-                                                                    filter: envoy.filters.http.rbac
-                                                                    path:
-                                                                        - key: api
-                                                                    value:
-                                                                        string_match:
-                                                                            exact: __local
-                                                                metadata_source: ROUTE
-                                                        principals:
-                                                            - any: true
+                                            rules: {}
                         stat_prefix: ingress
                         stream_flush_timeout: 5s
                         stream_idle_timeout: 60s

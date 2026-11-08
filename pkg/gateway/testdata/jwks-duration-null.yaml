@@ -1,23 +1,36 @@
+---
 version: 1
 authenticators:
-  - name: internal-jwt
-    jwt:
-      issuer: https://issuer.example.test
-      jwks:
-        uri: https://issuer.example.test/jwks
-        fetch_timeout: null
-      audiences: [gateway-test]
+- name: internal-jwt
+  jwt:
+    issuer: https://issuer.example.test
+    jwks:
+      uri: https://issuer.example.test/jwks
+      fetch_timeout:
+    audiences:
+    - gateway-test
+  attributes:
+    tenant_id: {claim_path: [tenant]}
 servers:
-  - hostname: writer.example.test
-    authentication:
-      any_of: [internal-jwt]
-    apis: [metrics]
-apis:
+- hostname: gateway.example.test
+  apis:
   - name: metrics
-    upstream:
-      address: backend.example.test
-      port: 8080
-    routes:
-      - methods: [POST]
-        path:
-          exact: /write
+    access:
+    - name: default
+      authentication:
+        jwt: {providers: [internal-jwt]}
+      authorization:
+        grants:
+        - authenticator: internal-jwt
+          attributes:
+            tenant_id: [client-a]
+apis:
+- name: metrics
+  upstream:
+    address: backend.example.test
+    port: 8080
+  routes:
+  - methods:
+    - POST
+    path:
+      exact: "/write"

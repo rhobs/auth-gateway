@@ -1,0 +1,133 @@
+version: 1
+authenticators:
+  - name: issuer-one
+    jwt:
+      issuer: https://issuer-one.access.test
+      jwks: {uri: https://issuer-one.access.test/keys}
+      audiences: [access-test]
+    attributes:
+      tenant_id: {claim_path: [tenant]}
+      role: {claim_path: [role]}
+      requested_tenant: {header: X-Tenant}
+  - name: issuer-two
+    jwt:
+      issuer: https://issuer-two.access.test
+      jwks: {uri: https://issuer-two.access.test/keys}
+      audiences: [access-test]
+    attributes:
+      tenant_id: {claim_path: [organization, id]}
+      role: {claim_path: [access, role]}
+      requested_tenant: {header: X-Tenant}
+  - name: writer-key
+    api_key: {secret: access-test-keys, header: X-Writer-Key}
+    attributes:
+      tenant_id: {credential: true}
+      role: {credential: true}
+      requested_tenant: {header: X-Tenant}
+  - name: writer-cert
+    mtls:
+      trusted_ca:
+        config_map: {name: access-test-client-ca, key: ca.crt}
+    attributes:
+      tenant_id: {uri_san: true}
+      writer_id: {dns_san: true}
+      requested_tenant: {header: X-Tenant}
+apis:
+  - name: write
+    upstream: {address: httpbin, port: 8080}
+    metrics: {}
+    routes:
+      - methods: [POST]
+        path: {exact: /write}
+        rewrite: {path: /anything}
+        processing:
+          request_headers:
+            - {name: X-Scope-OrgID, from_attribute: requested_tenant}
+  - name: read
+    upstream: {address: httpbin, port: 8080}
+    metrics: {}
+    routes:
+      - methods: [GET]
+        path: {exact: /read}
+        rewrite: {path: /anything}
+        processing:
+          request_headers:
+            - {name: X-Scope-OrgID, from_attribute: requested_tenant}
+  - name: health
+    upstream: {address: httpbin, port: 8080}
+    routes:
+      - methods: [GET]
+        path: {exact: /health}
+servers:
+  - hostname: gateway.access.test
+    apis:
+      - name: write
+        access:
+          - name: jwt-writers
+            match:
+              headers:
+                X-Tenant: {in: [tenant-a, tenant-b]}
+                X-Mode: {exact: write}
+            authentication:
+              jwt: {providers: [issuer-one]}
+            authorization:
+              grants:
+                - authenticator: issuer-one
+                  attributes:
+                    tenant_id: {equals_attribute: requested_tenant}
+                    role: [writer]
+          - name: key-writers
+            match:
+              headers:
+                X-Tenant: {exact: partner-a}
+                X-Mode: {exact: write}
+            authentication:
+              api_key: {authenticator: writer-key}
+            authorization:
+              grants:
+                - authenticator: writer-key
+                  attributes:
+                    tenant_id: {equals_attribute: requested_tenant}
+                    role: [writer]
+      - name: read
+        access:
+          - name: readers
+            match:
+              headers:
+                X-Tenant: {in: [tenant-a, tenant-b]}
+                X-Mode: {exact: read}
+            authentication:
+              jwt: {providers: [issuer-one, issuer-two]}
+            authorization:
+              grants:
+                - authenticator: issuer-one
+                  attributes:
+                    tenant_id: {equals_attribute: requested_tenant}
+                    role: [reader]
+                - authenticator: issuer-two
+                  attributes:
+                    tenant_id: {equals_attribute: requested_tenant}
+                    role: [viewer]
+      - name: health
+        public: true
+  - hostname: cert.access.test
+    tls_config:
+      secret: access-test-tls
+      mtls: {authenticator: writer-cert}
+    apis:
+      - name: write
+        access:
+          - tenant: partner-a
+            match:
+              headers:
+                X-Tenant: {exact: partner-a}
+                X-Mode: {exact: write}
+            authorization:
+              grants:
+                - authenticator: writer-cert
+                  attributes:
+                    tenant_id: ['spiffe://writers.access.test/partner-a']
+                    writer_id: [writer-1.access.test]
+kubernetes:
+  name: access-test
+  namespace: gateway-test

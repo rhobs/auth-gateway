@@ -48,7 +48,7 @@ var _ = Describe("Client-certificate authentication", Label("gateway", "tls", "m
 		}
 	}, NodeTimeout(60*time.Second))
 
-	It("uses raw SAN and request-header grants, while a CA-only grant accepts a SAN-less certificate", func(ctx SpecContext) {
+	It("uses SAN grants and request-header selection, while a CA-only grant accepts a SAN-less certificate", func(ctx SpecContext) {
 		for _, test := range []struct {
 			name        string
 			certificate *tls.Certificate
@@ -61,12 +61,12 @@ var _ = Describe("Client-certificate authentication", Label("gateway", "tls", "m
 			expectMTLSDenied(ctx, gateway, test.name, mtlsOnlyHost, test.certificate, "", "", test.headers, http.StatusForbidden)
 		}
 		status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, "api-probe", "CA-only grant", 1, func() (int, []byte, error) {
-			return gateway.request(ctx, mtlsTrustHost, &gateway.noSAN, "", "", http.MethodGet, "/trust", "", nil)
+			return gateway.request(ctx, mtlsTrustHost, &gateway.noSAN, "", "", http.MethodPost, "/trust", "", nil)
 		})
 		Expect(status).To(Equal(http.StatusOK), string(body))
 		echo, err := decodeHTTPBinEcho(body)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(echo.Method).To(Equal(http.MethodGet))
+		Expect(echo.Method).To(Equal(http.MethodPost))
 		Expect(echo.URL).To(HaveSuffix("/anything"))
 		Expect(echo.Data).To(BeEmpty())
 	}, NodeTimeout(60*time.Second))
@@ -82,82 +82,17 @@ var _ = Describe("Client-certificate authentication", Label("gateway", "tls", "m
 		} {
 			expectMTLSDenied(ctx, gateway, test.name, mtlsOnlyHost, test.certificate, "", "", mtlsRequestHeaders(), http.StatusForbidden)
 		}
-		expectMTLSDenied(ctx, gateway, "multiple SANs with a valid JWT", mtlsMixedHost, &gateway.multiURI,
-			gateway.token(mtlsSecondURI), "", mtlsRequestHeaders(), http.StatusForbidden)
+
 	}, NodeTimeout(90*time.Second))
 
-	It("uses JWT, then mTLS, then API key on mixed any_of servers", func(ctx SpecContext) {
-		for _, test := range []struct {
-			name        string
-			certificate *tls.Certificate
-			token       string
-			key         string
-			tenant      string
-		}{
-			{name: "JWT without a certificate", token: gateway.token(mtlsSecondURI), tenant: mtlsSecondURI},
-			{name: "key without a certificate", key: mtlsAllowedKey, tenant: mtlsAllowedURI},
-			{name: "invalid JWT and valid key", token: "broken.jwt", key: mtlsAllowedKey, tenant: mtlsAllowedURI},
-			{name: "JWT before key", token: gateway.token(mtlsSecondURI), key: mtlsAllowedKey, tenant: mtlsSecondURI},
-			{name: "mTLS before invalid key", certificate: &gateway.allowed, key: "wrong-key", tenant: mtlsAllowedURI},
-			{name: "JWT before mTLS and key", certificate: &gateway.allowed, token: gateway.token(mtlsSecondURI), key: mtlsAllowedKey, tenant: mtlsSecondURI},
-			{name: "mTLS after invalid JWT", certificate: &gateway.allowed, token: "broken.jwt", tenant: mtlsAllowedURI},
-		} {
-			status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, "api-ingest", test.name, 1, func() (int, []byte, error) {
-				return gateway.request(ctx, mtlsMixedHost, test.certificate, test.token, test.key, http.MethodPost, "/ingest", mtlsPayload, mtlsRequestHeaders())
-			})
-			Expect(status).To(Equal(http.StatusOK), test.name+": "+string(body))
-			expectMTLSEcho(body, test.tenant)
-		}
-	}, NodeTimeout(90*time.Second))
-
-	It("does not fall back from an authenticated identity without a grant", func(ctx SpecContext) {
-		for _, test := range []struct {
-			name        string
-			certificate *tls.Certificate
-			token       string
-			key         string
-		}{
-			{name: "ungranted mTLS before key", certificate: &gateway.denied, key: mtlsAllowedKey},
-			{name: "ungranted JWT before mTLS and key", certificate: &gateway.allowed, token: gateway.token(mtlsDeniedURI), key: mtlsAllowedKey},
-			{name: "ungranted JWT without a certificate", token: gateway.token(mtlsDeniedURI)},
-		} {
-			expectMTLSDenied(ctx, gateway, test.name, mtlsMixedHost, test.certificate, test.token, test.key, mtlsRequestHeaders(), http.StatusForbidden)
-		}
-	}, NodeTimeout(60*time.Second))
-
-	It("returns 401 when no credential is accepted on optional-certificate hosts", func(ctx SpecContext) {
-		for _, test := range []struct {
-			name    string
-			host    string
-			token   string
-			key     string
-			headers http.Header
-		}{
-			{name: "JWT plus mTLS without a credential", host: mtlsJWTCertHost},
-			{name: "JWT plus mTLS with invalid JWT", host: mtlsJWTCertHost, token: "broken.jwt"},
-			{name: "three methods without a credential", host: mtlsMixedHost},
-			{name: "spoofed peer identity", host: mtlsJWTCertHost, headers: http.Header{
-				"X-Auth-Gateway-MTLS-Fingerprint": []string{"abcdef"},
-				"X-Auth-Gateway-MTLS-URI-SAN":     []string{mtlsAllowedURI},
-			}},
-		} {
-			expectMTLSDenied(ctx, gateway, test.name, test.host, nil, test.token, test.key, test.headers, http.StatusUnauthorized)
-		}
-	}, NodeTimeout(60*time.Second))
-
-	It("requires all credentials and equal nonempty raw attributes on all_of", func(ctx SpecContext) {
-		status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, "api-ingest", "all credentials", 1, func() (int, []byte, error) {
-			return gateway.request(ctx, mtlsAllHost, &gateway.allowed, gateway.token(mtlsAllowedURI), mtlsAllowedKey,
-				http.MethodPost, "/ingest", mtlsPayload, mtlsRequestHeaders())
+	It("does not allow bearer headers to replace a required certificate", func(ctx SpecContext) {
+		expectMTLSHandshakeDenied(ctx, gateway, "bearer without certificate", mtlsOnlyHost, nil, "unrelated.jwt", "", mtlsRequestHeaders())
+		status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, "api-ingest", "certificate with unrelated bearer", 1, func() (int, []byte, error) {
+			return gateway.request(ctx, mtlsOnlyHost, &gateway.allowed, "unrelated.jwt", "", http.MethodPost, "/ingest", mtlsPayload, mtlsRequestHeaders())
 		})
 		Expect(status).To(Equal(http.StatusOK), string(body))
 		expectMTLSEcho(body, mtlsAllowedURI)
-		expectMTLSDenied(ctx, gateway, "missing JWT", mtlsAllHost, &gateway.allowed, "", mtlsAllowedKey, mtlsRequestHeaders(), http.StatusUnauthorized)
-		expectMTLSDenied(ctx, gateway, "missing key", mtlsAllHost, &gateway.allowed, gateway.token(mtlsAllowedURI), "", mtlsRequestHeaders(), http.StatusUnauthorized)
-		expectMTLSDenied(ctx, gateway, "shared attribute mismatch", mtlsAllHost, &gateway.allowed, gateway.token(mtlsSecondURI), mtlsAllowedKey,
-			mtlsRequestHeaders(), http.StatusForbidden)
-		expectMTLSHandshakeDenied(ctx, gateway, "missing certificate for all_of", mtlsAllHost, nil, gateway.token(mtlsAllowedURI), mtlsAllowedKey, mtlsRequestHeaders())
-	}, NodeTimeout(90*time.Second))
+	}, NodeTimeout(60*time.Second))
 
 	It("reloads a projected client CA without replacing the gateway Pod", func(ctx SpecContext) {
 		const clientCAUpdateStat = "listener.0.0.0.0_8080.server_ssl_socket_factory.ssl_context_update_by_sds"

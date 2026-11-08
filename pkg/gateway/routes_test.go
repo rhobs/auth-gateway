@@ -11,16 +11,18 @@ import (
 func TestLoadRejectsMissingRouteMethods(t *testing.T) {
 	input := `version: 1
 servers:
-  - hostname: auth.example.com
-    apis: [metrics]
-apis:
+- hostname: auth.example.com
+  apis:
   - name: metrics
-    upstream:
-      address: thanos-receive
-      port: 19291
-    routes:
-      - path:
-          exact: /metrics/api/v1/receive
+    public: true
+apis:
+- name: metrics
+  upstream:
+    address: thanos-receive
+    port: 19291
+  routes:
+  - path:
+      exact: "/metrics/api/v1/receive"
 `
 	if _, err := Load(strings.NewReader(input)); err == nil || !strings.Contains(err.Error(), ".methods") {
 		t.Fatalf("Load error = %v, want a missing route methods error", err)
@@ -83,11 +85,11 @@ func TestServerRouteConflictsAreScopedToBindings(t *testing.T) {
 	if err := Validate(config); err != nil {
 		t.Fatalf("unbound API with the same path rejected: %v", err)
 	}
-	config.Servers = append(config.Servers, gatewayapi.Server{Hostname: "other.example.com", APIs: []string{"other"}})
+	config.Servers = append(config.Servers, gatewayapi.Server{Hostname: "other.example.com", APIs: []gatewayapi.APIBinding{{Name: "other", Public: true}}})
 	if err := Validate(config); err != nil {
 		t.Fatalf("same path on separate servers rejected: %v", err)
 	}
-	config.Servers[0].APIs = append(config.Servers[0].APIs, "other")
+	config.Servers[0].APIs = append(config.Servers[0].APIs, gatewayapi.APIBinding{Name: "other", Public: true})
 	if err := Validate(config); err == nil || !strings.Contains(err.Error(), "servers[0].apis") {
 		t.Fatalf("Validate error = %v, want route conflict on servers[0]", err)
 	}
@@ -99,8 +101,8 @@ func TestValidateServers(t *testing.T) {
 		c := loadConfigCase(t, "public-routing")
 		c.Kubernetes = nil
 		c.Servers = []gatewayapi.Server{
-			{Hostname: "auth.example.com", APIs: []string{"metrics"}},
-			{Hostname: "tls.example.com", TLSConfig: &gatewayapi.ServerTLS{}, APIs: []string{"metrics"}},
+			{Hostname: "auth.example.com", APIs: []gatewayapi.APIBinding{{Name: "metrics", Public: true}}},
+			{Hostname: "tls.example.com", TLSConfig: &gatewayapi.ServerTLS{}, APIs: []gatewayapi.APIBinding{{Name: "metrics", Public: true}}},
 		}
 		return c
 	}
@@ -121,8 +123,12 @@ func TestValidateServers(t *testing.T) {
 		{name: "IP hostname", field: "servers[0].hostname", edit: func(c *gatewayapi.Config) { c.Servers[0].Hostname = "127.0.0.1" }},
 		{name: "duplicate hostname", field: "servers[2].hostname", edit: func(c *gatewayapi.Config) { c.Servers = append(c.Servers, c.Servers[0]) }},
 		{name: "host bound to both protocols", field: "servers[1].hostname", edit: func(c *gatewayapi.Config) { c.Servers[1].Hostname = c.Servers[0].Hostname }},
-		{name: "unknown API", field: "servers[0].apis", edit: func(c *gatewayapi.Config) { c.Servers[0].APIs = []string{"unknown"} }},
-		{name: "duplicate API binding", field: "servers[0].apis", edit: func(c *gatewayapi.Config) { c.Servers[0].APIs = []string{"metrics", "metrics"} }},
+		{name: "unknown API", field: "servers[0].apis", edit: func(c *gatewayapi.Config) {
+			c.Servers[0].APIs = []gatewayapi.APIBinding{{Name: "unknown", Public: true}}
+		}},
+		{name: "duplicate API binding", field: "servers[0].apis", edit: func(c *gatewayapi.Config) {
+			c.Servers[0].APIs = []gatewayapi.APIBinding{{Name: "metrics", Public: true}, {Name: "metrics", Public: true}}
+		}},
 		{name: "certificate paths share a directory", field: "servers[1].tls_config.certificate", edit: func(c *gatewayapi.Config) {
 			c.Servers[1].TLSConfig.Certificate = "/etc/certs/tls.crt"
 			c.Servers[1].TLSConfig.PrivateKey = "/etc/keys/tls.key"
@@ -173,7 +179,7 @@ func TestGenerateAllowsMethodsOnOnePath(t *testing.T) {
 		Upstream: config.APIs[0].Upstream,
 		Routes:   []gatewayapi.Route{secondRoute},
 	})
-	config.Servers[0].APIs = append(config.Servers[0].APIs, "metrics-write")
+	config.Servers[0].APIs = append(config.Servers[0].APIs, gatewayapi.APIBinding{Name: "metrics-write", Public: true})
 	files, err := Generate(config)
 	if err != nil {
 		t.Fatal(err)

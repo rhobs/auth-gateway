@@ -161,13 +161,6 @@ authenticators:
     attributes:
       tenant_id: {credential: true}
       upstream_tenant: {credential: true}
-authorization_policies:
-  - name: key-writers
-    grants:
-      - authenticator: partner-key
-        apis: [ingest]
-        attributes:
-          tenant_id: [client-a]
 apis:
   - name: ingest
     upstream: {address: httpbin, port: 8080}
@@ -186,14 +179,24 @@ apis:
         rewrite: {path: /anything}
 servers:
   - hostname: %s
-    authentication: {any_of: [partner-key]}
-    authorization: {any_of: [key-writers]}
-    apis: [ingest]
+    apis:
+      - name: ingest
+        access:
+          - name: writers
+            authentication:
+              api_key: {authenticator: partner-key}
+            authorization:
+              grants:
+                - authenticator: partner-key
+                  attributes:
+                    tenant_id: [client-a]
   - hostname: %s
     tls_config:
       certificate: %s
       private_key: %s
-    apis: [tls-probe]
+    apis:
+      - name: tls-probe
+        public: true
 `, runtimeLiveKeyHeader, runtimeLiveKeyHost, runtimeLiveTLSHost, certificatePath, keyPath)
 
 	config, err := Load(strings.NewReader(input))

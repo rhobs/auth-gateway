@@ -136,15 +136,15 @@ func TestFaultMatchReferences(t *testing.T) {
 			c.APIs[0].FaultInjection.Match.Attributes["unknown"] = []string{"a"}
 		}},
 		{name: "unbound provider", want: "servers[0] authentication does not provide fault_injection.match.attributes.writer_id", edit: func(c *gatewayapi.Config) {
-			c.Servers[0].Authentication = &gatewayapi.Authentication{AnyOf: []string{"partner-key"}}
+			c.Servers[0].APIs[0].Access = []gatewayapi.Access{c.Servers[0].APIs[0].Access[1]}
 			delete(c.Authenticators[1].Attributes, "writer_id")
 		}},
 		{name: "public binding", want: "servers[0] authentication does not provide fault_injection.match.attributes.tenant_id", edit: func(c *gatewayapi.Config) {
-			c.Servers[0].Authentication = nil
-			c.Servers[0].Authorization = nil
+			c.Servers[0].APIs[0].Public = true
+			c.Servers[0].APIs[0].Access = nil
 		}},
-		{name: "request header tenant", want: "fault_injection.match.attributes.tenant_id requires an identity attribute", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[0].Attributes["tenant_id"] = gatewayapi.AttributeSource{Header: new("X-Tenant-ID")}
+		{name: "request header tenant", want: "fault_injection.match.attributes.requested_tenant requires an identity attribute", edit: func(c *gatewayapi.Config) {
+			c.APIs[0].FaultInjection.Match.Attributes["requested_tenant"] = []string{"tenant-a"}
 		}},
 		{name: "invalid disabled match", want: "fault_injection.match.attributes.unknown", edit: func(c *gatewayapi.Config) {
 			c.APIs[0].FaultInjection.Enabled = false
@@ -307,7 +307,7 @@ func TestFaultInjectionPreservesRouteHeaderProcessing(t *testing.T) {
 			t.Fatalf("filter %q must precede fault injection: %v", name, names)
 		}
 	}
-	route := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes(), "api-0-metrics-route-0-method-0")
+	route := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes(), "api-0-metrics-route-0-method-0-access-0-match-0")
 	if route == nil {
 		t.Fatal("processed route is missing")
 	}
@@ -335,7 +335,7 @@ func TestGeneratedFaultMatchUsesAuthenticatedFilterState(t *testing.T) {
 	manager := firstGeneratedHTTPManager(t, files.EnvoyBootstrap.Contents)
 	names := httpFilterNames(manager)
 	faultIndex := slices.Index(names, faultCompositeFilterName)
-	for _, name := range []string{jwtAuthnFilterName, apiKeyFilterName, attributeInitializationFilterName(0), authorizationFilterName} {
+	for _, name := range []string{jwtAuthnFilterName, apiKeyFilterName, attributeFilterName, authorizationFilterName} {
 		if index := slices.Index(names, name); index < 0 || index >= faultIndex {
 			t.Fatalf("filter %q must precede fault injection: %v", name, names)
 		}
@@ -355,7 +355,7 @@ func TestGeneratedFaultMatchUsesAuthenticatedFilterState(t *testing.T) {
 		policy.GetAbort().GetHttpStatus() != http.StatusServiceUnavailable || policy.GetAbort().GetHeaderAbort() != nil {
 		t.Fatalf("native fault policy = %v, want exact trigger and configured status", &policy)
 	}
-	generatedRoute := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes(), "api-0-injected-route-0-method-0")
+	generatedRoute := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes(), "api-0-injected-route-0-method-0-access-0-match-0")
 	var selector composite.CompositePerRoute
 	if err := generatedRoute.GetTypedPerFilterConfig()[faultCompositeFilterName].UnmarshalTo(&selector); err != nil {
 		t.Fatal(err)
@@ -386,12 +386,16 @@ func TestFaultMatchInitializesAttributesWithoutMetrics(t *testing.T) {
 		filter string
 	}{
 		{name: "issuer-one", filter: "envoy.filters.http.set_filter_state"},
-		{name: "partner-key", filter: "auth_gateway.attributes.server-0"},
+		{name: "partner-key", filter: "envoy.filters.http.set_filter_state"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			c := faultSelectorConfig(t)
 			c.APIs[0].Metrics = nil
-			c.Servers[0].Authentication = &gatewayapi.Authentication{AnyOf: []string{test.name}}
+			index := 0
+			if test.name == "partner-key" {
+				index = 1
+			}
+			c.Servers[0].APIs[0].Access = []gatewayapi.Access{c.Servers[0].APIs[0].Access[index]}
 			files, err := Generate(c)
 			if err != nil {
 				t.Fatal(err)

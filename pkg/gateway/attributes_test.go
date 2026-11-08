@@ -6,10 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	headertometadata "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_to_metadata/v3"
-	setfilterstate "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
-	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
+
 	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
 )
 
@@ -123,10 +121,9 @@ func TestHeaderMetadataCapturePreservesRequestHeader(t *testing.T) {
 	names := httpFilterNames(manager)
 	headerFilter := slices.Index(names, "envoy.filters.http.header_to_metadata")
 	if headerFilter < 0 || headerFilter <= slices.Index(names, "envoy.filters.http.api_key_auth") ||
-		headerFilter >= slices.Index(names, "auth_gateway.authentication") ||
 		headerFilter >= slices.Index(names, "envoy.filters.http.rbac") ||
 		headerFilter >= slices.Index(names, "envoy.filters.http.header_mutation") {
-		t.Fatalf("header capture is not before authentication, grants, and mutation: %v", names)
+		t.Fatalf("header capture must follow credentials and precede grants and mutation: %v", names)
 	}
 	var metadata headertometadata.Config
 	if err := manager.HttpFilters[headerFilter].GetTypedConfig().UnmarshalTo(&metadata); err != nil {
@@ -143,17 +140,6 @@ func TestHeaderMetadataCapturePreservesRequestHeader(t *testing.T) {
 		captured[0].GetOnHeaderPresent().GetType() != headertometadata.Config_STRING ||
 		captured[0].GetOnHeaderPresent().GetEncode() != headertometadata.Config_NONE {
 		t.Fatalf("header capture rules = %#v", captured)
-	}
-}
-
-func TestAPIKeyAttributeFilterInitializesMissingHostConfigMap(t *testing.T) {
-	c := resolveTestConfig(t, loadConfigCase(t, "api-key-auth"))
-	host := &route.VirtualHost{Name: "key.gateway.test"}
-	if _, err := apiKeyAttributeFilters(c, nil, []indexedVirtualHost{{serverIndex: 1, host: host}}); err != nil {
-		t.Fatal(err)
-	}
-	if host.TypedPerFilterConfig[attributeInitializationFilterName(1)] == nil {
-		t.Fatal("API-key attribute initialization was not added to the host")
 	}
 }
 
@@ -211,108 +197,5 @@ func TestAPIKeyAttributeExtractionPreservesCredentialValues(t *testing.T) {
 		if rule.OnHeaderMissing != nil {
 			t.Errorf("attribute %s supplies a value without a verified identity", attribute)
 		}
-	}
-}
-
-func TestJWTAttributesUseStaticFilterConfiguration(t *testing.T) {
-	c := loadConfigCase(t, "jwt-auth-with-attributes")
-	files, err := Generate(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
-	var attributeFilter *hcm.HttpFilter
-	for _, filter := range manager.HttpFilters {
-		if filter.Name == attributeFilterName {
-			attributeFilter = filter
-		}
-	}
-	if attributeFilter == nil || attributeFilter.GetTypedConfig() == nil || attributeFilter.GetConfigDiscovery() != nil {
-		t.Fatalf("attribute filter = %#v, want static configuration", attributeFilter)
-	}
-	var attributes setfilterstate.Config
-	if err := attributeFilter.GetTypedConfig().UnmarshalTo(&attributes); err != nil {
-		t.Fatal(err)
-	}
-	wantKeys := []string{
-		filterStateKey("tenant_id"), filterStateKey("writer_id"),
-		filterStateKey("tenant_id"), filterStateKey("writer_id"),
-	}
-	if len(attributes.OnRequestHeaders) != len(wantKeys) {
-		t.Fatalf("attribute updates = %d, want %d", len(attributes.OnRequestHeaders), len(wantKeys))
-	}
-	for index, update := range attributes.OnRequestHeaders {
-		if update.GetObjectKey() != wantKeys[index] || !update.SkipIfEmpty {
-			t.Fatalf("attribute update %d key/skip behavior = %#v/%t", index, update.GetKey(), update.SkipIfEmpty)
-		}
-		format := update.GetFormatString()
-		if format == nil || !format.OmitEmptyValues {
-			t.Fatalf("attribute formatter = %#v", update.GetValue())
-		}
-		expression := format.GetTextFormatSource().GetInlineString()
-		if !strings.HasPrefix(expression, "%CEL(") || !strings.HasSuffix(expression, ")%") || !strings.Contains(expression, "metadata.filter_metadata") {
-			t.Fatalf("attribute expression = %q, want a verified source", expression)
-		}
-	}
-}
-
-func TestAPIKeyInitializersAreHostScoped(t *testing.T) {
-	c := loadConfigCase(t, "api-key-auth")
-	files, err := Generate(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
-	for _, test := range []struct {
-		index int
-		want  int
-	}{
-		{index: 1, want: 2},
-		{index: 2, want: 6},
-	} {
-		filter := apiKeyHTTPFilter(t, manager, attributeInitializationFilterName(test.index))
-		if !filter.Disabled {
-			t.Fatalf("server %d initializer is not host-scoped", test.index)
-		}
-		var initialized setfilterstate.Config
-		if err := filter.GetTypedConfig().UnmarshalTo(&initialized); err != nil {
-			t.Fatal(err)
-		}
-		if len(initialized.OnRequestHeaders) != test.want {
-			t.Fatalf("server %d initializes %d attributes, want %d", test.index, len(initialized.OnRequestHeaders), test.want)
-		}
-		for _, value := range initialized.OnRequestHeaders {
-			format := value.GetFormatString().GetTextFormatSource()
-			if !value.SkipIfEmpty || format == nil || !strings.Contains(format.GetInlineString(), "metadata.filter_metadata") {
-				t.Fatalf("server %d initializer reads an unsafe source: %#v", test.index, value)
-			}
-		}
-	}
-}
-
-func TestHeaderWorkingAttributesRequireVerifiedAuthenticator(t *testing.T) {
-	c := loadConfigCase(t, "api-key-auth")
-	c.Authenticators[0].Attributes["requested_tenant"] = gatewayapi.AttributeSource{Header: new("X-Tenant")}
-	c.Authenticators[1].Attributes["requested_tenant"] = gatewayapi.AttributeSource{Header: new("X-Tenant")}
-	files, err := Generate(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
-	filter := apiKeyHTTPFilter(t, manager, attributeInitializationFilterName(2))
-	var initialization setfilterstate.Config
-	if err := filter.GetTypedConfig().UnmarshalTo(&initialization); err != nil {
-		t.Fatal(err)
-	}
-	var sources []string
-	for _, value := range initialization.OnRequestHeaders {
-		if value.GetObjectKey() == "auth_gateway.attributes.requested_tenant" {
-			sources = append(sources, value.GetFormatString().GetTextFormatSource().GetInlineString())
-		}
-	}
-	if len(sources) != 2 ||
-		!strings.Contains(sources[0], `metadata.filter_metadata["auth_gateway.api_key"]["identity"]`) ||
-		!strings.Contains(sources[1], `metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"] == "https://issuer-one.jwt.test"`) {
-		t.Fatalf("mixed any_of header initializers lack credential guards: %v", sources)
 	}
 }
