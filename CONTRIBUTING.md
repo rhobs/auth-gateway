@@ -46,14 +46,14 @@ replace the full suite before handoff.
 
 | Location | Contract |
 |----------|----------|
-| `pkg/api/*_test.go` | Configuration value encoding. |
-| `pkg/config/*_test.go` | YAML loading, defaults, validation, and reference resolution. |
-| `pkg/envoy/*_test.go` | Envoy extensions, filter composition, generated files, and references. |
-| `pkg/kubernetes/*_test.go` | Kubernetes resources and generated manifest references. |
-| `pkg/otel/*_test.go` | Collector configuration. |
-| `pkg/envoy/runtime*_test.go` | Pinned image validation, file reloads, and admission isolation. |
+| `pkg/api/duration_test.go` | Duration value encoding. |
+| `pkg/gateway/<feature>_test.go` | Loading, validation, and generation for the matching feature file. |
+| `pkg/gateway/runtime*_test.go` | Pinned image validation, file reloads, and admission isolation. |
 | `e2e/internal/framework/*_test.go` | Reusable Kubernetes test infrastructure. |
 | `e2e/*_test.go` | Observable routing, authentication, authorization, processing, TLS, reload, and metrics behavior. |
+
+Keep feature implementations and their unit tests in matching files. Keep
+shared test support in `test_helpers_test.go` and fixtures in `pkg/gateway/testdata`.
 
 Give each test one contract and an observable result. Use valid baselines,
 explicit YAML or fixtures, and independent expected values. For validation,
@@ -73,7 +73,7 @@ them. For an intentional output change, run:
 
 ```sh
 make update-golden
-git diff -- config/testdata
+git diff -- pkg/gateway/testdata
 make test
 git diff --check
 ```

@@ -6,9 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/rhobs/auth-gateway/pkg/config"
-	"github.com/rhobs/auth-gateway/pkg/envoy"
-	"github.com/rhobs/auth-gateway/pkg/otel"
+	"github.com/rhobs/auth-gateway/pkg/gateway"
 )
 
 func main() {
@@ -18,7 +16,7 @@ func main() {
 	flag.Parse()
 
 	if *printImageDefaults {
-		fmt.Println(config.DefaultEnvoyImage, config.DefaultOTelCollectorImage)
+		fmt.Println(gateway.DefaultEnvoyImage, gateway.DefaultOTelCollectorImage)
 		return
 	}
 
@@ -33,7 +31,7 @@ func generate(configPath, outputDirectory string) error {
 	if err != nil {
 		return fmt.Errorf("open config %q: %w", configPath, err)
 	}
-	gatewayConfig, loadErr := config.Load(input)
+	gatewayConfig, loadErr := gateway.Load(input)
 	closeErr := input.Close()
 	if loadErr != nil {
 		return fmt.Errorf("load config %q: %w", configPath, loadErr)
@@ -42,11 +40,11 @@ func generate(configPath, outputDirectory string) error {
 		return fmt.Errorf("close config %q: %w", configPath, closeErr)
 	}
 
-	envoyFiles, err := envoy.Generate(gatewayConfig)
+	envoyFiles, err := gateway.Generate(gatewayConfig)
 	if err != nil {
 		return fmt.Errorf("generate Envoy files: %w", err)
 	}
-	collectorConfig, err := otel.Generate(gatewayConfig)
+	collectorConfig, err := gateway.GenerateOTelCollectorConfig(gatewayConfig)
 	if err != nil {
 		return fmt.Errorf("generate collector config: %w", err)
 	}
@@ -58,7 +56,7 @@ func generate(configPath, outputDirectory string) error {
 		return fmt.Errorf("create output directory %q: %w", outputDirectory, err)
 	}
 	for _, file := range envoyFiles.All() {
-		relativePath, err := filepath.Rel(config.EnvoyConfigDirectory, file.Path)
+		relativePath, err := filepath.Rel(gateway.EnvoyConfigDirectory, file.Path)
 		if err != nil {
 			return fmt.Errorf("make generated path %q relative: %w", file.Path, err)
 		}

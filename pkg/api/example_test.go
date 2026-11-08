@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/rhobs/auth-gateway/pkg/api"
-	"github.com/rhobs/auth-gateway/pkg/config"
+	"github.com/rhobs/auth-gateway/pkg/gateway"
 )
 
 func ExampleNewDuration() {
-	gateway := api.Config{
+	cfg := api.Config{
 		Version: 1,
 		Listener: api.Listener{
 			Port:           new(uint32(8080)),
@@ -33,12 +33,12 @@ func ExampleNewDuration() {
 			}},
 		}},
 	}
-	if err := config.Validate(gateway); err != nil {
+	if err := gateway.Validate(cfg); err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Println(gateway.Listener.RequestTimeout)
-	fmt.Println(gateway.APIs[0].Upstream.ConnectTimeout)
+	fmt.Println(cfg.Listener.RequestTimeout)
+	fmt.Println(cfg.APIs[0].Upstream.ConnectTimeout)
 	// Output:
 	// 30s
 	// 5s

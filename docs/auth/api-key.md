@@ -37,8 +37,8 @@ version control.
 ### API-key Secret format
 
 The library accepts one credential document. Load it with
-`config.LoadAPIKeyCredentials` and pass the result with the selected
-authenticator to `kubernetes.APIKeySecret` to build the Kubernetes Secret:
+`gateway.LoadAPIKeyCredentials` and pass the result with the selected
+authenticator to `gateway.APIKeySecret` to build the Kubernetes Secret:
 
 ```yaml
 credentials:
