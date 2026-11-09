@@ -114,11 +114,22 @@ func validateAPIMetrics(name string, value *gatewayapi.APIMetrics) error {
 	return nil
 }
 
-func validateMetricAttributeReferences(apis []gatewayapi.API, authenticators map[string]gatewayapi.Authenticator) error {
+func validateMetricAttributeReferences(apis []gatewayapi.API, authenticators map[string]gatewayapi.Authenticator, servers []gatewayapi.Server) error {
 	known := make(map[string]struct{})
 	for _, authenticator := range authenticators {
 		for attribute := range authenticator.Attributes {
 			known[attribute] = struct{}{}
+		}
+	}
+	for _, server := range servers {
+		for _, binding := range server.APIs {
+			for _, access := range binding.Access {
+				if access.Authorization.ExtAuthz != nil {
+					for attribute := range access.Authorization.ExtAuthz.ResponseAttributes {
+						known[attribute] = struct{}{}
+					}
+				}
+			}
 		}
 	}
 	for i, api := range apis {

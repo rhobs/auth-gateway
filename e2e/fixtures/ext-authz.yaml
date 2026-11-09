@@ -1,0 +1,61 @@
+version: 1
+authenticators:
+- name: issuer-one
+  jwt:
+    issuer: https://issuer-one.jwt.test
+    jwks:
+      uri: https://jwks.jwt.test/issuer-one
+  attributes:
+    tenant_id: {claim_path: [organization, id]}
+ext_authz_services:
+- name: policy
+  upstream:
+    address: policy.example.test
+    port: 9000
+    http_protocol: http2
+    tls_config:
+      server_name: policy.example.test
+  timeout: 300ms
+  request_headers: [authorization, x-tenant, x-policy-mode]
+  credential_headers: [authorization]
+apis:
+- name: ext-authz-api
+  upstream:
+    address: httpbin
+    port: 8080
+  routes:
+  - methods: [GET]
+    path: {exact: /protected}
+    rewrite: {path: /anything}
+    processing:
+      request_headers:
+      - name: X-Scope-OrgID
+        from_attribute: policy_tenant
+servers:
+- hostname: ext.auth-gateway.test
+  apis:
+  - name: ext-authz-api
+    access:
+    - name: jwt
+      match:
+        headers:
+          X-Tenant: {exact: internal}
+      authentication:
+        jwt: {providers: [issuer-one]}
+      authorization:
+        ext_authz:
+          service: policy
+          response_attributes:
+            policy_tenant: [identity, tenant]
+    - name: external
+      match:
+        headers:
+          X-Tenant: {in: [partner, partner-other]}
+      authorization:
+        ext_authz:
+          service: policy
+          response_attributes:
+            policy_tenant: [identity, tenant]
+kubernetes:
+  name: auth-gateway
+  namespace: observability

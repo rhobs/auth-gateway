@@ -414,10 +414,42 @@ func addAccessRouteConfigs(c resolvedConfig, generated *route.Route, access reso
 		generated.TypedPerFilterConfig = make(map[string]*anypb.Any)
 	}
 	authorization, err := authorizationPerRouteConfig(c, access)
+	if access.Authorization.ExtAuthz != nil {
+		authorization, err = packEnvoy(&httpRBAC.RBACPerRoute{})
+	}
 	if err != nil {
 		return err
 	}
 	generated.TypedPerFilterConfig[authorizationFilterName] = authorization
+	if external := access.Authorization.ExtAuthz; external != nil {
+		config, err := extAuthzPerRouteConfig()
+		if err != nil {
+			return err
+		}
+		generated.TypedPerFilterConfig[extAuthzFilterName(external.Service)] = config
+		if credentials := c.extAuthzIndex[external.Service].CredentialHeaders; len(credentials) != 0 {
+			cleanup, err := extAuthzCredentialCleanupPerRouteConfig(credentials)
+			if err != nil {
+				return err
+			}
+			generated.TypedPerFilterConfig[extAuthzCredentialCleanupName] = cleanup
+		}
+		if generated.Metadata == nil {
+			generated.Metadata = &core.Metadata{FilterMetadata: make(map[string]*structpb.Struct)}
+		}
+		if generated.Metadata.FilterMetadata == nil {
+			generated.Metadata.FilterMetadata = make(map[string]*structpb.Struct)
+		}
+		apiName := generated.Metadata.FilterMetadata[authorizationFilterName].Fields[apiMetadataName].GetStringValue()
+		generated.Metadata.FilterMetadata[extAuthzMetadataName] = extAuthzRouteMetadata(apiName, access)
+		if len(external.ResponseAttributes) != 0 {
+			attributes, err := extAuthzAttributePerRouteConfig(external.ResponseAttributes)
+			if err != nil {
+				return err
+			}
+			generated.TypedPerFilterConfig[extAuthzAttributeFilterName] = attributes
+		}
+	}
 	headers := slices.Sorted(maps.Keys(access.Match.Headers))
 	if access.Authentication != nil {
 		if access.Authentication.JWT != nil {
@@ -434,6 +466,13 @@ func addAccessRouteConfigs(c resolvedConfig, generated *route.Route, access reso
 				return err
 			}
 			generated.TypedPerFilterConfig[apiKeyFilterName] = config
+		}
+	}
+	if external := access.Authorization.ExtAuthz; external != nil {
+		for _, header := range c.extAuthzIndex[external.Service].CredentialHeaders {
+			if !slices.ContainsFunc(headers, func(existing string) bool { return strings.EqualFold(existing, header) }) {
+				headers = append(headers, header)
+			}
 		}
 	}
 	validation, err := requestValidationPerRouteConfig(headers)

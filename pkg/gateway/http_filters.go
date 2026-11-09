@@ -58,6 +58,13 @@ func httpFilters(c resolvedConfig, hosts []indexedVirtualHost, protected bool) (
 		return nil, err
 	}
 	filters = append(filters, cleanup)
+	if len(c.ExtAuthzServices) != 0 {
+		credentials, err := extAuthzCredentialCleanupFilter()
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, credentials)
+	}
 	if apis := apisForHosts(c, hosts); hasRequestHeaderProcessing(apis) {
 		headers, err := requestHeaderHTTPFilter(apis)
 		if err != nil {
@@ -166,6 +173,20 @@ func protectedHTTPFilters(c resolvedConfig, filters []*hcm.HttpFilter, hosts []i
 		return nil, err
 	}
 	filters = append(filters, authorization)
+	for _, service := range c.ExtAuthzServices {
+		filter, err := extAuthzHTTPFilter(service)
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, filter)
+	}
+	if len(c.ExtAuthzServices) != 0 {
+		filter, err := extAuthzAttributeFilter()
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, filter)
+	}
 	if hasRequestHeaderProcessing(apisForHosts(c, hosts)) {
 		return appendRequiredHeaderRBAC(filters)
 	}
@@ -176,6 +197,11 @@ func hasProtectedHosts(c resolvedConfig, hosts []indexedVirtualHost) bool {
 	for _, host := range hosts {
 		if len(c.servers[host.serverIndex].authenticators) != 0 {
 			return true
+		}
+		for _, binding := range c.servers[host.serverIndex].bindings {
+			if len(binding.access) != 0 {
+				return true
+			}
 		}
 	}
 	return false

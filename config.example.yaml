@@ -110,6 +110,22 @@ authenticators:
       requested_tenant:
         header: X-Tenant
 
+# Optional gRPC Check service for access entries using authorization.ext_authz.
+# Envoy verifies the service certificate, and forwards only listed headers.
+ext_authz_services:
+  - name: policy
+    upstream:
+      address: policy.observability.svc.cluster.local
+      port: 9000
+      http_protocol: http2
+      tls_config:
+        server_name: policy.observability.svc.cluster.local
+        trusted_ca:
+          config_map: {name: policy-ca, key: ca.pem}
+    timeout: 300ms # Default.
+    request_headers: [authorization, x-tenant]
+    credential_headers: [authorization] # Remove before API upstream forwarding.
+
 # Metrics collection is enabled by default. Per-API counters still need
 # apis[].metrics. Tracing is disabled by default.
 observability:
@@ -397,6 +413,35 @@ servers:
                     tenant_id:
                       equals_attribute: requested_tenant
                     role: [reader, admin]
+
+  # Local JWT verification can precede external authorization. An entry with
+  # no local authentication lets the policy service do both jobs.
+  - hostname: policy-query.example.com
+    tls_config:
+      secret: policy-query-gateway-tls
+    apis:
+      - name: metrics-query
+        access:
+          - name: internal-policy
+            match:
+              headers:
+                X-Tenant: {exact: client-123}
+            authentication:
+              jwt: {providers: [internal-jwt]}
+            authorization:
+              ext_authz:
+                service: policy
+                response_attributes:
+                  authorized_tenant: [identity, tenant]
+          - name: partner-policy
+            match:
+              headers:
+                X-Tenant: {exact: customer-456}
+            authorization:
+              ext_authz:
+                service: policy
+                response_attributes:
+                  authorized_tenant: [identity, tenant]
 
   # Client certificates are mandatory for this server's entire API set.
   - hostname: mtls-write.example.com

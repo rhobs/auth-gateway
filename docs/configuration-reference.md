@@ -22,12 +22,13 @@ be at least `1ms`.
 | `listener`               | object          | Defaults below | Listener fields use the defaults below if omitted.                       |
 | `overload`               | object          | Disabled       | If present, both capacity limits are required.                           |
 | `authenticators`         | list of objects | Empty          | Names must be unique. Each entry sets exactly one of `jwt`, `api_key`, or `mtls`. |
+| `ext_authz_services`     | list of objects | Empty          | Named gRPC authorization services; see [external authorization services](#external-authorization-services). |
 | `servers`                | list of objects | None           | Required; at least one server.                                           |
 | `apis`                   | list of objects | None           | Required; at least one API.                                              |
 | `observability`          | object          | Defaults below | Optional metrics and tracing settings.                                   |
 | `kubernetes`             | object          | None           | Omit for file-based output; required to generate Kubernetes resources.   |
 
-Names used for APIs, authenticators, and shared access entries
+Names used for APIs, authenticators, external authorization services, and shared access entries
 must be 1 to 53 characters, start with a lowercase ASCII letter, and contain
 only lowercase letters, digits, and hyphens. Names must be unique within their
 own list. Attribute names must be 1 to 64 characters, start with a lowercase
@@ -187,11 +188,12 @@ object is omitted.
 Each API with `metrics` configured emits a request counter. The automatic `api`
 label is the API name and `http_status_code` comes from the response.
 Additional labels use values from authenticator attributes declared under
-`authenticators[].attributes`.
+`authenticators[].attributes` or response attributes declared by an external
+authorization entry.
 
 | Field                   | Type                                | Default | Constraint                                                                                                                                                                                                                  |
 |-------------------------|-------------------------------------|---------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `apis[].metrics.labels` | map of label name to attribute name | Empty   | Label names must be valid Prometheus names, must not start with `__`, and cannot be `api`, `http_status_code`, or `envoy_http_conn_manager_prefix`. Each value must be a valid attribute name declared by an authenticator. |
+| `apis[].metrics.labels` | map of label name to attribute name | Empty   | Label names must be valid Prometheus names, must not start with `__`, and cannot be `api`, `http_status_code`, or `envoy_http_conn_manager_prefix`. Each value must be a valid authenticator or external response attribute. |
 
 #### Metric cardinality
 
@@ -226,7 +228,7 @@ its abort settings for the next test.
 | `apis[].fault_injection.enabled`           | boolean | `false` | Requires `abort` when enabled.                                    |
 | `apis[].fault_injection.match`             | object  | None    | Optional; if supplied, must contain headers or attributes. Omit to select all requests that pass authentication, authorization, and required-header checks. |
 | `apis[].fault_injection.match.headers`     | map of header name to string | Empty | All headers must match exact values. Names are case-insensitive and cannot contain underscores, duplicate another name ignoring case, or use reserved identity, routing, connection, framing, or credential headers. Route processing cannot overwrite these headers. Values must be nonempty and contain no control characters. |
-| `apis[].fault_injection.match.attributes`  | map of attribute name to list of strings | Empty | All attributes must match at least one listed exact value. Each list must contain distinct nonempty values without control characters. Every provider selected by every protected binding must declare each attribute. Sources must be verified claims, credentials, or certificate SANs; header sources are rejected. |
+| `apis[].fault_injection.match.attributes`  | map of attribute name to list of strings | Empty | All attributes must match at least one listed exact value. Each list must contain distinct nonempty values without control characters. Every protected binding must declare each attribute. Sources must be verified claims, credentials, certificate SANs, or external response attributes; header sources are rejected. |
 | `apis[].fault_injection.abort`             | object  | None    | Required when enabled; HTTP errors only.                          |
 | `apis[].fault_injection.abort.http_status` | uint32  | None    | Required error status from `400` to `599`.                         |
 | `apis[].fault_injection.abort.percentage`  | uint32  | None    | Required whole-number percentage from `1` to `100`.               |
@@ -251,15 +253,35 @@ gateway configuration, then explicitly roll out the Deployment to toggle them.
 
 | Field                                                         | Type            | Default | Constraint                                                                                                                                  |
 |---------------------------------------------------------------|-----------------|---------|---------------------------------------------------------------------------------------------------------------------------------------------|
-| `apis[].routes[].processing.request_headers`                  | list of objects | None    | If `processing` is present, at least one mapping is required. Every selected provider must declare each referenced attribute; public bindings cannot use these mappings.       |
+| `apis[].routes[].processing.request_headers`                  | list of objects | None    | If `processing` is present, at least one mapping is required. Every protected entry must provide each referenced attribute; public bindings cannot use these mappings.       |
 | `apis[].routes[].processing.request_headers[].name`           | string          | None    | Required valid HTTP header name; cannot be a reserved identity, routing, connection, or framing header. Names must be unique ignoring case. |
 | `apis[].routes[].processing.request_headers[].from_attribute` | string          | None    | Required valid attribute name.                                                                                                              |
 
 Headers and metric labels use attribute values directly from their declared
 sources. When an upstream needs a different value from the one used in a grant,
 supply an additional source attribute and reference it in `from_attribute` or
-`apis[].metrics.labels`. See the [JWT](auth/jwt.md) and [API-key](auth/api-key.md)
-guides for examples.
+`apis[].metrics.labels`. See the [JWT](auth/jwt.md), [API-key](auth/api-key.md),
+and [external authorization](auth/ext-authz.md) guides for examples.
+
+### External authorization services
+
+Each `ext_authz_services[]` entry defines one gRPC Check service. Its upstream
+uses HTTP/2 and verified TLS. The service must be reachable by Envoy, and a
+custom CA ConfigMap must exist in the gateway namespace before deployment.
+
+| Field | Type | Default | Constraint |
+|-------|------|---------|------------|
+| `ext_authz_services[].name` | string | None | Required unique name using the format above. |
+| `ext_authz_services[].upstream` | object | None | Required; uses the [upstream fields](#upstream), with `http_protocol: http2` and `tls_config` required. |
+| `ext_authz_services[].timeout` | duration | `300ms` | Positive gRPC Check timeout. |
+| `ext_authz_services[].request_headers` | list of strings | None | Required nonempty, case-insensitive unique list of HTTP request headers sent to the service. Header names must be valid, contain no `_`, and must not be reserved identity, routing, connection, or framing headers. `authorization` and `cookie` are allowed. |
+| `ext_authz_services[].credential_headers` | list of strings | Empty | Case-insensitive unique subset of `request_headers`; removed before forwarding to the API upstream. Include any credential header the service uses. |
+
+The service receives the selected headers, route metadata identifying the API
+and access entry, and available JWT, API-key, or mTLS metadata after local
+authentication. The service must return an explicit allow or deny decision.
+See the [external authorization guide](auth/ext-authz.md) for the Check contract
+and failure behavior.
 
 ## Servers, authentication, and authorization
 
@@ -285,12 +307,15 @@ must be unique within a binding; a label does not itself match a request.
 | `match.headers` | map of header name to matcher | Empty | All configured headers must match. Safe names without underscores, credential or reserved headers, or duplicates ignoring case. |
 | `match.headers.<header>.exact` | string | None | Exactly one of `exact` or `in`; a nonempty value without commas, controls, or surrounding whitespace. |
 | `match.headers.<header>.in` | list of strings | None | Nonempty list of distinct values with the same constraints as `exact`. |
-| `authentication.jwt.providers` | list of strings | None | Nonempty unique JWT authenticator names with distinct issuers within this entry. |
+| `authentication.jwt.providers` | list of strings | None | Nonempty unique JWT authenticator names with distinct issuers within this entry; optional when `authorization.ext_authz` is selected. |
 | `authentication.api_key.authenticator` | string | None | Name of the API-key authenticator. |
-| `authorization.grants` | list of objects | None | Required nonempty grants for this server/API entry. See [authorization grants](#authorization-grants). |
+| `authorization.grants` | list of objects | None | Nonempty grants when local authorization is selected. See [authorization grants](#authorization-grants). |
+| `authorization.ext_authz` | object | None | Selects one named external service instead of local grants. See [external authorization](#external-authorization). |
 
-Outside dedicated mTLS servers, `authentication` must select exactly one of
-`jwt` or `api_key`. A JWT entry may trust several providers; each grant remains
+Outside dedicated mTLS servers, `authentication` selects exactly one of
+`jwt` or `api_key` when local grants are used. It may be omitted for external
+authorization, allowing the service to authenticate as well as authorize.
+A JWT entry may trust several providers; each grant remains
 tied to one verifying provider. A key cannot replace an invalid JWT on a JWT
 entry, and a JWT cannot replace a missing key on a key entry.
 
@@ -302,7 +327,9 @@ selector or selected credential headers and comma-separated selectors return
 `400`. Missing or unmatched selectors return `403`. Invalid selected
 credentials normally return `401`; a validly signed JWT with an untrusted
 audience returns `403` in the pinned Envoy version. An authenticated request
-without an applicable grant returns `403`. Denials do not reach the upstream.
+without an applicable grant returns `403`. External denials use the service's
+HTTP status, and Check errors or timeouts return `503`. Denials do not reach
+the upstream.
 
 A public API requires `public: true`; omitted access never makes it public.
 See the [authentication guide](auth/README.md) for examples.
@@ -382,9 +409,27 @@ a header must participate in this entry's `match.headers`. This binds a listed
 requested tenant to the particular verified tenant rather than checking two
 independent allowlists. Attribute values are never normalized or translated.
 
+### External authorization
+
+These fields live under `servers[].apis[].access[].authorization.ext_authz`.
+Select exactly one of `authorization.grants` or `authorization.ext_authz`.
+
+| Field | Type | Default | Constraint |
+|-------|------|---------|------------|
+| `service` | string | None | Required name of an `ext_authz_services[]` entry. |
+| `response_attributes` | map of attribute name to list of strings | Empty | Optional paths in the Check response's `dynamic_metadata`; each path is a nonempty list of nonempty literal keys. Names cannot collide with attributes from the entry's local authenticator. |
+
+Only nonempty scalar string response attributes are copied into gateway
+filter state. Missing, empty, or list-valued data does not satisfy a required
+route header. Response attributes can also feed metric labels and fault
+selectors. Local JWT or API-key authentication runs before the external check
+when configured. Dedicated mTLS server authentication is inherited. With no
+local authenticator, the service performs any required authentication itself.
+
 ## Trusted CA
 
-Trusted CA settings appear under `apis[].upstream.tls_config.trusted_ca` or
+Trusted CA settings appear under `apis[].upstream.tls_config.trusted_ca`,
+`ext_authz_services[].upstream.tls_config.trusted_ca`, or
 `authenticators[].jwt.jwks.trusted_ca`, and are required under
 `authenticators[].mtls.trusted_ca`. Upstream and JWKS trust use the system CA
 bundle when this object is omitted. mTLS client trust has no system CA fallback.

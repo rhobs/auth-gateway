@@ -27,6 +27,7 @@ type resolvedConfig struct {
 	gatewayapi.Config
 	apiIndex           map[string]gatewayapi.API
 	authenticatorIndex map[string]gatewayapi.Authenticator
+	extAuthzIndex      map[string]gatewayapi.ExternalAuthorizationService
 	servers            []resolvedServer
 	usedAuthenticators map[string]struct{}
 	apiKey             gatewayapi.Authenticator
@@ -229,6 +230,9 @@ func withDefaultsConfig(c gatewayapi.Config) gatewayapi.Config {
 	for i := range c.Authenticators {
 		c.Authenticators[i] = withDefaultsAuthenticator(c.Authenticators[i])
 	}
+	for i := range c.ExtAuthzServices {
+		c.ExtAuthzServices[i] = withDefaultsExtAuthzService(c.ExtAuthzServices[i])
+	}
 	if c.Node.ID == "" {
 		c.Node.ID = defaultNodeID
 	}
@@ -264,6 +268,7 @@ func cloneConfig(c gatewayapi.Config) gatewayapi.Config {
 	c.Listener = cloneListener(c.Listener)
 	c.Overload = cloneConfigPointer(c.Overload, cloneOverloadConfig)
 	c.Authenticators = cloneSlice(c.Authenticators, cloneAuthenticator)
+	c.ExtAuthzServices = cloneSlice(c.ExtAuthzServices, cloneExtAuthzService)
 	c.Servers = cloneSlice(c.Servers, cloneServer)
 	c.APIs = cloneSlice(c.APIs, cloneAPI)
 	c.Observability = cloneObservabilityConfig(c.Observability)
@@ -364,6 +369,10 @@ func resolveAuthentication(c *resolvedConfig) error {
 	if err := validateAuthenticatorAttributesConfig(c.Config, apiKeyHeader); err != nil {
 		return err
 	}
+	c.extAuthzIndex, err = validateExtAuthzServices(c.Config)
+	if err != nil {
+		return err
+	}
 	if apiKeyHeader != "" {
 		if err := validateAPIKeyHeaderUse(c.Config, apiKeyHeader); err != nil {
 			return err
@@ -372,7 +381,7 @@ func resolveAuthentication(c *resolvedConfig) error {
 	if err := validateFaultHeaderReferences(c.APIs, apiKeyHeader); err != nil {
 		return err
 	}
-	if err := validateMetricAttributeReferences(c.APIs, authenticators); err != nil {
+	if err := validateMetricAttributeReferences(c.APIs, authenticators, c.Servers); err != nil {
 		return err
 	}
 	c.authenticatorIndex = authenticators
@@ -412,6 +421,11 @@ func (c resolvedConfig) caMounts() []gatewayapi.CAConfigMap {
 	for _, api := range c.APIs {
 		if api.Upstream.TLSConfig != nil {
 			add(api.Upstream.TLSConfig.TrustedCA)
+		}
+	}
+	for _, service := range c.ExtAuthzServices {
+		if service.Upstream.TLSConfig != nil {
+			add(service.Upstream.TLSConfig.TrustedCA)
 		}
 	}
 	return mounts

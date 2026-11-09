@@ -150,6 +150,14 @@ func validateFaultAttributeSources(serverName string, server resolvedServer) err
 				return missing()
 			}
 			for _, access := range binding.access {
+				if access.Authorization.ExtAuthz != nil {
+					if _, exists := access.Authorization.ExtAuthz.ResponseAttributes[attribute]; exists {
+						continue
+					}
+				}
+				if len(access.authenticators) == 0 {
+					return missing()
+				}
 				for _, authenticator := range access.authenticators {
 					source, exists := authenticator.Attributes[attribute]
 					if !exists {
