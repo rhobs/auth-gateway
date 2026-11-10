@@ -132,7 +132,7 @@ func TestPublicOnlyChainRemovesConfiguredCredentials(t *testing.T) {
 	}
 	bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
 	manager := decodeHTTPManager(t, bootstrap.StaticResources.Listeners[0].FilterChains[0])
-	if got, want := httpFilterNames(manager), []string{requestControlsFilterName, credentialCleanupFilterName, routerFilterName}; !slices.Equal(got, want) {
+	if got, want := httpFilterNames(manager), []string{credentialConflictFilterName, requestControlsFilterName, credentialCleanupFilterName, routerFilterName}; !slices.Equal(got, want) {
 		t.Fatalf("public-only HTTP filter order = %v, want %v", got, want)
 	}
 }

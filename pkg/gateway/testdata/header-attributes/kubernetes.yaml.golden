@@ -114,6 +114,24 @@ data:
                             max_headers_count: 100
                             max_stream_duration: 30s
                         http_filters:
+                            - name: auth_gateway.credential_conflict
+                              typed_config:
+                                '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC
+                                rules:
+                                    action: DENY
+                                    policies:
+                                        mixed-credentials:
+                                            permissions:
+                                                - and_rules:
+                                                    rules:
+                                                        - header:
+                                                            name: authorization
+                                                            present_match: true
+                                                        - header:
+                                                            name: x-partner-key
+                                                            present_match: true
+                                            principals:
+                                                - any: true
                             - name: auth_gateway.request_controls
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation

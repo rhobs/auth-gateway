@@ -31,6 +31,10 @@ contributes missing attributes. Multiple JWT providers can serve the same
 read API while keeping their verified claims separate. A gateway can define
 multiple JWT and mTLS authenticators and one API-key authenticator.
 
+When an API-key authenticator is configured, any request carrying both its
+credential header and `Authorization` returns `403` before authentication and
+custom request metrics, regardless of the path or selected access method.
+
 mTLS uses a dedicated HTTPS server mode: `tls_config.mtls.authenticator` names
 the certificate validator for every API on that server. Client certificates
 are always required during TLS establishment. Access entries omit

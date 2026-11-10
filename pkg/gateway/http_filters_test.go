@@ -104,7 +104,7 @@ func TestAccessFilterOrderPreservesOriginalSources(t *testing.T) {
 	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
 	names := httpFilterNames(manager)
 	previous := -1
-	for _, name := range []string{requestControlsFilterName, requestValidationFilterName, jwtAuthnFilterName, apiKeyFilterName, headerToMetadataFilterName, authorizationFilterName, requiredHeaderFilterName, credentialCleanupFilterName, headerMutationFilterName, routerFilterName} {
+	for _, name := range []string{credentialConflictFilterName, requestControlsFilterName, requestValidationFilterName, jwtAuthnFilterName, apiKeyFilterName, headerToMetadataFilterName, authorizationFilterName, requiredHeaderFilterName, credentialCleanupFilterName, headerMutationFilterName, routerFilterName} {
 		index := slices.Index(names, name)
 		if index <= previous {
 			t.Fatalf("%q has unsafe filter order: %v", name, names)

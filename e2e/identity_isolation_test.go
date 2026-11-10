@@ -54,7 +54,7 @@ var _ = Describe("Tenant and resource isolation", Label("gateway", "identity-iso
 			{"external writer", "external-a", "external-org", http.MethodPost, "/write", token("issuer-two", "external-org", "writer"), ""},
 			{"internal writer A", "client-a", "client-a", http.MethodPost, "/write", token("issuer-one", "client-a", "writer"), ""},
 			{"internal writer B", "client-b", "client-b", http.MethodPost, "/write", token("issuer-one", "client-b", "writer"), ""},
-			{"key writer", "key-a", "key-a", http.MethodPost, "/write", "invalid.jwt", "journey-key"},
+			{"key writer", "key-a", "key-a", http.MethodPost, "/write", "", "journey-key"},
 			{"internal reader", "client-a", "", http.MethodGet, "/read", token("issuer-one", "client-a", "reader"), ""},
 			{"external reader", "client-b", "", http.MethodGet, "/read", token("issuer-two", "client-b", "viewer"), ""},
 		} {
@@ -104,7 +104,7 @@ var _ = Describe("Tenant and resource isolation", Label("gateway", "identity-iso
 				cluster = "api-journey-write"
 			}
 			expectDeniedBeforeUpstream(ctx, gateway.adminAddr, cluster, test.name, test.status, func() (int, []byte, error) {
-				return gateway.request(ctx, accessJourneyHost, false, test.method, test.path, apiKeyRequestBody, token(test.issuer, test.credentialTenant, test.role), "journey-key", http.Header{"X-Tenant": []string{test.tenant}, "X-Environment": []string{"production"}, "X-Scope-OrgID": []string{test.tenant}})
+				return gateway.request(ctx, accessJourneyHost, false, test.method, test.path, apiKeyRequestBody, token(test.issuer, test.credentialTenant, test.role), "", http.Header{"X-Tenant": []string{test.tenant}, "X-Environment": []string{"production"}, "X-Scope-OrgID": []string{test.tenant}})
 			})
 		}
 	}, NodeTimeout(2*time.Minute))
@@ -130,7 +130,7 @@ var _ = Describe("Tenant and resource isolation", Label("gateway", "identity-iso
 	}, NodeTimeout(2*time.Minute))
 
 	It("keeps public APIs explicit on the same host", func(ctx SpecContext) {
-		status, body, err := gateway.request(ctx, accessJourneyHost, false, http.MethodGet, "/health", "", "broken.jwt", "invalid-key", nil)
+		status, body, err := gateway.request(ctx, accessJourneyHost, false, http.MethodGet, "/health", "", "broken.jwt", "", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
 		echo, err := decodeHTTPBinEcho(body)
