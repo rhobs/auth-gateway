@@ -1,7 +1,8 @@
 # Authentication and authorization
 
-The gateway supports [JWT](jwt.md), [API keys](api-key.md), and
-[client-certificate mTLS](mtls.md). Shared `authenticators` define credential
+The gateway supports [JWT](jwt.md), [API keys](api-key.md),
+[client-certificate mTLS](mtls.md), and [external authorization](ext-authz.md).
+Shared `authenticators` define credential
 validation and original attribute sources. Access belongs to each
 `servers[].apis[]` binding. See the [complete example](../../config.example.yaml)
 and [configuration reference](../configuration-reference.md).
@@ -26,7 +27,7 @@ repeated selected credential headers, and comma-separated selectors return
 
 ## Authentication
 
-A protected entry selects exactly one method:
+A protected entry with local authentication selects exactly one method:
 
 - `authentication.jwt.providers` names one or more trusted JWT authenticators.
 - `authentication.api_key.authenticator` names the API-key authenticator.
@@ -42,6 +43,9 @@ credential header and `Authorization` returns `403` before authentication and
 the backend, regardless of the path or selected access method. A matched API
 with request metrics configured still counts the `403` response.
 
+An entry using `authorization.ext_authz` may omit `authentication`. Its service
+then authenticates and authorizes the selected request.
+
 mTLS uses a dedicated HTTPS server mode: `tls_config.mtls.authenticator` names
 the certificate validator for every API on that server. Client certificates
 are always required during TLS establishment. Access entries omit
@@ -49,7 +53,8 @@ are always required during TLS establishment. Access entries omit
 
 ## Authorization
 
-Each entry's `authorization.grants` names its verifying authenticator and
+Each entry selects local `authorization.grants` or `authorization.ext_authz`.
+Local grants name their verifying authenticator and
 credential attribute conditions. Any applicable grant can allow the request;
 every condition within that grant must match. Roles are literal attribute
 values, with no implicit inheritance.
@@ -67,6 +72,8 @@ impersonate the other.
 Authorization failure returns `403`. Invalid selected credentials normally
 return `401`; the pinned Envoy version returns `403` for an untrusted JWT
 audience. Missing or invalid mTLS certificates fail the TLS handshake.
+External denials use the service's status; Check errors and timeouts return
+`503`.
 
 ## Forwarding
 
@@ -75,7 +82,8 @@ values after authorization. Forward the authorized request tenant with
 `from_attribute: requested_tenant`, or declare a separate verified source when
 an upstream needs another value. Required values must exist before a request
 can reach the backend. Bearer tokens, configured API keys, and internal identity
-headers are removed before forwarding.
+headers are removed before forwarding. Header attributes declared by an
+external authorization service can also supply managed headers.
 
 Changes to access, validators, attribute sources, or forwarding require
 regeneration and an explicit Deployment rollout. API-key sets and mTLS client

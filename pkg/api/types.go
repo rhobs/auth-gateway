@@ -73,7 +73,23 @@ type AuthorizationGrant struct {
 
 // Authorization grants access within one server/API entry.
 type Authorization struct {
-	Grants []AuthorizationGrant `yaml:"grants"`
+	Grants   []AuthorizationGrant   `yaml:"grants,omitempty"`
+	ExtAuthz *ExternalAuthorization `yaml:"ext_authz,omitempty"`
+}
+
+// ExternalAuthorization selects a service for an access entry.
+type ExternalAuthorization struct {
+	Service string `yaml:"service"`
+}
+
+// ExternalAuthorizationService describes a gRPC authorization service.
+type ExternalAuthorizationService struct {
+	Name              string            `yaml:"name"`
+	Upstream          Upstream          `yaml:"upstream"`
+	Timeout           *Duration         `yaml:"timeout,omitempty"`
+	RequestHeaders    []string          `yaml:"request_headers"`
+	CredentialHeaders []string          `yaml:"credential_headers,omitempty"`
+	Attributes        []AttributeSource `yaml:"attributes,omitempty"`
 }
 
 // APIBinding exposes one API with explicit public access or protected entries.
@@ -99,15 +115,16 @@ type AccessMatch struct {
 
 // Config describes gateway behavior, observability, and optional Kubernetes output.
 type Config struct {
-	Version        int                 `yaml:"version"`
-	Node           EnvoyNode           `yaml:"node,omitempty"`
-	Listener       Listener            `yaml:"listener"`
-	Overload       *OverloadConfig     `yaml:"overload,omitempty"`
-	Authenticators []Authenticator     `yaml:"authenticators,omitempty"`
-	Servers        []Server            `yaml:"servers"`
-	APIs           []API               `yaml:"apis"`
-	Observability  ObservabilityConfig `yaml:"observability,omitempty"`
-	Kubernetes     *Kubernetes         `yaml:"kubernetes,omitempty"`
+	Version          int                            `yaml:"version"`
+	Node             EnvoyNode                      `yaml:"node,omitempty"`
+	Listener         Listener                       `yaml:"listener"`
+	Overload         *OverloadConfig                `yaml:"overload,omitempty"`
+	Authenticators   []Authenticator                `yaml:"authenticators,omitempty"`
+	ExtAuthzServices []ExternalAuthorizationService `yaml:"ext_authz_services,omitempty"`
+	Servers          []Server                       `yaml:"servers"`
+	APIs             []API                          `yaml:"apis"`
+	Observability    ObservabilityConfig            `yaml:"observability,omitempty"`
+	Kubernetes       *Kubernetes                    `yaml:"kubernetes,omitempty"`
 }
 
 // EnvoyNode describes the identity and logical cluster of this Envoy instance.

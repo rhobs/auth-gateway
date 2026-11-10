@@ -61,7 +61,7 @@ func resolveServerAccess(c *resolvedConfig, index int) error {
 					return fmt.Errorf("%s.match overlaps tenant values in access[%d]", entryField, previous)
 				}
 			}
-			selected, err := resolveAccessAuthenticators(c.authenticatorIndex, *server, entry.Authentication, entryField)
+			selected, err := resolveAccessAuthenticators(c.authenticatorIndex, *server, entry.Authentication, entry.Authorization.ExtAuthz != nil, entryField)
 			if err != nil {
 				return err
 			}
@@ -69,7 +69,10 @@ func resolveServerAccess(c *resolvedConfig, index int) error {
 			if err := validateAccessGrants(entryField, access); err != nil {
 				return err
 			}
-			if err := validateAccessForwarding(entryField, resolved.api, selected); err != nil {
+			if err := validateExtAuthzAccess(entryField, access, c.extAuthzIndex); err != nil {
+				return err
+			}
+			if err := validateAccessForwarding(entryField, resolved.api, access, c.extAuthzIndex); err != nil {
 				return err
 			}
 			for _, authenticator := range selected {
@@ -87,12 +90,15 @@ func resolveServerAccess(c *resolvedConfig, index int) error {
 	return nil
 }
 
-func resolveAccessAuthenticators(known map[string]gatewayapi.Authenticator, server resolvedServer, authentication *gatewayapi.Authentication, field string) ([]gatewayapi.Authenticator, error) {
+func resolveAccessAuthenticators(known map[string]gatewayapi.Authenticator, server resolvedServer, authentication *gatewayapi.Authentication, external bool, field string) ([]gatewayapi.Authenticator, error) {
 	if server.usesMTLS() {
 		if authentication != nil {
 			return nil, fmt.Errorf("%s.authentication is forbidden on a dedicated mTLS server", field)
 		}
 		return []gatewayapi.Authenticator{server.mtls}, nil
+	}
+	if authentication == nil && external {
+		return nil, nil
 	}
 	if authentication == nil || (authentication.JWT == nil) == (authentication.APIKey == nil) {
 		return nil, fmt.Errorf("%s.authentication must select exactly one of jwt or api_key", field)
@@ -276,6 +282,12 @@ func tenantHeadersOverlap(first, second gatewayapi.AccessMatch) bool {
 }
 
 func validateAccessGrants(field string, access resolvedAccess) error {
+	if access.Authorization.ExtAuthz != nil {
+		if access.Authorization.Grants != nil {
+			return fmt.Errorf("%s.authorization must select exactly one of grants or ext_authz", field)
+		}
+		return nil
+	}
 	if len(access.Authorization.Grants) == 0 {
 		return fmt.Errorf("%s.authorization.grants must not be empty", field)
 	}
@@ -336,13 +348,22 @@ func accessMatchesHeader(match gatewayapi.AccessMatch, header string) bool {
 	return false
 }
 
-func validateAccessForwarding(field string, api gatewayapi.API, authenticators []gatewayapi.Authenticator) error {
-	for _, authenticator := range authenticators {
-		for _, route := range api.Routes {
-			if route.Processing == nil {
-				continue
+func validateAccessForwarding(field string, api gatewayapi.API, access resolvedAccess, services map[string]gatewayapi.ExternalAuthorizationService) error {
+	for _, route := range api.Routes {
+		if route.Processing == nil {
+			continue
+		}
+		for _, mapping := range route.Processing.RequestHeaders {
+			if access.Authorization.ExtAuthz != nil {
+				service := services[access.Authorization.ExtAuthz.Service]
+				if extAuthzProvidesAttribute(access, service, mapping.FromAttribute) {
+					continue
+				}
 			}
-			for _, mapping := range route.Processing.RequestHeaders {
+			if len(access.authenticators) == 0 {
+				return fmt.Errorf("%s does not provide processing attribute %q", field, mapping.FromAttribute)
+			}
+			for _, authenticator := range access.authenticators {
 				if !providesAttributeAuthenticator(authenticator, mapping.FromAttribute) {
 					return fmt.Errorf("%s authenticator %q does not provide processing attribute %q", field, authenticator.Name, mapping.FromAttribute)
 				}
@@ -375,6 +396,7 @@ func cloneAccess(access gatewayapi.Access) gatewayapi.Access {
 	access.Match.Headers = cloneMatchExpressions(access.Match.Headers)
 	access.Authentication = cloneConfigPointer(access.Authentication, cloneAuthentication)
 	access.Authorization.Grants = cloneSlice(access.Authorization.Grants, cloneAuthorizationGrant)
+	access.Authorization.ExtAuthz = clonePointer(access.Authorization.ExtAuthz)
 	return access
 }
 

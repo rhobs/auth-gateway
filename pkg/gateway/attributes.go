@@ -169,6 +169,19 @@ func requestHeaderSources(c resolvedConfig, serverIndexes []int) []string {
 				}
 			}
 		}
+		for _, binding := range c.servers[index].bindings {
+			for _, access := range binding.access {
+				if access.Authorization.ExtAuthz == nil {
+					continue
+				}
+				service := c.extAuthzIndex[access.Authorization.ExtAuthz.Service]
+				for _, source := range service.Attributes {
+					if source.FromSource == attributeSourceHeader {
+						headers[strings.ToLower(source.Value.Text)] = struct{}{}
+					}
+				}
+			}
+		}
 	}
 	return slices.Sorted(maps.Keys(headers))
 }
@@ -260,7 +273,7 @@ func apiKeyAttributeExpression(attribute string) string {
 }
 
 func needsWorkingAttributes(c resolvedConfig) bool {
-	return hasRequestHeaderProcessing(c.APIs) || hasRequestMetricLabels(c.APIs) || hasFaultMatchAttributes(c.APIs)
+	return len(c.ExtAuthzServices) != 0 || hasRequestHeaderProcessing(c.APIs) || hasRequestMetricLabels(c.APIs) || hasFaultMatchAttributes(c.APIs)
 }
 
 func filterStateKey(attribute string) string {
@@ -310,10 +323,20 @@ func attributeHTTPFilter() (*hcm.HttpFilter, error) {
 	return &hcm.HttpFilter{Name: attributeFilterName, Disabled: true, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: packed}}, nil
 }
 
-func attributePerRouteConfig(access resolvedAccess) (*anypb.Any, error) {
+func attributePerRouteConfig(c resolvedConfig, access resolvedAccess) (*anypb.Any, error) {
 	config := &setfilterstate.Config{}
 	for _, authenticator := range access.authenticators {
 		appendAttributeInitialization(config, authenticator)
+	}
+	if external := access.Authorization.ExtAuthz; external != nil {
+		for _, source := range c.extAuthzIndex[external.Service].Attributes {
+			if source.FromSource != attributeSourceHeader {
+				continue
+			}
+			value, check := metadataStringPathExpression(requestHeaderMetadataNamespace, []string{strings.ToLower(source.Value.Text)})
+			expression := "((" + check + " && " + value + " != \"\") ? " + value + " : \"\")"
+			config.OnRequestHeaders = append(config.OnRequestHeaders, filterStateValue(filterStateKey(source.Name), expression))
+		}
 	}
 	packed, err := packEnvoy(config)
 	if err != nil {
