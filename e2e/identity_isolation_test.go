@@ -85,49 +85,7 @@ var _ = Describe("Tenant and resource isolation", Label("gateway", "identity-iso
 		}
 	}, NodeTimeout(2*time.Minute))
 
-	It("denies tenant impersonation, provider confusion, and permissions for another resource", func(ctx SpecContext) {
-		for _, test := range []struct {
-			name, tenant, issuer, credentialTenant, role, method, path string
-			status                                                     int
-		}{
-			{"cross-tenant writer", "client-b", "issuer-one", "client-a", "writer", http.MethodPost, "/write", http.StatusForbidden},
-			{"wrong external organization", "external-a", "issuer-two", "client-a", "writer", http.MethodPost, "/write", http.StatusForbidden},
-			{"unselected writer provider", "client-a", "issuer-two", "client-a", "writer", http.MethodPost, "/write", http.StatusUnauthorized},
-			{"writer cannot read", "client-a", "issuer-one", "client-a", "writer", http.MethodGet, "/read", http.StatusForbidden},
-			{"reader cannot write", "client-a", "issuer-one", "client-a", "reader", http.MethodPost, "/write", http.StatusForbidden},
-			{"other provider's reader role", "client-a", "issuer-two", "client-a", "reader", http.MethodGet, "/read", http.StatusForbidden},
-			{"other listed read tenant", "client-b", "issuer-two", "client-a", "viewer", http.MethodGet, "/read", http.StatusForbidden},
-			{"unlisted tenant", "client-c", "issuer-one", "client-c", "writer", http.MethodPost, "/write", http.StatusForbidden},
-		} {
-			cluster := "api-journey-read"
-			if test.method == http.MethodPost {
-				cluster = "api-journey-write"
-			}
-			expectDeniedBeforeUpstream(ctx, gateway.adminAddr, cluster, test.name, test.status, func() (int, []byte, error) {
-				return gateway.request(ctx, accessJourneyHost, false, test.method, test.path, apiKeyRequestBody, token(test.issuer, test.credentialTenant, test.role), "", http.Header{"X-Tenant": []string{test.tenant}, "X-Environment": []string{"production"}, "X-Scope-OrgID": []string{test.tenant}})
-			})
-		}
-	}, NodeTimeout(2*time.Minute))
-
-	It("rejects missing selectors and ambiguous selected headers before authenticating", func(ctx SpecContext) {
-		valid := token("issuer-one", "client-a", "writer")
-		for _, test := range []struct {
-			name     string
-			headers  http.Header
-			jwt, key string
-			status   int
-		}{
-			{"missing environment", http.Header{"X-Tenant": []string{"client-a"}}, valid, "", http.StatusForbidden},
-			{"wrong environment", http.Header{"X-Tenant": []string{"client-a"}, "X-Environment": []string{"staging"}}, valid, "", http.StatusForbidden},
-			{"duplicate environment", http.Header{"X-Tenant": []string{"client-a"}, "X-Environment": []string{"production", "staging"}}, valid, "", http.StatusBadRequest},
-			{"duplicate Authorization", http.Header{"X-Tenant": []string{"client-a"}, "X-Environment": []string{"production"}, "Authorization": []string{"Bearer " + valid, "Bearer invalid"}}, "", "", http.StatusBadRequest},
-			{"duplicate API key", http.Header{"X-Tenant": []string{"key-a"}, "X-Environment": []string{"production"}, "X-Partner-Key": []string{"journey-key", "invalid"}}, "", "", http.StatusBadRequest},
-		} {
-			expectDeniedBeforeUpstream(ctx, gateway.adminAddr, "api-journey-write", test.name, test.status, func() (int, []byte, error) {
-				return gateway.request(ctx, accessJourneyHost, false, http.MethodPost, "/write", apiKeyRequestBody, test.jwt, test.key, test.headers)
-			})
-		}
-	}, NodeTimeout(2*time.Minute))
+	registerIdentityDeniedSpecs(func() (*apiKeyE2E, func(string, any, string) string) { return gateway, token })
 
 	It("keeps public APIs explicit on the same host", func(ctx SpecContext) {
 		status, body, err := gateway.request(ctx, accessJourneyHost, false, http.MethodGet, "/health", "", "broken.jwt", "", nil)
