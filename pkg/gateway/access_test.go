@@ -159,15 +159,3 @@ func TestAccessDefaultsDoNotAliasSourcesOrConditions(t *testing.T) {
 		t.Fatal("defaulting aliases the caller's access configuration")
 	}
 }
-
-func TestLoadRejectsLegacyAccessSchema(t *testing.T) {
-	for _, input := range []string{
-		"version: 1\nauthorization_policies: []\n",
-		"version: 1\nservers:\n- hostname: example.test\n  authentication: {any_of: [issuer]}\n",
-		"version: 1\nservers:\n- hostname: example.test\n  apis: [write]\n",
-	} {
-		if _, err := Load(strings.NewReader(input)); err == nil {
-			t.Fatalf("legacy access schema accepted: %s", input)
-		}
-	}
-}

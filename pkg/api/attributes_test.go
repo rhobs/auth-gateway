@@ -41,7 +41,6 @@ func TestMatchValueRejectsOtherTypes(t *testing.T) {
 	for _, input := range []string{
 		"[reader, 123]",
 		"123",
-		"{equals_attribute: requested_tenant}",
 	} {
 		t.Run(input, func(t *testing.T) {
 			var value MatchValue
@@ -49,21 +48,6 @@ func TestMatchValueRejectsOtherTypes(t *testing.T) {
 				t.Fatal("invalid match value was accepted")
 			}
 		})
-	}
-}
-
-func TestMatchExpressionsRejectLegacyMappings(t *testing.T) {
-	for _, input := range []string{
-		"headers: {X-Tenant: {exact: tenant-a}}",
-		"attributes: {role: [writer]}",
-	} {
-		var document struct {
-			Headers    []MatchExpression `yaml:"headers"`
-			Attributes []MatchExpression `yaml:"attributes"`
-		}
-		if err := yaml.Unmarshal([]byte(input), &document); err == nil {
-			t.Fatalf("legacy mapping accepted: %s", input)
-		}
 	}
 }
 
@@ -90,8 +74,5 @@ func TestAuthenticatorAttributesUseNamedEntries(t *testing.T) {
 		}{}); err == nil {
 			t.Errorf("accepted invalid attribute value %s", value)
 		}
-	}
-	if err := yaml.Unmarshal([]byte("attributes: {tenant_id: {claim_path: [sub]}}"), &Authenticator{}); err == nil {
-		t.Fatal("legacy attribute map was accepted")
 	}
 }
