@@ -68,6 +68,27 @@ func TestAccessValidation(t *testing.T) {
 		{"attribute in with scalar value", "nonempty list", func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1].Expression = "in"
 		}},
+		{"has with list value", "nonempty string", func(c *gatewayapi.Config) {
+			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1]
+			condition.Expression = gatewayapi.ExpressionHas
+			condition.Value = gatewayapi.MatchValue{IsList: true, Items: []string{"writer"}}
+		}},
+		{"has-one-of with scalar value", "nonempty list", func(c *gatewayapi.Config) {
+			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1].Expression = gatewayapi.ExpressionHasOneOf
+		}},
+		{"has-one-of with duplicate values", "distinct nonempty strings", func(c *gatewayapi.Config) {
+			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1]
+			condition.Expression = gatewayapi.ExpressionHasOneOf
+			condition.Value = gatewayapi.MatchValue{IsList: true, Items: []string{"writer", "writer"}}
+		}},
+		{"has on API-key attribute", "requires a JWT claim source", func(c *gatewayapi.Config) {
+			c.Servers[0].APIs[0].Access[1].Authorization.Grants[0].Attributes[1].Expression = gatewayapi.ExpressionHas
+		}},
+		{"has-one-of on certificate attribute", "requires a JWT claim source", func(c *gatewayapi.Config) {
+			condition := &c.Servers[1].APIs[0].Access[0].Authorization.Grants[0].Attributes[0]
+			condition.Expression = gatewayapi.ExpressionHasOneOf
+			condition.Value = gatewayapi.MatchValue{IsList: true, Items: []string{"writer", "reader"}}
+		}},
 		{"duplicate attribute", "duplicates attribute", func(c *gatewayapi.Config) {
 			grant := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0]
 			grant.Attributes = append(grant.Attributes, grant.Attributes[1])
@@ -110,6 +131,12 @@ func TestAccessValidation(t *testing.T) {
 		{"attribute comparison on header", "only valid for attributes", func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Access[0].Match.Headers[0].Expression = "equals-attribute"
 		}},
+		{"has on header", "only valid for attributes", func(c *gatewayapi.Config) {
+			c.Servers[0].APIs[0].Access[0].Match.Headers[0].Expression = gatewayapi.ExpressionHas
+		}},
+		{"has-one-of on header", "only valid for attributes", func(c *gatewayapi.Config) {
+			c.Servers[0].APIs[0].Access[0].Match.Headers[0].Expression = gatewayapi.ExpressionHasOneOf
+		}},
 		{"comma in selector", "must not contain commas", func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Access[0].Match.Headers[0].Value.Items = []string{"tenant-a,tenant-b"}
 		}},
@@ -139,6 +166,27 @@ func TestAccessValidation(t *testing.T) {
 			test.edit(&c)
 			if err := Validate(c); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Validate() = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestJWTListGrantValidation(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		expression string
+		value      gatewayapi.MatchValue
+	}{
+		{name: "has", expression: gatewayapi.ExpressionHas, value: gatewayapi.MatchValue{Text: "writer"}},
+		{name: "has-one-of", expression: gatewayapi.ExpressionHasOneOf, value: gatewayapi.MatchValue{IsList: true, Items: []string{"reader", "writer"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c := loadConfigCase(t, "access-control")
+			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1]
+			condition.Expression = test.expression
+			condition.Value = test.value
+			if err := Validate(c); err != nil {
+				t.Fatalf("valid JWT list grant was rejected: %v", err)
 			}
 		})
 	}

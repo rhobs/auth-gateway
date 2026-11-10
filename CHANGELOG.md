@@ -7,6 +7,9 @@ Notable changes to RHOBS Auth Gateway are recorded here.
 ### Added
 
 - Add a security reporting policy and repository ownership guidance.
+- Allow JWT grant conditions to match exact elements in verified list claims
+  with `has` and `has-one-of`. Regenerate the bootstrap and roll out the
+  Envoy Deployment to apply new grants.
 
 ### Removed
 

@@ -12,6 +12,8 @@ func TestMatchExpressionsYAMLRoundTrip(t *testing.T) {
 		{Name: "role", Expression: "equals", Value: MatchValue{Text: "reader"}},
 		{Name: "tenant_id", Expression: "equals-attribute", Value: MatchValue{Text: "requested_tenant"}},
 		{Name: "writer_id", Expression: "in", Value: MatchValue{IsList: true, Items: []string{"agent-17", "agent-18"}}},
+		{Name: "groups", Expression: "has", Value: MatchValue{Text: "metrics-writers"}},
+		{Name: "groups", Expression: "has-one-of", Value: MatchValue{IsList: true, Items: []string{"metrics-readers", "metrics-admins"}}},
 		{Name: "Authorization", Expression: "present"},
 	}
 	data, err := yaml.Marshal(want)
@@ -23,7 +25,7 @@ func TestMatchExpressionsYAMLRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	var expected any
-	if err := yaml.Unmarshal([]byte("- name: role\n  expression: equals\n  value: reader\n- name: tenant_id\n  expression: equals-attribute\n  value: requested_tenant\n- name: writer_id\n  expression: in\n  value: [agent-17, agent-18]\n- name: Authorization\n  expression: present\n"), &expected); err != nil {
+	if err := yaml.Unmarshal([]byte("- name: role\n  expression: equals\n  value: reader\n- name: tenant_id\n  expression: equals-attribute\n  value: requested_tenant\n- name: writer_id\n  expression: in\n  value: [agent-17, agent-18]\n- name: groups\n  expression: has\n  value: metrics-writers\n- name: groups\n  expression: has-one-of\n  value: [metrics-readers, metrics-admins]\n- name: Authorization\n  expression: present\n"), &expected); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(document, expected) {

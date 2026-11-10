@@ -103,6 +103,62 @@ func TestGrantLiteralExpressionsMatchScalarStrings(t *testing.T) {
 	}
 }
 
+func TestGrantListExpressionsMatchJWTElements(t *testing.T) {
+	c := loadConfigCase(t, "access-control")
+	setTestAttribute(&c.Authenticators[0], testClaimAttribute("groups", "token", "groups"))
+	for _, test := range []struct {
+		name       string
+		expression string
+		value      gatewayapi.MatchValue
+		want       []string
+	}{
+		{name: "has", expression: gatewayapi.ExpressionHas, value: gatewayapi.MatchValue{Text: "writer"}, want: []string{"writer"}},
+		{name: "has-one-of", expression: gatewayapi.ExpressionHasOneOf, value: gatewayapi.MatchValue{IsList: true, Items: []string{"reader", "writer"}}, want: []string{"reader", "writer"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			grant := gatewayapi.AuthorizationGrant{Authenticator: "issuer-one", Attributes: []gatewayapi.MatchExpression{{Name: "groups", Expression: test.expression, Value: test.value}}}
+			policy, err := grantPolicy(c.Authenticators[0], grant)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if policy.Condition != nil {
+				t.Fatal("list membership must use a native metadata matcher")
+			}
+			principals := policy.Principals[0].GetAndIds().GetIds()
+			if len(principals) != 2 {
+				t.Fatalf("principals = %d, want verified issuer and groups", len(principals))
+			}
+			verified := principals[0].GetSourcedMetadata().GetMetadataMatcher()
+			if !slices.Equal(metadataMatcherPath(verified.GetPath()), []string{"issuer-one", "iss"}) || verified.GetValue().GetStringMatch().GetExact() != c.Authenticators[0].JWT.Issuer {
+				t.Fatalf("verified issuer principal = %v", verified)
+			}
+			groups := principals[1].GetSourcedMetadata().GetMetadataMatcher()
+			if groups.GetFilter() != jwtAuthnFilterName || !slices.Equal(metadataMatcherPath(groups.GetPath()), []string{"issuer-one", "token", "groups"}) {
+				t.Fatalf("groups metadata source = %v", groups)
+			}
+			match := groups.GetValue().GetListMatch().GetOneOf()
+			if match == nil {
+				t.Fatalf("groups matcher must require a list: %v", groups.GetValue())
+			}
+			if len(test.want) == 1 {
+				if match.GetStringMatch().GetExact() != test.want[0] {
+					t.Fatalf("exact element matcher = %v", match)
+				}
+				return
+			}
+			choices := match.GetOrMatch().GetValueMatchers()
+			if len(choices) != len(test.want) {
+				t.Fatalf("element choices = %v", choices)
+			}
+			for i, choice := range choices {
+				if choice.GetStringMatch().GetExact() != test.want[i] {
+					t.Fatalf("choice %d = %v, want %q", i, choice, test.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestMultiProviderGrantsKeepVerifiedClaimsSeparate(t *testing.T) {
 	c := loadConfigCase(t, "access-control")
 	effective := resolveTestConfig(t, c)

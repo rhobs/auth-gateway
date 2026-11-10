@@ -82,7 +82,8 @@ headers and values emitted by the API-key and mTLS filters. The native
 access route. Each route carries its own extraction settings and copies
 attributes only from its verifying provider. Missing, empty, or undeclared
 values stay unset. Another credential never
-contributes values. RBAC checks `equals` and `in` against scalar string metadata.
+contributes values. RBAC checks `equals` and `in` against scalar string metadata
+and uses native list matching for `has` and `has-one-of` on verified JWT claims.
 Equality uses a native RBAC CEL condition and nonempty scalar guards for both
 source values, including request-header metadata captured before mutation.
 
@@ -96,10 +97,11 @@ client header may exceed that size because it is not stored as one metadata
 value. Missing bindings remain unset, and credentials and the internal
 client header are removed before forwarding.
 
-The filter uses CEL to copy source values into
+The filter uses CEL to copy scalar source values into
 `auth_gateway.attributes.<name>`. Its configuration is part of the static
 bootstrap. RBAC evaluates grants against source metadata; filter state feeds
-managed upstream headers and metric labels with the same values.
+managed upstream headers and metric labels with the same values. List claims
+remain available to RBAC but are not copied into string filter state.
 
 ## Files and reloads
 
