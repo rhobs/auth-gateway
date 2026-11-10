@@ -138,6 +138,42 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 		}
 	}, SpecTimeout(2*time.Minute))
 
+	It("requires a nonempty scalar claim for a present grant", func(ctx SpecContext) {
+		for _, test := range []struct {
+			name    string
+			value   any
+			missing bool
+			allowed bool
+		}{
+			{name: "nonempty string", value: "enabled", allowed: true},
+			{name: "missing claim", missing: true},
+			{name: "empty string", value: ""},
+			{name: "list claim", value: []string{"enabled"}},
+			{name: "null claim"},
+			{name: "number claim", value: 1},
+		} {
+			claims := map[string]any{"exp": time.Now().Add(5 * time.Minute).Unix()}
+			if !test.missing {
+				claims["feature"] = test.value
+			}
+			token := jwtPlainGateway.token("issuer-one", claims, nil)
+			request := func() (int, []byte, error) {
+				return jwtPlainGateway.requestPath(ctx, jwtPlainGateway.httpAddr, jwtPlainHost, false, "/presence", token, false)
+			}
+			if !test.allowed {
+				expectDeniedBeforeUpstream(ctx, jwtPlainGateway.adminAddr, "api-presence", test.name, http.StatusForbidden, request)
+				continue
+			}
+			status, body := expectUpstreamRequestDelta(ctx, jwtPlainGateway.adminAddr, "api-presence", test.name, 1, request)
+			Expect(status).To(Equal(http.StatusOK), test.name+": "+string(body))
+			echo, err := decodeHTTPBinEcho(body)
+			Expect(err).NotTo(HaveOccurred(), test.name)
+			Expect(echo.Method).To(Equal(http.MethodGet), test.name)
+			Expect(echo.URL).To(HaveSuffix("/anything"), test.name)
+			Expect(headerValue(echo.Headers, "Authorization")).To(BeEmpty(), test.name)
+		}
+	}, SpecTimeout(90*time.Second))
+
 	It("rejects invalid credentials and denied claims before the upstream", func(ctx SpecContext) {
 		adminAddress := jwtPlainGateway.adminAddr
 

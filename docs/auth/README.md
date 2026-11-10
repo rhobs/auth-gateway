@@ -62,7 +62,8 @@ values, with no implicit inheritance.
 `equals` compares a scalar attribute to one string, and `in` checks whether a
 scalar attribute is in a configured list. For verified JWT list claims, `has`
 checks one exact string element and `has-one-of` accepts any string from a
-configured list. Optional `equals-attribute` on
+configured list. `present` requires a nonempty scalar value from a verified
+claim, API-key credential, or certificate SAN. `equals-attribute` on
 `tenant_id` with `value: requested_tenant` binds the verified tenant to
 an original request header declared by the same authenticator. Both values
 must be nonempty scalar strings. A header used in equality must also appear

@@ -180,9 +180,6 @@ func validateAccessMatch(field string, entry gatewayapi.Access, apiKeyHeader str
 func validateMatchExpression(field string, condition gatewayapi.MatchExpression, allowAttribute bool) error {
 	switch condition.Expression {
 	case gatewayapi.ExpressionPresent:
-		if allowAttribute {
-			return fmt.Errorf("%s.expression present is only valid for headers", field)
-		}
 		if condition.Value.Text != "" || condition.Value.IsList || len(condition.Value.Items) != 0 {
 			return fmt.Errorf("%s.value must be omitted for present", field)
 		}

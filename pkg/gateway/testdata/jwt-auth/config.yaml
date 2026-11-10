@@ -18,6 +18,9 @@ authenticators:
     - name: scopes
       from_source: claim
       value: [token, scopes]
+    - name: feature
+      from_source: claim
+      value: [feature]
 apis:
 - name: metrics
   upstream:
@@ -53,6 +56,8 @@ servers:
             - name: scopes
               expression: has-one-of
               value: [metrics.write, metrics.admin]
+            - name: feature
+              expression: present
 kubernetes:
   name: auth-gateway
   namespace: observability

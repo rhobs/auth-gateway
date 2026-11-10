@@ -76,6 +76,9 @@ before an HTTP request is processed. A grant may omit `attributes` or use `[]`
 to explicitly trust any certificate accepted by the configured CA. This still
 requires certificate authentication.
 
+Use `expression: present` without `value` to require a nonempty declared SAN
+without matching a particular string.
+
 A `header` source captures the original request value. It can supply the
 right-hand side of `equals-attribute` when that header also participates in
 `match.headers`. A header alone cannot supply a credential condition. Forwarded

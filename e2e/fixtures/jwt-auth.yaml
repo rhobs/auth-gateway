@@ -18,6 +18,9 @@ authenticators:
     - name: groups
       from_source: claim
       value: [token, groups]
+    - name: feature
+      from_source: claim
+      value: [feature]
 apis:
 - name: metrics
   upstream:
@@ -45,6 +48,14 @@ apis:
   routes:
   - methods: [GET]
     path: {exact: /groups-any}
+    rewrite: {path: /anything}
+- name: presence
+  upstream:
+    address: httpbin
+    port: 8080
+  routes:
+  - methods: [GET]
+    path: {exact: /presence}
     rewrite: {path: /anything}
 servers:
 - hostname: plain.jwt.auth-gateway.test
@@ -87,6 +98,17 @@ servers:
           - name: groups
             expression: has-one-of
             value: [metrics-readers, metrics-writers]
+  - name: presence
+    access:
+    - name: default
+      authentication:
+        jwt: {providers: [issuer-one]}
+      authorization:
+        grants:
+        - authenticator: issuer-one
+          attributes:
+          - name: feature
+            expression: present
 kubernetes:
   name: auth-gateway
   namespace: default

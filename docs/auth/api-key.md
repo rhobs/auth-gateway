@@ -162,6 +162,9 @@ matched API with request metrics configured still counts the `403` response.
 A valid JWT cannot replace a missing key. Known credential headers are removed
 before forwarding.
 
+Use `expression: present` without `value` to require a nonempty credential
+attribute when no particular value is needed.
+
 An API-key access entry can select the same API path and tenant as a JWT entry
 by matching its configured credential header with `expression: present`. The
 JWT entry must match `Authorization` with `expression: present`. See the
