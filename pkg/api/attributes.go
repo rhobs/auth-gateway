@@ -11,6 +11,8 @@ const yamlStringTag = "!!str"
 const (
 	ExpressionEquals          = "equals"
 	ExpressionEqualsAttribute = "equals-attribute"
+	ExpressionHas             = "has"
+	ExpressionHasOneOf        = "has-one-of"
 	ExpressionIn              = "in"
 	ExpressionPresent         = "present"
 )

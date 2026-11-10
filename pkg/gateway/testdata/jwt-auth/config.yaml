@@ -12,6 +12,12 @@ authenticators:
     - name: tenant_id
       from_source: claim
       value: [organization, id]
+    - name: groups
+      from_source: claim
+      value: [token, groups]
+    - name: scopes
+      from_source: claim
+      value: [token, scopes]
 apis:
 - name: metrics
   upstream:
@@ -41,6 +47,12 @@ servers:
             - name: tenant_id
               expression: equals
               value: customer-a
+            - name: groups
+              expression: has
+              value: metrics-writers
+            - name: scopes
+              expression: has-one-of
+              value: [metrics.write, metrics.admin]
 kubernetes:
   name: auth-gateway
   namespace: observability

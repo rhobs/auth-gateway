@@ -89,6 +89,36 @@ instead use `expression: equals` with `value: client-123` on `X-Tenant` and a
 literal `tenant_id` grant with `value: organization-789` when that organization is explicitly permitted
 to write for the requested tenant.
 
+## Group membership
+
+Declare a verified list claim with the same nested key path syntax:
+
+```yaml
+- name: groups
+  from_source: claim
+  value: [token, groups]
+```
+
+For a JWT claim `{"token":{"groups":["metrics-readers","metrics-admins"]}}`,
+these grant conditions each match:
+
+```yaml
+- name: groups
+  expression: has
+  value: metrics-admins
+
+- name: groups
+  expression: has-one-of
+  value: [metrics-readers, metrics-writers]
+```
+
+Use them in separate grants because a grant cannot repeat an attribute name.
+The claim must be a list. A scalar string, missing claim, null, or empty list
+does not match. Matching is case-sensitive. Non-string list elements are
+ignored; a matching string element still grants access. List claims are not
+available as upstream header values, metric labels, or fault injection
+selectors.
+
 ## Multiple providers
 
 A JWT entry can set `providers: [internal-jwt, external-jwt]` to trust either

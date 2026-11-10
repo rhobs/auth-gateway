@@ -73,6 +73,10 @@ authenticators:
       - name: role
         from_source: claim
         value: [role]
+      # A list-valued claim can be checked with has or has-one-of in a grant.
+      # - name: groups
+      #   from_source: claim
+      #   value: [token, groups]
       - name: requested_tenant
         from_source: header
         value: X-Tenant
@@ -358,6 +362,9 @@ servers:
                     - name: role
                       expression: equals
                       value: writer
+                    # - name: groups
+                    #   expression: has-one-of
+                    #   value: [metrics-writers, metrics-admins]
 
           # Presence selectors keep the shared tenant's access entries distinct.
           - name: partner-writers

@@ -15,6 +15,9 @@ authenticators:
     - name: my_list
       from_source: claim
       value: [x, my_list]
+    - name: groups
+      from_source: claim
+      value: [token, groups]
 apis:
 - name: metrics
   upstream:
@@ -27,6 +30,22 @@ apis:
       exact: "/protected"
     rewrite:
       path: "/anything"
+- name: groups-exact
+  upstream:
+    address: httpbin
+    port: 8080
+  routes:
+  - methods: [GET]
+    path: {exact: /groups-exact}
+    rewrite: {path: /anything}
+- name: groups-any
+  upstream:
+    address: httpbin
+    port: 8080
+  routes:
+  - methods: [GET]
+    path: {exact: /groups-any}
+    rewrite: {path: /anything}
 servers:
 - hostname: plain.jwt.auth-gateway.test
   apis:
@@ -44,6 +63,30 @@ servers:
             - name: my_list
               expression: in
               value: [y, z]
+  - name: groups-exact
+    access:
+    - name: default
+      authentication:
+        jwt: {providers: [issuer-one]}
+      authorization:
+        grants:
+        - authenticator: issuer-one
+          attributes:
+          - name: groups
+            expression: has
+            value: metrics-admins
+  - name: groups-any
+    access:
+    - name: default
+      authentication:
+        jwt: {providers: [issuer-one]}
+      authorization:
+        grants:
+        - authenticator: issuer-one
+          attributes:
+          - name: groups
+            expression: has-one-of
+            value: [metrics-readers, metrics-writers]
 kubernetes:
   name: auth-gateway
   namespace: default

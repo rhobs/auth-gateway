@@ -180,14 +180,20 @@ func validateMatchExpression(field string, condition gatewayapi.MatchExpression,
 		if condition.Value.Text != "" || condition.Value.IsList || len(condition.Value.Items) != 0 {
 			return fmt.Errorf("%s.value must be omitted for present", field)
 		}
-	case gatewayapi.ExpressionEquals, gatewayapi.ExpressionEqualsAttribute:
+	case gatewayapi.ExpressionEquals, gatewayapi.ExpressionEqualsAttribute, gatewayapi.ExpressionHas:
 		if condition.Expression == gatewayapi.ExpressionEqualsAttribute && !allowAttribute {
 			return fmt.Errorf("%s.expression equals-attribute is only valid for attributes", field)
+		}
+		if condition.Expression == gatewayapi.ExpressionHas && !allowAttribute {
+			return fmt.Errorf("%s.expression has is only valid for attributes", field)
 		}
 		if condition.Value.IsList || len(condition.Value.Items) != 0 || !validCredentialText(condition.Value.Text) {
 			return fmt.Errorf("%s.value must be a nonempty string without controls", field)
 		}
-	case gatewayapi.ExpressionIn:
+	case gatewayapi.ExpressionIn, gatewayapi.ExpressionHasOneOf:
+		if condition.Expression == gatewayapi.ExpressionHasOneOf && !allowAttribute {
+			return fmt.Errorf("%s.expression has-one-of is only valid for attributes", field)
+		}
 		if !condition.Value.IsList || condition.Value.Text != "" || len(condition.Value.Items) == 0 {
 			return fmt.Errorf("%s.value must be a nonempty list of strings", field)
 		}
@@ -199,13 +205,13 @@ func validateMatchExpression(field string, condition gatewayapi.MatchExpression,
 			seen[value] = true
 		}
 	default:
-		return fmt.Errorf("%s.expression must be equals, equals-attribute, in, or present", field)
+		return fmt.Errorf("%s.expression must be equals, equals-attribute, has, has-one-of, in, or present", field)
 	}
 	return nil
 }
 
 func matchValues(condition gatewayapi.MatchExpression) []string {
-	if condition.Expression == gatewayapi.ExpressionIn {
+	if condition.Expression == gatewayapi.ExpressionIn || condition.Expression == gatewayapi.ExpressionHasOneOf {
 		return condition.Value.Items
 	}
 	if condition.Expression == gatewayapi.ExpressionPresent {
@@ -303,6 +309,9 @@ func validateAccessGrants(field string, access resolvedAccess) error {
 			}
 			if err := validateMatchExpression(attributeField, condition, true); err != nil {
 				return err
+			}
+			if (condition.Expression == gatewayapi.ExpressionHas || condition.Expression == gatewayapi.ExpressionHasOneOf) && source.FromSource != "claim" {
+				return fmt.Errorf("%s.expression %s requires a JWT claim source", attributeField, condition.Expression)
 			}
 			if condition.Expression == gatewayapi.ExpressionEqualsAttribute {
 				other, ok := authenticatorAttribute(authenticator, condition.Value.Text)

@@ -374,11 +374,16 @@ access; every condition within that grant must succeed.
 | `authenticator` | string | None | Required authenticator enabled by this entry, or the server's dedicated mTLS authenticator. |
 | `attributes` | list of expressions | None | JWT and key grants require at least one credential-derived condition. mTLS may use `[]` or omit the list to trust the client CA alone. |
 | `attributes[].name` | string | None | Required unique attribute name declared by this authenticator; its source must be a verified claim, key credential, or certificate SAN. |
-| `attributes[].expression` | string | None | `equals` compares the attribute with a string, `in` checks membership in a configured list, and `equals-attribute` compares it with another named attribute. |
-| `attributes[].value` | string or list of strings | None | A nonempty string for `equals` and `equals-attribute`; a nonempty list of distinct strings for `in`. Values cannot contain controls or surrounding whitespace. |
+| `attributes[].expression` | string | None | `equals` compares a scalar attribute with a string, `in` checks a scalar against a configured list, `equals-attribute` compares two scalar attributes, `has` checks a JWT claim list for one string, and `has-one-of` checks it for any configured string. |
+| `attributes[].value` | string or list of strings | None | A nonempty string for `equals`, `equals-attribute`, and `has`; a nonempty list of distinct strings for `in` and `has-one-of`. Values cannot contain controls or surrounding whitespace. |
 
 `equals` and `in` require a scalar string attribute. A list-valued JWT claim
-does not match. Values are case-sensitive and used unchanged.
+does not match those expressions. `has` and `has-one-of` require a list-valued
+JWT claim. A scalar, missing, null, or empty claim does not match. They match
+exact string elements; other element types are ignored. Values are
+case-sensitive and used unchanged. List claims are used directly for grants;
+they are not copied into string filter state for upstream headers, metric
+labels, or fault injection selectors.
 
 `equals-attribute` requires both original values to be nonempty scalar strings
 and exactly equal. Missing, empty, list-valued, and non-string operands fail.

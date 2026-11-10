@@ -237,6 +237,12 @@ func allowedStringValueMatcher(allowedValues []string) *matcher.ValueMatcher {
 	return &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_OrMatch{OrMatch: &matcher.OrMatcher{ValueMatchers: values}}}
 }
 
+func listContainsStringValueMatcher(allowedValues []string) *matcher.ValueMatcher {
+	return &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_ListMatch{ListMatch: &matcher.ListMatcher{
+		MatchPattern: &matcher.ListMatcher_OneOf{OneOf: allowedStringValueMatcher(allowedValues)},
+	}}}
+}
+
 func jwtClaimPrincipal(claimPath []string, value *matcher.ValueMatcher) *rbac.Principal {
 	return dynamicMetadataPrincipal(jwtAuthnFilterName, claimPath, value)
 }
@@ -294,6 +300,10 @@ func grantPolicy(authenticator gatewayapi.Authenticator, grant gatewayapi.Author
 	var equality *expr.Expr
 	for _, condition := range sortedMatchExpressions(grant.Attributes) {
 		namespace, path := attributeMetadataPath(authenticator, condition.Name)
+		if condition.Expression == gatewayapi.ExpressionHas || condition.Expression == gatewayapi.ExpressionHasOneOf {
+			principals = append(principals, dynamicMetadataPrincipal(namespace, path, listContainsStringValueMatcher(matchValues(condition))))
+			continue
+		}
 		if condition.Expression != gatewayapi.ExpressionEqualsAttribute {
 			value := allowedStringValueMatcher(matchValues(condition))
 			principals = append(principals, dynamicMetadataPrincipal(namespace, path, value))

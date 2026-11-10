@@ -90,6 +90,54 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 		}
 	}, SpecTimeout(90*time.Second))
 
+	It("matches exact group members and any configured group", func(ctx SpecContext) {
+		for _, test := range []struct {
+			name, path string
+			groups     any
+			missing    bool
+			allowed    bool
+		}{
+			{name: "has matching group", path: "/groups-exact", groups: []string{"other", "metrics-admins"}, allowed: true},
+			{name: "has matching group with other element types", path: "/groups-exact", groups: []any{42, "metrics-admins"}, allowed: true},
+			{name: "has other group", path: "/groups-exact", groups: []string{"metrics-readers"}},
+			{name: "has different case", path: "/groups-exact", groups: []string{"Metrics-Admins"}},
+			{name: "has scalar claim", path: "/groups-exact", groups: "metrics-admins"},
+			{name: "has nested list", path: "/groups-exact", groups: []any{[]string{"metrics-admins"}}},
+			{name: "has null claim", path: "/groups-exact"},
+			{name: "has missing claim", path: "/groups-exact", missing: true},
+			{name: "has-one-of first choice", path: "/groups-any", groups: []string{"metrics-readers"}, allowed: true},
+			{name: "has-one-of second choice", path: "/groups-any", groups: []string{"other", "metrics-writers"}, allowed: true},
+			{name: "has-one-of other element types", path: "/groups-any", groups: []any{false, "metrics-writers"}, allowed: true},
+			{name: "has-one-of other group", path: "/groups-any", groups: []string{"metrics-admins"}},
+			{name: "has-one-of empty list", path: "/groups-any", groups: []string{}},
+			{name: "has-one-of scalar claim", path: "/groups-any", groups: "metrics-readers"},
+		} {
+			claims := map[string]any{"exp": time.Now().Add(5 * time.Minute).Unix()}
+			if !test.missing {
+				claims["token"] = map[string]any{"groups": test.groups}
+			}
+			token := jwtPlainGateway.token("issuer-one", claims, nil)
+			cluster := "api-groups-exact"
+			if test.path == "/groups-any" {
+				cluster = "api-groups-any"
+			}
+			request := func() (int, []byte, error) {
+				return jwtPlainGateway.requestPath(ctx, jwtPlainGateway.httpAddr, jwtPlainHost, false, test.path, token, false)
+			}
+			if !test.allowed {
+				expectDeniedBeforeUpstream(ctx, jwtPlainGateway.adminAddr, cluster, test.name, http.StatusForbidden, request)
+				continue
+			}
+			status, body := expectUpstreamRequestDelta(ctx, jwtPlainGateway.adminAddr, cluster, test.name, 1, request)
+			Expect(status).To(Equal(http.StatusOK), test.name+": "+string(body))
+			echo, err := decodeHTTPBinEcho(body)
+			Expect(err).NotTo(HaveOccurred(), test.name)
+			Expect(echo.Method).To(Equal(http.MethodGet), test.name)
+			Expect(echo.URL).To(HaveSuffix("/anything"), test.name)
+			Expect(headerValue(echo.Headers, "Authorization")).To(BeEmpty(), test.name)
+		}
+	}, SpecTimeout(2*time.Minute))
+
 	It("rejects invalid credentials and denied claims before the upstream", func(ctx SpecContext) {
 		adminAddress := jwtPlainGateway.adminAddr
 

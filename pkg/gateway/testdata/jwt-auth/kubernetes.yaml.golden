@@ -322,6 +322,34 @@ data:
                                                                                 filter: envoy.filters.http.jwt_authn
                                                                                 path:
                                                                                     - key: internal-jwt
+                                                                                    - key: token
+                                                                                    - key: groups
+                                                                                value:
+                                                                                    list_match:
+                                                                                        one_of:
+                                                                                            string_match:
+                                                                                                exact: metrics-writers
+                                                                        - sourced_metadata:
+                                                                            metadata_matcher:
+                                                                                filter: envoy.filters.http.jwt_authn
+                                                                                path:
+                                                                                    - key: internal-jwt
+                                                                                    - key: token
+                                                                                    - key: scopes
+                                                                                value:
+                                                                                    list_match:
+                                                                                        one_of:
+                                                                                            or_match:
+                                                                                                value_matchers:
+                                                                                                    - string_match:
+                                                                                                        exact: metrics.write
+                                                                                                    - string_match:
+                                                                                                        exact: metrics.admin
+                                                                        - sourced_metadata:
+                                                                            metadata_matcher:
+                                                                                filter: envoy.filters.http.jwt_authn
+                                                                                path:
+                                                                                    - key: internal-jwt
                                                                                     - key: organization
                                                                                     - key: id
                                                                                 value:
