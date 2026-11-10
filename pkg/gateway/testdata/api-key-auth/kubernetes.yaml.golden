@@ -658,9 +658,8 @@ data:
                                             - name: :method
                                               string_match:
                                                 exact: POST
-                                            - name: x-auth-path
-                                              string_match:
-                                                exact: jwt
+                                            - name: authorization
+                                              present_match: true
                                         path: /ingest
                                       metadata:
                                         filter_metadata:
@@ -693,11 +692,27 @@ data:
                                                                     args:
                                                                         - call_expr:
                                                                             args:
-                                                                                - call_expr:
+                                                                                - const_expr:
+                                                                                    string_value: authorization
+                                                                                  id: "3"
+                                                                                - id: "2"
+                                                                                  select_expr:
+                                                                                    field: headers
+                                                                                    operand:
+                                                                                        id: "1"
+                                                                                        ident_expr:
+                                                                                            name: request
+                                                                            function: '@in'
+                                                                          id: "4"
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - const_expr:
+                                                                                    string_value: ','
+                                                                                  id: "7"
+                                                                            function: contains
+                                                                            target:
+                                                                                call_expr:
                                                                                     args:
-                                                                                        - const_expr:
-                                                                                            string_value: x-auth-path
-                                                                                          id: "3"
                                                                                         - id: "2"
                                                                                           select_expr:
                                                                                             field: headers
@@ -705,74 +720,14 @@ data:
                                                                                                 id: "1"
                                                                                                 ident_expr:
                                                                                                     name: request
-                                                                                    function: '@in'
-                                                                                  id: "4"
-                                                                                - call_expr:
-                                                                                    args:
-                                                                                        - const_expr:
-                                                                                            string_value: ','
-                                                                                          id: "7"
-                                                                                    function: contains
-                                                                                    target:
-                                                                                        call_expr:
-                                                                                            args:
-                                                                                                - id: "2"
-                                                                                                  select_expr:
-                                                                                                    field: headers
-                                                                                                    operand:
-                                                                                                        id: "1"
-                                                                                                        ident_expr:
-                                                                                                            name: request
-                                                                                                - const_expr:
-                                                                                                    string_value: x-auth-path
-                                                                                                  id: "3"
-                                                                                            function: _[_]
-                                                                                        id: "5"
-                                                                                  id: "6"
-                                                                            function: _&&_
-                                                                          id: "8"
-                                                                        - call_expr:
-                                                                            args:
-                                                                                - call_expr:
-                                                                                    args:
                                                                                         - const_expr:
                                                                                             string_value: authorization
-                                                                                          id: "11"
-                                                                                        - id: "10"
-                                                                                          select_expr:
-                                                                                            field: headers
-                                                                                            operand:
-                                                                                                id: "9"
-                                                                                                ident_expr:
-                                                                                                    name: request
-                                                                                    function: '@in'
-                                                                                  id: "12"
-                                                                                - call_expr:
-                                                                                    args:
-                                                                                        - const_expr:
-                                                                                            string_value: ','
-                                                                                          id: "15"
-                                                                                    function: contains
-                                                                                    target:
-                                                                                        call_expr:
-                                                                                            args:
-                                                                                                - id: "10"
-                                                                                                  select_expr:
-                                                                                                    field: headers
-                                                                                                    operand:
-                                                                                                        id: "9"
-                                                                                                        ident_expr:
-                                                                                                            name: request
-                                                                                                - const_expr:
-                                                                                                    string_value: authorization
-                                                                                                  id: "11"
-                                                                                            function: _[_]
-                                                                                        id: "13"
-                                                                                  id: "14"
-                                                                            function: _&&_
-                                                                          id: "16"
-                                                                    function: _||_
-                                                                id: "17"
+                                                                                          id: "3"
+                                                                                    function: _[_]
+                                                                                id: "5"
+                                                                          id: "6"
+                                                                    function: _&&_
+                                                                id: "8"
                                                             permissions:
                                                                 - any: true
                                                             principals:
@@ -869,9 +824,8 @@ data:
                                             - name: :method
                                               string_match:
                                                 exact: POST
-                                            - name: x-auth-path
-                                              string_match:
-                                                exact: api_key
+                                            - name: x-partner-key
+                                              present_match: true
                                         path: /ingest
                                       metadata:
                                         filter_metadata:
@@ -904,11 +858,27 @@ data:
                                                                     args:
                                                                         - call_expr:
                                                                             args:
-                                                                                - call_expr:
+                                                                                - const_expr:
+                                                                                    string_value: x-partner-key
+                                                                                  id: "3"
+                                                                                - id: "2"
+                                                                                  select_expr:
+                                                                                    field: headers
+                                                                                    operand:
+                                                                                        id: "1"
+                                                                                        ident_expr:
+                                                                                            name: request
+                                                                            function: '@in'
+                                                                          id: "4"
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - const_expr:
+                                                                                    string_value: ','
+                                                                                  id: "7"
+                                                                            function: contains
+                                                                            target:
+                                                                                call_expr:
                                                                                     args:
-                                                                                        - const_expr:
-                                                                                            string_value: x-auth-path
-                                                                                          id: "3"
                                                                                         - id: "2"
                                                                                           select_expr:
                                                                                             field: headers
@@ -916,74 +886,14 @@ data:
                                                                                                 id: "1"
                                                                                                 ident_expr:
                                                                                                     name: request
-                                                                                    function: '@in'
-                                                                                  id: "4"
-                                                                                - call_expr:
-                                                                                    args:
-                                                                                        - const_expr:
-                                                                                            string_value: ','
-                                                                                          id: "7"
-                                                                                    function: contains
-                                                                                    target:
-                                                                                        call_expr:
-                                                                                            args:
-                                                                                                - id: "2"
-                                                                                                  select_expr:
-                                                                                                    field: headers
-                                                                                                    operand:
-                                                                                                        id: "1"
-                                                                                                        ident_expr:
-                                                                                                            name: request
-                                                                                                - const_expr:
-                                                                                                    string_value: x-auth-path
-                                                                                                  id: "3"
-                                                                                            function: _[_]
-                                                                                        id: "5"
-                                                                                  id: "6"
-                                                                            function: _&&_
-                                                                          id: "8"
-                                                                        - call_expr:
-                                                                            args:
-                                                                                - call_expr:
-                                                                                    args:
                                                                                         - const_expr:
                                                                                             string_value: x-partner-key
-                                                                                          id: "11"
-                                                                                        - id: "10"
-                                                                                          select_expr:
-                                                                                            field: headers
-                                                                                            operand:
-                                                                                                id: "9"
-                                                                                                ident_expr:
-                                                                                                    name: request
-                                                                                    function: '@in'
-                                                                                  id: "12"
-                                                                                - call_expr:
-                                                                                    args:
-                                                                                        - const_expr:
-                                                                                            string_value: ','
-                                                                                          id: "15"
-                                                                                    function: contains
-                                                                                    target:
-                                                                                        call_expr:
-                                                                                            args:
-                                                                                                - id: "10"
-                                                                                                  select_expr:
-                                                                                                    field: headers
-                                                                                                    operand:
-                                                                                                        id: "9"
-                                                                                                        ident_expr:
-                                                                                                            name: request
-                                                                                                - const_expr:
-                                                                                                    string_value: x-partner-key
-                                                                                                  id: "11"
-                                                                                            function: _[_]
-                                                                                        id: "13"
-                                                                                  id: "14"
-                                                                            function: _&&_
-                                                                          id: "16"
-                                                                    function: _||_
-                                                                id: "17"
+                                                                                          id: "3"
+                                                                                    function: _[_]
+                                                                                id: "5"
+                                                                          id: "6"
+                                                                    function: _&&_
+                                                                id: "8"
                                                             permissions:
                                                                 - any: true
                                                             principals:
@@ -1108,27 +1018,11 @@ data:
                                                                     args:
                                                                         - call_expr:
                                                                             args:
-                                                                                - const_expr:
-                                                                                    string_value: x-auth-path
-                                                                                  id: "3"
-                                                                                - id: "2"
-                                                                                  select_expr:
-                                                                                    field: headers
-                                                                                    operand:
-                                                                                        id: "1"
-                                                                                        ident_expr:
-                                                                                            name: request
-                                                                            function: '@in'
-                                                                          id: "4"
-                                                                        - call_expr:
-                                                                            args:
-                                                                                - const_expr:
-                                                                                    string_value: ','
-                                                                                  id: "7"
-                                                                            function: contains
-                                                                            target:
-                                                                                call_expr:
+                                                                                - call_expr:
                                                                                     args:
+                                                                                        - const_expr:
+                                                                                            string_value: authorization
+                                                                                          id: "3"
                                                                                         - id: "2"
                                                                                           select_expr:
                                                                                             field: headers
@@ -1136,14 +1030,74 @@ data:
                                                                                                 id: "1"
                                                                                                 ident_expr:
                                                                                                     name: request
+                                                                                    function: '@in'
+                                                                                  id: "4"
+                                                                                - call_expr:
+                                                                                    args:
                                                                                         - const_expr:
-                                                                                            string_value: x-auth-path
-                                                                                          id: "3"
-                                                                                    function: _[_]
-                                                                                id: "5"
-                                                                          id: "6"
-                                                                    function: _&&_
-                                                                id: "8"
+                                                                                            string_value: ','
+                                                                                          id: "7"
+                                                                                    function: contains
+                                                                                    target:
+                                                                                        call_expr:
+                                                                                            args:
+                                                                                                - id: "2"
+                                                                                                  select_expr:
+                                                                                                    field: headers
+                                                                                                    operand:
+                                                                                                        id: "1"
+                                                                                                        ident_expr:
+                                                                                                            name: request
+                                                                                                - const_expr:
+                                                                                                    string_value: authorization
+                                                                                                  id: "3"
+                                                                                            function: _[_]
+                                                                                        id: "5"
+                                                                                  id: "6"
+                                                                            function: _&&_
+                                                                          id: "8"
+                                                                        - call_expr:
+                                                                            args:
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - const_expr:
+                                                                                            string_value: x-partner-key
+                                                                                          id: "11"
+                                                                                        - id: "10"
+                                                                                          select_expr:
+                                                                                            field: headers
+                                                                                            operand:
+                                                                                                id: "9"
+                                                                                                ident_expr:
+                                                                                                    name: request
+                                                                                    function: '@in'
+                                                                                  id: "12"
+                                                                                - call_expr:
+                                                                                    args:
+                                                                                        - const_expr:
+                                                                                            string_value: ','
+                                                                                          id: "15"
+                                                                                    function: contains
+                                                                                    target:
+                                                                                        call_expr:
+                                                                                            args:
+                                                                                                - id: "10"
+                                                                                                  select_expr:
+                                                                                                    field: headers
+                                                                                                    operand:
+                                                                                                        id: "9"
+                                                                                                        ident_expr:
+                                                                                                            name: request
+                                                                                                - const_expr:
+                                                                                                    string_value: x-partner-key
+                                                                                                  id: "11"
+                                                                                            function: _[_]
+                                                                                        id: "13"
+                                                                                  id: "14"
+                                                                            function: _&&_
+                                                                          id: "16"
+                                                                    function: _||_
+                                                                id: "17"
                                                             permissions:
                                                                 - any: true
                                                             principals:

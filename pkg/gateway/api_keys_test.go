@@ -352,6 +352,7 @@ servers:
 func TestAPIKeyDefaultsDoNotMutateInput(t *testing.T) {
 	c := loadConfigCase(t, "api-key-auth")
 	c.Authenticators[1].APIKey.Header = ""
+	c.Servers[2].APIs[0].Access[1].Match.Headers[0].Name = defaultAPIKeyHeader
 	attributes := credentialAttributeNamesAuthenticator(c.Authenticators[1])
 	if _, err := GenerateKubernetes(c); err != nil {
 		t.Fatal(err)
