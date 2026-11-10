@@ -38,7 +38,8 @@ Secret-backed credential set.
 Each server/API binding expands its original-header selectors into native
 exact-match routes. List selectors produce repeated routes for the allowed
 values. Each route selects its JWT requirement or enables the native API-key
-filter and supplies its own RBAC grants. Authentication is disabled by default
+filter and supplies its own RBAC grants or external authorization service.
+Authentication is disabled by default
 and enabled only on selected routes. Public APIs require an explicit binding.
 Unmatched access returns `403`; `404` and `405` fallbacks do not authenticate.
 Header presence selectors use Envoy's native `present_match` route matcher.
@@ -46,7 +47,8 @@ JWT and API-key entries may share a tenant only when each requires its own
 credential header; the early mixed-credential check makes those routes
 mutually exclusive.
 
-There is one selected credential type per entry. Multiple JWT providers use a
+Local authentication selects one credential type per entry. External-only
+entries can leave authentication to the policy service. Multiple JWT providers use a
 native JWT `requires_any` requirement, with provider-specific verified metadata
 and grants. Another credential type never acts as a fallback or fills missing
 attributes. Invalid selected credentials normally return `401`; the pinned
@@ -103,6 +105,26 @@ bootstrap. RBAC evaluates grants against source metadata; filter state feeds
 managed upstream headers and metric labels with the same values. List claims
 remain available to RBAC but are not copied into string filter state.
 
+### External authorization
+
+Each named external service has a verified TLS HTTP/2 Envoy cluster and native
+`ext_authz` filter. The filters are disabled by default and enabled on selected
+access routes. The selected filter runs after local JWT, API-key, or mTLS
+authentication and before required-header checks and request processing.
+Entries without local authentication still run the external filter.
+
+The gRPC Check request includes allowlisted request headers, the route's
+API and access labels, declared attributes in
+`auth_gateway.ext_authz.attributes`, and parsed JWT claims in
+`envoy.filters.http.jwt_authn` when JWT authentication ran. A route-specific
+Lua filter copies nonempty scalar attributes from filter state into Check
+metadata after local authentication and before the external check. Missing,
+empty, and non-string declared values stay unset; required route headers then
+fail closed. An explicit policy denial uses its supplied HTTP
+status. Transport errors and timeouts return `503`. Header mutations from the
+policy service are rejected, and the route cache is not cleared. Selected
+credential headers are removed before upstream forwarding.
+
 ## Files and reloads
 
 File-based deployments must place generated resources at the paths Envoy reads:
@@ -131,7 +153,8 @@ Envoy keeps the last accepted resource after a failed update.
 
 Changes to routes, authentication, authorization, attribute sources,
 request-header bindings, metric bindings, or other bootstrap data require a
-Deployment rollout. Changes to upstream or JWKS CA bundles require a rollout.
+Deployment rollout. Changes to upstream, external service, or JWKS CA bundles
+require a rollout.
 Client CA ConfigMap updates are watched and take effect on new TLS connections.
 Collector ConfigMap changes require restarting the collector so it reads the
 new settings. Generated Deployments have no checksum annotation.
