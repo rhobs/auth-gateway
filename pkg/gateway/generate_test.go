@@ -456,7 +456,7 @@ func TestResolvedReferencesDoNotAliasInput(t *testing.T) {
 			setTestAttribute(&c.Authenticators[0], testClaimAttribute("tenant_id", "changed"))
 		}},
 		{name: "grant allowlist", edit: func(c *gatewayapi.Config) {
-			c.Servers[2].APIs[0].Access[0].Authorization.Grants[0].Attributes["tenant_id"].Values[0] = "changed"
+			c.Servers[2].APIs[0].Access[0].Authorization.Grants[0].Attributes[0].Value.Text = "changed"
 		}},
 		{name: "server", edit: func(c *gatewayapi.Config) { c.Servers[2].Hostname = "changed.gateway.test" }},
 		{name: "API binding", edit: func(c *gatewayapi.Config) { c.Servers[2].APIs[0].Name = "public" }},

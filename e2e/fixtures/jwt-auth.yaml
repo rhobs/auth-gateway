@@ -41,9 +41,9 @@ servers:
         grants:
         - authenticator: issuer-one
           attributes:
-            my_list:
-            - y
-            - z
+            - name: my_list
+              expression: in
+              value: [y, z]
 kubernetes:
   name: auth-gateway
   namespace: default

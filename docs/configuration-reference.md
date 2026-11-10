@@ -282,9 +282,10 @@ must be unique within a binding; a label does not itself match a request.
 |-------|------|---------|------------|
 | `tenant` | string | None | Nonempty concrete label without commas, controls, or surrounding whitespace. |
 | `name` | string | None | Shared label using the name format above. |
-| `match.headers` | map of header name to matcher | Empty | All configured headers must match. Safe names without underscores, credential or reserved headers, or duplicates ignoring case. |
-| `match.headers.<header>.exact` | string | None | Exactly one of `exact` or `in`; a nonempty value without commas, controls, or surrounding whitespace. |
-| `match.headers.<header>.in` | list of strings | None | Nonempty list of distinct values with the same constraints as `exact`. |
+| `match.headers` | list of expressions | Empty | All configured headers must match. Names must be safe headers without underscores, credential or reserved headers, or duplicates ignoring case. |
+| `match.headers[].name` | string | None | Required request header name. |
+| `match.headers[].expression` | string | None | `equals` for one string or `in` for a list of strings. `equals-attribute` is not valid for headers. |
+| `match.headers[].value` | string or list of strings | None | Nonempty string for `equals`; nonempty list of distinct strings for `in`. Values cannot contain commas, controls, or surrounding whitespace. |
 | `authentication.jwt.providers` | list of strings | None | Nonempty unique JWT authenticator names with distinct issuers within this entry. |
 | `authentication.api_key.authenticator` | string | None | Name of the API-key authenticator. |
 | `authorization.grants` | list of objects | None | Required nonempty grants for this server/API entry. See [authorization grants](#authorization-grants). |
@@ -330,7 +331,6 @@ with JWT or API-key entries. See the [mTLS guide](auth/mtls.md).
 | `authenticators[].jwt`                               | object                          | None             | Set exactly one of `jwt`, `api_key`, or `mtls`.                                                                                   |
 | `authenticators[].api_key`                           | object                          | None             | Set exactly one of `jwt`, `api_key`, or `mtls`; only one API-key authenticator is supported per configuration.                    |
 | `authenticators[].mtls`                              | object                          | None             | Set exactly one of `jwt`, `api_key`, or `mtls`; only HTTPS servers may select it.                                                 |
-| `authenticators[].attributes`                        | map of attribute name to object | Empty            | Attribute keys use the format above. Each source sets exactly one supported input for its authenticator type.                   |
 | `authenticators[].jwt.issuer`                        | string                          | None             | Required nonempty issuer identifier without surrounding whitespace, CR, LF, or tab.                                             |
 | `authenticators[].jwt.jwks`                          | object                          | None             | Required JWKS endpoint and optional fetch settings.                                                                             |
 | `authenticators[].jwt.audiences`                     | list of strings                 | Empty            | Optional; each value must be nonempty, trimmed, unique, and contain no CR, LF, or tab.                                          |
@@ -364,15 +364,15 @@ access; every condition within that grant must succeed.
 | Field | Type | Default | Constraint |
 |-------|------|---------|------------|
 | `authenticator` | string | None | Required authenticator enabled by this entry, or the server's dedicated mTLS authenticator. |
-| `attributes` | map of attribute name to condition | None | JWT and key grants require at least one credential-derived condition. mTLS may use `{}` or omit the map to trust the client CA alone. |
-| `attributes.<attribute>` | list of strings or equality object | None | Attribute must be declared by this authenticator and come from a verified claim, key credential, or certificate SAN. |
-| `attributes.<attribute>.equals_attribute` | string | None | Name of another attribute declared by the same authenticator; cannot be combined with literal values. |
+| `attributes` | list of expressions | None | JWT and key grants require at least one credential-derived condition. mTLS may use `[]` or omit the list to trust the client CA alone. |
+| `attributes[].name` | string | None | Required unique attribute name declared by this authenticator; its source must be a verified claim, key credential, or certificate SAN. |
+| `attributes[].expression` | string | None | `equals` compares the attribute with a string, `in` checks membership in a configured list, and `equals-attribute` compares it with another named attribute. |
+| `attributes[].value` | string or list of strings | None | A nonempty string for `equals` and `equals-attribute`; a nonempty list of distinct strings for `in`. Values cannot contain controls or surrounding whitespace. |
 
-A literal list requires at least one distinct nonempty value without controls
-or surrounding whitespace. JWT claims may match as scalar strings or as an
-allowed member of a list. Other sources use exact scalar matching.
+`equals` and `in` require a scalar string attribute. A list-valued JWT claim
+does not match. Values are case-sensitive and used unchanged.
 
-`equals_attribute` requires both original values to be nonempty scalar strings
+`equals-attribute` requires both original values to be nonempty scalar strings
 and exactly equal. Missing, empty, list-valued, and non-string operands fail.
 The right-hand source may be another verified attribute or a request header;
 a header must participate in this entry's `match.headers`. This binds a listed

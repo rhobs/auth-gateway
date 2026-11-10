@@ -366,8 +366,8 @@ func serverVirtualHost(c resolvedConfig, index int, server resolvedServer) (*rou
 		}
 		selectorHeaders := make(map[string]bool)
 		for accessIndex, access := range binding.access {
-			for header := range access.Match.Headers {
-				selectorHeaders[strings.ToLower(header)] = true
+			for _, header := range access.Match.Headers {
+				selectorHeaders[strings.ToLower(header.Name)] = true
 			}
 			for combinationIndex, headers := range accessHeaderCombinations(access.Match) {
 				generated := proto.Clone(base).(*route.Route)
@@ -396,17 +396,32 @@ func serverVirtualHost(c resolvedConfig, index int, server resolvedServer) (*rou
 
 func accessHeaderCombinations(match gatewayapi.AccessMatch) [][]*route.HeaderMatcher {
 	combinations := [][]*route.HeaderMatcher{nil}
-	for _, name := range slices.Sorted(maps.Keys(match.Headers)) {
+	for _, condition := range sortedMatchExpressions(match.Headers) {
 		var expanded [][]*route.HeaderMatcher
 		for _, headers := range combinations {
-			for _, value := range headerMatchValues(match.Headers[name]) {
-				matcher := &route.HeaderMatcher{Name: strings.ToLower(name), HeaderMatchSpecifier: &route.HeaderMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: value}}}}
+			for _, value := range matchValues(condition) {
+				matcher := &route.HeaderMatcher{Name: strings.ToLower(condition.Name), HeaderMatchSpecifier: &route.HeaderMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: value}}}}
 				expanded = append(expanded, append(slices.Clone(headers), matcher))
 			}
 		}
 		combinations = expanded
 	}
 	return combinations
+}
+
+func sortedMatchExpressions(expressions []gatewayapi.MatchExpression) []gatewayapi.MatchExpression {
+	return slices.SortedFunc(slices.Values(expressions), func(a, b gatewayapi.MatchExpression) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+}
+
+func accessHeaderNames(match gatewayapi.AccessMatch) []string {
+	names := make([]string, 0, len(match.Headers))
+	for _, condition := range match.Headers {
+		names = append(names, condition.Name)
+	}
+	slices.Sort(names)
+	return names
 }
 
 func addAccessRouteConfigs(c resolvedConfig, generated *route.Route, access resolvedAccess) error {
@@ -418,7 +433,7 @@ func addAccessRouteConfigs(c resolvedConfig, generated *route.Route, access reso
 		return err
 	}
 	generated.TypedPerFilterConfig[authorizationFilterName] = authorization
-	headers := slices.Sorted(maps.Keys(access.Match.Headers))
+	headers := accessHeaderNames(access.Match)
 	if access.Authentication != nil {
 		if access.Authentication.JWT != nil {
 			headers = append(headers, authorizationHeaderName)

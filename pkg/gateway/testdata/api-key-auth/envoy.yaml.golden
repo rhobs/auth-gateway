@@ -822,14 +822,8 @@ static_resources:
                                                                                 - key: organization
                                                                                 - key: id
                                                                             value:
-                                                                                or_match:
-                                                                                    value_matchers:
-                                                                                        - string_match:
-                                                                                            exact: client-a
-                                                                                        - list_match:
-                                                                                            one_of:
-                                                                                                string_match:
-                                                                                                    exact: client-a
+                                                                                string_match:
+                                                                                    exact: client-a
                                     envoy.filters.http.set_filter_state:
                                         '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
                                         config:

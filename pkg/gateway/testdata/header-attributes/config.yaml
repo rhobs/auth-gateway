@@ -53,14 +53,18 @@ servers:
     - name: writers
       match:
         headers:
-          X-Tenant: {in: [client-a, client-b]}
+          - name: X-Tenant
+            expression: in
+            value: [client-a, client-b]
       authentication:
         jwt: {providers: [issuer-one]}
       authorization:
         grants:
         - authenticator: issuer-one
           attributes:
-            tenant_id: {equals_attribute: requested_tenant}
+            - name: tenant_id
+              expression: equals-attribute
+              value: requested_tenant
 - hostname: key.headers.test
   apis:
   - name: ingest
@@ -68,14 +72,18 @@ servers:
     - name: writers
       match:
         headers:
-          X-Tenant: {in: [client-a, client-b]}
+          - name: X-Tenant
+            expression: in
+            value: [client-a, client-b]
       authentication:
         api_key: {authenticator: partner-key}
       authorization:
         grants:
         - authenticator: partner-key
           attributes:
-            tenant_id: {equals_attribute: requested_tenant}
+            - name: tenant_id
+              expression: equals-attribute
+              value: requested_tenant
 kubernetes:
   name: auth-gateway
   namespace: gateway-test

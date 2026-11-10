@@ -29,7 +29,7 @@ func TestGrantEqualityUsesOriginalScalarSources(t *testing.T) {
 		{"API key", "auth_gateway.api_key", 2, []string{"attribute.tenant_id"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			grant := gatewayapi.AuthorizationGrant{Authenticator: c.Authenticators[test.index].Name, Attributes: map[string]*gatewayapi.AttributeCondition{"tenant_id": {EqualsAttribute: "requested_tenant"}}}
+			grant := gatewayapi.AuthorizationGrant{Authenticator: c.Authenticators[test.index].Name, Attributes: []gatewayapi.MatchExpression{{Name: "tenant_id", Expression: "equals-attribute", Value: gatewayapi.MatchValue{Text: "requested_tenant"}}}}
 			policy, err := grantPolicy(c.Authenticators[test.index], grant)
 			if err != nil {
 				t.Fatal(err)
@@ -53,6 +53,50 @@ func TestGrantEqualityUsesOriginalScalarSources(t *testing.T) {
 				value := principal.GetSourcedMetadata().GetMetadataMatcher().GetValue()
 				if value.GetStringMatch().GetSafeRegex().GetRegex() != headerValuePattern || value.GetListMatch() != nil {
 					t.Fatalf("comparison must require a nonempty scalar string: %v", value)
+				}
+			}
+		})
+	}
+}
+
+func TestGrantLiteralExpressionsMatchScalarStrings(t *testing.T) {
+	c := loadConfigCase(t, "access-control")
+	for _, test := range []struct {
+		name       string
+		expression string
+		value      gatewayapi.MatchValue
+		want       []string
+	}{
+		{name: "equals", expression: "equals", value: gatewayapi.MatchValue{Text: "writer"}, want: []string{"writer"}},
+		{name: "in", expression: "in", value: gatewayapi.MatchValue{IsList: true, Items: []string{"reader", "writer"}}, want: []string{"reader", "writer"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			grant := gatewayapi.AuthorizationGrant{Authenticator: "issuer-one", Attributes: []gatewayapi.MatchExpression{{Name: "role", Expression: test.expression, Value: test.value}}}
+			policy, err := grantPolicy(c.Authenticators[0], grant)
+			if err != nil {
+				t.Fatal(err)
+			}
+			principals := policy.Principals[0].GetAndIds().GetIds()
+			if len(principals) != 2 {
+				t.Fatalf("principals = %d, want verified issuer and role", len(principals))
+			}
+			value := principals[1].GetSourcedMetadata().GetMetadataMatcher().GetValue()
+			if value.GetListMatch() != nil {
+				t.Fatal("list-valued claims must not match")
+			}
+			if len(test.want) == 1 {
+				if value.GetStringMatch().GetExact() != test.want[0] {
+					t.Fatalf("exact match = %v", value)
+				}
+				return
+			}
+			choices := value.GetOrMatch().GetValueMatchers()
+			if len(choices) != len(test.want) {
+				t.Fatalf("choices = %v", choices)
+			}
+			for i, choice := range choices {
+				if choice.GetStringMatch().GetExact() != test.want[i] || choice.GetListMatch() != nil {
+					t.Fatalf("choice %d = %v, want %q", i, choice, test.want[i])
 				}
 			}
 		})

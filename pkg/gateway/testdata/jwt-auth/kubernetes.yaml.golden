@@ -325,14 +325,8 @@ data:
                                                                                     - key: organization
                                                                                     - key: id
                                                                                 value:
-                                                                                    or_match:
-                                                                                        value_matchers:
-                                                                                            - string_match:
-                                                                                                exact: customer-a
-                                                                                            - list_match:
-                                                                                                one_of:
-                                                                                                    string_match:
-                                                                                                        exact: customer-a
+                                                                                    string_match:
+                                                                                        exact: customer-a
                                     - direct_response:
                                         status: 403
                                       match:

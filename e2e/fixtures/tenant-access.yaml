@@ -86,61 +86,97 @@ servers:
           - tenant: external-a
             match:
               headers:
-                X-Tenant: {exact: external-a}
-                X-Environment: {exact: production}
+                - name: X-Tenant
+                  expression: equals
+                  value: external-a
+                - name: X-Environment
+                  expression: equals
+                  value: production
             authentication:
               jwt: {providers: [issuer-two]}
             authorization:
               grants:
                 - authenticator: issuer-two
                   attributes:
-                    tenant_id: [external-org]
-                    role: [writer]
+                    - name: tenant_id
+                      expression: equals
+                      value: external-org
+                    - name: role
+                      expression: equals
+                      value: writer
           - name: internal-writers
             match:
               headers:
-                X-Tenant: {in: [client-a, client-b]}
-                X-Environment: {exact: production}
+                - name: X-Tenant
+                  expression: in
+                  value: [client-a, client-b]
+                - name: X-Environment
+                  expression: equals
+                  value: production
             authentication:
               jwt: {providers: [issuer-one]}
             authorization:
               grants:
                 - authenticator: issuer-one
                   attributes:
-                    tenant_id: {equals_attribute: requested_tenant}
-                    role: [writer]
+                    - name: tenant_id
+                      expression: equals-attribute
+                      value: requested_tenant
+                    - name: role
+                      expression: equals
+                      value: writer
           - tenant: key-a
             match:
               headers:
-                X-Tenant: {exact: key-a}
-                X-Environment: {exact: production}
+                - name: X-Tenant
+                  expression: equals
+                  value: key-a
+                - name: X-Environment
+                  expression: equals
+                  value: production
             authentication:
               api_key: {authenticator: partner-key}
             authorization:
               grants:
                 - authenticator: partner-key
                   attributes:
-                    tenant_id: {equals_attribute: requested_tenant}
-                    role: [writer]
+                    - name: tenant_id
+                      expression: equals-attribute
+                      value: requested_tenant
+                    - name: role
+                      expression: equals
+                      value: writer
       - name: journey-read
         access:
           - name: readers
             match:
               headers:
-                X-Tenant: {in: [client-a, client-b]}
-                X-Environment: {exact: production}
+                - name: X-Tenant
+                  expression: in
+                  value: [client-a, client-b]
+                - name: X-Environment
+                  expression: equals
+                  value: production
             authentication:
               jwt: {providers: [issuer-one, issuer-two]}
             authorization:
               grants:
                 - authenticator: issuer-one
                   attributes:
-                    tenant_id: {equals_attribute: requested_tenant}
-                    role: [reader]
+                    - name: tenant_id
+                      expression: equals-attribute
+                      value: requested_tenant
+                    - name: role
+                      expression: equals
+                      value: reader
                 - authenticator: issuer-two
                   attributes:
-                    tenant_id: {equals_attribute: requested_tenant}
-                    role: [viewer]
+                    - name: tenant_id
+                      expression: equals-attribute
+                      value: requested_tenant
+                    - name: role
+                      expression: equals
+                      value: viewer
       - name: journey-health
         public: true
 kubernetes:

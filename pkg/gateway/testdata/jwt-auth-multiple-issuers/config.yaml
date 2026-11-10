@@ -51,12 +51,14 @@ servers:
         grants:
         - authenticator: issuer-one
           attributes:
-            tenant_id:
-            - customer-a
+            - name: tenant_id
+              expression: equals
+              value: customer-a
         - authenticator: issuer-two
           attributes:
-            tenant_id:
-            - customer-b
+            - name: tenant_id
+              expression: equals
+              value: customer-b
 - hostname: issuer-one.jwt.example.test
   apis:
   - name: metrics
@@ -70,8 +72,9 @@ servers:
         grants:
         - authenticator: issuer-one
           attributes:
-            tenant_id:
-            - customer-a
+            - name: tenant_id
+              expression: equals
+              value: customer-a
 kubernetes:
   name: auth-gateway
   namespace: observability

@@ -75,10 +75,12 @@ servers:
         grants:
         - authenticator: client-cert
           attributes:
-            tenant_id:
-            - spiffe://clients.example.test/client-a
-            dns_id:
-            - client-a.example.test
+            - name: tenant_id
+              expression: equals
+              value: spiffe://clients.example.test/client-a
+            - name: dns_id
+              expression: equals
+              value: client-a.example.test
 - hostname: trust.gateway.test
   tls_config:
     secret: gateway-tls
@@ -91,7 +93,7 @@ servers:
       authorization:
         grants:
         - authenticator: client-cert
-          attributes: {}
+          attributes: []
 kubernetes:
   name: auth-gateway
   namespace: gateway-test

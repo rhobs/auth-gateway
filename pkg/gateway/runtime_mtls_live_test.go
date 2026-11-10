@@ -108,7 +108,9 @@ servers:
               grants:
                 - authenticator: client-cert
                   attributes:
-                    tenant_id: ['spiffe://clients.example.test/client-a']
+                    - name: tenant_id
+                      expression: equals
+                      value: spiffe://clients.example.test/client-a
 `
 	c, err := Load(strings.NewReader(input))
 	if err != nil {

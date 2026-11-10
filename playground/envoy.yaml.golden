@@ -1064,14 +1064,8 @@ static_resources:
                                                                                 - key: playground-metrics-jwt
                                                                                 - key: sub
                                                                             value:
-                                                                                or_match:
-                                                                                    value_matchers:
-                                                                                        - string_match:
-                                                                                            exact: metrics-writer
-                                                                                        - list_match:
-                                                                                            one_of:
-                                                                                                string_match:
-                                                                                                    exact: metrics-writer
+                                                                                string_match:
+                                                                                    exact: metrics-writer
                                     envoy.filters.http.set_filter_state:
                                         '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
                                         config:
@@ -1234,14 +1228,8 @@ static_resources:
                                                                                 - key: playground-logs-jwt
                                                                                 - key: sub
                                                                             value:
-                                                                                or_match:
-                                                                                    value_matchers:
-                                                                                        - string_match:
-                                                                                            exact: logs-writer
-                                                                                        - list_match:
-                                                                                            one_of:
-                                                                                                string_match:
-                                                                                                    exact: logs-writer
+                                                                                string_match:
+                                                                                    exact: logs-writer
                                     envoy.filters.http.set_filter_state:
                                         '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
                                         config:
@@ -1701,14 +1689,8 @@ static_resources:
                                                                                 - key: playground-metrics-jwt
                                                                                 - key: sub
                                                                             value:
-                                                                                or_match:
-                                                                                    value_matchers:
-                                                                                        - string_match:
-                                                                                            exact: metrics-writer
-                                                                                        - list_match:
-                                                                                            one_of:
-                                                                                                string_match:
-                                                                                                    exact: metrics-writer
+                                                                                string_match:
+                                                                                    exact: metrics-writer
                                     envoy.filters.http.set_filter_state:
                                         '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
                                         config:
@@ -2160,14 +2142,8 @@ static_resources:
                                                                                 - key: playground-logs-jwt
                                                                                 - key: sub
                                                                             value:
-                                                                                or_match:
-                                                                                    value_matchers:
-                                                                                        - string_match:
-                                                                                            exact: logs-writer
-                                                                                        - list_match:
-                                                                                            one_of:
-                                                                                                string_match:
-                                                                                                    exact: logs-writer
+                                                                                string_match:
+                                                                                    exact: logs-writer
                                     envoy.filters.http.set_filter_state:
                                         '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
                                         config:

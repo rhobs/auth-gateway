@@ -39,11 +39,10 @@ func TestEnvoyAPIKeyAttributeLayouts(t *testing.T) {
 				removeTestAttribute(&c.Authenticators[0], "attribute00")
 				c.APIs[0].Routes[0].Processing.RequestHeaders[0].FromAttribute = name
 				grant := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0]
-				grant.Attributes[name] = grant.Attributes["attribute00"]
-				delete(grant.Attributes, "attribute00")
+				grant.Attributes[0].Name = name
 			}
 			if test.valueBytes > 0 {
-				c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes["attribute00"].Values = []string{"value00" + strings.Repeat("v", test.valueBytes-len("value00"))}
+				c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[0].Value.Text = "value00" + strings.Repeat("v", test.valueBytes-len("value00"))
 			}
 			files, err := Generate(c)
 			if err != nil {

@@ -193,7 +193,9 @@ servers:
               grants:
                 - authenticator: partner-key
                   attributes:
-                    tenant_id: [client-a]
+                    - name: tenant_id
+                      expression: equals
+                      value: client-a
   - hostname: %s
     tls_config:
       certificate: %s

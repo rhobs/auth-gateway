@@ -323,7 +323,9 @@ servers:
         grants:
         - authenticator: local-key
           attributes:
-            tenant_id: [client-a]
+            - name: tenant_id
+              expression: equals
+              value: client-a
 `
 	c, err := Load(strings.NewReader(input))
 	if err != nil {

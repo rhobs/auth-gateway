@@ -514,20 +514,10 @@ data:
                                                                                 value:
                                                                                     or_match:
                                                                                         value_matchers:
-                                                                                            - or_match:
-                                                                                                value_matchers:
-                                                                                                    - string_match:
-                                                                                                        exact: client-123
-                                                                                                    - string_match:
-                                                                                                        exact: client-456
-                                                                                            - list_match:
-                                                                                                one_of:
-                                                                                                    or_match:
-                                                                                                        value_matchers:
-                                                                                                            - string_match:
-                                                                                                                exact: client-123
-                                                                                                            - string_match:
-                                                                                                                exact: client-456
+                                                                                            - string_match:
+                                                                                                exact: client-123
+                                                                                            - string_match:
+                                                                                                exact: client-456
                                                         grant-1:
                                                             permissions:
                                                                 - any: true
@@ -551,14 +541,8 @@ data:
                                                                                     - key: organization
                                                                                     - key: id
                                                                                 value:
-                                                                                    or_match:
-                                                                                        value_matchers:
-                                                                                            - string_match:
-                                                                                                exact: customer-456
-                                                                                            - list_match:
-                                                                                                one_of:
-                                                                                                    string_match:
-                                                                                                        exact: customer-456
+                                                                                    string_match:
+                                                                                        exact: customer-456
                                         envoy.filters.http.set_filter_state:
                                             '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
                                             config:
@@ -744,14 +728,8 @@ data:
                                                                                     - key: z
                                                                                     - key: claim
                                                                                 value:
-                                                                                    or_match:
-                                                                                        value_matchers:
-                                                                                            - string_match:
-                                                                                                exact: client-123
-                                                                                            - list_match:
-                                                                                                one_of:
-                                                                                                    string_match:
-                                                                                                        exact: client-123
+                                                                                    string_match:
+                                                                                        exact: client-123
                                                         grant-1:
                                                             permissions:
                                                                 - any: true
@@ -777,20 +755,10 @@ data:
                                                                                 value:
                                                                                     or_match:
                                                                                         value_matchers:
-                                                                                            - or_match:
-                                                                                                value_matchers:
-                                                                                                    - string_match:
-                                                                                                        exact: customer-456
-                                                                                                    - string_match:
-                                                                                                        exact: customer-789
-                                                                                            - list_match:
-                                                                                                one_of:
-                                                                                                    or_match:
-                                                                                                        value_matchers:
-                                                                                                            - string_match:
-                                                                                                                exact: customer-456
-                                                                                                            - string_match:
-                                                                                                                exact: customer-789
+                                                                                            - string_match:
+                                                                                                exact: customer-456
+                                                                                            - string_match:
+                                                                                                exact: customer-789
                                         envoy.filters.http.set_filter_state:
                                             '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
                                             config:
@@ -1281,20 +1249,10 @@ data:
                                                                                 value:
                                                                                     or_match:
                                                                                         value_matchers:
-                                                                                            - or_match:
-                                                                                                value_matchers:
-                                                                                                    - string_match:
-                                                                                                        exact: client-123
-                                                                                                    - string_match:
-                                                                                                        exact: client-456
-                                                                                            - list_match:
-                                                                                                one_of:
-                                                                                                    or_match:
-                                                                                                        value_matchers:
-                                                                                                            - string_match:
-                                                                                                                exact: client-123
-                                                                                                            - string_match:
-                                                                                                                exact: client-456
+                                                                                            - string_match:
+                                                                                                exact: client-123
+                                                                                            - string_match:
+                                                                                                exact: client-456
                                                         grant-1:
                                                             permissions:
                                                                 - any: true
@@ -1318,14 +1276,8 @@ data:
                                                                                     - key: organization
                                                                                     - key: id
                                                                                 value:
-                                                                                    or_match:
-                                                                                        value_matchers:
-                                                                                            - string_match:
-                                                                                                exact: customer-456
-                                                                                            - list_match:
-                                                                                                one_of:
-                                                                                                    string_match:
-                                                                                                        exact: customer-456
+                                                                                    string_match:
+                                                                                        exact: customer-456
                                         envoy.filters.http.set_filter_state:
                                             '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
                                             config:
@@ -1511,14 +1463,8 @@ data:
                                                                                     - key: z
                                                                                     - key: claim
                                                                                 value:
-                                                                                    or_match:
-                                                                                        value_matchers:
-                                                                                            - string_match:
-                                                                                                exact: client-123
-                                                                                            - list_match:
-                                                                                                one_of:
-                                                                                                    string_match:
-                                                                                                        exact: client-123
+                                                                                    string_match:
+                                                                                        exact: client-123
                                                         grant-1:
                                                             permissions:
                                                                 - any: true
@@ -1544,20 +1490,10 @@ data:
                                                                                 value:
                                                                                     or_match:
                                                                                         value_matchers:
-                                                                                            - or_match:
-                                                                                                value_matchers:
-                                                                                                    - string_match:
-                                                                                                        exact: customer-456
-                                                                                                    - string_match:
-                                                                                                        exact: customer-789
-                                                                                            - list_match:
-                                                                                                one_of:
-                                                                                                    or_match:
-                                                                                                        value_matchers:
-                                                                                                            - string_match:
-                                                                                                                exact: customer-456
-                                                                                                            - string_match:
-                                                                                                                exact: customer-789
+                                                                                            - string_match:
+                                                                                                exact: customer-456
+                                                                                            - string_match:
+                                                                                                exact: customer-789
                                         envoy.filters.http.set_filter_state:
                                             '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
                                             config:

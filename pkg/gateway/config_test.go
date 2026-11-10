@@ -143,7 +143,7 @@ func TestDefaultsCloneInputs(t *testing.T) {
 		headerSource := testAttribute(&defaulted.Authenticators[2], "requested_tenant")
 		headerSource.Value.Text = "changed"
 		defaulted.Servers[0].APIs[0].Name = "changed"
-		defaulted.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes["tenant_id"].Values[0] = "changed"
+		defaulted.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[0].Value.Items[0] = "changed"
 		defaulted.Servers[0].APIs[0].Access[0].Authentication.JWT.Providers[0] = "changed"
 		defaulted.Servers[0].APIs[0].Access[0].Name = "changed"
 		defaulted.APIs[0].Routes[0].Processing.RequestHeaders[0].Name = "changed"
@@ -153,7 +153,7 @@ func TestDefaultsCloneInputs(t *testing.T) {
 			testAttribute(&c.Authenticators[2], "tenant_id").Value.Text == "changed" ||
 			testAttribute(&c.Authenticators[2], "requested_tenant").Value.Text == "changed" ||
 			c.Servers[0].APIs[0].Name == "changed" ||
-			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes["tenant_id"].Values[0] == "changed" ||
+			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[0].Value.Items[0] == "changed" ||
 			c.Servers[0].APIs[0].Access[0].Authentication.JWT.Providers[0] == "changed" ||
 			c.Servers[0].APIs[0].Access[0].Name == "changed" ||
 			c.APIs[0].Routes[0].Processing.RequestHeaders[0].Name == "changed" {

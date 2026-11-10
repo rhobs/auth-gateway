@@ -719,14 +719,8 @@ data:
                                                                                     - key: issuer-one
                                                                                     - key: role
                                                                                 value:
-                                                                                    or_match:
-                                                                                        value_matchers:
-                                                                                            - string_match:
-                                                                                                exact: writer
-                                                                                            - list_match:
-                                                                                                one_of:
-                                                                                                    string_match:
-                                                                                                        exact: writer
+                                                                                    string_match:
+                                                                                        exact: writer
                                                                         - sourced_metadata:
                                                                             metadata_matcher:
                                                                                 filter: envoy.filters.http.jwt_authn
@@ -1048,14 +1042,8 @@ data:
                                                                                     - key: issuer-one
                                                                                     - key: role
                                                                                 value:
-                                                                                    or_match:
-                                                                                        value_matchers:
-                                                                                            - string_match:
-                                                                                                exact: writer
-                                                                                            - list_match:
-                                                                                                one_of:
-                                                                                                    string_match:
-                                                                                                        exact: writer
+                                                                                    string_match:
+                                                                                        exact: writer
                                                                         - sourced_metadata:
                                                                             metadata_matcher:
                                                                                 filter: envoy.filters.http.jwt_authn
@@ -1808,14 +1796,8 @@ data:
                                                                                     - key: issuer-one
                                                                                     - key: role
                                                                                 value:
-                                                                                    or_match:
-                                                                                        value_matchers:
-                                                                                            - string_match:
-                                                                                                exact: reader
-                                                                                            - list_match:
-                                                                                                one_of:
-                                                                                                    string_match:
-                                                                                                        exact: reader
+                                                                                    string_match:
+                                                                                        exact: reader
                                                                         - sourced_metadata:
                                                                             metadata_matcher:
                                                                                 filter: envoy.filters.http.jwt_authn
@@ -1919,14 +1901,8 @@ data:
                                                                                     - key: access
                                                                                     - key: role
                                                                                 value:
-                                                                                    or_match:
-                                                                                        value_matchers:
-                                                                                            - string_match:
-                                                                                                exact: viewer
-                                                                                            - list_match:
-                                                                                                one_of:
-                                                                                                    string_match:
-                                                                                                        exact: viewer
+                                                                                    string_match:
+                                                                                        exact: viewer
                                                                         - sourced_metadata:
                                                                             metadata_matcher:
                                                                                 filter: envoy.filters.http.jwt_authn
@@ -2270,14 +2246,8 @@ data:
                                                                                     - key: issuer-one
                                                                                     - key: role
                                                                                 value:
-                                                                                    or_match:
-                                                                                        value_matchers:
-                                                                                            - string_match:
-                                                                                                exact: reader
-                                                                                            - list_match:
-                                                                                                one_of:
-                                                                                                    string_match:
-                                                                                                        exact: reader
+                                                                                    string_match:
+                                                                                        exact: reader
                                                                         - sourced_metadata:
                                                                             metadata_matcher:
                                                                                 filter: envoy.filters.http.jwt_authn
@@ -2381,14 +2351,8 @@ data:
                                                                                     - key: access
                                                                                     - key: role
                                                                                 value:
-                                                                                    or_match:
-                                                                                        value_matchers:
-                                                                                            - string_match:
-                                                                                                exact: viewer
-                                                                                            - list_match:
-                                                                                                one_of:
-                                                                                                    string_match:
-                                                                                                        exact: viewer
+                                                                                    string_match:
+                                                                                        exact: viewer
                                                                         - sourced_metadata:
                                                                             metadata_matcher:
                                                                                 filter: envoy.filters.http.jwt_authn

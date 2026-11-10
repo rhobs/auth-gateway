@@ -48,8 +48,9 @@ servers:
         grants:
         - authenticator: tracing-key
           attributes:
-            tenant_id:
-            - trace-client
+            - name: tenant_id
+              expression: equals
+              value: trace-client
 kubernetes:
   name: auth-gateway
   namespace: auth-gateway-tracing-e2e
