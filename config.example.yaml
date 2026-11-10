@@ -382,6 +382,8 @@ servers:
                     - name: tenant_id
                       expression: equals-attribute
                       value: requested_tenant
+                    - name: writer_id
+                      expression: present
                     - name: role
                       expression: equals
                       value: writer

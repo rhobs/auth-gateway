@@ -89,6 +89,20 @@ instead use `expression: equals` with `value: client-123` on `X-Tenant` and a
 literal `tenant_id` grant with `value: organization-789` when that organization is explicitly permitted
 to write for the requested tenant.
 
+## Claim presence
+
+Use `present` when a verified claim must contain a nonempty string but no
+particular value is required:
+
+```yaml
+- name: writer_id
+  expression: present
+```
+
+The attribute must be declared by the selected JWT authenticator. Missing,
+empty, null, numeric, and list-valued claims do not match. Use `has` or
+`has-one-of` when a list must contain a particular string.
+
 ## Group membership
 
 Declare a verified list claim with the same nested key path syntax:

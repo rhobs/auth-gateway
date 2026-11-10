@@ -322,6 +322,16 @@ data:
                                                                                 filter: envoy.filters.http.jwt_authn
                                                                                 path:
                                                                                     - key: internal-jwt
+                                                                                    - key: feature
+                                                                                value:
+                                                                                    string_match:
+                                                                                        safe_regex:
+                                                                                            regex: ^[^\x00-\x1f\x7f]+$
+                                                                        - sourced_metadata:
+                                                                            metadata_matcher:
+                                                                                filter: envoy.filters.http.jwt_authn
+                                                                                path:
+                                                                                    - key: internal-jwt
                                                                                     - key: token
                                                                                     - key: groups
                                                                                 value:

@@ -300,6 +300,10 @@ func grantPolicy(authenticator gatewayapi.Authenticator, grant gatewayapi.Author
 	var equality *expr.Expr
 	for _, condition := range sortedMatchExpressions(grant.Attributes) {
 		namespace, path := attributeMetadataPath(authenticator, condition.Name)
+		if condition.Expression == gatewayapi.ExpressionPresent {
+			principals = append(principals, dynamicMetadataPrincipal(namespace, path, nonemptyScalarValueMatcher()))
+			continue
+		}
 		if condition.Expression == gatewayapi.ExpressionHas || condition.Expression == gatewayapi.ExpressionHasOneOf {
 			principals = append(principals, dynamicMetadataPrincipal(namespace, path, listContainsStringValueMatcher(matchValues(condition))))
 			continue

@@ -103,6 +103,42 @@ func TestGrantLiteralExpressionsMatchScalarStrings(t *testing.T) {
 	}
 }
 
+func TestGrantPresentRequiresNonemptyScalarSource(t *testing.T) {
+	c := loadConfigCase(t, "access-control")
+	for _, test := range []struct {
+		name, namespace string
+		index           int
+		path            []string
+	}{
+		{name: "JWT", namespace: jwtAuthnFilterName, index: 0, path: []string{"issuer-one", "tenant"}},
+		{name: "API key", namespace: apiKeyMetadataNamespace, index: 2, path: []string{"attribute.tenant_id"}},
+		{name: "mTLS", namespace: mtlsMetadataNamespace, index: 3, path: []string{mtlsURIMetadataKey}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			grant := gatewayapi.AuthorizationGrant{Authenticator: c.Authenticators[test.index].Name, Attributes: []gatewayapi.MatchExpression{{Name: "tenant_id", Expression: gatewayapi.ExpressionPresent}}}
+			policy, err := grantPolicy(c.Authenticators[test.index], grant)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if policy.Condition != nil {
+				t.Fatal("present grant must use a native metadata matcher")
+			}
+			principals := policy.Principals[0].GetAndIds().GetIds()
+			if len(principals) != 2 {
+				t.Fatalf("principals = %d, want verified identity and attribute", len(principals))
+			}
+			attribute := principals[1].GetSourcedMetadata().GetMetadataMatcher()
+			if attribute.GetFilter() != test.namespace || !slices.Equal(metadataMatcherPath(attribute.GetPath()), test.path) {
+				t.Fatalf("present source = %v, want %s %v", attribute, test.namespace, test.path)
+			}
+			value := attribute.GetValue()
+			if value.GetStringMatch().GetSafeRegex().GetRegex() != headerValuePattern || value.GetListMatch() != nil || value.GetPresentMatch() {
+				t.Fatalf("present must require a nonempty scalar string: %v", value)
+			}
+		})
+	}
+}
+
 func TestGrantListExpressionsMatchJWTElements(t *testing.T) {
 	c := loadConfigCase(t, "access-control")
 	setTestAttribute(&c.Authenticators[0], testClaimAttribute("groups", "token", "groups"))

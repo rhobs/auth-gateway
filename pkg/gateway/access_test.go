@@ -114,10 +114,21 @@ func TestAccessValidation(t *testing.T) {
 		{"present with value", "value must be omitted", func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Access[0].Match.Headers[1].Expression = "present"
 		}},
-		{"present on attribute", "only valid for headers", func(c *gatewayapi.Config) {
+		{"present attribute with value", "value must be omitted for present", func(c *gatewayapi.Config) {
+			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1]
+			condition.Expression = "present"
+			condition.Value = gatewayapi.MatchValue{Text: "writer"}
+		}},
+		{"present attribute with list value", "value must be omitted for present", func(c *gatewayapi.Config) {
+			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1]
+			condition.Expression = "present"
+			condition.Value = gatewayapi.MatchValue{IsList: true, Items: []string{"writer"}}
+		}},
+		{"present header attribute", "not a header source", func(c *gatewayapi.Config) {
 			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1]
 			condition.Expression = "present"
 			condition.Value = gatewayapi.MatchValue{}
+			setTestAttribute(&c.Authenticators[0], testTextAttribute("role", "header", "X-Role"))
 		}},
 		{"empty header values", "nonempty list", func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Access[0].Match.Headers[0].Value = gatewayapi.MatchValue{IsList: true}
@@ -166,6 +177,27 @@ func TestAccessValidation(t *testing.T) {
 			test.edit(&c)
 			if err := Validate(c); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Validate() = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestPresentGrantValidation(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		server int
+		access int
+	}{
+		{name: "JWT", server: 0, access: 0},
+		{name: "API key", server: 0, access: 1},
+		{name: "mTLS", server: 1, access: 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c := loadConfigCase(t, "access-control")
+			grant := &c.Servers[test.server].APIs[0].Access[test.access].Authorization.Grants[0]
+			grant.Attributes = []gatewayapi.MatchExpression{{Name: "tenant_id", Expression: gatewayapi.ExpressionPresent}}
+			if err := Validate(c); err != nil {
+				t.Fatalf("valid present grant was rejected: %v", err)
 			}
 		})
 	}
