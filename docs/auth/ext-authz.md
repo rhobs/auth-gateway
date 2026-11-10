@@ -23,8 +23,8 @@ ext_authz_services:
         trusted_ca:
           config_map: {name: policy-ca, key: ca.pem}
     timeout: 300ms
-    request_headers: [authorization, x-partner-key, x-tenant]
-    credential_headers: [authorization, x-partner-key]
+    request_headers: [authorization, x-tenant]
+    credential_headers: [authorization]
     attributes:
       - name: requested_tenant
         from_source: header
@@ -38,6 +38,8 @@ ext_authz_services:
 Check request. Include credentials the policy needs. List those same headers
 in `credential_headers` so they are removed before the API upstream. The
 gateway rejects repeated selected credentials before the check.
+The native API-key filter hides a locally verified key before the Check call;
+the policy service receives its declared attributes instead.
 
 Each `attributes` entry names a value sent in the Check request's
 `auth_gateway.ext_authz.attributes` metadata namespace. A `header` source

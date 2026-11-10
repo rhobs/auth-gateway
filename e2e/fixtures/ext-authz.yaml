@@ -26,8 +26,8 @@ ext_authz_services:
     tls_config:
       server_name: policy.example.test
   timeout: 300ms
-  request_headers: [authorization, x-partner-key, x-tenant, x-policy-mode]
-  credential_headers: [authorization, x-partner-key]
+  request_headers: [authorization, x-tenant, x-policy-mode]
+  credential_headers: [authorization]
   attributes:
   - name: requested_tenant
     from_source: header

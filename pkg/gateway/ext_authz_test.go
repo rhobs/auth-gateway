@@ -152,3 +152,42 @@ func TestExternalAuthorizationGeneratedFilterAndRoutes(t *testing.T) {
 		}
 	}
 }
+
+func TestExternalAuthorizationAfterMTLS(t *testing.T) {
+	c := loadConfigCase(t, "mtls-auth")
+	service := loadConfigCase(t, "ext-authz").ExtAuthzServices[0]
+	service.Attributes = []gatewayapi.AttributeSource{
+		{Name: "tenant_id", FromSource: "authenticator", Value: gatewayapi.AttributeValue{Text: "tenant_id"}},
+		{Name: "requested_tenant", FromSource: "authenticator", Value: gatewayapi.AttributeValue{Text: "requested_tenant"}},
+	}
+	c.ExtAuthzServices = []gatewayapi.ExternalAuthorizationService{service}
+	c.Servers[0].APIs[0].Access[0].Authorization = gatewayapi.Authorization{ExtAuthz: &gatewayapi.ExternalAuthorization{Service: "policy"}}
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap := decodeBootstrap(t, files.EnvoyBootstrap.Contents)
+	for _, listener := range bootstrap.GetStaticResources().GetListeners() {
+		for _, chain := range listener.GetFilterChains() {
+			manager := decodeHTTPManager(t, chain)
+			if !containsFilter(manager, extAuthzFilterName("policy")) {
+				continue
+			}
+			for _, generated := range manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes() {
+				if generated.GetTypedPerFilterConfig()[extAuthzFilterName("policy")] == nil {
+					continue
+				}
+				var bridge lua.LuaPerRoute
+				if err := generated.GetTypedPerFilterConfig()[extAuthzAttributeBridgeName].UnmarshalTo(&bridge); err != nil {
+					t.Fatal(err)
+				}
+				script := bridge.GetSourceCode().GetInlineString()
+				if !strings.Contains(script, filterStateKey("tenant_id")) || !strings.Contains(script, filterStateKey("requested_tenant")) {
+					t.Fatalf("mTLS route %q does not send its declared attributes", generated.GetName())
+				}
+				return
+			}
+		}
+	}
+	t.Fatal("mTLS access route has no external authorization filter")
+}
