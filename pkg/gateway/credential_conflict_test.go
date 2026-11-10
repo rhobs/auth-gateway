@@ -56,6 +56,7 @@ func TestCredentialConflictPrecedesMetricsOnEveryChain(t *testing.T) {
 func TestCredentialConflictUsesDefaultAPIKeyHeader(t *testing.T) {
 	c := loadConfigCase(t, "api-key-auth")
 	c.Authenticators[1].APIKey.Header = ""
+	c.Servers[2].APIs[0].Access[1].Match.Headers[0].Name = defaultAPIKeyHeader
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)

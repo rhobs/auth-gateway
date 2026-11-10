@@ -9,14 +9,20 @@ and [configuration reference](../configuration-reference.md).
 ## Request selection
 
 Each API binding requires protected `access` entries or explicit `public: true`.
-An entry's `match.headers` selects the request context using `equals` or `in`
-expressions. All configured headers must match. `tenant` labels a
+An entry's `match.headers` selects the request context using `equals`, `in`, or
+`present` expressions. All configured headers must match. `present` checks
+whether the header exists and takes no `value`. `tenant` labels a
 concrete entry; `name` labels a shared entry. Labels themselves do not match
 requests.
 
-Selectors must not overlap. Missing or unmatched context returns `403` before
-the backend. Repeated selectors or selected credential headers, and
-comma-separated selectors, return `400`.
+Two entries may cover the same tenant and API path when the JWT entry requires
+`Authorization: present` and the API-key entry requires the configured key
+header with `present`. Each credential header can select only its own
+authentication method. Other overlapping entries remain invalid. See the
+[full example](../../config.example.yaml) for a shared write path. Missing or
+unmatched context returns `403` before the backend. Repeated selectors,
+repeated selected credential headers, and comma-separated selectors return
+`400`.
 
 ## Authentication
 
@@ -33,7 +39,8 @@ multiple JWT and mTLS authenticators and one API-key authenticator.
 
 When an API-key authenticator is configured, any request carrying both its
 credential header and `Authorization` returns `403` before authentication and
-custom request metrics, regardless of the path or selected access method.
+the backend, regardless of the path or selected access method. A matched API
+with request metrics configured still counts the `403` response.
 
 mTLS uses a dedicated HTTPS server mode: `tls_config.mtls.authenticator` names
 the certificate validator for every API on that server. Client certificates

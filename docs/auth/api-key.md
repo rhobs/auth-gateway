@@ -157,9 +157,15 @@ servers:
 All listed conditions must match. A client cannot request another tenant just
 by changing a header. Send only the configured API-key header on a key request.
 If it and `Authorization` are both present, the gateway returns `403` before
-authentication or custom request metrics run, including on public and unmatched
-paths. A valid JWT cannot replace a missing key. Known credential headers are
-removed before forwarding.
+authentication or the backend, including on public and unmatched paths. A
+matched API with request metrics configured still counts the `403` response.
+A valid JWT cannot replace a missing key. Known credential headers are removed
+before forwarding.
+
+An API-key access entry can select the same API path and tenant as a JWT entry
+by matching its configured credential header with `expression: present`. The
+JWT entry must match `Authorization` with `expression: present`. See the
+[full example](../../config.example.yaml).
 
 When the upstream needs a different tenant value, supply an additional
 credential attribute. The credential document above includes

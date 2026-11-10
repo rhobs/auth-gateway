@@ -106,11 +106,14 @@ servers:
   apis:
   - name: ingest
     access:
-    - match:
+    - name: shared-jwt-writers
+      match:
         headers:
           - name: X-Tenant
             expression: equals
-            value: client-b
+            value: client-a
+          - name: Authorization
+            expression: present
       authentication:
         jwt:
           providers:
@@ -121,16 +124,18 @@ servers:
           attributes:
             - name: tenant_id
               expression: equals
-              value: client-b
+              value: client-a
             - name: writer_id
               expression: in
               value: [writer-a, writer-b]
-      tenant: client-b
-    - match:
+    - name: shared-key-writers
+      match:
         headers:
           - name: X-Tenant
             expression: equals
             value: client-a
+          - name: X-Partner-Key
+            expression: present
       authentication:
         api_key:
           authenticator: partner-key
@@ -144,7 +149,6 @@ servers:
             - name: writer_id
               expression: in
               value: [writer-a, writer-b]
-      tenant: client-a
 - hostname: key-tls.api-key.auth-gateway.test
   apis:
   - name: ingest

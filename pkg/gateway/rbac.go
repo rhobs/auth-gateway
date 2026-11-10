@@ -327,8 +327,14 @@ func requestValidationHTTPFilter() (*hcm.HttpFilter, error) {
 func requestValidationPerRouteConfig(headers []string) (*anypb.Any, error) {
 	builder := &celExpressionBuilder{}
 	var repeated *expr.Expr
+	seen := make(map[string]bool, len(headers))
 	for _, name := range headers {
-		condition := builder.repeatedHeader(strings.ToLower(name))
+		lower := strings.ToLower(name)
+		if seen[lower] {
+			continue
+		}
+		seen[lower] = true
+		condition := builder.repeatedHeader(lower)
 		if repeated == nil {
 			repeated = condition
 		} else {

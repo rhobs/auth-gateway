@@ -399,6 +399,11 @@ func accessHeaderCombinations(match gatewayapi.AccessMatch) [][]*route.HeaderMat
 	for _, condition := range sortedMatchExpressions(match.Headers) {
 		var expanded [][]*route.HeaderMatcher
 		for _, headers := range combinations {
+			if condition.Expression == gatewayapi.ExpressionPresent {
+				matcher := &route.HeaderMatcher{Name: strings.ToLower(condition.Name), HeaderMatchSpecifier: &route.HeaderMatcher_PresentMatch{PresentMatch: true}}
+				expanded = append(expanded, append(slices.Clone(headers), matcher))
+				continue
+			}
 			for _, value := range matchValues(condition) {
 				matcher := &route.HeaderMatcher{Name: strings.ToLower(condition.Name), HeaderMatchSpecifier: &route.HeaderMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: value}}}}
 				expanded = append(expanded, append(slices.Clone(headers), matcher))

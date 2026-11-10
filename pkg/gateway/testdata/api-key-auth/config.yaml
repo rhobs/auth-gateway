@@ -86,12 +86,11 @@ servers:
   apis:
   - name: ingest
     access:
-    - name: path-0
+    - name: jwt-writers
       match:
         headers:
-          - name: X-Auth-Path
-            expression: equals
-            value: jwt
+          - name: Authorization
+            expression: present
       authentication:
         jwt:
           providers:
@@ -103,12 +102,11 @@ servers:
             - name: tenant_id
               expression: equals
               value: client-a
-    - name: path-1
+    - name: key-writers
       match:
         headers:
-          - name: X-Auth-Path
-            expression: equals
-            value: api_key
+          - name: X-Partner-Key
+            expression: present
       authentication:
         api_key:
           authenticator: partner-key

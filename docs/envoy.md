@@ -41,6 +41,10 @@ values. Each route selects its JWT requirement or enables the native API-key
 filter and supplies its own RBAC grants. Authentication is disabled by default
 and enabled only on selected routes. Public APIs require an explicit binding.
 Unmatched access returns `403`; `404` and `405` fallbacks do not authenticate.
+Header presence selectors use Envoy's native `present_match` route matcher.
+JWT and API-key entries may share a tenant only when each requires its own
+credential header; the early mixed-credential check makes those routes
+mutually exclusive.
 
 There is one selected credential type per entry. Multiple JWT providers use a
 native JWT `requires_any` requirement, with provider-specific verified metadata

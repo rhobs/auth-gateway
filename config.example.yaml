@@ -333,7 +333,7 @@ servers:
                       expression: equals
                       value: writer
 
-          # These tenants write using internal JWTs only.
+          # client-456 can use an internal JWT or a partner API key.
           - name: internal-writers
             match:
               headers:
@@ -343,6 +343,8 @@ servers:
                 - name: X-Environment
                   expression: equals
                   value: production
+                - name: Authorization
+                  expression: present
             authentication:
               jwt:
                 providers: [internal-jwt]
@@ -357,16 +359,18 @@ servers:
                       expression: equals
                       value: writer
 
-          # These tenants write using API keys only.
+          # Presence selectors keep the shared tenant's access entries distinct.
           - name: partner-writers
             match:
               headers:
                 - name: X-Tenant
                   expression: in
-                  value: [customer-123, customer-456]
+                  value: [client-456, customer-123, customer-456]
                 - name: X-Environment
                   expression: equals
                   value: production
+                - name: X-Partner-Key
+                  expression: present
             authentication:
               api_key:
                 authenticator: partner-key
