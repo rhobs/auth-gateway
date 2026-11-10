@@ -9,10 +9,9 @@ authenticators:
     audiences:
     - gateway-test
   attributes:
-    tenant_id:
-      claim_path:
-      - organization
-      - id
+    - name: tenant_id
+      from_source: claim
+      value: [organization, id]
 - name: issuer-two
   jwt:
     issuer: https://issuer-two.jwt.test
@@ -22,10 +21,9 @@ authenticators:
     audiences:
     - gateway-test
   attributes:
-    tenant_id:
-      claim_path:
-      - organization
-      - id
+    - name: tenant_id
+      from_source: claim
+      value: [organization, id]
 apis:
 - name: metrics
   upstream:

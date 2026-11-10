@@ -17,9 +17,15 @@ authenticators:
       trusted_ca:
         config_map: {name: partner-client-ca, key: ca.crt}
     attributes:
-      tenant_id: {uri_san: true}
-      writer_id: {dns_san: true}
-      requested_tenant: {header: X-Tenant}
+      - name: tenant_id
+        from_source: certificate
+        value: uri_san
+      - name: writer_id
+        from_source: certificate
+        value: dns_san
+      - name: requested_tenant
+        from_source: header
+        value: X-Tenant
 servers:
   - hostname: cert.auth.example.com
     tls_config:

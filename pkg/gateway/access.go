@@ -227,23 +227,23 @@ func validateAccessGrants(field string, access resolvedAccess) error {
 			if condition == nil {
 				return fmt.Errorf("%s must contain values or equals_attribute", attributeField)
 			}
-			source, ok := authenticator.Attributes[name]
+			source, ok := authenticatorAttribute(authenticator, name)
 			if !ok || !attributeNamePattern.MatchString(name) {
 				return fmt.Errorf("%s is not declared by authenticator %q", attributeField, authenticator.Name)
 			}
-			if source.Header != nil {
+			if source.FromSource == attributeSourceHeader {
 				return fmt.Errorf("%s must use a verified credential attribute, not a header source", attributeField)
 			}
 			if condition.EqualsAttribute != "" {
 				if condition.Values != nil {
 					return fmt.Errorf("%s cannot combine values and equals_attribute", attributeField)
 				}
-				other, ok := authenticator.Attributes[condition.EqualsAttribute]
+				other, ok := authenticatorAttribute(authenticator, condition.EqualsAttribute)
 				if !ok {
 					return fmt.Errorf("%s.equals_attribute references undeclared attribute %q", attributeField, condition.EqualsAttribute)
 				}
-				if other.Header != nil && !accessMatchesHeader(access.Match, *other.Header) {
-					return fmt.Errorf("%s.equals_attribute header %q must be selected in match.headers", attributeField, *other.Header)
+				if other.FromSource == attributeSourceHeader && !accessMatchesHeader(access.Match, other.Value.Text) {
+					return fmt.Errorf("%s.equals_attribute header %q must be selected in match.headers", attributeField, other.Value.Text)
 				}
 				continue
 			}

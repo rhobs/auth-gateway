@@ -6,10 +6,12 @@ authenticators:
     secret: gateway-api-keys
     header: X-Partner-Key
   attributes:
-    tenant_id:
-      credential: true
-    writer_id:
-      credential: true
+    - name: tenant_id
+      from_source: credential
+      value: tenant_id
+    - name: writer_id
+      from_source: credential
+      value: writer_id
 servers:
 - hostname: fault.auth-gateway.test
   apis:

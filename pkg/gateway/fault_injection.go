@@ -151,11 +151,11 @@ func validateFaultAttributeSources(serverName string, server resolvedServer) err
 			}
 			for _, access := range binding.access {
 				for _, authenticator := range access.authenticators {
-					source, exists := authenticator.Attributes[attribute]
+					source, exists := authenticatorAttribute(authenticator, attribute)
 					if !exists {
 						return missing()
 					}
-					if source.Header != nil {
+					if source.FromSource == attributeSourceHeader {
 						return fmt.Errorf("%s API %q fault_injection.match.attributes.%s requires an identity attribute, not a request header source", serverName, api.Name, attribute)
 					}
 				}

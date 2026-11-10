@@ -41,9 +41,9 @@ func withDefaultsAuthenticator(authenticator gatewayapi.Authenticator) gatewayap
 
 func cloneAuthenticator(authenticator gatewayapi.Authenticator) gatewayapi.Authenticator {
 	if authenticator.Attributes != nil {
-		attributes := make(map[string]gatewayapi.AttributeSource, len(authenticator.Attributes))
-		for name, source := range authenticator.Attributes {
-			attributes[name] = cloneAttributeSource(source)
+		attributes := make([]gatewayapi.AttributeSource, len(authenticator.Attributes))
+		for i, source := range authenticator.Attributes {
+			attributes[i] = cloneAttributeSource(source)
 		}
 		authenticator.Attributes = attributes
 	}
@@ -54,15 +54,15 @@ func cloneAuthenticator(authenticator gatewayapi.Authenticator) gatewayapi.Authe
 }
 
 func providesAttributeAuthenticator(authenticator gatewayapi.Authenticator, name string) bool {
-	_, exists := authenticator.Attributes[name]
+	_, exists := authenticatorAttribute(authenticator, name)
 	return exists
 }
 
 func credentialAttributeNamesAuthenticator(authenticator gatewayapi.Authenticator) []string {
 	var names []string
-	for name, source := range authenticator.Attributes {
-		if source.Credential != nil && *source.Credential {
-			names = append(names, name)
+	for _, source := range authenticator.Attributes {
+		if source.FromSource == "credential" && !slices.Contains(names, source.Value.Text) {
+			names = append(names, source.Value.Text)
 		}
 	}
 	slices.Sort(names)

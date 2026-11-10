@@ -10,7 +10,9 @@ authenticators:
     audiences:
     - gateway-test
   attributes:
-    tenant_id: {claim_path: [tenant]}
+    - name: tenant_id
+      from_source: claim
+      value: [tenant]
 servers:
 - hostname: gateway.example.test
   apis:

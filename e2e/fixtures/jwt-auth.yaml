@@ -12,10 +12,9 @@ authenticators:
     jwks:
       uri: https://jwks.jwt.test/issuer-one
   attributes:
-    my_list:
-      claim_path:
-      - x
-      - my_list
+    - name: my_list
+      from_source: claim
+      value: [x, my_list]
 apis:
 - name: metrics
   upstream:

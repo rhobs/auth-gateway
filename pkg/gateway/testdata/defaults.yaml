@@ -7,7 +7,9 @@ authenticators:
     jwks:
       uri: https://sso.example.com/realms/observability/jwks
   attributes:
-    tenant_id: {claim_path: [tenant]}
+    - name: tenant_id
+      from_source: claim
+      value: [tenant]
 servers:
 - hostname: write.example.com
   tls_config: {secret: gateway-tls}

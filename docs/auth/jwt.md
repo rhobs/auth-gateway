@@ -18,13 +18,21 @@ authenticators:
         uri: https://sso.example.com/jwks
       audiences: [observability-ingestion]
     attributes:
-      tenant_id: {claim_path: [organization, id]}
-      role: {claim_path: [role]}
-      upstream_tenant: {claim_path: [organization, upstream_tenant]}
-      requested_tenant: {header: X-Tenant}
+      - name: tenant_id
+        from_source: claim
+        value: [organization, id]
+      - name: role
+        from_source: claim
+        value: [role]
+      - name: upstream_tenant
+        from_source: claim
+        value: [organization, upstream_tenant]
+      - name: requested_tenant
+        from_source: header
+        value: X-Tenant
 ```
 
-`claim_path` follows literal object keys, including keys containing dots.
+Claim `value` follows literal object keys, including keys containing dots.
 Headers retain their original values until authorization completes. JWKS
 clusters default to IPv4-only DNS; `V6_ONLY`, `AUTO`, `V4_PREFERRED`, and `ALL`
 are also supported in `jwks.dns_lookup_family`.

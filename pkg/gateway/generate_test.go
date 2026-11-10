@@ -453,7 +453,7 @@ func TestResolvedReferencesDoNotAliasInput(t *testing.T) {
 		{name: "API route", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Path.Exact = "/changed" }},
 		{name: "authenticator", edit: func(c *gatewayapi.Config) { c.Authenticators[0].JWT.Issuer = "https://changed.jwt.test" }},
 		{name: "attribute source", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[0].Attributes["tenant_id"] = gatewayapi.AttributeSource{ClaimPath: []string{"changed"}}
+			setTestAttribute(&c.Authenticators[0], testClaimAttribute("tenant_id", "changed"))
 		}},
 		{name: "grant allowlist", edit: func(c *gatewayapi.Config) {
 			c.Servers[2].APIs[0].Access[0].Authorization.Grants[0].Attributes["tenant_id"].Values[0] = "changed"

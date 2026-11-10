@@ -137,7 +137,7 @@ func TestFaultMatchReferences(t *testing.T) {
 		}},
 		{name: "unbound provider", want: "servers[0] authentication does not provide fault_injection.match.attributes.writer_id", edit: func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Access = []gatewayapi.Access{c.Servers[0].APIs[0].Access[1]}
-			delete(c.Authenticators[1].Attributes, "writer_id")
+			removeTestAttribute(&c.Authenticators[1], "writer_id")
 		}},
 		{name: "public binding", want: "servers[0] authentication does not provide fault_injection.match.attributes.tenant_id", edit: func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Public = true

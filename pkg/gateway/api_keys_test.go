@@ -67,7 +67,7 @@ func TestAPIKeyClientIncludesMissingAttributesInNameOrder(t *testing.T) {
 func TestAPIKeyHeaderAttributesStayOutOfCredentialIdentity(t *testing.T) {
 	c := loadConfigCase(t, "api-key-auth")
 	authenticator := c.Authenticators[1]
-	authenticator.Attributes["requested_tenant"] = gatewayapi.AttributeSource{Header: new("X-Tenant")}
+	setTestAttribute(&authenticator, testTextAttribute("requested_tenant", "header", "X-Tenant"))
 	credential := []gatewayapi.APIKeyCredential{{Key: "key-a", Attributes: map[string]string{"tenant_id": "client-a"}}}
 	file, err := GenerateAPIKeyECDS(authenticator, credential)
 	if err != nil {
@@ -81,7 +81,7 @@ func TestAPIKeyHeaderAttributesStayOutOfCredentialIdentity(t *testing.T) {
 		t.Fatalf("header attribute in credentials was accepted: %v", err)
 	}
 
-	authenticator.Attributes = map[string]gatewayapi.AttributeSource{"requested_tenant": {Header: new("X-Tenant")}}
+	authenticator.Attributes = []gatewayapi.AttributeSource{testTextAttribute("requested_tenant", "header", "X-Tenant")}
 	file, err = GenerateAPIKeyECDS(authenticator, []gatewayapi.APIKeyCredential{{Key: "key-a"}})
 	if err != nil {
 		t.Fatal(err)
@@ -176,11 +176,11 @@ func TestAPIKeyAttributeGenerationIsDeterministic(t *testing.T) {
 		t.Fatal(err)
 	}
 	sources := c.Authenticators[0].Attributes
-	c.Authenticators[0].Attributes = map[string]gatewayapi.AttributeSource{"requested_tenant": sources["requested_tenant"]}
+	c.Authenticators[0].Attributes = []gatewayapi.AttributeSource{*testAttribute(&gatewayapi.Authenticator{Attributes: sources}, "requested_tenant")}
 	reversedValues := make(map[string]string)
 	for index := 19; index >= 0; index-- {
 		name := fmt.Sprintf("attribute%02d", index)
-		c.Authenticators[0].Attributes[name] = sources[name]
+		setTestAttribute(&c.Authenticators[0], *testAttribute(&gatewayapi.Authenticator{Attributes: sources}, name))
 		reversedValues[name] = values[name]
 	}
 	second, err := Generate(c)
@@ -202,7 +202,7 @@ func apiKeyAttributesConfig(t *testing.T, count int) gatewayapi.Config {
 	const filename = "testdata/api-key-attributes.yaml"
 	c := loadTestConfig(t, readTestFile(t, filename), filename)
 	for index := count; index < 20; index++ {
-		delete(c.Authenticators[0].Attributes, fmt.Sprintf("attribute%02d", index))
+		removeTestAttribute(&c.Authenticators[0], fmt.Sprintf("attribute%02d", index))
 	}
 	if count == 0 {
 		c.APIs[0].Routes[0].Processing = nil
@@ -298,7 +298,9 @@ authenticators:
 - name: local-key
   api_key: {}
   attributes:
-    tenant_id: {credential: true}
+    - name: tenant_id
+      from_source: credential
+      value: tenant_id
 apis:
 - name: ingest
   upstream:

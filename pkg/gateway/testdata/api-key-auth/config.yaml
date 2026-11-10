@@ -9,22 +9,23 @@ authenticators:
     audiences:
     - gateway-test
   attributes:
-    tenant_id:
-      claim_path:
-      - organization
-      - id
-    writer_id:
-      claim_path:
-      - sub
+    - name: tenant_id
+      from_source: claim
+      value: [organization, id]
+    - name: writer_id
+      from_source: claim
+      value: [sub]
 - name: partner-key
   api_key:
     secret: gateway-api-keys
     header: X-Partner-Key
   attributes:
-    tenant_id:
-      credential: true
-    writer_id:
-      credential: true
+    - name: tenant_id
+      from_source: credential
+      value: tenant_id
+    - name: writer_id
+      from_source: credential
+      value: writer_id
 observability:
   metrics:
     custom_metric_name: gateway_http_requests_total

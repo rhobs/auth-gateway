@@ -117,8 +117,8 @@ func validateAPIMetrics(name string, value *gatewayapi.APIMetrics) error {
 func validateMetricAttributeReferences(apis []gatewayapi.API, authenticators map[string]gatewayapi.Authenticator) error {
 	known := make(map[string]struct{})
 	for _, authenticator := range authenticators {
-		for attribute := range authenticator.Attributes {
-			known[attribute] = struct{}{}
+		for _, attribute := range authenticator.Attributes {
+			known[attribute.Name] = struct{}{}
 		}
 	}
 	for i, api := range apis {

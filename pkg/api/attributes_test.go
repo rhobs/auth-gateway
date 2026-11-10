@@ -61,3 +61,32 @@ func TestAttributeConditionRejectsMarshalingBothForms(t *testing.T) {
 		t.Fatalf("Marshal error = %v, want conflicting condition forms", err)
 	}
 }
+
+func TestAuthenticatorAttributesUseNamedEntries(t *testing.T) {
+	input := []byte("name: issuer\njwt: {issuer: https://issuer.example, jwks: {uri: https://issuer.example/jwks}}\nattributes:\n  - name: tenant_id\n    from_source: claim\n    value: [organization, id]\n  - name: requested_tenant\n    from_source: header\n    value: X-Tenant\n")
+	var authenticator Authenticator
+	if err := yaml.Unmarshal(input, &authenticator); err != nil {
+		t.Fatal(err)
+	}
+	if len(authenticator.Attributes) != 2 || !reflect.DeepEqual(authenticator.Attributes[0].Value.Path, []string{"organization", "id"}) || authenticator.Attributes[1].Value.Text != "X-Tenant" {
+		t.Fatalf("attributes = %#v", authenticator.Attributes)
+	}
+	data, err := yaml.Marshal(authenticator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip Authenticator
+	if err := yaml.Unmarshal(data, &roundTrip); err != nil || !reflect.DeepEqual(roundTrip, authenticator) {
+		t.Fatalf("round trip = %#v, error = %v", roundTrip, err)
+	}
+	for _, value := range []string{"123", "[tenant, 123]", "{key: tenant}"} {
+		if err := yaml.Unmarshal([]byte("value: "+value), &struct {
+			Value AttributeValue `yaml:"value"`
+		}{}); err == nil {
+			t.Errorf("accepted invalid attribute value %s", value)
+		}
+	}
+	if err := yaml.Unmarshal([]byte("attributes: {tenant_id: {claim_path: [sub]}}"), &Authenticator{}); err == nil {
+		t.Fatal("legacy attribute map was accepted")
+	}
+}

@@ -19,8 +19,9 @@ authenticators:
     secret: auth-gateway-tracing-keys
     header: X-Trace-Key
   attributes:
-    tenant_id:
-      credential: true
+    - name: tenant_id
+      from_source: credential
+      value: tenant_id
 apis:
 - name: tracing
   metrics: {}

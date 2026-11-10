@@ -7,60 +7,38 @@ import (
 	"testing"
 
 	headertometadata "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_to_metadata/v3"
-
 	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
 )
 
 func TestValidateAuthenticatorAttributeSources(t *testing.T) {
 	tests := []struct {
-		name string
-		want string
-		edit func(*gatewayapi.Config)
+		name          string
+		authenticator int
+		source        gatewayapi.AttributeSource
+		want          string
 	}{
-		{name: "JWT missing source", want: "authenticators[0].attributes.tenant_id", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[0].Attributes["tenant_id"] = gatewayapi.AttributeSource{}
-		}},
-		{name: "JWT multiple sources", want: "authenticators[0].attributes.tenant_id", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[0].Attributes["tenant_id"] = gatewayapi.AttributeSource{ClaimPath: []string{"sub"}, Header: new("X-Tenant")}
-		}},
-		{name: "JWT credential source", want: "authenticators[0].attributes.tenant_id", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[0].Attributes["tenant_id"] = gatewayapi.AttributeSource{Credential: new(true)}
-		}},
-		{name: "empty header", want: "authenticators[0].attributes.requested_tenant.header", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[0].Attributes["requested_tenant"] = gatewayapi.AttributeSource{Header: new("")}
-		}},
-		{name: "invalid header", want: "authenticators[0].attributes.requested_tenant.header", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[0].Attributes["requested_tenant"] = gatewayapi.AttributeSource{Header: new("Bad Header")}
-		}},
-		{name: "reserved header", want: "authenticators[0].attributes.requested_tenant.header", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[0].Attributes["requested_tenant"] = gatewayapi.AttributeSource{Header: new("Authorization")}
-		}},
-		{name: "internal header", want: "authenticators[0].attributes.requested_tenant.header", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[0].Attributes["requested_tenant"] = gatewayapi.AttributeSource{Header: new("X-Auth-Gateway-Identity")}
-		}},
-		{name: "underscore header", want: "authenticators[0].attributes.requested_tenant.header", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[0].Attributes["requested_tenant"] = gatewayapi.AttributeSource{Header: new("X_Tenant")}
-		}},
-		{name: "key credential header", want: "authenticators[0].attributes.requested_tenant.header is reserved", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[0].Attributes["requested_tenant"] = gatewayapi.AttributeSource{Header: new("x-partner-key")}
-		}},
-		{name: "key missing source", want: "authenticators[2].attributes.tenant_id", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[2].Attributes["tenant_id"] = gatewayapi.AttributeSource{}
-		}},
-		{name: "key false credential", want: "authenticators[2].attributes.tenant_id.credential", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[2].Attributes["tenant_id"] = gatewayapi.AttributeSource{Credential: new(false)}
-		}},
-		{name: "key claim source", want: "authenticators[2].attributes.tenant_id", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[2].Attributes["tenant_id"] = gatewayapi.AttributeSource{ClaimPath: []string{"sub"}}
-		}},
-		{name: "key multiple sources", want: "authenticators[2].attributes.tenant_id", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[2].Attributes["tenant_id"] = gatewayapi.AttributeSource{Credential: new(true), Header: new("X-Tenant")}
-		}},
+		{"empty name", 0, testClaimAttribute("", "sub"), ".name"},
+		{"invalid name", 0, testClaimAttribute("Bad", "sub"), ".name"},
+		{"missing source", 0, gatewayapi.AttributeSource{Name: "tenant_id"}, ".from_source"},
+		{"empty claim path", 0, testClaimAttribute("tenant_id"), ".value"},
+		{"empty claim key", 0, testClaimAttribute("tenant_id", ""), ".value"},
+		{"claim on API key", 2, testClaimAttribute("tenant_id", "sub"), ".value"},
+		{"credential on JWT", 0, testTextAttribute("tenant_id", "credential", "tenant_id"), ".value"},
+		{"empty credential key", 2, testTextAttribute("tenant_id", "credential", ""), ".value"},
+		{"header list", 0, gatewayapi.AttributeSource{Name: "requested_tenant", FromSource: "header", Value: gatewayapi.AttributeValue{Path: []string{"X-Tenant"}, IsPath: true}}, ".value"},
+		{"invalid header", 0, testTextAttribute("requested_tenant", "header", "Bad Header"), ".value"},
+		{"reserved header", 0, testTextAttribute("requested_tenant", "header", "Authorization"), ".value"},
+		{"credential header", 2, testTextAttribute("requested_tenant", "header", "x-partner-key"), "reserved"},
+		{"certificate on JWT", 0, testTextAttribute("tenant_id", "certificate", "uri_san"), ".value"},
+		{"invalid certificate value", 1, testTextAttribute("tenant_id", "certificate", "email_san"), ".value"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			c := loadAuthValidationFixture(t)
-			test.edit(&c)
+			if test.authenticator == 1 {
+				c = loadConfigCase(t, "mtls-auth")
+			}
+			setTestAttribute(&c.Authenticators[test.authenticator], test.source)
 			if err := Validate(c); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("validation error = %v, want %q", err, test.want)
 			}
@@ -68,51 +46,40 @@ func TestValidateAuthenticatorAttributeSources(t *testing.T) {
 	}
 }
 
-func TestValidateMTLSAttributeSources(t *testing.T) {
-	tests := []struct {
-		name string
-		want string
-		edit func(*gatewayapi.Config)
-	}{
-		{name: "missing source", want: "authenticators[1].attributes.tenant_id", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[1].Attributes["tenant_id"] = gatewayapi.AttributeSource{}
-		}},
-		{name: "false URI SAN", want: "authenticators[1].attributes.tenant_id.uri_san", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[1].Attributes["tenant_id"] = gatewayapi.AttributeSource{URISAN: new(false)}
-		}},
-		{name: "false DNS SAN", want: "authenticators[1].attributes.dns_id.dns_san", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[1].Attributes["dns_id"] = gatewayapi.AttributeSource{DNSSAN: new(false)}
-		}},
-		{name: "multiple sources", want: "authenticators[1].attributes.tenant_id", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[1].Attributes["tenant_id"] = gatewayapi.AttributeSource{URISAN: new(true), DNSSAN: new(true)}
-		}},
-		{name: "JWT source", want: "authenticators[1].attributes.tenant_id", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[1].Attributes["tenant_id"] = gatewayapi.AttributeSource{ClaimPath: []string{"sub"}}
-		}},
-		{name: "API key source", want: "authenticators[1].attributes.tenant_id", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[1].Attributes["tenant_id"] = gatewayapi.AttributeSource{Credential: new(true)}
-		}},
-		{name: "URI SAN on JWT", want: "authenticators[0].attributes.tenant_id", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[0].Attributes["tenant_id"] = gatewayapi.AttributeSource{URISAN: new(true)}
-		}},
-		{name: "DNS SAN on API key", want: "authenticators[2].attributes.tenant_id", edit: func(c *gatewayapi.Config) {
-			c.Authenticators[2].Attributes["tenant_id"] = gatewayapi.AttributeSource{DNSSAN: new(true)}
-		}},
+func TestValidateDuplicateAuthenticatorAttributeName(t *testing.T) {
+	c := loadAuthValidationFixture(t)
+	c.Authenticators[0].Attributes = append(c.Authenticators[0].Attributes, testClaimAttribute("tenant_id", "other"))
+	if err := Validate(c); err == nil || !strings.Contains(err.Error(), "duplicates attribute") {
+		t.Fatalf("duplicate attribute error = %v", err)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			c := loadConfigCase(t, "mtls-auth")
-			test.edit(&c)
-			if err := Validate(c); err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("validation error = %v, want %q", err, test.want)
-			}
-		})
+}
+
+func TestAPIKeySourceUsesDeclaredCredentialKey(t *testing.T) {
+	authenticator := gatewayapi.Authenticator{
+		Name: "partner-key", APIKey: &gatewayapi.APIKeyAuthenticator{},
+		Attributes: []gatewayapi.AttributeSource{
+			testTextAttribute("tenant_id", "credential", "organization_id"),
+			testTextAttribute("upstream_tenant", "credential", "organization_id"),
+		},
+	}
+	data, err := GenerateAPIKeyECDS(authenticator, []gatewayapi.APIKeyCredential{{Key: "key", Attributes: map[string]string{"organization_id": "client-a"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decodeAPIKeySecret(t, data).Credentials[0].Client; got != "organization_id=client-a" {
+		t.Fatalf("client identity = %q", got)
+	}
+	for _, name := range []string{"tenant_id", "upstream_tenant"} {
+		namespace, path := attributeMetadataPath(authenticator, name)
+		if namespace != apiKeyMetadataNamespace || !slices.Equal(path, []string{"attribute.organization_id"}) {
+			t.Fatalf("metadata path for %s = %q %v", name, namespace, path)
+		}
 	}
 }
 
 func TestHeaderMetadataCapturePreservesRequestHeader(t *testing.T) {
 	c := loadConfigCase(t, "api-key-auth")
-	c.Authenticators[1].Attributes["requested_tenant"] = gatewayapi.AttributeSource{Header: new("x-TENANT")}
+	setTestAttribute(&c.Authenticators[1], testTextAttribute("requested_tenant", "header", "x-TENANT"))
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)
@@ -146,14 +113,14 @@ func TestHeaderMetadataCapturePreservesRequestHeader(t *testing.T) {
 func TestAPIKeyAttributeExtractionPreservesCredentialValues(t *testing.T) {
 	authenticator := gatewayapi.Authenticator{
 		Name: "partner-key", APIKey: &gatewayapi.APIKeyAuthenticator{},
-		Attributes: map[string]gatewayapi.AttributeSource{
-			"a":                     {Credential: new(true)},
-			"attribute0":            {Credential: new(true)},
-			"attribute00":           {Credential: new(true)},
-			"hyphen-name":           {Credential: new(true)},
-			"missing":               {Credential: new(true)},
-			"under_score":           {Credential: new(true)},
-			strings.Repeat("z", 64): {Credential: new(true)},
+		Attributes: []gatewayapi.AttributeSource{
+			testTextAttribute("a", "credential", "a"),
+			testTextAttribute("attribute0", "credential", "attribute0"),
+			testTextAttribute("attribute00", "credential", "attribute00"),
+			testTextAttribute("hyphen-name", "credential", "hyphen-name"),
+			testTextAttribute("missing", "credential", "missing"),
+			testTextAttribute("under_score", "credential", "under_score"),
+			testTextAttribute(strings.Repeat("z", 64), "credential", strings.Repeat("z", 64)),
 		},
 	}
 	values := map[string]string{
