@@ -10,6 +10,7 @@ require (
 	github.com/onsi/gomega v1.43.1
 	go.yaml.in/yaml/v3 v3.0.5
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa
+	google.golang.org/grpc v1.82.0
 	google.golang.org/protobuf v1.36.12
 	k8s.io/api v0.34.4
 	k8s.io/apimachinery v0.34.4

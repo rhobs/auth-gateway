@@ -1,0 +1,91 @@
+version: 1
+authenticators:
+- name: issuer-one
+  jwt:
+    issuer: https://issuer-one.jwt.test
+    jwks:
+      uri: https://jwks.jwt.test/issuer-one
+  attributes:
+  - name: tenant_id
+    from_source: claim
+    value: [organization, id]
+- name: partner-key
+  api_key:
+    secret: auth-gateway-api-keys
+    header: X-Partner-Key
+  attributes:
+  - name: tenant_id
+    from_source: credential
+    value: tenant_id
+ext_authz_services:
+- name: policy
+  upstream:
+    address: policy.example.test
+    port: 9000
+    http_protocol: http2
+    tls_config:
+      server_name: policy.example.test
+  timeout: 300ms
+  request_headers: [authorization, x-partner-key, x-tenant, x-policy-mode]
+  credential_headers: [authorization, x-partner-key]
+  attributes:
+  - name: requested_tenant
+    from_source: header
+    value: X-Tenant
+  - name: tenant_id
+    from_source: authenticator
+    value: tenant_id
+apis:
+- name: ext-authz-api
+  upstream:
+    address: httpbin
+    port: 8080
+  routes:
+  - methods: [GET]
+    path: {exact: /protected}
+    rewrite: {path: /anything}
+    processing:
+      request_headers:
+      - name: X-Scope-OrgID
+        from_attribute: requested_tenant
+servers:
+- hostname: ext.auth-gateway.test
+  apis:
+  - name: ext-authz-api
+    access:
+    - name: jwt
+      match:
+        headers:
+        - name: X-Tenant
+          expression: equals
+          value: internal
+      authentication:
+        jwt: {providers: [issuer-one]}
+      authorization:
+        ext_authz:
+          service: policy
+    - name: external
+      match:
+        headers:
+        - name: X-Tenant
+          expression: in
+          value: [partner, partner-other]
+      authorization:
+        ext_authz:
+          service: policy
+    - name: api-key
+      match:
+        headers:
+        - name: X-Tenant
+          expression: equals
+          value: client-a
+        - name: X-Partner-Key
+          expression: present
+      authentication:
+        api_key: {authenticator: partner-key}
+      authorization:
+        ext_authz:
+          service: policy
+kubernetes:
+  name: auth-gateway
+  namespace: observability
