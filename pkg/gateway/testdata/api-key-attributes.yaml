@@ -130,8 +130,9 @@ servers:
     - name: default
       match:
         headers:
-          X-Scope-OrgID:
-            exact: caller-controlled
+          - name: X-Scope-OrgID
+            expression: equals
+            value: caller-controlled
       authentication:
         api_key:
           authenticator: partner-key
@@ -139,5 +140,6 @@ servers:
         grants:
         - authenticator: partner-key
           attributes:
-            attribute00:
-            - value00
+            - name: attribute00
+              expression: equals
+              value: value00

@@ -40,8 +40,9 @@ servers:
     - name: path-0
       match:
         headers:
-          X-Auth-Path:
-            exact: jwt
+          - name: X-Auth-Path
+            expression: equals
+            value: jwt
       authentication:
         jwt:
           providers:
@@ -50,15 +51,15 @@ servers:
         grants:
         - authenticator: issuer-one
           attributes:
-            tenant_id:
-            - tenant-a
-            - tenant-b
-            - tenant-c
+            - name: tenant_id
+              expression: in
+              value: [tenant-a, tenant-b, tenant-c]
     - name: path-1
       match:
         headers:
-          X-Auth-Path:
-            exact: api_key
+          - name: X-Auth-Path
+            expression: equals
+            value: api_key
       authentication:
         api_key:
           authenticator: partner-key
@@ -66,17 +67,17 @@ servers:
         grants:
         - authenticator: partner-key
           attributes:
-            tenant_id:
-            - tenant-a
-            - tenant-b
-            - tenant-c
+            - name: tenant_id
+              expression: in
+              value: [tenant-a, tenant-b, tenant-c]
   - name: healthy
     access:
     - name: path-0
       match:
         headers:
-          X-Auth-Path:
-            exact: jwt
+          - name: X-Auth-Path
+            expression: equals
+            value: jwt
       authentication:
         jwt:
           providers:
@@ -85,15 +86,15 @@ servers:
         grants:
         - authenticator: issuer-one
           attributes:
-            tenant_id:
-            - tenant-a
-            - tenant-b
-            - tenant-c
+            - name: tenant_id
+              expression: in
+              value: [tenant-a, tenant-b, tenant-c]
     - name: path-1
       match:
         headers:
-          X-Auth-Path:
-            exact: api_key
+          - name: X-Auth-Path
+            expression: equals
+            value: api_key
       authentication:
         api_key:
           authenticator: partner-key
@@ -101,10 +102,9 @@ servers:
         grants:
         - authenticator: partner-key
           attributes:
-            tenant_id:
-            - tenant-a
-            - tenant-b
-            - tenant-c
+            - name: tenant_id
+              expression: in
+              value: [tenant-a, tenant-b, tenant-c]
 apis:
 - name: injected
   metrics:

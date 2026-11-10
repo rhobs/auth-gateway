@@ -26,9 +26,9 @@ servers:
         grants:
         - authenticator: issuer-one
           attributes:
-            tenant_id:
-            - customer-a
-            - customer-b
+            - name: tenant_id
+              expression: in
+              value: [customer-a, customer-b]
   - name: healthy
     access:
     - name: default
@@ -40,9 +40,9 @@ servers:
         grants:
         - authenticator: issuer-one
           attributes:
-            tenant_id:
-            - customer-a
-            - customer-b
+            - name: tenant_id
+              expression: in
+              value: [customer-a, customer-b]
 observability:
   metrics:
     custom_metric_name: gateway_http_requests_total

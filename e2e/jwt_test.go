@@ -30,7 +30,7 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 			{name: "unlisted aud claim", audience: "other-service"},
 		} {
 			claims := map[string]any{
-				"x":   map[string]any{"my_list": []string{"y", "z"}},
+				"x":   map[string]any{"my_list": "y"},
 				"exp": time.Now().Add(5 * time.Minute).Unix(),
 			}
 			if test.audience != "" {
@@ -49,18 +49,17 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 		}
 	}, NodeTimeout(60*time.Second))
 
-	It("authorizes each listed member and rejects an unlisted member", func(ctx SpecContext) {
+	It("matches scalar claims against the configured list", func(ctx SpecContext) {
 		adminAddress := jwtPlainGateway.adminAddr
 		for _, test := range []struct {
-			name   string
-			values []string
+			name  string
+			value any
 		}{
-			{name: "y member", values: []string{"y"}},
-			{name: "z member", values: []string{"z"}},
-			{name: "both members", values: []string{"y", "z"}},
+			{name: "y", value: "y"},
+			{name: "z", value: "z"},
 		} {
 			claims := map[string]any{
-				"x":   map[string]any{"my_list": test.values},
+				"x":   map[string]any{"my_list": test.value},
 				"aud": "gateway-test",
 				"exp": time.Now().Add(5 * time.Minute).Unix(),
 			}
@@ -76,21 +75,27 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 			Expect(headerValue(echo.Headers, "Authorization")).To(BeEmpty(), test.name)
 			Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(BeEmpty(), test.name)
 		}
-		disallowedClaims := map[string]any{
-			"x": map[string]any{"my_list": []string{"unlisted"}}, "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix(),
+		for _, test := range []struct {
+			name  string
+			value any
+		}{
+			{name: "unlisted string", value: "unlisted"},
+			{name: "list claim", value: []string{"y", "z"}},
+		} {
+			claims := map[string]any{"x": map[string]any{"my_list": test.value}, "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix()}
+			token := jwtPlainGateway.token("issuer-one", claims, nil)
+			expectDeniedBeforeUpstream(ctx, adminAddress, "api-metrics", test.name, http.StatusForbidden, func() (int, []byte, error) {
+				return jwtPlainGateway.request(ctx, jwtPlainGateway.httpAddr, jwtPlainHost, false, token, false)
+			})
 		}
-		disallowedToken := jwtPlainGateway.token("issuer-one", disallowedClaims, nil)
-		expectDeniedBeforeUpstream(ctx, adminAddress, "api-metrics", "unlisted list member", http.StatusForbidden, func() (int, []byte, error) {
-			return jwtPlainGateway.request(ctx, jwtPlainGateway.httpAddr, jwtPlainHost, false, disallowedToken, false)
-		})
 	}, SpecTimeout(90*time.Second))
 
 	It("rejects invalid credentials and denied claims before the upstream", func(ctx SpecContext) {
 		adminAddress := jwtPlainGateway.adminAddr
 
-		allowed := map[string]any{"x": map[string]any{"my_list": []string{"y", "z"}}, "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix()}
-		denied := map[string]any{"x": map[string]any{"my_list": []string{"unlisted"}}, "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix()}
-		futureNotBefore := map[string]any{"x": map[string]any{"my_list": []string{"y"}}, "aud": "gateway-test", "exp": time.Now().Add(10 * time.Minute).Unix(), "nbf": time.Now().Add(5 * time.Minute).Unix()}
+		allowed := map[string]any{"x": map[string]any{"my_list": "y"}, "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix()}
+		denied := map[string]any{"x": map[string]any{"my_list": "unlisted"}, "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix()}
+		futureNotBefore := map[string]any{"x": map[string]any{"my_list": "y"}, "aud": "gateway-test", "exp": time.Now().Add(10 * time.Minute).Unix(), "nbf": time.Now().Add(5 * time.Minute).Unix()}
 		cases := []struct {
 			name   string
 			token  string

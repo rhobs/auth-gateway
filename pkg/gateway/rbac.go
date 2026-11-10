@@ -237,13 +237,6 @@ func allowedStringValueMatcher(allowedValues []string) *matcher.ValueMatcher {
 	return &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_OrMatch{OrMatch: &matcher.OrMatcher{ValueMatchers: values}}}
 }
 
-// claimValueMatcher accepts a scalar claim or any allowed member of a list claim.
-func claimValueMatcher(allowedValues []string) *matcher.ValueMatcher {
-	allowedMatcher := allowedStringValueMatcher(allowedValues)
-	listMatcher := &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_ListMatch{ListMatch: &matcher.ListMatcher{MatchPattern: &matcher.ListMatcher_OneOf{OneOf: allowedMatcher}}}}
-	return &matcher.ValueMatcher{MatchPattern: &matcher.ValueMatcher_OrMatch{OrMatch: &matcher.OrMatcher{ValueMatchers: []*matcher.ValueMatcher{allowedMatcher, listMatcher}}}}
-}
-
 func jwtClaimPrincipal(claimPath []string, value *matcher.ValueMatcher) *rbac.Principal {
 	return dynamicMetadataPrincipal(jwtAuthnFilterName, claimPath, value)
 }
@@ -299,18 +292,14 @@ func grantPolicy(authenticator gatewayapi.Authenticator, grant gatewayapi.Author
 	principals := []*rbac.Principal{verified}
 	builder := &celExpressionBuilder{}
 	var equality *expr.Expr
-	for _, name := range slices.Sorted(maps.Keys(grant.Attributes)) {
-		condition := grant.Attributes[name]
-		namespace, path := attributeMetadataPath(authenticator, name)
-		if condition.EqualsAttribute == "" {
-			value := allowedStringValueMatcher(condition.Values)
-			if authenticator.JWT != nil {
-				value = claimValueMatcher(condition.Values)
-			}
+	for _, condition := range sortedMatchExpressions(grant.Attributes) {
+		namespace, path := attributeMetadataPath(authenticator, condition.Name)
+		if condition.Expression != gatewayapi.ExpressionEqualsAttribute {
+			value := allowedStringValueMatcher(matchValues(condition))
 			principals = append(principals, dynamicMetadataPrincipal(namespace, path, value))
 			continue
 		}
-		otherNamespace, otherPath := attributeMetadataPath(authenticator, condition.EqualsAttribute)
+		otherNamespace, otherPath := attributeMetadataPath(authenticator, condition.Value.Text)
 		principals = append(principals,
 			dynamicMetadataPrincipal(namespace, path, nonemptyScalarValueMatcher()),
 			dynamicMetadataPrincipal(otherNamespace, otherPath, nonemptyScalarValueMatcher()))

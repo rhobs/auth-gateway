@@ -9,8 +9,8 @@ and [configuration reference](../configuration-reference.md).
 ## Request selection
 
 Each API binding requires protected `access` entries or explicit `public: true`.
-An entry's `match.headers` selects the request context using exact values or
-allowed value lists. All configured headers must match. `tenant` labels a
+An entry's `match.headers` selects the request context using `equals` or `in`
+expressions. All configured headers must match. `tenant` labels a
 concrete entry; `name` labels a shared entry. Labels themselves do not match
 requests.
 
@@ -43,8 +43,9 @@ credential attribute conditions. Any applicable grant can allow the request;
 every condition within that grant must match. Roles are literal attribute
 values, with no implicit inheritance.
 
-Literal lists allow configured values. Optional
-`tenant_id: {equals_attribute: requested_tenant}` binds the verified tenant to
+`equals` compares a scalar attribute to one string, and `in` checks whether a
+scalar attribute is in a configured list. Optional `equals-attribute` on
+`tenant_id` with `value: requested_tenant` binds the verified tenant to
 an original request header declared by the same authenticator. Both values
 must be nonempty scalar strings. A header used in equality must also appear
 in `match.headers`. Listing two tenants never permits a credential for one to

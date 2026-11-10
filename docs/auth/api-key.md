@@ -137,15 +137,21 @@ servers:
           - tenant: client-123
             match:
               headers:
-                X-Tenant: {exact: client-123}
+                - name: X-Tenant
+                  expression: equals
+                  value: client-123
             authentication:
               api_key: {authenticator: partner-key}
             authorization:
               grants:
                 - authenticator: partner-key
                   attributes:
-                    tenant_id: {equals_attribute: requested_tenant}
-                    writer_id: [writer-17]
+                    - name: tenant_id
+                      expression: equals-attribute
+                      value: requested_tenant
+                    - name: writer_id
+                      expression: equals
+                      value: writer-17
 ```
 
 All listed conditions must match. A client cannot request another tenant just

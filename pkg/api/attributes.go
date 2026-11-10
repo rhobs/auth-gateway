@@ -8,6 +8,12 @@ import (
 
 const yamlStringTag = "!!str"
 
+const (
+	ExpressionEquals          = "equals"
+	ExpressionEqualsAttribute = "equals-attribute"
+	ExpressionIn              = "in"
+)
+
 // AttributeValue is a claim key path or a scalar source name.
 type AttributeValue struct {
 	Text   string
@@ -44,41 +50,45 @@ func (v AttributeValue) MarshalYAML() (any, error) {
 	return v.Text, nil
 }
 
-// AttributeCondition accepts literal values or equality with another source.
-type AttributeCondition struct {
-	Values          []string
-	EqualsAttribute string
+// MatchValue holds a string or a list of strings.
+type MatchValue struct {
+	Text   string
+	Items  []string
+	IsList bool
 }
 
-func (c *AttributeCondition) UnmarshalYAML(node *yaml.Node) error {
-	*c = AttributeCondition{}
+func (v *MatchValue) UnmarshalYAML(node *yaml.Node) error {
+	*v = MatchValue{}
 	switch node.Kind {
+	case yaml.ScalarNode:
+		if node.Tag != yamlStringTag {
+			return fmt.Errorf("match value must be a string or a list of strings")
+		}
+		v.Text = node.Value
 	case yaml.SequenceNode:
+		v.IsList = true
 		for _, value := range node.Content {
 			if value.Kind != yaml.ScalarNode || value.Tag != yamlStringTag {
-				return fmt.Errorf("attribute allowlists must contain strings")
+				return fmt.Errorf("match value list must contain strings")
 			}
+			v.Items = append(v.Items, value.Value)
 		}
-		return node.Decode(&c.Values)
-	case yaml.MappingNode:
-		if len(node.Content) != 2 || node.Content[0].Value != "equals_attribute" || node.Content[1].Tag != yamlStringTag {
-			return fmt.Errorf("attribute condition must set only equals_attribute")
-		}
-		c.EqualsAttribute = node.Content[1].Value
-		return nil
 	default:
-		return fmt.Errorf("attribute condition must be a string list or equals_attribute")
+		return fmt.Errorf("match value must be a string or a list of strings")
 	}
+	return nil
 }
 
-func (c *AttributeCondition) MarshalYAML() (any, error) {
-	if c.EqualsAttribute != "" {
-		if c.Values != nil {
-			return nil, fmt.Errorf("attribute condition cannot combine values and equals_attribute")
-		}
-		return struct {
-			EqualsAttribute string `yaml:"equals_attribute"`
-		}{c.EqualsAttribute}, nil
+func (v MatchValue) MarshalYAML() (any, error) {
+	if v.IsList {
+		return v.Items, nil
 	}
-	return c.Values, nil
+	return v.Text, nil
+}
+
+// MatchExpression compares a named header or attribute with its value.
+type MatchExpression struct {
+	Name       string     `yaml:"name"`
+	Expression string     `yaml:"expression"`
+	Value      MatchValue `yaml:"value"`
 }

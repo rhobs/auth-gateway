@@ -175,7 +175,7 @@ func setupJWTGateway(ctx SpecContext, namespace, fixtureName string) (*jwtE2E, e
 	}
 	warmupClaims := jwtTestClaims("customer-a")
 	if fixtureName == "jwt-auth.yaml" {
-		warmupClaims["x"] = map[string]any{"my_list": []string{"y", "z"}}
+		warmupClaims["x"] = map[string]any{"my_list": "y"}
 	}
 	warmupClaims["sub"] = "warmup"
 	warmupToken := (&jwtE2E{keys: keys}).token("issuer-one", warmupClaims, nil)

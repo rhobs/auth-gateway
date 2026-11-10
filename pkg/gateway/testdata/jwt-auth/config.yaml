@@ -38,8 +38,9 @@ servers:
         grants:
         - authenticator: internal-jwt
           attributes:
-            tenant_id:
-            - customer-a
+            - name: tenant_id
+              expression: equals
+              value: customer-a
 kubernetes:
   name: auth-gateway
   namespace: observability

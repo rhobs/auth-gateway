@@ -51,15 +51,21 @@ servers:
           - name: internal-writers
             match:
               headers:
-                X-Tenant: {in: [client-123, client-456]}
+                - name: X-Tenant
+                  expression: in
+                  value: [client-123, client-456]
             authentication:
               jwt: {providers: [internal-jwt]}
             authorization:
               grants:
                 - authenticator: internal-jwt
                   attributes:
-                    tenant_id: {equals_attribute: requested_tenant}
-                    role: [writer]
+                    - name: tenant_id
+                      expression: equals-attribute
+                      value: requested_tenant
+                    - name: role
+                      expression: equals
+                      value: writer
 ```
 
 Define `metrics-write` under `apis` as in the [full example](../../config.example.yaml).
@@ -74,8 +80,8 @@ X-Tenant: client-123
 
 Equality requires nonempty scalar strings. A token for `client-123` cannot
 select `client-456` even though both headers are listed. A concrete entry can
-instead use `X-Tenant: {exact: client-123}` and a literal grant such as
-`tenant_id: [organization-789]` when that organization is explicitly permitted
+instead use `expression: equals` with `value: client-123` on `X-Tenant` and a
+literal `tenant_id` grant with `value: organization-789` when that organization is explicitly permitted
 to write for the requested tenant.
 
 ## Multiple providers

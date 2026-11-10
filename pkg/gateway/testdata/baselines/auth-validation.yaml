@@ -106,13 +106,14 @@ servers:
         grants:
         - authenticator: internal-jwt
           attributes:
-            tenant_id:
-            - client-123
-            - client-456
+            - name: tenant_id
+              expression: in
+              value: [client-123, client-456]
         - authenticator: external-jwt
           attributes:
-            tenant_id:
-            - customer-456
+            - name: tenant_id
+              expression: equals
+              value: customer-456
   - name: metrics-query
     access:
     - name: default
@@ -125,13 +126,14 @@ servers:
         grants:
         - authenticator: internal-jwt
           attributes:
-            tenant_id:
-            - client-123
-            - client-456
+            - name: tenant_id
+              expression: in
+              value: [client-123, client-456]
         - authenticator: external-jwt
           attributes:
-            tenant_id:
-            - customer-456
+            - name: tenant_id
+              expression: equals
+              value: customer-456
   - name: logs
     access:
     - name: default
@@ -144,12 +146,14 @@ servers:
         grants:
         - authenticator: internal-jwt
           attributes:
-            tenant_id:
-            - client-123
+            - name: tenant_id
+              expression: equals
+              value: client-123
         - authenticator: external-jwt
           attributes:
-            tenant_id:
-            - customer-456
+            - name: tenant_id
+              expression: equals
+              value: customer-456
 - hostname: external.auth.test
   apis:
   - name: metrics-write
@@ -164,13 +168,14 @@ servers:
         grants:
         - authenticator: internal-jwt
           attributes:
-            tenant_id:
-            - client-123
-            - client-456
+            - name: tenant_id
+              expression: in
+              value: [client-123, client-456]
         - authenticator: external-jwt
           attributes:
-            tenant_id:
-            - customer-456
+            - name: tenant_id
+              expression: equals
+              value: customer-456
 kubernetes:
   name: auth-gateway
   namespace: gateway-test

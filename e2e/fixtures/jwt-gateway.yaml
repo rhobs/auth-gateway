@@ -136,8 +136,9 @@ servers:
         grants:
         - authenticator: issuer-one
           attributes:
-            tenant_id:
-            - customer-a
+            - name: tenant_id
+              expression: equals
+              value: customer-a
   - name: status-only
     access:
     - name: default
@@ -149,8 +150,9 @@ servers:
         grants:
         - authenticator: issuer-two
           attributes:
-            tenant_id:
-            - customer-b
+            - name: tenant_id
+              expression: equals
+              value: customer-b
   - name: unmetered
     access:
     - name: default
@@ -162,8 +164,9 @@ servers:
         grants:
         - authenticator: issuer-one
           attributes:
-            tenant_id:
-            - customer-a
+            - name: tenant_id
+              expression: equals
+              value: customer-a
 - hostname: writer-tls.jwt.auth-gateway.test
   tls_config:
     secret: jwt-gateway-tls
@@ -181,8 +184,9 @@ servers:
         grants:
         - authenticator: issuer-one
           attributes:
-            tenant_id:
-            - customer-a
+            - name: tenant_id
+              expression: equals
+              value: customer-a
   - name: status-only
     access:
     - name: default
@@ -194,8 +198,9 @@ servers:
         grants:
         - authenticator: issuer-two
           attributes:
-            tenant_id:
-            - customer-b
+            - name: tenant_id
+              expression: equals
+              value: customer-b
   - name: unmetered
     access:
     - name: default
@@ -207,8 +212,9 @@ servers:
         grants:
         - authenticator: issuer-one
           attributes:
-            tenant_id:
-            - customer-a
+            - name: tenant_id
+              expression: equals
+              value: customer-a
 - hostname: issuer-one-only.jwt.auth-gateway.test
   apis:
   - name: metrics
@@ -222,8 +228,9 @@ servers:
         grants:
         - authenticator: issuer-one
           attributes:
-            tenant_id:
-            - customer-a
+            - name: tenant_id
+              expression: equals
+              value: customer-a
   - name: unmetered
     access:
     - name: default
@@ -235,8 +242,9 @@ servers:
         grants:
         - authenticator: issuer-one
           attributes:
-            tenant_id:
-            - customer-a
+            - name: tenant_id
+              expression: equals
+              value: customer-a
 kubernetes:
   name: auth-gateway
   namespace: default

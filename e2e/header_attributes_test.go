@@ -121,7 +121,20 @@ func shapeHeaderAttributeGateway(c *gatewayapi.Config) {
 		{headerJWTOnlyHost, "X-JWT-Tenant", "issuer-one", gatewayapi.Authentication{JWT: &gatewayapi.JWTAuthentication{Providers: []string{"issuer-one"}}}},
 		{headerKeyOnlyHost, "X-Key-Tenant", "partner-key", gatewayapi.Authentication{APIKey: &gatewayapi.AuthenticatorReference{Authenticator: "partner-key"}}},
 	} {
-		c.Servers = append(c.Servers, gatewayapi.Server{Hostname: method.host, APIs: []gatewayapi.APIBinding{{Name: "header-ingest", Access: []gatewayapi.Access{{Name: "writers", Match: gatewayapi.AccessMatch{Headers: map[string]gatewayapi.HeaderMatch{method.header: {In: []string{"client-a", "client-b"}}}}, Authentication: &method.authentication, Authorization: gatewayapi.Authorization{Grants: []gatewayapi.AuthorizationGrant{{Authenticator: method.authenticator, Attributes: map[string]*gatewayapi.AttributeCondition{"tenant_id": {EqualsAttribute: "requested_tenant"}}}}}}}}}})
+		access := gatewayapi.Access{
+			Name: "writers",
+			Match: gatewayapi.AccessMatch{Headers: []gatewayapi.MatchExpression{{
+				Name: method.header, Expression: "in", Value: gatewayapi.MatchValue{IsList: true, Items: []string{"client-a", "client-b"}},
+			}}},
+			Authentication: &method.authentication,
+			Authorization: gatewayapi.Authorization{Grants: []gatewayapi.AuthorizationGrant{{
+				Authenticator: method.authenticator,
+				Attributes: []gatewayapi.MatchExpression{{
+					Name: "tenant_id", Expression: "equals-attribute", Value: gatewayapi.MatchValue{Text: "requested_tenant"},
+				}},
+			}}},
+		}
+		c.Servers = append(c.Servers, gatewayapi.Server{Hostname: method.host, APIs: []gatewayapi.APIBinding{{Name: "header-ingest", Access: []gatewayapi.Access{access}}}})
 	}
 }
 

@@ -72,7 +72,7 @@ headers and values emitted by the API-key and mTLS filters. The native
 access route. Each route carries its own extraction settings and copies
 attributes only from its verifying provider. Missing, empty, or undeclared
 values stay unset. Another credential never
-contributes values. RBAC checks literal conditions against original metadata.
+contributes values. RBAC checks `equals` and `in` against scalar string metadata.
 Equality uses a native RBAC CEL condition and nonempty scalar guards for both
 source values, including request-header metadata captured before mutation.
 

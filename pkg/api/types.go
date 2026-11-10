@@ -67,8 +67,8 @@ type AuthenticatorReference struct {
 
 // AuthorizationGrant checks attributes supplied by its verifying authenticator.
 type AuthorizationGrant struct {
-	Authenticator string                         `yaml:"authenticator"`
-	Attributes    map[string]*AttributeCondition `yaml:"attributes"`
+	Authenticator string            `yaml:"authenticator"`
+	Attributes    []MatchExpression `yaml:"attributes"`
 }
 
 // Authorization grants access within one server/API entry.
@@ -94,13 +94,7 @@ type Access struct {
 
 // AccessMatch requires every configured request header to match.
 type AccessMatch struct {
-	Headers map[string]HeaderMatch `yaml:"headers,omitempty"`
-}
-
-// HeaderMatch accepts one exact value or one member of an allowed list.
-type HeaderMatch struct {
-	Exact *string  `yaml:"exact,omitempty"`
-	In    []string `yaml:"in,omitempty"`
+	Headers []MatchExpression `yaml:"headers,omitempty"`
 }
 
 // Config describes gateway behavior, observability, and optional Kubernetes output.

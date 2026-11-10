@@ -117,8 +117,9 @@ servers:
         grants:
         - authenticator: playground-key
           attributes:
-            user_id:
-            - metrics-writer
+            - name: user_id
+              expression: equals
+              value: metrics-writer
   - name: logs
     access:
     - name: default
@@ -129,8 +130,9 @@ servers:
         grants:
         - authenticator: playground-key
           attributes:
-            user_id:
-            - logs-writer
+            - name: user_id
+              expression: equals
+              value: logs-writer
 - hostname: jwt.localhost
   apis:
   - name: metrics-write
@@ -144,8 +146,9 @@ servers:
         grants:
         - authenticator: playground-metrics-jwt
           attributes:
-            user_id:
-            - metrics-writer
+            - name: user_id
+              expression: equals
+              value: metrics-writer
   - name: logs
     access:
     - name: default
@@ -157,16 +160,18 @@ servers:
         grants:
         - authenticator: playground-logs-jwt
           attributes:
-            user_id:
-            - logs-writer
+            - name: user_id
+              expression: equals
+              value: logs-writer
 - hostname: tenants.localhost
   apis:
   - name: metrics-write
     access:
     - match:
         headers:
-          X-Tenant:
-            exact: partner
+          - name: X-Tenant
+            expression: equals
+            value: partner
       authentication:
         api_key:
           authenticator: playground-key
@@ -174,13 +179,15 @@ servers:
         grants:
         - authenticator: playground-key
           attributes:
-            user_id:
-            - metrics-writer
+            - name: user_id
+              expression: equals
+              value: metrics-writer
       tenant: partner
     - match:
         headers:
-          X-Tenant:
-            exact: internal
+          - name: X-Tenant
+            expression: equals
+            value: internal
       authentication:
         jwt:
           providers:
@@ -189,15 +196,17 @@ servers:
         grants:
         - authenticator: playground-metrics-jwt
           attributes:
-            user_id:
-            - metrics-writer
+            - name: user_id
+              expression: equals
+              value: metrics-writer
       tenant: internal
   - name: logs
     access:
     - match:
         headers:
-          X-Tenant:
-            exact: partner
+          - name: X-Tenant
+            expression: equals
+            value: partner
       authentication:
         api_key:
           authenticator: playground-key
@@ -205,13 +214,15 @@ servers:
         grants:
         - authenticator: playground-key
           attributes:
-            user_id:
-            - logs-writer
+            - name: user_id
+              expression: equals
+              value: logs-writer
       tenant: partner
     - match:
         headers:
-          X-Tenant:
-            exact: internal
+          - name: X-Tenant
+            expression: equals
+            value: internal
       authentication:
         jwt:
           providers:
@@ -220,6 +231,7 @@ servers:
         grants:
         - authenticator: playground-logs-jwt
           attributes:
-            user_id:
-            - logs-writer
+            - name: user_id
+              expression: equals
+              value: logs-writer
       tenant: internal

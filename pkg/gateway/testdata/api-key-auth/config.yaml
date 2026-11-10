@@ -79,8 +79,9 @@ servers:
         grants:
         - authenticator: partner-key
           attributes:
-            tenant_id:
-            - client-a
+            - name: tenant_id
+              expression: equals
+              value: client-a
 - hostname: mixed.gateway.test
   apis:
   - name: ingest
@@ -88,8 +89,9 @@ servers:
     - name: path-0
       match:
         headers:
-          X-Auth-Path:
-            exact: jwt
+          - name: X-Auth-Path
+            expression: equals
+            value: jwt
       authentication:
         jwt:
           providers:
@@ -98,13 +100,15 @@ servers:
         grants:
         - authenticator: issuer-one
           attributes:
-            tenant_id:
-            - client-a
+            - name: tenant_id
+              expression: equals
+              value: client-a
     - name: path-1
       match:
         headers:
-          X-Auth-Path:
-            exact: api_key
+          - name: X-Auth-Path
+            expression: equals
+            value: api_key
       authentication:
         api_key:
           authenticator: partner-key
@@ -112,8 +116,9 @@ servers:
         grants:
         - authenticator: partner-key
           attributes:
-            tenant_id:
-            - client-a
+            - name: tenant_id
+              expression: equals
+              value: client-a
 kubernetes:
   name: auth-gateway
   namespace: gateway-test

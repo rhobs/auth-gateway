@@ -96,20 +96,21 @@ servers:
         grants:
         - authenticator: partner-key
           attributes:
-            tenant_id:
-            - client-a
-            - client-b
-            writer_id:
-            - writer-a
-            - writer-b
+            - name: tenant_id
+              expression: in
+              value: [client-a, client-b]
+            - name: writer_id
+              expression: in
+              value: [writer-a, writer-b]
 - hostname: shared.api-key.auth-gateway.test
   apis:
   - name: ingest
     access:
     - match:
         headers:
-          X-Tenant:
-            exact: client-b
+          - name: X-Tenant
+            expression: equals
+            value: client-b
       authentication:
         jwt:
           providers:
@@ -118,16 +119,18 @@ servers:
         grants:
         - authenticator: issuer-one
           attributes:
-            tenant_id:
-            - client-b
-            writer_id:
-            - writer-a
-            - writer-b
+            - name: tenant_id
+              expression: equals
+              value: client-b
+            - name: writer_id
+              expression: in
+              value: [writer-a, writer-b]
       tenant: client-b
     - match:
         headers:
-          X-Tenant:
-            exact: client-a
+          - name: X-Tenant
+            expression: equals
+            value: client-a
       authentication:
         api_key:
           authenticator: partner-key
@@ -135,11 +138,12 @@ servers:
         grants:
         - authenticator: partner-key
           attributes:
-            tenant_id:
-            - client-a
-            writer_id:
-            - writer-a
-            - writer-b
+            - name: tenant_id
+              expression: equals
+              value: client-a
+            - name: writer_id
+              expression: in
+              value: [writer-a, writer-b]
       tenant: client-a
 - hostname: key-tls.api-key.auth-gateway.test
   apis:
@@ -153,12 +157,12 @@ servers:
         grants:
         - authenticator: partner-key
           attributes:
-            tenant_id:
-            - client-a
-            - client-b
-            writer_id:
-            - writer-a
-            - writer-b
+            - name: tenant_id
+              expression: in
+              value: [client-a, client-b]
+            - name: writer_id
+              expression: in
+              value: [writer-a, writer-b]
   tls_config:
     secret: api-key-gateway-tls
 kubernetes:

@@ -85,8 +85,9 @@ servers:
         grants:
         - authenticator: issuer
           attributes:
-            tenant_id:
-            - customer-a
+            - name: tenant_id
+              expression: equals
+              value: customer-a
 observability:
   metrics:
     enabled: true

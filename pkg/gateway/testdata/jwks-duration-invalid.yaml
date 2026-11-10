@@ -27,8 +27,9 @@ servers:
         grants:
         - authenticator: internal-jwt
           attributes:
-            tenant_id:
-            - client-a
+            - name: tenant_id
+              expression: equals
+              value: client-a
 apis:
 - name: metrics
   upstream:

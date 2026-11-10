@@ -90,48 +90,76 @@ servers:
           - name: jwt-writers
             match:
               headers:
-                X-Tenant: {in: [tenant-a, tenant-b]}
-                X-Mode: {exact: write}
+                - name: X-Tenant
+                  expression: in
+                  value: [tenant-a, tenant-b]
+                - name: X-Mode
+                  expression: equals
+                  value: write
             authentication:
               jwt: {providers: [issuer-one]}
             authorization:
               grants:
                 - authenticator: issuer-one
                   attributes:
-                    tenant_id: {equals_attribute: requested_tenant}
-                    role: [writer]
+                    - name: tenant_id
+                      expression: equals-attribute
+                      value: requested_tenant
+                    - name: role
+                      expression: equals
+                      value: writer
           - name: key-writers
             match:
               headers:
-                X-Tenant: {exact: partner-a}
-                X-Mode: {exact: write}
+                - name: X-Tenant
+                  expression: equals
+                  value: partner-a
+                - name: X-Mode
+                  expression: equals
+                  value: write
             authentication:
               api_key: {authenticator: writer-key}
             authorization:
               grants:
                 - authenticator: writer-key
                   attributes:
-                    tenant_id: {equals_attribute: requested_tenant}
-                    role: [writer]
+                    - name: tenant_id
+                      expression: equals-attribute
+                      value: requested_tenant
+                    - name: role
+                      expression: equals
+                      value: writer
       - name: read
         access:
           - name: readers
             match:
               headers:
-                X-Tenant: {in: [tenant-a, tenant-b]}
-                X-Mode: {exact: read}
+                - name: X-Tenant
+                  expression: in
+                  value: [tenant-a, tenant-b]
+                - name: X-Mode
+                  expression: equals
+                  value: read
             authentication:
               jwt: {providers: [issuer-one, issuer-two]}
             authorization:
               grants:
                 - authenticator: issuer-one
                   attributes:
-                    tenant_id: {equals_attribute: requested_tenant}
-                    role: [reader]
+                    - name: tenant_id
+                      expression: equals-attribute
+                      value: requested_tenant
+                    - name: role
+                      expression: equals
+                      value: reader
                 - authenticator: issuer-two
                   attributes:
-                    tenant_id: {equals_attribute: requested_tenant}
-                    role: [viewer]
+                    - name: tenant_id
+                      expression: equals-attribute
+                      value: requested_tenant
+                    - name: role
+                      expression: equals
+                      value: viewer
       - name: health
         public: true
   - hostname: cert.access.test
@@ -144,14 +172,22 @@ servers:
           - tenant: partner-a
             match:
               headers:
-                X-Tenant: {exact: partner-a}
-                X-Mode: {exact: write}
+                - name: X-Tenant
+                  expression: equals
+                  value: partner-a
+                - name: X-Mode
+                  expression: equals
+                  value: write
             authorization:
               grants:
                 - authenticator: writer-cert
                   attributes:
-                    tenant_id: ['spiffe://writers.access.test/partner-a']
-                    writer_id: [writer-1.access.test]
+                    - name: tenant_id
+                      expression: equals
+                      value: 'spiffe://writers.access.test/partner-a'
+                    - name: writer_id
+                      expression: equals
+                      value: writer-1.access.test
 kubernetes:
   name: access-test
   namespace: gateway-test

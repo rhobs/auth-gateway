@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 
@@ -135,45 +134,66 @@ func validateAccessMatch(field string, entry gatewayapi.Access, apiKeyHeader str
 		return fmt.Errorf("%s.tenant must be a nonempty single value", field)
 	}
 	seen := make(map[string]bool)
-	for _, header := range slices.Sorted(maps.Keys(entry.Match.Headers)) {
+	for index, condition := range entry.Match.Headers {
+		header := condition.Name
+		conditionField := fmt.Sprintf("%s.match.headers[%d]", field, index)
 		lower := strings.ToLower(header)
 		if !validHeaderFieldName(header) || strings.Contains(header, "_") || forbiddenIdentityHeader(lower) || strings.EqualFold(header, apiKeyHeader) {
-			return fmt.Errorf("%s.match.headers contains unsafe header %q", field, header)
+			return fmt.Errorf("%s contains unsafe header %q", conditionField, header)
 		}
 		if seen[lower] {
-			return fmt.Errorf("%s.match.headers duplicates header %q ignoring case", field, header)
+			return fmt.Errorf("%s duplicates header %q ignoring case", conditionField, header)
 		}
 		seen[lower] = true
-		matcher := entry.Match.Headers[header]
-		if (matcher.Exact == nil) == (matcher.In == nil) {
-			return fmt.Errorf("%s.match.headers.%s must select exactly one of exact or in", field, header)
+		if err := validateMatchExpression(conditionField, condition, false); err != nil {
+			return err
 		}
-		values := headerMatchValues(matcher)
-		if len(values) == 0 {
-			return fmt.Errorf("%s.match.headers.%s.in must not be empty", field, header)
-		}
-		unique := make(map[string]bool)
-		for _, value := range values {
-			if !validCredentialText(value) || strings.Contains(value, ",") || unique[value] {
-				return fmt.Errorf("%s.match.headers.%s must contain distinct nonempty values without commas or controls", field, header)
+		for _, value := range matchValues(condition) {
+			if strings.Contains(value, ",") {
+				return fmt.Errorf("%s.value must not contain commas", conditionField)
 			}
-			unique[value] = true
 		}
 	}
 	return nil
 }
 
-func headerMatchValues(match gatewayapi.HeaderMatch) []string {
-	if match.Exact != nil {
-		return []string{*match.Exact}
+func validateMatchExpression(field string, condition gatewayapi.MatchExpression, allowAttribute bool) error {
+	switch condition.Expression {
+	case gatewayapi.ExpressionEquals, gatewayapi.ExpressionEqualsAttribute:
+		if condition.Expression == gatewayapi.ExpressionEqualsAttribute && !allowAttribute {
+			return fmt.Errorf("%s.expression equals-attribute is only valid for attributes", field)
+		}
+		if condition.Value.IsList || len(condition.Value.Items) != 0 || !validCredentialText(condition.Value.Text) {
+			return fmt.Errorf("%s.value must be a nonempty string without controls", field)
+		}
+	case gatewayapi.ExpressionIn:
+		if !condition.Value.IsList || condition.Value.Text != "" || len(condition.Value.Items) == 0 {
+			return fmt.Errorf("%s.value must be a nonempty list of strings", field)
+		}
+		seen := make(map[string]bool)
+		for _, value := range condition.Value.Items {
+			if !validCredentialText(value) || seen[value] {
+				return fmt.Errorf("%s.value must contain distinct nonempty strings without controls", field)
+			}
+			seen[value] = true
+		}
+	default:
+		return fmt.Errorf("%s.expression must be equals, equals-attribute, or in", field)
 	}
-	return match.In
+	return nil
+}
+
+func matchValues(condition gatewayapi.MatchExpression) []string {
+	if condition.Expression == gatewayapi.ExpressionIn {
+		return condition.Value.Items
+	}
+	return []string{condition.Value.Text}
 }
 
 func accessMatchesOverlap(first, second gatewayapi.AccessMatch) bool {
-	for name, firstMatch := range first.Headers {
-		for other, secondMatch := range second.Headers {
-			if strings.EqualFold(name, other) && !headerMatchesOverlap(firstMatch, secondMatch) {
+	for _, firstMatch := range first.Headers {
+		for _, secondMatch := range second.Headers {
+			if strings.EqualFold(firstMatch.Name, secondMatch.Name) && !headerMatchesOverlap(firstMatch, secondMatch) {
 				return false
 			}
 		}
@@ -181,9 +201,9 @@ func accessMatchesOverlap(first, second gatewayapi.AccessMatch) bool {
 	return true
 }
 
-func headerMatchesOverlap(first, second gatewayapi.HeaderMatch) bool {
-	for _, value := range headerMatchValues(first) {
-		if slices.Contains(headerMatchValues(second), value) {
+func headerMatchesOverlap(first, second gatewayapi.MatchExpression) bool {
+	for _, value := range matchValues(first) {
+		if slices.Contains(matchValues(second), value) {
 			return true
 		}
 	}
@@ -191,12 +211,12 @@ func headerMatchesOverlap(first, second gatewayapi.HeaderMatch) bool {
 }
 
 func tenantHeadersOverlap(first, second gatewayapi.AccessMatch) bool {
-	for name, firstMatch := range first.Headers {
-		if !strings.EqualFold(name, "X-Tenant") {
+	for _, firstMatch := range first.Headers {
+		if !strings.EqualFold(firstMatch.Name, "X-Tenant") {
 			continue
 		}
-		for other, secondMatch := range second.Headers {
-			if strings.EqualFold(name, other) {
+		for _, secondMatch := range second.Headers {
+			if strings.EqualFold(secondMatch.Name, "X-Tenant") {
 				return headerMatchesOverlap(firstMatch, secondMatch)
 			}
 		}
@@ -221,12 +241,14 @@ func validateAccessGrants(field string, access resolvedAccess) error {
 		if len(grant.Attributes) == 0 && authenticator.MTLS == nil {
 			return fmt.Errorf("%s.attributes must not be empty", grantField)
 		}
-		for _, name := range slices.Sorted(maps.Keys(grant.Attributes)) {
-			condition := grant.Attributes[name]
-			attributeField := grantField + ".attributes." + name
-			if condition == nil {
-				return fmt.Errorf("%s must contain values or equals_attribute", attributeField)
+		seen := make(map[string]bool)
+		for attributeIndex, condition := range grant.Attributes {
+			name := condition.Name
+			attributeField := fmt.Sprintf("%s.attributes[%d]", grantField, attributeIndex)
+			if seen[name] {
+				return fmt.Errorf("%s duplicates attribute %q", attributeField, name)
 			}
+			seen[name] = true
 			source, ok := authenticatorAttribute(authenticator, name)
 			if !ok || !attributeNamePattern.MatchString(name) {
 				return fmt.Errorf("%s is not declared by authenticator %q", attributeField, authenticator.Name)
@@ -234,28 +256,17 @@ func validateAccessGrants(field string, access resolvedAccess) error {
 			if source.FromSource == attributeSourceHeader {
 				return fmt.Errorf("%s must use a verified credential attribute, not a header source", attributeField)
 			}
-			if condition.EqualsAttribute != "" {
-				if condition.Values != nil {
-					return fmt.Errorf("%s cannot combine values and equals_attribute", attributeField)
-				}
-				other, ok := authenticatorAttribute(authenticator, condition.EqualsAttribute)
+			if err := validateMatchExpression(attributeField, condition, true); err != nil {
+				return err
+			}
+			if condition.Expression == gatewayapi.ExpressionEqualsAttribute {
+				other, ok := authenticatorAttribute(authenticator, condition.Value.Text)
 				if !ok {
-					return fmt.Errorf("%s.equals_attribute references undeclared attribute %q", attributeField, condition.EqualsAttribute)
+					return fmt.Errorf("%s.value references undeclared attribute %q", attributeField, condition.Value.Text)
 				}
 				if other.FromSource == attributeSourceHeader && !accessMatchesHeader(access.Match, other.Value.Text) {
-					return fmt.Errorf("%s.equals_attribute header %q must be selected in match.headers", attributeField, other.Value.Text)
+					return fmt.Errorf("%s.value header %q must be selected in match.headers", attributeField, other.Value.Text)
 				}
-				continue
-			}
-			if len(condition.Values) == 0 {
-				return fmt.Errorf("%s must contain values or equals_attribute", attributeField)
-			}
-			seen := make(map[string]bool)
-			for _, value := range condition.Values {
-				if !validCredentialText(value) || seen[value] {
-					return fmt.Errorf("%s must contain distinct nonempty values without controls", attributeField)
-				}
-				seen[value] = true
 			}
 		}
 	}
@@ -263,8 +274,8 @@ func validateAccessGrants(field string, access resolvedAccess) error {
 }
 
 func accessMatchesHeader(match gatewayapi.AccessMatch, header string) bool {
-	for name := range match.Headers {
-		if strings.EqualFold(name, header) {
+	for _, condition := range match.Headers {
+		if strings.EqualFold(condition.Name, header) {
 			return true
 		}
 	}
@@ -307,12 +318,7 @@ func cloneAPIBinding(binding gatewayapi.APIBinding) gatewayapi.APIBinding {
 }
 
 func cloneAccess(access gatewayapi.Access) gatewayapi.Access {
-	access.Match.Headers = maps.Clone(access.Match.Headers)
-	for name, match := range access.Match.Headers {
-		match.Exact = clonePointer(match.Exact)
-		match.In = slices.Clone(match.In)
-		access.Match.Headers[name] = match
-	}
+	access.Match.Headers = cloneMatchExpressions(access.Match.Headers)
 	access.Authentication = cloneConfigPointer(access.Authentication, cloneAuthentication)
 	access.Authorization.Grants = cloneSlice(access.Authorization.Grants, cloneAuthorizationGrant)
 	return access
@@ -327,13 +333,14 @@ func cloneAuthentication(authentication gatewayapi.Authentication) gatewayapi.Au
 }
 
 func cloneAuthorizationGrant(grant gatewayapi.AuthorizationGrant) gatewayapi.AuthorizationGrant {
-	grant.Attributes = maps.Clone(grant.Attributes)
-	for name, condition := range grant.Attributes {
-		condition = clonePointer(condition)
-		if condition != nil {
-			condition.Values = slices.Clone(condition.Values)
-		}
-		grant.Attributes[name] = condition
-	}
+	grant.Attributes = cloneMatchExpressions(grant.Attributes)
 	return grant
+}
+
+func cloneMatchExpressions(expressions []gatewayapi.MatchExpression) []gatewayapi.MatchExpression {
+	cloned := slices.Clone(expressions)
+	for index := range cloned {
+		cloned[index].Value.Items = slices.Clone(cloned[index].Value.Items)
+	}
+	return cloned
 }

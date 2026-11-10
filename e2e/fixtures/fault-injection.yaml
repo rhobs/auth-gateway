@@ -25,10 +25,9 @@ servers:
         grants:
         - authenticator: partner-key
           attributes:
-            tenant_id:
-            - tenant-a
-            - tenant-b
-            - tenant-c
+            - name: tenant_id
+              expression: in
+              value: [tenant-a, tenant-b, tenant-c]
   - name: healthy
     access:
     - name: default
@@ -39,10 +38,9 @@ servers:
         grants:
         - authenticator: partner-key
           attributes:
-            tenant_id:
-            - tenant-a
-            - tenant-b
-            - tenant-c
+            - name: tenant_id
+              expression: in
+              value: [tenant-a, tenant-b, tenant-c]
 observability:
   metrics:
     custom_metric_name: gateway_http_requests_total

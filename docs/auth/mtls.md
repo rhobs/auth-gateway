@@ -37,13 +37,19 @@ servers:
           - tenant: client-123
             match:
               headers:
-                X-Tenant: {exact: client-123}
+                - name: X-Tenant
+                  expression: equals
+                  value: client-123
             authorization:
               grants:
                 - authenticator: partner-cert
                   attributes:
-                    tenant_id: ['spiffe://partners.example.com/client-123']
-                    writer_id: [writer-17.partners.example.com]
+                    - name: tenant_id
+                      expression: equals
+                      value: spiffe://partners.example.com/client-123
+                    - name: writer_id
+                      expression: equals
+                      value: writer-17.partners.example.com
 ```
 
 Create the serving TLS Secret and client CA ConfigMap in the gateway namespace
@@ -66,12 +72,12 @@ values are denied before the backend.
 
 All grant conditions must match. A trusted certificate without an applicable
 grant receives `403`. Missing or untrusted certificates fail the TLS handshake
-before an HTTP request is processed. A grant may omit `attributes` or use `{}`
+before an HTTP request is processed. A grant may omit `attributes` or use `[]`
 to explicitly trust any certificate accepted by the configured CA. This still
 requires certificate authentication.
 
 A `header` source captures the original request value. It can supply the
-right-hand side of `equals_attribute` when that header also participates in
+right-hand side of `equals-attribute` when that header also participates in
 `match.headers`. A header alone cannot supply a credential condition. Forwarded
 headers and metric labels preserve their declared source values.
 
