@@ -78,6 +78,11 @@ Authorization: Bearer <token>
 X-Tenant: client-123
 ```
 
+When a JWT and an API key serve the same path and tenant, add
+`{name: Authorization, expression: present}` to the JWT access entry's
+`match.headers`. The key entry selects its configured key header with
+`expression: present`, as in the [full example](../../config.example.yaml).
+
 Equality requires nonempty scalar strings. A token for `client-123` cannot
 select `client-456` even though both headers are listed. A concrete entry can
 instead use `expression: equals` with `value: client-123` on `X-Tenant` and a

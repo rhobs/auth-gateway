@@ -12,6 +12,7 @@ const (
 	ExpressionEquals          = "equals"
 	ExpressionEqualsAttribute = "equals-attribute"
 	ExpressionIn              = "in"
+	ExpressionPresent         = "present"
 )
 
 // AttributeValue is a claim key path or a scalar source name.
@@ -86,9 +87,9 @@ func (v MatchValue) MarshalYAML() (any, error) {
 	return v.Text, nil
 }
 
-// MatchExpression compares a named header or attribute with its value.
+// MatchExpression compares a named value or checks for a request header.
 type MatchExpression struct {
 	Name       string     `yaml:"name"`
 	Expression string     `yaml:"expression"`
-	Value      MatchValue `yaml:"value"`
+	Value      MatchValue `yaml:"value,omitempty"`
 }

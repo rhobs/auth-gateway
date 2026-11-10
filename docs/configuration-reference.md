@@ -283,10 +283,10 @@ must be unique within a binding; a label does not itself match a request.
 |-------|------|---------|------------|
 | `tenant` | string | None | Nonempty concrete label without commas, controls, or surrounding whitespace. |
 | `name` | string | None | Shared label using the name format above. |
-| `match.headers` | list of expressions | Empty | All configured headers must match. Names must be safe headers without underscores, credential or reserved headers, or duplicates ignoring case. |
+| `match.headers` | list of expressions | Empty | All configured headers must match. Names must be safe headers without underscores or duplicates ignoring case. Credential headers are allowed only with `present` and the matching authentication method; other reserved headers are forbidden. |
 | `match.headers[].name` | string | None | Required request header name. |
-| `match.headers[].expression` | string | None | `equals` for one string or `in` for a list of strings. `equals-attribute` is not valid for headers. |
-| `match.headers[].value` | string or list of strings | None | Nonempty string for `equals`; nonempty list of distinct strings for `in`. Values cannot contain commas, controls, or surrounding whitespace. |
+| `match.headers[].expression` | string | None | `equals` for one string, `in` for a list, or `present` for header existence. `equals-attribute` is not valid for headers. |
+| `match.headers[].value` | string or list of strings | None | Nonempty string for `equals`; nonempty list of distinct strings for `in`; omit for `present`. Values cannot contain commas, controls, or surrounding whitespace. |
 | `authentication.jwt.providers` | list of strings | None | Nonempty unique JWT authenticator names with distinct issuers within this entry. |
 | `authentication.api_key.authenticator` | string | None | Name of the API-key authenticator. |
 | `authorization.grants` | list of objects | None | Required nonempty grants for this server/API entry. See [authorization grants](#authorization-grants). |
@@ -300,8 +300,12 @@ gateway returns `403` before authentication on every path, including public
 and unmatched paths. Empty header values also count as present.
 
 Selectors cannot overlap within a binding. `X-Tenant` values also cannot
-overlap across entries even when other header selectors differ. An empty
-header match is an explicit catch-all and must be the binding's only entry.
+overlap across entries even when other header selectors differ, except when
+one entry requires `Authorization: present` for JWT and the other requires the
+configured API-key header with `present` for API-key authentication. This lets
+both methods serve the same API path and tenant. `present` matches even an
+empty header value; credential validation still applies. An empty header match
+is an explicit catch-all and must be the binding's only entry.
 Header values are case-sensitive. Lists accept one value per request; repeated
 selector or selected credential headers and comma-separated selectors return
 `400`. Missing or unmatched selectors return `403`. Invalid selected

@@ -99,18 +99,19 @@ var _ = Describe("API-key request decisions", Label("gateway", "api-key", "authe
 		}
 	}, NodeTimeout(60*time.Second))
 
-	It("uses only the authentication method selected for the tenant", func(ctx SpecContext) {
+	It("serves one tenant and path with either selected credential", func(ctx SpecContext) {
 		for _, test := range []struct {
 			name, tenant, token, key, writer string
 			status                           int
 		}{
-			{name: "JWT tenant", tenant: "client-b", token: gateway.token("client-b", "writer-b"), writer: "writer-b", status: http.StatusOK},
+			{name: "JWT tenant", tenant: "client-a", token: gateway.token("client-a", "writer-a"), writer: "writer-a", status: http.StatusOK},
 			{name: "key tenant", tenant: "client-a", key: apiKeySharedSecretKey, writer: "writer-a", status: http.StatusOK},
-			{name: "JWT missing despite valid key", tenant: "client-b", key: apiKeySharedSecretKey, status: http.StatusUnauthorized},
-			{name: "JWT invalid", tenant: "client-b", token: "broken.jwt", status: http.StatusUnauthorized},
-			{name: "key missing despite valid JWT", tenant: "client-a", token: gateway.token("client-a", "writer-a"), status: http.StatusUnauthorized},
-			{name: "JWT has wrong tenant", tenant: "client-b", token: gateway.token("client-a", "writer-a"), status: http.StatusForbidden},
-			{name: "tenant not selected", tenant: "client-c", token: gateway.token("client-b", "writer-b"), status: http.StatusForbidden},
+			{name: "both credentials", tenant: "client-a", token: gateway.token("client-a", "writer-a"), key: apiKeySharedSecretKey, status: http.StatusForbidden},
+			{name: "no credential", tenant: "client-a", status: http.StatusForbidden},
+			{name: "invalid JWT", tenant: "client-a", token: "broken.jwt", status: http.StatusUnauthorized},
+			{name: "unknown key", tenant: "client-a", key: "unknown-key", status: http.StatusUnauthorized},
+			{name: "JWT has wrong tenant", tenant: "client-a", token: gateway.token("client-b", "writer-b"), status: http.StatusForbidden},
+			{name: "tenant not selected", tenant: "client-c", token: gateway.token("client-a", "writer-a"), status: http.StatusForbidden},
 		} {
 			var delta uint64
 			if test.status == http.StatusOK {

@@ -51,6 +51,9 @@ func resolveServerAccess(c *resolvedConfig, index int) error {
 			}
 			labels[label] = true
 			for previous := range binding.Access[:j] {
+				if credentialSelectorsDisjoint(binding.Access[previous].Match, entry.Match, apiKeyHeader) {
+					continue
+				}
 				if accessMatchesOverlap(binding.Access[previous].Match, entry.Match) {
 					return fmt.Errorf("%s.match overlaps access[%d]", entryField, previous)
 				}
@@ -138,8 +141,19 @@ func validateAccessMatch(field string, entry gatewayapi.Access, apiKeyHeader str
 		header := condition.Name
 		conditionField := fmt.Sprintf("%s.match.headers[%d]", field, index)
 		lower := strings.ToLower(header)
-		if !validHeaderFieldName(header) || strings.Contains(header, "_") || forbiddenIdentityHeader(lower) || strings.EqualFold(header, apiKeyHeader) {
+		isAPIKeyHeader := apiKeyHeader != "" && strings.EqualFold(header, apiKeyHeader)
+		credentialHeader := lower == authorizationHeaderName || isAPIKeyHeader
+		reserved := forbiddenIdentityHeader(lower) || isAPIKeyHeader
+		allowCredentialPresence := credentialHeader && condition.Expression == gatewayapi.ExpressionPresent
+		if !validHeaderFieldName(header) || strings.Contains(header, "_") ||
+			reserved && !allowCredentialPresence {
 			return fmt.Errorf("%s contains unsafe header %q", conditionField, header)
+		}
+		if lower == authorizationHeaderName && (entry.Authentication == nil || entry.Authentication.JWT == nil) {
+			return fmt.Errorf("%s Authorization presence requires JWT authentication", conditionField)
+		}
+		if isAPIKeyHeader && (entry.Authentication == nil || entry.Authentication.APIKey == nil) {
+			return fmt.Errorf("%s API-key header presence requires API-key authentication", conditionField)
 		}
 		if seen[lower] {
 			return fmt.Errorf("%s duplicates header %q ignoring case", conditionField, header)
@@ -159,6 +173,13 @@ func validateAccessMatch(field string, entry gatewayapi.Access, apiKeyHeader str
 
 func validateMatchExpression(field string, condition gatewayapi.MatchExpression, allowAttribute bool) error {
 	switch condition.Expression {
+	case gatewayapi.ExpressionPresent:
+		if allowAttribute {
+			return fmt.Errorf("%s.expression present is only valid for headers", field)
+		}
+		if condition.Value.Text != "" || condition.Value.IsList || len(condition.Value.Items) != 0 {
+			return fmt.Errorf("%s.value must be omitted for present", field)
+		}
 	case gatewayapi.ExpressionEquals, gatewayapi.ExpressionEqualsAttribute:
 		if condition.Expression == gatewayapi.ExpressionEqualsAttribute && !allowAttribute {
 			return fmt.Errorf("%s.expression equals-attribute is only valid for attributes", field)
@@ -178,7 +199,7 @@ func validateMatchExpression(field string, condition gatewayapi.MatchExpression,
 			seen[value] = true
 		}
 	default:
-		return fmt.Errorf("%s.expression must be equals, equals-attribute, or in", field)
+		return fmt.Errorf("%s.expression must be equals, equals-attribute, in, or present", field)
 	}
 	return nil
 }
@@ -187,7 +208,28 @@ func matchValues(condition gatewayapi.MatchExpression) []string {
 	if condition.Expression == gatewayapi.ExpressionIn {
 		return condition.Value.Items
 	}
+	if condition.Expression == gatewayapi.ExpressionPresent {
+		return nil
+	}
 	return []string{condition.Value.Text}
+}
+
+func credentialSelectorsDisjoint(first, second gatewayapi.AccessMatch, apiKeyHeader string) bool {
+	if apiKeyHeader == "" {
+		return false
+	}
+	// The first HTTP filter rejects requests carrying both credential headers.
+	return accessHasPresentHeader(first, authorizationHeaderName) && accessHasPresentHeader(second, apiKeyHeader) ||
+		accessHasPresentHeader(first, apiKeyHeader) && accessHasPresentHeader(second, authorizationHeaderName)
+}
+
+func accessHasPresentHeader(match gatewayapi.AccessMatch, header string) bool {
+	for _, condition := range match.Headers {
+		if strings.EqualFold(condition.Name, header) && condition.Expression == gatewayapi.ExpressionPresent {
+			return true
+		}
+	}
+	return false
 }
 
 func accessMatchesOverlap(first, second gatewayapi.AccessMatch) bool {
@@ -202,6 +244,9 @@ func accessMatchesOverlap(first, second gatewayapi.AccessMatch) bool {
 }
 
 func headerMatchesOverlap(first, second gatewayapi.MatchExpression) bool {
+	if first.Expression == gatewayapi.ExpressionPresent || second.Expression == gatewayapi.ExpressionPresent {
+		return true
+	}
 	for _, value := range matchValues(first) {
 		if slices.Contains(matchValues(second), value) {
 			return true
