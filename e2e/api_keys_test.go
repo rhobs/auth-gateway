@@ -104,13 +104,13 @@ var _ = Describe("API-key request decisions", Label("gateway", "api-key", "authe
 			name, tenant, token, key, writer string
 			status                           int
 		}{
-			{name: "JWT tenant", tenant: "client-b", token: gateway.token("client-b", "writer-b"), key: "wrong-key", writer: "writer-b", status: http.StatusOK},
-			{name: "key tenant", tenant: "client-a", token: "broken.jwt", key: apiKeySharedSecretKey, writer: "writer-a", status: http.StatusOK},
+			{name: "JWT tenant", tenant: "client-b", token: gateway.token("client-b", "writer-b"), writer: "writer-b", status: http.StatusOK},
+			{name: "key tenant", tenant: "client-a", key: apiKeySharedSecretKey, writer: "writer-a", status: http.StatusOK},
 			{name: "JWT missing despite valid key", tenant: "client-b", key: apiKeySharedSecretKey, status: http.StatusUnauthorized},
-			{name: "JWT invalid despite valid key", tenant: "client-b", token: "broken.jwt", key: apiKeySharedSecretKey, status: http.StatusUnauthorized},
+			{name: "JWT invalid", tenant: "client-b", token: "broken.jwt", status: http.StatusUnauthorized},
 			{name: "key missing despite valid JWT", tenant: "client-a", token: gateway.token("client-a", "writer-a"), status: http.StatusUnauthorized},
-			{name: "JWT has wrong tenant", tenant: "client-b", token: gateway.token("client-a", "writer-a"), key: apiKeySharedSecretKey, status: http.StatusForbidden},
-			{name: "tenant not selected", tenant: "client-c", token: gateway.token("client-b", "writer-b"), key: apiKeySharedSecretKey, status: http.StatusForbidden},
+			{name: "JWT has wrong tenant", tenant: "client-b", token: gateway.token("client-a", "writer-a"), status: http.StatusForbidden},
+			{name: "tenant not selected", tenant: "client-c", token: gateway.token("client-b", "writer-b"), status: http.StatusForbidden},
 		} {
 			var delta uint64
 			if test.status == http.StatusOK {
@@ -125,6 +125,38 @@ var _ = Describe("API-key request decisions", Label("gateway", "api-key", "authe
 			}
 		}
 	}, NodeTimeout(2*time.Minute))
+
+	It("rejects both credential headers on every path before metrics or the backend", func(ctx SpecContext) {
+		before, err := requestMetricTotal(ctx, gateway.adminAddr)
+		Expect(err).NotTo(HaveOccurred())
+		for _, test := range []struct {
+			name, host, path, token, key, cluster string
+			tls, emptyHeaders                     bool
+		}{
+			{name: "key route", host: apiKeyOnlyHost, path: "/ingest", token: gateway.token("client-a", "writer-a"), key: apiKeySharedSecretKey, cluster: "api-ingest"},
+			{name: "JWT route", host: apiKeySharedHost, path: "/ingest", token: "broken.jwt", key: apiKeySharedSecretKey, cluster: "api-ingest"},
+			{name: "public route", host: apiKeyPublicHost, path: "/health", token: "broken.jwt", key: apiKeySharedSecretKey, cluster: "api-public"},
+			{name: "unknown path", host: apiKeyOnlyHost, path: "/unknown", token: "broken.jwt", key: apiKeySharedSecretKey, cluster: "api-ingest"},
+			{name: "empty header values", host: apiKeyOnlyHost, path: "/ingest", emptyHeaders: true, cluster: "api-ingest"},
+			{name: "TLS route", host: apiKeyTLSHost, path: "/ingest", token: gateway.token("client-a", "writer-a"), key: apiKeySharedSecretKey, cluster: "api-ingest", tls: true},
+		} {
+			var headers http.Header
+			if test.emptyHeaders {
+				headers = http.Header{"Authorization": []string{""}, gateway.keyHeader: []string{""}}
+			}
+			status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, test.cluster, test.name, 0, func() (int, []byte, error) {
+				method := http.MethodPost
+				if test.path == "/health" {
+					method = http.MethodGet
+				}
+				return gateway.request(ctx, test.host, test.tls, method, test.path, "", test.token, test.key, headers)
+			})
+			Expect(status).To(Equal(http.StatusForbidden), test.name+": "+string(body))
+		}
+		after, err := requestMetricTotal(ctx, gateway.adminAddr)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(after).To(Equal(before), "mixed credentials emitted a custom request metric")
+	}, Label("metrics"), NodeTimeout(2*time.Minute))
 
 	It("counts source key attributes in response metrics", func(ctx SpecContext) {
 		labels := requestMetricLabels("ingest", http.StatusOK, "client-a", "writer-a")
@@ -172,7 +204,7 @@ var _ = Describe("API-key Secret projection", Label("gateway", "api-key", "authe
 			return fmt.Sprintf("Secret rotation did not replace the accepted key: HTTP %d: %s (error: %v)", status, body, err)
 		})
 		status, body, err = gateway.request(ctx, apiKeyTLSHost, true, http.MethodPost, "/ingest", apiKeyRequestBody,
-			gateway.token("client-b", "writer-b"), "key-b", nil)
+			"", "key-b", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
 		expectAPIKeyEcho(body, "client-b", "writer-b")

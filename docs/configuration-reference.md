@@ -187,7 +187,8 @@ object is omitted.
 Each API with `metrics` configured emits a request counter. The automatic `api`
 label is the API name and `http_status_code` comes from the response.
 Additional labels use values from authenticator attributes declared under
-`authenticators[].attributes`.
+`authenticators[].attributes`. Requests carrying both the configured API-key
+header and `Authorization` are rejected before this counter runs.
 
 | Field                   | Type                                | Default | Constraint                                                                                                                                                                                                                  |
 |-------------------------|-------------------------------------|---------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -294,6 +295,9 @@ Outside dedicated mTLS servers, `authentication` must select exactly one of
 `jwt` or `api_key`. A JWT entry may trust several providers; each grant remains
 tied to one verifying provider. A key cannot replace an invalid JWT on a JWT
 entry, and a JWT cannot replace a missing key on a key entry.
+If both the configured API-key header and `Authorization` are present, the
+gateway returns `403` before authentication on every path, including public
+and unmatched paths. Empty header values also count as present.
 
 Selectors cannot overlap within a binding. `X-Tenant` values also cannot
 overlap across entries even when other header selectors differ. An empty

@@ -155,8 +155,10 @@ servers:
 ```
 
 All listed conditions must match. A client cannot request another tenant just
-by changing a header. An invalid JWT does not affect a selected API-key entry,
-and a valid JWT cannot replace a missing key. Known credential headers are
+by changing a header. Send only the configured API-key header on a key request.
+If it and `Authorization` are both present, the gateway returns `403` before
+authentication or custom request metrics run, including on public and unmatched
+paths. A valid JWT cannot replace a missing key. Known credential headers are
 removed before forwarding.
 
 When the upstream needs a different tenant value, supply an additional

@@ -87,11 +87,19 @@ func httpFilters(c resolvedConfig, hosts []indexedVirtualHost, protected bool) (
 }
 
 func requestControlFilters(c resolvedConfig, hosts []*route.VirtualHost) ([]*hcm.HttpFilter, error) {
+	conflict, err := credentialConflictHTTPFilter(c)
+	if err != nil {
+		return nil, err
+	}
 	controls, err := requestControlHeaderFilter()
 	if err != nil {
 		return nil, err
 	}
-	filters := []*hcm.HttpFilter{controls}
+	filters := make([]*hcm.HttpFilter, 0, 3)
+	if conflict != nil {
+		filters = append(filters, conflict)
+	}
+	filters = append(filters, controls)
 	if hasRequestMetricRoutes(hosts) {
 		metrics, err := requestMetricsHTTPFilter(c)
 		if err != nil {

@@ -56,7 +56,7 @@ var _ = Describe("API-key credential attributes", Label("gateway", "api-key", "a
 			headers.Set(fmt.Sprintf("X-Attribute%02d", index), "caller-controlled")
 		}
 		status, body, err := gateway.request(ctx, apiKeyOnlyHost, false, http.MethodPost, "/ingest", apiKeyRequestBody,
-			"caller.jwt", "attribute-key", headers)
+			"", "attribute-key", headers)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
 		expectAPIKeyEcho(body, "client-a", "writer-a")

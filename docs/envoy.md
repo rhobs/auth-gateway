@@ -56,6 +56,11 @@ this guard so its local denials map to `400`. Input sanitization overwrites the
 marker, and it is removed after validation. Repeated selectors cannot select
 another access entry or reach the backend.
 
+An RBAC filter before request metrics rejects requests carrying both the
+configured API-key header and `Authorization` with `403`. This applies to all
+paths whenever an API-key authenticator is configured. Later filters do not
+process the rejected request.
+
 Authorization, upstream headers, and metric labels use values from the declared
 attribute sources. Supply separate source attributes when these uses need
 different values. A missing value needed by a request-header binding
