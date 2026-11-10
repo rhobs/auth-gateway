@@ -58,8 +58,9 @@ another access entry or reach the backend.
 
 An RBAC filter before request metrics rejects requests carrying both the
 configured API-key header and `Authorization` with `403`. This applies to all
-paths whenever an API-key authenticator is configured. Later filters do not
-process the rejected request.
+paths whenever an API-key authenticator is configured. Later request filters
+and the backend do not process the rejected request. The response metrics
+filter still counts the `403` for APIs with request metrics configured.
 
 Authorization, upstream headers, and metric labels use values from the declared
 attribute sources. Supply separate source attributes when these uses need

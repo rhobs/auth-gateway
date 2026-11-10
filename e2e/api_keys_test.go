@@ -126,7 +126,7 @@ var _ = Describe("API-key request decisions", Label("gateway", "api-key", "authe
 		}
 	}, NodeTimeout(2*time.Minute))
 
-	It("rejects both credential headers on every path before metrics or the backend", func(ctx SpecContext) {
+	It("rejects both credential headers on every path before the backend", func(ctx SpecContext) {
 		before, err := requestMetricTotal(ctx, gateway.adminAddr)
 		Expect(err).NotTo(HaveOccurred())
 		for _, test := range []struct {
@@ -155,7 +155,7 @@ var _ = Describe("API-key request decisions", Label("gateway", "api-key", "authe
 		}
 		after, err := requestMetricTotal(ctx, gateway.adminAddr)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(after).To(Equal(before), "mixed credentials emitted a custom request metric")
+		Expect(after).To(Equal(before+4), "metered /ingest requests should count their 403 responses")
 	}, Label("metrics"), NodeTimeout(2*time.Minute))
 
 	It("counts source key attributes in response metrics", func(ctx SpecContext) {
