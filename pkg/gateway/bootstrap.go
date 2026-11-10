@@ -58,6 +58,13 @@ func generateClusters(c resolvedConfig) ([]*cluster.Cluster, error) {
 		return nil, err
 	}
 	clusters = append(clusters, jwks...)
+	for _, service := range c.ExtAuthzServices {
+		item, err := extAuthzCluster(service)
+		if err != nil {
+			return nil, fmt.Errorf("external authorization service %q: %w", service.Name, err)
+		}
+		clusters = append(clusters, item)
+	}
 	if enabledObservabilityTracing(c.Observability.Tracing) {
 		tracingCluster, err := otelTraceCluster()
 		if err != nil {
