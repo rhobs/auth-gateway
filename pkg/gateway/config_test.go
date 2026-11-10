@@ -137,11 +137,11 @@ func TestDefaultsCloneInputs(t *testing.T) {
 		c := loadAuthValidationFixture(t)
 		defaulted := withDefaultsConfig(c)
 		defaulted.Authenticators[0].JWT.Audiences[0] = "changed"
-		defaulted.Authenticators[0].Attributes["tenant_id"].ClaimPath[0] = "changed"
-		keySource := defaulted.Authenticators[2].Attributes["tenant_id"]
-		*keySource.Credential = false
-		headerSource := defaulted.Authenticators[2].Attributes["requested_tenant"]
-		*headerSource.Header = "changed"
+		testAttribute(&defaulted.Authenticators[0], "tenant_id").Value.Path[0] = "changed"
+		keySource := testAttribute(&defaulted.Authenticators[2], "tenant_id")
+		keySource.Value.Text = "changed"
+		headerSource := testAttribute(&defaulted.Authenticators[2], "requested_tenant")
+		headerSource.Value.Text = "changed"
 		defaulted.Servers[0].APIs[0].Name = "changed"
 		defaulted.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes["tenant_id"].Values[0] = "changed"
 		defaulted.Servers[0].APIs[0].Access[0].Authentication.JWT.Providers[0] = "changed"
@@ -149,9 +149,9 @@ func TestDefaultsCloneInputs(t *testing.T) {
 		defaulted.APIs[0].Routes[0].Processing.RequestHeaders[0].Name = "changed"
 
 		if c.Authenticators[0].JWT.Audiences[0] == "changed" ||
-			c.Authenticators[0].Attributes["tenant_id"].ClaimPath[0] == "changed" ||
-			!*c.Authenticators[2].Attributes["tenant_id"].Credential ||
-			*c.Authenticators[2].Attributes["requested_tenant"].Header == "changed" ||
+			testAttribute(&c.Authenticators[0], "tenant_id").Value.Path[0] == "changed" ||
+			testAttribute(&c.Authenticators[2], "tenant_id").Value.Text == "changed" ||
+			testAttribute(&c.Authenticators[2], "requested_tenant").Value.Text == "changed" ||
 			c.Servers[0].APIs[0].Name == "changed" ||
 			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes["tenant_id"].Values[0] == "changed" ||
 			c.Servers[0].APIs[0].Access[0].Authentication.JWT.Providers[0] == "changed" ||

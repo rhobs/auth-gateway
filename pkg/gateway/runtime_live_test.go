@@ -159,8 +159,12 @@ authenticators:
       secret: gateway-api-keys
       header: %s
     attributes:
-      tenant_id: {credential: true}
-      upstream_tenant: {credential: true}
+      - name: tenant_id
+        from_source: credential
+        value: tenant_id
+      - name: upstream_tenant
+        from_source: credential
+        value: upstream_tenant
 apis:
   - name: ingest
     upstream: {address: httpbin, port: 8080}

@@ -9,13 +9,12 @@ authenticators:
     audiences:
     - gateway-test
   attributes:
-    tenant_id:
-      claim_path:
-      - organization
-      - id
-    writer_id:
-      claim_path:
-      - sub
+    - name: tenant_id
+      from_source: claim
+      value: [organization, id]
+    - name: writer_id
+      from_source: claim
+      value: [sub]
 apis:
 - name: metrics
   upstream:

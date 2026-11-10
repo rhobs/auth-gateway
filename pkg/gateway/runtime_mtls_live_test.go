@@ -81,7 +81,9 @@ authenticators:
     mtls:
       trusted_ca: {filename: /etc/auth-gateway/runtime-client-ca.crt}
     attributes:
-      tenant_id: {uri_san: true}
+      - name: tenant_id
+        from_source: certificate
+        value: uri_san
 apis:
   - name: ingest
     upstream: {address: httpbin, port: 8080}

@@ -14,16 +14,15 @@ authenticators:
     audiences:
     - gateway-test
   attributes:
-    tenant_id:
-      claim_path:
-      - organization
-      - id
-    writer_id:
-      claim_path:
-      - sub
-    escaped_id:
-      claim_path:
-      - literal.claim
+    - name: tenant_id
+      from_source: claim
+      value: [organization, id]
+    - name: writer_id
+      from_source: claim
+      value: [sub]
+    - name: escaped_id
+      from_source: claim
+      value: [literal.claim]
 - name: issuer-two
   jwt:
     issuer: https://issuer-two.jwt.test
@@ -32,16 +31,15 @@ authenticators:
     audiences:
     - gateway-test
   attributes:
-    tenant_id:
-      claim_path:
-      - organization
-      - id
-    writer_id:
-      claim_path:
-      - sub
-    escaped_id:
-      claim_path:
-      - literal.claim
+    - name: tenant_id
+      from_source: claim
+      value: [organization, id]
+    - name: writer_id
+      from_source: claim
+      value: [sub]
+    - name: escaped_id
+      from_source: claim
+      value: [literal.claim]
 observability:
   metrics:
     custom_metric_name: gateway_http_requests_total

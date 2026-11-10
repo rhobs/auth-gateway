@@ -106,8 +106,8 @@ var _ = Describe("Header-to-credential tenant equality", Label("gateway", "authe
 })
 
 func shapeHeaderAttributeGateway(c *gatewayapi.Config) {
-	c.Authenticators[0].Attributes["requested_tenant"] = gatewayapi.AttributeSource{Header: new("X-JWT-Tenant")}
-	c.Authenticators[1].Attributes["requested_tenant"] = gatewayapi.AttributeSource{Header: new("X-Key-Tenant")}
+	setE2EAttribute(&c.Authenticators[0], gatewayapi.AttributeSource{Name: "requested_tenant", FromSource: "header", Value: gatewayapi.AttributeValue{Text: "X-JWT-Tenant"}})
+	setE2EAttribute(&c.Authenticators[1], gatewayapi.AttributeSource{Name: "requested_tenant", FromSource: "header", Value: gatewayapi.AttributeValue{Text: "X-Key-Tenant"}})
 	c.APIs = append(c.APIs, gatewayapi.API{
 		Name:     "header-ingest",
 		Metrics:  &gatewayapi.APIMetrics{Labels: map[string]string{"tenant": "requested_tenant"}},
@@ -123,6 +123,16 @@ func shapeHeaderAttributeGateway(c *gatewayapi.Config) {
 	} {
 		c.Servers = append(c.Servers, gatewayapi.Server{Hostname: method.host, APIs: []gatewayapi.APIBinding{{Name: "header-ingest", Access: []gatewayapi.Access{{Name: "writers", Match: gatewayapi.AccessMatch{Headers: map[string]gatewayapi.HeaderMatch{method.header: {In: []string{"client-a", "client-b"}}}}, Authentication: &method.authentication, Authorization: gatewayapi.Authorization{Grants: []gatewayapi.AuthorizationGrant{{Authenticator: method.authenticator, Attributes: map[string]*gatewayapi.AttributeCondition{"tenant_id": {EqualsAttribute: "requested_tenant"}}}}}}}}}})
 	}
+}
+
+func setE2EAttribute(authenticator *gatewayapi.Authenticator, source gatewayapi.AttributeSource) {
+	for i := range authenticator.Attributes {
+		if authenticator.Attributes[i].Name == source.Name {
+			authenticator.Attributes[i] = source
+			return
+		}
+	}
+	authenticator.Attributes = append(authenticator.Attributes, source)
 }
 
 func expectHeaderAttributeEcho(body []byte, tenant string, sourceHeaders map[string]string) {

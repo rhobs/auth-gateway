@@ -14,15 +14,12 @@ authenticators:
     audiences:
     - observability-ingestion
   attributes:
-    tenant_id:
-      claim_path:
-      - x
-      - y
-      - z
-      - claim
-    writer_id:
-      claim_path:
-      - sub
+    - name: tenant_id
+      from_source: claim
+      value: [x, y, z, claim]
+    - name: writer_id
+      from_source: claim
+      value: [sub]
 - name: external-jwt
   jwt:
     issuer: https://sso.external.example.com/realms/observability
@@ -31,13 +28,12 @@ authenticators:
     audiences:
     - observability-ingestion
   attributes:
-    tenant_id:
-      claim_path:
-      - organization
-      - id
-    writer_id:
-      claim_path:
-      - sub
+    - name: tenant_id
+      from_source: claim
+      value: [organization, id]
+    - name: writer_id
+      from_source: claim
+      value: [sub]
 observability:
   metrics:
     custom_metric_name: gateway_http_requests_total

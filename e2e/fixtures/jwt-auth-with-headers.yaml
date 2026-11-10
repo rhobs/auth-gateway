@@ -14,15 +14,15 @@ authenticators:
     audiences:
     - gateway-test
   attributes:
-    tenant_id:
-      claim_path:
-      - organization
-      - id
-    writer_id:
-      claim_path:
-      - sub
-    requested_tenant:
-      header: X-Scope-OrgID
+    - name: tenant_id
+      from_source: claim
+      value: [organization, id]
+    - name: writer_id
+      from_source: claim
+      value: [sub]
+    - name: requested_tenant
+      from_source: header
+      value: X-Scope-OrgID
 apis:
 - name: metrics
   upstream:

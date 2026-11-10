@@ -5,48 +5,69 @@ authenticators:
   api_key:
     header: X-Partner-Key
   attributes:
-    attribute00:
-      credential: true
-    attribute01:
-      credential: true
-    attribute02:
-      credential: true
-    attribute03:
-      credential: true
-    attribute04:
-      credential: true
-    attribute05:
-      credential: true
-    attribute06:
-      credential: true
-    attribute07:
-      credential: true
-    attribute08:
-      credential: true
-    attribute09:
-      credential: true
-    attribute10:
-      credential: true
-    attribute11:
-      credential: true
-    attribute12:
-      credential: true
-    attribute13:
-      credential: true
-    attribute14:
-      credential: true
-    attribute15:
-      credential: true
-    attribute16:
-      credential: true
-    attribute17:
-      credential: true
-    attribute18:
-      credential: true
-    attribute19:
-      credential: true
-    requested_tenant:
-      header: X-Scope-OrgID
+    - name: attribute00
+      from_source: credential
+      value: attribute00
+    - name: attribute01
+      from_source: credential
+      value: attribute01
+    - name: attribute02
+      from_source: credential
+      value: attribute02
+    - name: attribute03
+      from_source: credential
+      value: attribute03
+    - name: attribute04
+      from_source: credential
+      value: attribute04
+    - name: attribute05
+      from_source: credential
+      value: attribute05
+    - name: attribute06
+      from_source: credential
+      value: attribute06
+    - name: attribute07
+      from_source: credential
+      value: attribute07
+    - name: attribute08
+      from_source: credential
+      value: attribute08
+    - name: attribute09
+      from_source: credential
+      value: attribute09
+    - name: attribute10
+      from_source: credential
+      value: attribute10
+    - name: attribute11
+      from_source: credential
+      value: attribute11
+    - name: attribute12
+      from_source: credential
+      value: attribute12
+    - name: attribute13
+      from_source: credential
+      value: attribute13
+    - name: attribute14
+      from_source: credential
+      value: attribute14
+    - name: attribute15
+      from_source: credential
+      value: attribute15
+    - name: attribute16
+      from_source: credential
+      value: attribute16
+    - name: attribute17
+      from_source: credential
+      value: attribute17
+    - name: attribute18
+      from_source: credential
+      value: attribute18
+    - name: attribute19
+      from_source: credential
+      value: attribute19
+    - name: requested_tenant
+      from_source: header
+      value: X-Scope-OrgID
 apis:
 - name: ingest
   upstream:

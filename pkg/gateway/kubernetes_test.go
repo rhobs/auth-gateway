@@ -309,9 +309,9 @@ func TestGenerationIsDeterministic(t *testing.T) {
 		if reverse {
 			slices.Reverse(names)
 		}
-		c.Authenticators[0].Attributes = make(map[string]gatewayapi.AttributeSource, len(names))
+		c.Authenticators[0].Attributes = nil
 		for _, name := range names {
-			c.Authenticators[0].Attributes[name] = sources[name]
+			setTestAttribute(&c.Authenticators[0], *testAttribute(&gatewayapi.Authenticator{Attributes: sources}, name))
 		}
 		return c
 	}

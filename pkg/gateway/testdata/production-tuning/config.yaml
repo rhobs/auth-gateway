@@ -27,10 +27,9 @@ authenticators:
           name: shared-ca
           key: ca.crt
   attributes:
-    tenant_id:
-      claim_path:
-      - organization
-      - id
+    - name: tenant_id
+      from_source: claim
+      value: [organization, id]
 apis:
 - name: metrics
   upstream:

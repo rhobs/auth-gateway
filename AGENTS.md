@@ -11,6 +11,7 @@ test ownership, and golden-file updates.
 - Keep the schema, `config.example.yaml`, configuration documentation
   including `docs/configuration-reference.md`, generated output, and tests
   aligned.
+- Always read the Envoy docs before assuming or guessing.
 - Prefer native Envoy filters. Write custom Lua only when no suitable native
   option exists or when Lua reduces overall complexity.
 - Use attribute values unchanged from their declared sources. Declare a

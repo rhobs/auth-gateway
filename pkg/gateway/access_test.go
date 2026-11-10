@@ -38,9 +38,9 @@ func TestAccessValidation(t *testing.T) {
 		{"unselected grant provider", "is not enabled", func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Authenticator = "issuer-two"
 		}},
-		{"undeclared attribute", "is not declared", func(c *gatewayapi.Config) { delete(c.Authenticators[0].Attributes, "role") }},
+		{"undeclared attribute", "is not declared", func(c *gatewayapi.Config) { removeTestAttribute(&c.Authenticators[0], "role") }},
 		{"header identity condition", "not a header source", func(c *gatewayapi.Config) {
-			c.Authenticators[0].Attributes["role"] = gatewayapi.AttributeSource{Header: new("X-Role")}
+			setTestAttribute(&c.Authenticators[0], testTextAttribute("role", "header", "X-Role"))
 		}},
 		{"null condition", "must contain values", func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes["role"] = nil
@@ -55,7 +55,7 @@ func TestAccessValidation(t *testing.T) {
 			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes["tenant_id"].EqualsAttribute = "unknown"
 		}},
 		{"unmatched comparison header", "must be selected in match.headers", func(c *gatewayapi.Config) {
-			c.Authenticators[0].Attributes["requested_tenant"] = gatewayapi.AttributeSource{Header: new("X-Other-Tenant")}
+			setTestAttribute(&c.Authenticators[0], testTextAttribute("requested_tenant", "header", "X-Other-Tenant"))
 		}},
 		{"both condition forms", "cannot combine", func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes["tenant_id"].Values = []string{"tenant-a"}

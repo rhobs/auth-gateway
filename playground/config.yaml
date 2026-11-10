@@ -7,8 +7,9 @@ authenticators:
   api_key:
     header: X-API-Key
   attributes:
-    user_id:
-      credential: true
+    - name: user_id
+      from_source: credential
+      value: user_id
 - name: playground-metrics-jwt
   jwt:
     issuer: https://auth.localhost:8443/metrics
@@ -19,9 +20,9 @@ authenticators:
       trusted_ca:
         filename: "/etc/auth-gateway/mock-oauth2.crt"
   attributes:
-    user_id:
-      claim_path:
-      - sub
+    - name: user_id
+      from_source: claim
+      value: [sub]
 - name: playground-logs-jwt
   jwt:
     issuer: https://auth.localhost:8443/logs
@@ -32,9 +33,9 @@ authenticators:
       trusted_ca:
         filename: "/etc/auth-gateway/mock-oauth2.crt"
   attributes:
-    user_id:
-      claim_path:
-      - sub
+    - name: user_id
+      from_source: claim
+      value: [sub]
 observability:
   metrics:
     custom_metric_name: gateway_http_requests_total

@@ -13,16 +13,25 @@ authenticators:
       secret: auth-gateway-api-keys
       header: X-Partner-Key
     attributes:
-      tenant_id: {credential: true}
-      upstream_tenant: {credential: true}
-      writer_id: {credential: true}
-      requested_tenant: {header: X-Tenant}
+      - name: tenant_id
+        from_source: credential
+        value: tenant_id
+      - name: upstream_tenant
+        from_source: credential
+        value: upstream_tenant
+      - name: writer_id
+        from_source: credential
+        value: writer_id
+      - name: requested_tenant
+        from_source: header
+        value: X-Tenant
 ```
 
-`credential: true` reads a value bound to the issued key in the Secret.
-`header: X-Tenant` reads the original request header; it is separate from
-the `X-Partner-Key` credential header. For example, one Secret binding could
-contain these values:
+`from_source: credential` reads the named value bound to the issued key in the Secret.
+`from_source: header` reads the original request header; it is separate from
+the `X-Partner-Key` credential header. The entry's `name` is the gateway
+attribute. Its `value` names the key in the credential, so the two names can
+differ. For example, one Secret binding could contain these values:
 
 | Issued key | `tenant_id` | `upstream_tenant` | `writer_id` |
 | --- | --- | --- | --- |

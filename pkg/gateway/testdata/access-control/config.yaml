@@ -6,32 +6,56 @@ authenticators:
       jwks: {uri: https://issuer-one.access.test/keys}
       audiences: [access-test]
     attributes:
-      tenant_id: {claim_path: [tenant]}
-      role: {claim_path: [role]}
-      requested_tenant: {header: X-Tenant}
+      - name: tenant_id
+        from_source: claim
+        value: [tenant]
+      - name: role
+        from_source: claim
+        value: [role]
+      - name: requested_tenant
+        from_source: header
+        value: X-Tenant
   - name: issuer-two
     jwt:
       issuer: https://issuer-two.access.test
       jwks: {uri: https://issuer-two.access.test/keys}
       audiences: [access-test]
     attributes:
-      tenant_id: {claim_path: [organization, id]}
-      role: {claim_path: [access, role]}
-      requested_tenant: {header: X-Tenant}
+      - name: tenant_id
+        from_source: claim
+        value: [organization, id]
+      - name: role
+        from_source: claim
+        value: [access, role]
+      - name: requested_tenant
+        from_source: header
+        value: X-Tenant
   - name: writer-key
     api_key: {secret: access-test-keys, header: X-Writer-Key}
     attributes:
-      tenant_id: {credential: true}
-      role: {credential: true}
-      requested_tenant: {header: X-Tenant}
+      - name: tenant_id
+        from_source: credential
+        value: tenant_id
+      - name: role
+        from_source: credential
+        value: role
+      - name: requested_tenant
+        from_source: header
+        value: X-Tenant
   - name: writer-cert
     mtls:
       trusted_ca:
         config_map: {name: access-test-client-ca, key: ca.crt}
     attributes:
-      tenant_id: {uri_san: true}
-      writer_id: {dns_san: true}
-      requested_tenant: {header: X-Tenant}
+      - name: tenant_id
+        from_source: certificate
+        value: uri_san
+      - name: writer_id
+        from_source: certificate
+        value: dns_san
+      - name: requested_tenant
+        from_source: header
+        value: X-Tenant
 apis:
   - name: write
     upstream: {address: httpbin, port: 8080}

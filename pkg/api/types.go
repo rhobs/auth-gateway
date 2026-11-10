@@ -35,20 +35,18 @@ type APIKeyCredential struct {
 
 // AttributeSource selects one original value from a verified credential or request header.
 type AttributeSource struct {
-	ClaimPath  []string `yaml:"claim_path,omitempty"`
-	Header     *string  `yaml:"header,omitempty"`
-	Credential *bool    `yaml:"credential,omitempty"`
-	URISAN     *bool    `yaml:"uri_san,omitempty"`
-	DNSSAN     *bool    `yaml:"dns_san,omitempty"`
+	Name       string         `yaml:"name"`
+	FromSource string         `yaml:"from_source"`
+	Value      AttributeValue `yaml:"value"`
 }
 
 // Authenticator defines one named credential validator.
 type Authenticator struct {
-	Name       string                     `yaml:"name"`
-	JWT        *JWTAuthenticator          `yaml:"jwt,omitempty"`
-	APIKey     *APIKeyAuthenticator       `yaml:"api_key,omitempty"`
-	MTLS       *MTLSAuthenticator         `yaml:"mtls,omitempty"`
-	Attributes map[string]AttributeSource `yaml:"attributes,omitempty"`
+	Name       string               `yaml:"name"`
+	JWT        *JWTAuthenticator    `yaml:"jwt,omitempty"`
+	APIKey     *APIKeyAuthenticator `yaml:"api_key,omitempty"`
+	MTLS       *MTLSAuthenticator   `yaml:"mtls,omitempty"`
+	Attributes []AttributeSource    `yaml:"attributes,omitempty"`
 }
 
 // Authentication selects one credential type for an access entry.

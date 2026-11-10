@@ -62,14 +62,20 @@ authenticators:
         #   max_retries: 0
       audiences: [observability-ingestion]
     attributes:
-      tenant_id:
-        claim_path: [organization, id]
-      writer_id:
-        claim_path: [sub]
-      role:
-        claim_path: [role]
-      requested_tenant:
-        header: X-Tenant
+      # jwt supports attributes from the request headers and the verified claims.
+      # Claim values are lists of nested keys in the JWT payload.
+      - name: tenant_id
+        from_source: claim
+        value: [organization, id]
+      - name: writer_id
+        from_source: claim
+        value: [sub]
+      - name: role
+        from_source: claim
+        value: [role]
+      - name: requested_tenant
+        from_source: header
+        value: X-Tenant
 
   - name: external-jwt
     jwt:
@@ -78,25 +84,42 @@ authenticators:
         uri: https://sso.external.example.com/realms/observability/protocol/openid-connect/certs
       audiences: [observability-ingestion]
     attributes:
-      tenant_id:
-        claim_path: [organization, id]
-      writer_id:
-        claim_path: [sub]
-      role:
-        claim_path: [role]
-      requested_tenant:
-        header: X-Tenant
+      # jwt supports attributes from the request headers and verified claims.
+      # Claim values are lists of nested keys in the JWT payload.
+      - name: tenant_id
+        from_source: claim
+        value: [organization, id]
+      - name: writer_id
+        from_source: claim
+        value: [sub]
+      - name: role
+        from_source: claim
+        value: [role]
+      - name: requested_tenant
+        from_source: header
+        value: X-Tenant
 
   - name: partner-key
     api_key:
       secret: auth-gateway-api-keys
       header: X-Partner-Key # Optional; defaults to X-API-Key.
     attributes:
-      tenant_id: {credential: true}
-      role: {credential: true}
-      writer_id: {credential: true}
-      requested_tenant:
-        header: X-Tenant
+      # api_key supports attributes from the request headers and the API key credential.
+      - name: tenant_id
+        from_source: credential
+        value: tenant_id
+      - name: key_id
+        from_source: credential
+        value: key_id
+      - name: writer_id
+        from_source: credential
+        value: writer_id
+      - name: requested_tenant
+        from_source: header
+        value: X-Tenant
+      - name: role
+        from_source: credential
+        value: role
 
   - name: partner-cert
     mtls:
@@ -105,10 +128,16 @@ authenticators:
         config_map: {name: partner-client-ca, key: ca.crt}
         # For file-based output, use filename: /etc/partner-client-ca.pem.
     attributes:
-      tenant_id: {uri_san: true}
-      writer_id: {dns_san: true}
-      requested_tenant:
-        header: X-Tenant
+      # mtls supports attributes from the request headers and the client certificate SANs.
+      - name: tenant_id
+        from_source: certificate
+        value: uri_san
+      - name: writer_id
+        from_source: certificate
+        value: dns_san
+      - name: requested_tenant
+        from_source: header
+        value: X-Tenant
 
 # Metrics collection is enabled by default. Per-API counters still need
 # apis[].metrics. Tracing is disabled by default.

@@ -28,6 +28,42 @@ var (
 
 func duration(value time.Duration) *gatewayapi.Duration { return new(gatewayapi.Duration(value)) }
 
+func testClaimAttribute(name string, path ...string) gatewayapi.AttributeSource {
+	return gatewayapi.AttributeSource{Name: name, FromSource: "claim", Value: gatewayapi.AttributeValue{Path: path, IsPath: true}}
+}
+
+func testTextAttribute(name, from, value string) gatewayapi.AttributeSource {
+	return gatewayapi.AttributeSource{Name: name, FromSource: from, Value: gatewayapi.AttributeValue{Text: value}}
+}
+
+func setTestAttribute(authenticator *gatewayapi.Authenticator, source gatewayapi.AttributeSource) {
+	for i := range authenticator.Attributes {
+		if authenticator.Attributes[i].Name == source.Name {
+			authenticator.Attributes[i] = source
+			return
+		}
+	}
+	authenticator.Attributes = append(authenticator.Attributes, source)
+}
+
+func testAttribute(authenticator *gatewayapi.Authenticator, name string) *gatewayapi.AttributeSource {
+	for i := range authenticator.Attributes {
+		if authenticator.Attributes[i].Name == name {
+			return &authenticator.Attributes[i]
+		}
+	}
+	panic("missing test attribute: " + name)
+}
+
+func removeTestAttribute(authenticator *gatewayapi.Authenticator, name string) {
+	for i, source := range authenticator.Attributes {
+		if source.Name == name {
+			authenticator.Attributes = append(authenticator.Attributes[:i], authenticator.Attributes[i+1:]...)
+			return
+		}
+	}
+}
+
 func readTestFile(t testing.TB, name string) string {
 	t.Helper()
 	data, err := os.ReadFile(name)

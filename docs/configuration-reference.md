@@ -344,19 +344,16 @@ with JWT or API-key entries. See the [mTLS guide](auth/mtls.md).
 | `authenticators[].api_key.secret`                    | string                          | None             | Required for Kubernetes output; must be a Kubernetes Secret name. Optional for file-based output.                               |
 | `authenticators[].api_key.header`                    | string                          | `X-API-Key`      | Safe HTTP header name; no `_` and no reserved header names.                                                                     |
 | `authenticators[].mtls.trusted_ca`                   | object                          | None             | Required explicit client CA bundle; see [trusted CA](#trusted-ca).                                                               |
-| `authenticators[].attributes.<attribute>`            | object                          | None             | Dynamic key is an attribute name.                                                                                               |
-| `authenticators[].attributes.<attribute>.claim_path` | list of strings                 | None             | JWT only; one or more nonempty literal object keys.                                                                             |
-| `authenticators[].attributes.<attribute>.header`     | string                          | None             | A safe request header name; no `_` or reserved identity headers. Cannot equal the API-key credential header.                    |
-| `authenticators[].attributes.<attribute>.credential` | boolean                         | None             | API-key only; if set, must be `true`.                                                                                           |
-| `authenticators[].attributes.<attribute>.uri_san`    | boolean                         | None             | mTLS only; if set, must be `true`. Reads the verified certificate's single URI SAN.                                              |
-| `authenticators[].attributes.<attribute>.dns_san`    | boolean                         | None             | mTLS only; if set, must be `true`. Reads the verified certificate's single DNS SAN.                                              |
+| `authenticators[].attributes`                     | list of objects                 | Empty            | Each entry declares one named attribute. Names must be unique and use lowercase letters, numbers, `_`, or `-`; the first character must be a letter. |
+| `authenticators[].attributes[].name`              | string                          | None             | Required attribute name used by grants, metrics, and request processing. |
+| `authenticators[].attributes[].from_source`       | string                          | None             | Required source: `claim` for JWT, `credential` for API keys, `certificate` for mTLS, or `header` for any authenticator. |
+| `authenticators[].attributes[].value`             | string or list of strings       | None             | A nonempty list of literal object keys for `claim`; a credential attribute name, `uri_san` or `dns_san`, or a safe HTTP request header name for the other sources. |
 
-An attribute source uses `claim_path` or `header` for JWTs, and `credential:
-true` or `header` for API keys. mTLS attributes use `uri_san: true`,
-`dns_san: true`, or `header`. Each certificate may have at most one URI SAN and
-one DNS SAN; a SAN containing a comma is rejected. Header names follow HTTP
-field-name syntax and cannot use reserved identity, routing, connection, or
-framing headers.
+Each certificate may have at most one URI SAN and one DNS SAN; a SAN containing
+a comma is rejected. Header names follow HTTP field-name syntax and cannot use
+reserved identity, routing, connection, or framing headers. A header source
+cannot equal the API-key credential header. Credential values come from the
+named key in the API-key Secret and are used unchanged.
 
 ### Authorization grants
 
@@ -511,7 +508,7 @@ contain exactly one document and use only the fields below. An empty
 |----------------------------|---------------------------------|---------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `credentials`              | list of objects                 | None    | Required; `[]` is valid.                                                                                                                                                                           |
 | `credentials[].key`        | string                          | None    | Required; unique nonempty HTTP header value without commas, surrounding whitespace, or control characters.                                                                                                  |
-| `credentials[].attributes` | map of attribute name to string | Empty   | Attribute names must be declared as `credential: true` by the API-key authenticator. Values must be nonempty HTTP header values of at most 8191 bytes without surrounding whitespace, control characters, or semicolons. |
+| `credentials[].attributes` | map of attribute name to string | Empty   | Attribute names must be referenced by a `credential` source value in the API-key authenticator. Values must be nonempty HTTP header values of at most 8191 bytes without surrounding whitespace, control characters, or semicolons. |
 
 See the [API-key guide](auth/api-key.md) for the Secret layout and client
 requests, and [config.example.yaml](../config.example.yaml) for a full gateway

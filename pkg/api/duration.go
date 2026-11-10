@@ -27,7 +27,7 @@ func (duration *Duration) String() string { return time.Duration(*duration).Stri
 
 // UnmarshalYAML parses and validates a duration string with units.
 func (duration *Duration) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" || node.Value == "" {
+	if node.Kind != yaml.ScalarNode || node.Tag != yamlStringTag || node.Value == "" {
 		return &DurationYAMLError{Line: node.Line, Column: node.Column, Err: fmt.Errorf("must be a duration string with units, such as 250ms or 5s")}
 	}
 	value, err := time.ParseDuration(node.Value)

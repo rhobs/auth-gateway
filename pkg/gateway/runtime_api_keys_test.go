@@ -32,8 +32,11 @@ func TestEnvoyAPIKeyAttributeLayouts(t *testing.T) {
 			c := apiKeyAttributesConfig(t, test.count)
 			if test.longName {
 				name := strings.Repeat("z", 64)
-				c.Authenticators[0].Attributes[name] = c.Authenticators[0].Attributes["attribute00"]
-				delete(c.Authenticators[0].Attributes, "attribute00")
+				source := *testAttribute(&c.Authenticators[0], "attribute00")
+				source.Name = name
+				source.Value.Text = name
+				setTestAttribute(&c.Authenticators[0], source)
+				removeTestAttribute(&c.Authenticators[0], "attribute00")
 				c.APIs[0].Routes[0].Processing.RequestHeaders[0].FromAttribute = name
 				grant := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0]
 				grant.Attributes[name] = grant.Attributes["attribute00"]
