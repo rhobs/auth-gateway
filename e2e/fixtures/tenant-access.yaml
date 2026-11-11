@@ -13,8 +13,8 @@ authenticators:
         from_source: claim
         value: [role]
       - name: writer_id
-        from_source: claim
-        value: [sub]
+        from_source: header
+        value: X-Writer
       - name: requested_tenant
         from_source: header
         value: X-Tenant
@@ -82,6 +82,20 @@ servers:
   - hostname: access.auth-gateway.test
     apis:
       - name: journey-write
+        fault_injection:
+          enabled: true
+          match:
+            headers:
+              - name: X-Inject-Fault
+                expression: equals
+                value: "true"
+            attributes:
+              - name: writer_id
+                expression: equals
+                value: key-writer
+          abort:
+            http_status: 503
+            percentage: 100
         access:
           - tenant: external-a
             match:

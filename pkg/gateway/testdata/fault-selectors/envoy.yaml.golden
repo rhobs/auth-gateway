@@ -309,6 +309,10 @@ static_resources:
                                   on_header_present:
                                     key: x-tenant
                                     metadata_namespace: auth_gateway.request_headers
+                                - header: x-writer
+                                  on_header_present:
+                                    key: x-writer
+                                    metadata_namespace: auth_gateway.request_headers
                         - disabled: true
                           name: envoy.filters.http.set_filter_state
                           typed_config:
@@ -606,7 +610,7 @@ static_resources:
                                                   format_string:
                                                     omit_empty_values: true
                                                     text_format_source:
-                                                        inline_string: '%CEL((("issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"] : "")%'
+                                                        inline_string: '%CEL((("envoy.filters.http.jwt_authn" in metadata.filter_metadata && "issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "iss" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"] == "https://issuer-one.jwt.test" && "auth_gateway.request_headers" in metadata.filter_metadata && "x-writer" in metadata.filter_metadata["auth_gateway.request_headers"] && type(metadata.filter_metadata["auth_gateway.request_headers"]["x-writer"]) == string && metadata.filter_metadata["auth_gateway.request_headers"]["x-writer"] != "") ? metadata.filter_metadata["auth_gateway.request_headers"]["x-writer"] : ""))%'
                                                   object_key: auth_gateway.attributes.writer_id
                                                   skip_if_empty: true
                                 - match:
@@ -1141,7 +1145,7 @@ static_resources:
                                                   format_string:
                                                     omit_empty_values: true
                                                     text_format_source:
-                                                        inline_string: '%CEL((("issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"] : "")%'
+                                                        inline_string: '%CEL((("envoy.filters.http.jwt_authn" in metadata.filter_metadata && "issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "iss" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"] == "https://issuer-one.jwt.test" && "auth_gateway.request_headers" in metadata.filter_metadata && "x-writer" in metadata.filter_metadata["auth_gateway.request_headers"] && type(metadata.filter_metadata["auth_gateway.request_headers"]["x-writer"]) == string && metadata.filter_metadata["auth_gateway.request_headers"]["x-writer"] != "") ? metadata.filter_metadata["auth_gateway.request_headers"]["x-writer"] : ""))%'
                                                   object_key: auth_gateway.attributes.writer_id
                                                   skip_if_empty: true
                                 - match:
@@ -1629,7 +1633,7 @@ static_resources:
                                                   format_string:
                                                     omit_empty_values: true
                                                     text_format_source:
-                                                        inline_string: '%CEL((("issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "sub" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["sub"] : "")%'
+                                                        inline_string: '%CEL((("envoy.filters.http.jwt_authn" in metadata.filter_metadata && "issuer-one" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "iss" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"] && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["issuer-one"]["iss"] == "https://issuer-one.jwt.test" && "auth_gateway.request_headers" in metadata.filter_metadata && "x-writer" in metadata.filter_metadata["auth_gateway.request_headers"] && type(metadata.filter_metadata["auth_gateway.request_headers"]["x-writer"]) == string && metadata.filter_metadata["auth_gateway.request_headers"]["x-writer"] != "") ? metadata.filter_metadata["auth_gateway.request_headers"]["x-writer"] : ""))%'
                                                   object_key: auth_gateway.attributes.writer_id
                                                   skip_if_empty: true
                                 - match:

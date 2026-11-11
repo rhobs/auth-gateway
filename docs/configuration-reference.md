@@ -230,16 +230,18 @@ its abort settings for the next test.
 | `servers[].apis[].fault_injection.enabled` | boolean | `false` | Requires `abort` when enabled. |
 | `servers[].apis[].fault_injection.match` | object | None | Optional; if supplied, must contain headers or attributes. Omit to select all requests that pass authentication, authorization, and required-header checks. |
 | `servers[].apis[].fault_injection.match.headers` | list of match expressions | Empty | Each entry has `name`, `expression`, and a `value` for `equals` or `in`. Supports `equals`, `in`, and `present`. Names are case-insensitive, unique, and cannot contain underscores or use reserved identity, routing, connection, framing, or credential headers. Route processing cannot overwrite them. |
-| `servers[].apis[].fault_injection.match.attributes` | list of match expressions | Empty | Each entry has a verified attribute `name`, `expression`, and a `value` for `equals` or `in`. Supports `equals`, `in`, and `present`. Names must be unique. Every protected access entry must provide each attribute from a verified claim, credential, certificate SAN, or external authorization result; header sources are rejected. |
+| `servers[].apis[].fault_injection.match.attributes` | list of match expressions | Empty | Each entry has an attribute `name`, `expression`, and a `value` for `equals` or `in`. Supports `equals`, `in`, and `present`. Names must be unique. The selected access entry supplies values from its declared sources, including request headers. Missing values do not match. |
 | `servers[].apis[].fault_injection.abort` | object | None | Required when enabled; HTTP errors only. |
 | `servers[].apis[].fault_injection.abort.http_status` | uint32 | None | Required error status from `400` to `599`. |
 | `servers[].apis[].fault_injection.abort.percentage` | uint32 | None | Required whole-number percentage from `1` to `100`. |
 
 All header and attribute selectors must match. `in` takes a nonempty list of
 distinct strings; `present` omits `value`. Header presence accepts an empty
-header, while attribute presence requires a nonempty verified value. Missing
-attributes or headers do not match, and values are case-sensitive. Only the
-entry's verifying provider supplies attributes. The configured
+header, while attribute presence requires a nonempty value. Missing attributes
+or headers do not match, and values are case-sensitive. Attribute conditions
+use the values produced by the selected access entry. A header-sourced
+attribute can be set by the client; authentication and authorization still run
+before fault injection. The configured
 percentage applies after selection. Clients cannot change the configured
 status or percentage through Envoy fault-control headers.
 

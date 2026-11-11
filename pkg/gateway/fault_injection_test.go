@@ -7,8 +7,10 @@ import (
 	"testing"
 
 	xdsmatcher "github.com/cncf/xds/go/xds/type/matcher/v3"
+	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	composite "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/composite/v3"
 	fault "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/fault/v3"
+	setfilterstate "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	networkinput "github.com/envoyproxy/go-control-plane/envoy/extensions/matching/common_inputs/network/v3"
 	envoytype "github.com/envoyproxy/go-control-plane/envoy/type/v3"
@@ -129,22 +131,79 @@ func TestFaultMatchReferences(t *testing.T) {
 		{"overwritten trigger", "match.headers[0] is overwritten", func(c *gatewayapi.Config) {
 			c.APIs[0].Routes[0].Processing = &gatewayapi.RouteProcessing{RequestHeaders: []gatewayapi.RequestHeaderMapping{{Name: "x-inject-fault", FromAttribute: "tenant_id"}}}
 		}},
-		{"unknown attribute", "fault_injection.match.attributes.unknown", func(c *gatewayapi.Config) { c.Servers[0].APIs[0].FaultInjection.Match.Attributes[0].Name = "unknown" }},
-		{"unbound provider", "fault_injection.match.attributes.writer_id", func(c *gatewayapi.Config) { removeTestAttribute(&c.Authenticators[1], "writer_id") }},
-		{"public binding", "fault_injection.match.attributes.tenant_id", func(c *gatewayapi.Config) { c.Servers[0].APIs[0].Public = true; c.Servers[0].APIs[0].Access = nil }},
-		{"request header source", "fault_injection.match.attributes.requested_tenant requires an identity attribute", func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].FaultInjection.Match.Attributes[0].Name = "requested_tenant"
-		}},
-		{"invalid disabled match", "fault_injection.match.attributes.unknown", func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].FaultInjection.Enabled = false
-			c.Servers[0].APIs[0].FaultInjection.Match.Attributes[0].Name = "unknown"
-		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			c := faultSelectorConfig(t)
 			test.edit(&c)
 			if err := Validate(c); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("validation error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestFaultMatchUsesAttributesFromSelectedAccess(t *testing.T) {
+	c := faultSelectorConfig(t)
+	c.APIs[0].Metrics = nil
+	removeTestAttribute(&c.Authenticators[0], "writer_id")
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := firstGeneratedHTTPManager(t, files.EnvoyBootstrap.Contents)
+	routes := manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()
+	for _, test := range []struct {
+		name       string
+		wantWriter bool
+	}{
+		{"api-0-injected-route-0-method-0-access-0-match-0", false},
+		{"api-0-injected-route-0-method-0-access-1-match-0", true},
+	} {
+		generated := namedRoute(routes, test.name)
+		if generated == nil || generated.GetTypedPerFilterConfig()[faultCompositeFilterName] == nil {
+			t.Fatalf("route %q has no fault selector", test.name)
+		}
+		var wrapper route.FilterConfig
+		if err := generated.GetTypedPerFilterConfig()[attributeFilterName].UnmarshalTo(&wrapper); err != nil {
+			t.Fatal(err)
+		}
+		var attributes setfilterstate.Config
+		if err := wrapper.GetConfig().UnmarshalTo(&attributes); err != nil {
+			t.Fatal(err)
+		}
+		hasWriter := false
+		for _, value := range attributes.GetOnRequestHeaders() {
+			hasWriter = hasWriter || value.GetObjectKey() == filterStateKey("writer_id")
+		}
+		if hasWriter != test.wantWriter {
+			t.Fatalf("route %q sets writer_id = %t, want %t", test.name, hasWriter, test.wantWriter)
+		}
+	}
+}
+
+func TestFaultMatchAllowsHeaderSourceAndMissingAttribute(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		edit func(*gatewayapi.Config)
+	}{
+		{"header source", func(c *gatewayapi.Config) {
+			for i := range c.Authenticators[0].Attributes {
+				if c.Authenticators[0].Attributes[i].Name == "writer_id" {
+					c.Authenticators[0].Attributes[i].FromSource = attributeSourceHeader
+					c.Authenticators[0].Attributes[i].Value = gatewayapi.AttributeValue{Text: "X-Writer"}
+				}
+			}
+		}},
+		{"unknown attribute", func(c *gatewayapi.Config) {
+			c.Servers[0].APIs[0].FaultInjection.Match.Attributes[1].Name = "unknown"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c := faultSelectorConfig(t)
+			c.APIs[0].Metrics = nil
+			test.edit(&c)
+			if _, err := Generate(c); err != nil {
+				t.Fatalf("generation rejected a runtime fault match: %v", err)
 			}
 		})
 	}

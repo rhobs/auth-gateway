@@ -389,9 +389,6 @@ func resolveAuthentication(c *resolvedConfig) error {
 		if err := validateFaultBindings(fmt.Sprintf(serverFieldPathFormat, i), c.servers[i], apiKeyHeader); err != nil {
 			return err
 		}
-		if err := validateFaultAttributeSources(fmt.Sprintf(serverFieldPathFormat, i), c.servers[i], c.extAuthzIndex); err != nil {
-			return err
-		}
 	}
 	return nil
 }

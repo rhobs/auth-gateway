@@ -232,10 +232,10 @@ after authentication, attribute extraction, authorization, and request-header
 processing. It runs before admission control and the router.
 
 Optional `equals`, `in`, and `present` header matches gate injection. Attribute selectors read the
-same filter state as header forwarding and metrics, populated from verified
-claims, API-key credentials, or certificate SANs. All configured selectors
-must match, with alternative allowed values in each `in` expression. Header
-sources cannot supply attribute selectors. Status and percentage remain
+same filter state as header forwarding and metrics, populated for the selected
+access entry from its declared sources. Missing or empty attributes do not
+match. All configured selectors must match, with alternative allowed values in
+each `in` expression. Status and percentage remain
 configured by the operator; Envoy's client-controlled abort headers are not
 enabled. Unconfigured bindings and fallback routes have no fault selector.
 

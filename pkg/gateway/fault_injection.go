@@ -133,47 +133,6 @@ func validateFaultBindings(serverName string, server resolvedServer, apiKeyHeade
 	return nil
 }
 
-func validateFaultAttributeSources(serverName string, server resolvedServer, services map[string]gatewayapi.ExternalAuthorizationService) error {
-	for _, binding := range server.bindings {
-		if binding.FaultInjection == nil || binding.FaultInjection.Match == nil {
-			continue
-		}
-		for _, condition := range binding.FaultInjection.Match.Attributes {
-			attribute := condition.Name
-			missing := func() error {
-				return fmt.Errorf("%s authentication does not provide fault_injection.match.attributes.%s for API %q", serverName, attribute, binding.Name)
-			}
-			if len(binding.access) == 0 {
-				return missing()
-			}
-			for _, access := range binding.access {
-				if access.Authorization.ExtAuthz != nil {
-					service := services[access.Authorization.ExtAuthz.Service]
-					if source, exists := extAuthzAttribute(service, attribute); exists && source.FromSource == attributeSourceHeader {
-						return fmt.Errorf("%s API %q fault_injection.match.attributes.%s requires an identity attribute, not a request header source", serverName, binding.Name, attribute)
-					}
-					if extAuthzProvidesAttribute(access, service, attribute) {
-						continue
-					}
-				}
-				if len(access.authenticators) == 0 {
-					return missing()
-				}
-				for _, authenticator := range access.authenticators {
-					source, exists := authenticatorAttribute(authenticator, attribute)
-					if !exists {
-						return missing()
-					}
-					if source.FromSource == attributeSourceHeader {
-						return fmt.Errorf("%s API %q fault_injection.match.attributes.%s requires an identity attribute, not a request header source", serverName, binding.Name, attribute)
-					}
-				}
-			}
-		}
-	}
-	return nil
-}
-
 func hasFaultMatchAttributes(servers []gatewayapi.Server) bool {
 	for _, server := range servers {
 		for _, binding := range server.APIs {

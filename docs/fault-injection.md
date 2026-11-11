@@ -2,7 +2,7 @@
 
 Fault injection returns configured HTTP errors after authentication,
 authorization, and request-header validation. It supports request header
-conditions and selectors for verified attributes such as a tenant ID. Status
+conditions and selectors for attributes such as a tenant ID. Status
 and percentage stay under operator control.
 
 For an API that already requires authentication, configure the fault on its
@@ -32,10 +32,12 @@ servers:
       # existing authentication and authorization settings
 ```
 
-Here `tenant_id` must be declared by a bound authenticator using a verified
-JWT claim, API-key credential attribute, or certificate SAN. A client-supplied
-tenant header cannot replace that identity value. Header sources are rejected
-for attribute selectors.
+The selected access entry supplies `tenant_id` from its declared source, such
+as a JWT claim, API-key credential, certificate SAN, or request header. The
+attribute does not need to exist on every access entry in the binding. If the
+selected entry does not produce it, the condition does not match. A
+header-sourced value is client supplied, so use it only when that is the value
+you intend to select.
 
 Regenerate and apply the gateway resources, then explicitly roll out the
 Deployment. For example, a request authenticated as `test-tenant` with
@@ -44,7 +46,7 @@ or another tenant with the header, continues normally. Requests that fail
 authentication or authorization keep their usual denial status. All configured
 headers and attributes must match; values in an `in` list are alternatives.
 `equals`, `in`, and `present` are supported. `present` requires the header to
-exist or the verified attribute to have a nonempty value. Missing attributes
+exist or the attribute to have a nonempty value. Missing attributes
 do not match.
 
 Omitting `match` makes every request that passes authentication, authorization,
