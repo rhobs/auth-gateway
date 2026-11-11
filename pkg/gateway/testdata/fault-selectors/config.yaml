@@ -13,8 +13,8 @@ authenticators:
       from_source: claim
       value: [organization, id]
     - name: writer_id
-      from_source: claim
-      value: [sub]
+      from_source: header
+      value: X-Writer
     - name: requested_tenant
       from_source: header
       value: X-Tenant
