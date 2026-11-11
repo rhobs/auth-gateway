@@ -13,6 +13,9 @@ authenticators:
         from_source: claim
         value: [role]
       - name: writer_id
+        from_source: claim
+        value: [sub]
+      - name: fault_writer
         from_source: header
         value: X-Writer
       - name: requested_tenant
@@ -28,6 +31,9 @@ authenticators:
         from_source: credential
         value: role
       - name: writer_id
+        from_source: credential
+        value: writer_id
+      - name: fault_writer
         from_source: credential
         value: writer_id
       - name: requested_tenant
@@ -90,7 +96,7 @@ servers:
                 expression: equals
                 value: "true"
             attributes:
-              - name: writer_id
+              - name: fault_writer
                 expression: equals
                 value: key-writer
           abort:
