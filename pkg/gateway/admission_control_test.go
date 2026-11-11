@@ -286,7 +286,7 @@ func TestAdmissionControlFilterIsOmittedWhenDisabled(t *testing.T) {
 func TestAdmissionControlPreservesRouteProcessing(t *testing.T) {
 	c := loadConfigCase(t, "jwt-auth-with-headers")
 	c.APIs[0].AdmissionControl = &gatewayapi.AdmissionControlConfig{Enabled: true}
-	c.APIs[0].FaultInjection = &gatewayapi.FaultInjectionConfig{Enabled: true, Abort: &gatewayapi.FaultAbortConfig{HTTPStatus: 503, Percentage: 10}}
+	c.Servers[0].APIs[0].FaultInjection = &gatewayapi.FaultInjectionConfig{Enabled: true, Abort: &gatewayapi.FaultAbortConfig{HTTPStatus: 503, Percentage: 10}}
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)

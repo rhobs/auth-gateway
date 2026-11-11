@@ -249,7 +249,7 @@ func TestFaultInjectionToggleChangesOnlyBootstrapConfigMap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.APIs[0].FaultInjection.Enabled = false
+	c.Servers[0].APIs[0].FaultInjection.Enabled = false
 	after, err := GenerateKubernetes(c)
 	if err != nil {
 		t.Fatal(err)

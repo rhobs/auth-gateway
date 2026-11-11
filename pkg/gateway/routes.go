@@ -316,9 +316,6 @@ func serverVirtualHost(c resolvedConfig, index int, server resolvedServer) (*rou
 	if err != nil {
 		return nil, err
 	}
-	if err := addAPIFaultRouteConfigs(routes, server.apis); err != nil {
-		return nil, err
-	}
 	if err := addAPIAdmissionRouteConfigs(routes, server.apis); err != nil {
 		return nil, err
 	}
@@ -361,6 +358,9 @@ func serverVirtualHost(c resolvedConfig, index int, server resolvedServer) (*rou
 		binding := bindings[apiName]
 		if binding.Public {
 			base.TypedPerFilterConfig[authorizationFilterName] = disabled
+			if err := addFaultRouteConfig(base, binding, index); err != nil {
+				return nil, err
+			}
 			host.Routes = append(host.Routes, base)
 			continue
 		}
@@ -376,6 +376,9 @@ func serverVirtualHost(c resolvedConfig, index int, server resolvedServer) (*rou
 				generated.Match.Headers = append(generated.Match.Headers, headers...)
 				if err := addAccessRouteConfigs(c, generated, access); err != nil {
 					return nil, fmt.Errorf("servers[%d] route %q: %w", index, generated.Name, err)
+				}
+				if err := addFaultRouteConfig(generated, binding, index); err != nil {
+					return nil, err
 				}
 				host.Routes = append(host.Routes, generated)
 			}

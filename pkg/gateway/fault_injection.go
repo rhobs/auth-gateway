@@ -2,9 +2,8 @@ package gateway
 
 import (
 	"fmt"
-	"maps"
 	"net/http"
-	"slices"
+	"regexp"
 	"strings"
 
 	xdsmatcher "github.com/cncf/xds/go/xds/type/matcher/v3"
@@ -14,7 +13,6 @@ import (
 	matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	envoytype "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
-	"google.golang.org/protobuf/types/known/anypb"
 )
 
 const (
@@ -29,11 +27,8 @@ func cloneFaultInjectionConfig(c gatewayapi.FaultInjectionConfig) gatewayapi.Fau
 }
 
 func cloneFaultMatchConfig(c gatewayapi.FaultMatchConfig) gatewayapi.FaultMatchConfig {
-	c.Headers = maps.Clone(c.Headers)
-	c.Attributes = maps.Clone(c.Attributes)
-	for name, values := range c.Attributes {
-		c.Attributes[name] = slices.Clone(values)
-	}
+	c.Headers = cloneMatchExpressions(c.Headers)
+	c.Attributes = cloneMatchExpressions(c.Attributes)
 	return c
 }
 
@@ -67,67 +62,69 @@ func validateFaultMatchConfig(c gatewayapi.FaultMatchConfig, field string) error
 		return fmt.Errorf("%s must contain headers or attributes", field)
 	}
 	seen := make(map[string]bool, len(c.Headers))
-	for _, header := range slices.Sorted(maps.Keys(c.Headers)) {
-		lower := strings.ToLower(header)
-		if !validHeaderFieldName(header) || strings.Contains(header, "_") || forbiddenIdentityHeader(lower) {
-			return fmt.Errorf("%s.headers contains unsafe request header %q", field, header)
+	for i, condition := range c.Headers {
+		conditionField := fmt.Sprintf("%s.headers[%d]", field, i)
+		lower := strings.ToLower(condition.Name)
+		if !validHeaderFieldName(condition.Name) || strings.Contains(condition.Name, "_") || forbiddenIdentityHeader(lower) {
+			return fmt.Errorf("%s contains unsafe request header %q", conditionField, condition.Name)
 		}
 		if seen[lower] {
-			return fmt.Errorf("%s.headers contains duplicate header %q ignoring case", field, header)
+			return fmt.Errorf("%s duplicates header %q ignoring case", conditionField, condition.Name)
 		}
 		seen[lower] = true
-		if !validFaultMatchValue(c.Headers[header]) {
-			return fmt.Errorf("%s.headers.%s must be nonempty and contain no control characters", field, header)
+		if err := validateFaultExpression(conditionField, condition); err != nil {
+			return err
 		}
 	}
-	for _, attribute := range slices.Sorted(maps.Keys(c.Attributes)) {
-		if !attributeNamePattern.MatchString(attribute) {
-			return fmt.Errorf("%s.attributes contains invalid attribute name %q", field, attribute)
+	seen = make(map[string]bool, len(c.Attributes))
+	for i, condition := range c.Attributes {
+		conditionField := fmt.Sprintf(attributeIndexFieldFormat, field, i)
+		if !attributeNamePattern.MatchString(condition.Name) {
+			return fmt.Errorf("%s contains invalid attribute name %q", conditionField, condition.Name)
 		}
-		values := c.Attributes[attribute]
-		if len(values) == 0 {
-			return fmt.Errorf("%s.attributes.%s must contain at least one value", field, attribute)
+		if seen[condition.Name] {
+			return fmt.Errorf("%s duplicates attribute %q", conditionField, condition.Name)
 		}
-		seenValues := make(map[string]bool, len(values))
-		for _, value := range values {
-			if !validFaultMatchValue(value) || seenValues[value] {
-				return fmt.Errorf("%s.attributes.%s must contain distinct nonempty values without control characters", field, attribute)
-			}
-			seenValues[value] = true
+		seen[condition.Name] = true
+		if err := validateFaultExpression(conditionField, condition); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func validFaultMatchValue(value string) bool {
-	if value == "" {
-		return false
+func validateFaultExpression(field string, condition gatewayapi.MatchExpression) error {
+	if condition.Expression != gatewayapi.ExpressionEquals && condition.Expression != gatewayapi.ExpressionIn && condition.Expression != gatewayapi.ExpressionPresent {
+		return fmt.Errorf("%s.expression must be equals, in, or present", field)
 	}
-	for _, character := range value {
-		if character < 0x20 || character == 0x7f {
-			return false
-		}
-	}
-	return true
+	return validateMatchExpression(field, condition, false)
 }
 
-func validateFaultHeaderReferences(apis []gatewayapi.API, apiKeyHeader string) error {
-	for i, api := range apis {
-		if api.FaultInjection == nil || api.FaultInjection.Match == nil {
+func validateFaultBindings(serverName string, server resolvedServer, apiKeyHeader string) error {
+	for i, binding := range server.bindings {
+		if binding.FaultInjection == nil {
 			continue
 		}
-		for _, header := range slices.Sorted(maps.Keys(api.FaultInjection.Match.Headers)) {
-			field := fmt.Sprintf("apis[%d].fault_injection.match.headers.%s", i, header)
+		field := fmt.Sprintf("%s.apis[%d].fault_injection", serverName, i)
+		if err := validateFaultInjectionConfig(*binding.FaultInjection, field); err != nil {
+			return err
+		}
+		if binding.FaultInjection.Match == nil {
+			continue
+		}
+		for j, condition := range binding.FaultInjection.Match.Headers {
+			header := condition.Name
+			conditionField := fmt.Sprintf("%s.match.headers[%d]", field, j)
 			if strings.EqualFold(header, apiKeyHeader) {
-				return fmt.Errorf("%s is reserved for API-key credentials", field)
+				return fmt.Errorf("%s is reserved for API-key credentials", conditionField)
 			}
-			for _, apiRoute := range api.Routes {
+			for _, apiRoute := range binding.api.Routes {
 				if apiRoute.Processing == nil {
 					continue
 				}
 				for _, mapping := range apiRoute.Processing.RequestHeaders {
 					if strings.EqualFold(header, mapping.Name) {
-						return fmt.Errorf("%s is overwritten by route processing", field)
+						return fmt.Errorf("%s is overwritten by route processing", conditionField)
 					}
 				}
 			}
@@ -138,13 +135,13 @@ func validateFaultHeaderReferences(apis []gatewayapi.API, apiKeyHeader string) e
 
 func validateFaultAttributeSources(serverName string, server resolvedServer, services map[string]gatewayapi.ExternalAuthorizationService) error {
 	for _, binding := range server.bindings {
-		api := binding.api
-		if api.FaultInjection == nil || api.FaultInjection.Match == nil {
+		if binding.FaultInjection == nil || binding.FaultInjection.Match == nil {
 			continue
 		}
-		for _, attribute := range slices.Sorted(maps.Keys(api.FaultInjection.Match.Attributes)) {
+		for _, condition := range binding.FaultInjection.Match.Attributes {
+			attribute := condition.Name
 			missing := func() error {
-				return fmt.Errorf("%s authentication does not provide fault_injection.match.attributes.%s for API %q", serverName, attribute, api.Name)
+				return fmt.Errorf("%s authentication does not provide fault_injection.match.attributes.%s for API %q", serverName, attribute, binding.Name)
 			}
 			if len(binding.access) == 0 {
 				return missing()
@@ -153,7 +150,7 @@ func validateFaultAttributeSources(serverName string, server resolvedServer, ser
 				if access.Authorization.ExtAuthz != nil {
 					service := services[access.Authorization.ExtAuthz.Service]
 					if source, exists := extAuthzAttribute(service, attribute); exists && source.FromSource == attributeSourceHeader {
-						return fmt.Errorf("%s API %q fault_injection.match.attributes.%s requires an identity attribute, not a request header source", serverName, api.Name, attribute)
+						return fmt.Errorf("%s API %q fault_injection.match.attributes.%s requires an identity attribute, not a request header source", serverName, binding.Name, attribute)
 					}
 					if extAuthzProvidesAttribute(access, service, attribute) {
 						continue
@@ -168,7 +165,7 @@ func validateFaultAttributeSources(serverName string, server resolvedServer, ser
 						return missing()
 					}
 					if source.FromSource == attributeSourceHeader {
-						return fmt.Errorf("%s API %q fault_injection.match.attributes.%s requires an identity attribute, not a request header source", serverName, api.Name, attribute)
+						return fmt.Errorf("%s API %q fault_injection.match.attributes.%s requires an identity attribute, not a request header source", serverName, binding.Name, attribute)
 					}
 				}
 			}
@@ -177,10 +174,12 @@ func validateFaultAttributeSources(serverName string, server resolvedServer, ser
 	return nil
 }
 
-func hasFaultMatchAttributes(apis []gatewayapi.API) bool {
-	for _, api := range apis {
-		if api.FaultInjection != nil && api.FaultInjection.Enabled && api.FaultInjection.Match != nil && len(api.FaultInjection.Match.Attributes) > 0 {
-			return true
+func hasFaultMatchAttributes(servers []gatewayapi.Server) bool {
+	for _, server := range servers {
+		for _, binding := range server.APIs {
+			if binding.FaultInjection != nil && binding.FaultInjection.Enabled && binding.FaultInjection.Match != nil && len(binding.FaultInjection.Match.Attributes) > 0 {
+				return true
+			}
 		}
 	}
 	return false
@@ -189,15 +188,15 @@ func hasFaultMatchAttributes(apis []gatewayapi.API) bool {
 func faultHTTPFilter(c resolvedConfig, hosts []indexedVirtualHost) (*hcm.HttpFilter, error) {
 	chains := make(compositeFilterChains)
 	for _, host := range hosts {
-		for _, api := range c.servers[host.serverIndex].apis {
-			if api.FaultInjection == nil || !api.FaultInjection.Enabled {
+		for bindingIndex, binding := range c.servers[host.serverIndex].bindings {
+			if binding.FaultInjection == nil || !binding.FaultInjection.Enabled {
 				continue
 			}
-			config, err := packEnvoy(faultConfig(*api.FaultInjection))
+			config, err := packEnvoy(faultConfig(*binding.FaultInjection))
 			if err != nil {
-				return nil, fmt.Errorf("encode fault injection for API %q: %w", api.Name, err)
+				return nil, fmt.Errorf("encode fault injection for API %q: %w", binding.Name, err)
 			}
-			chains[api.Name] = compositeChain(faultFilterName, config)
+			chains[faultChainName(host.serverIndex, bindingIndex)] = compositeChain(faultFilterName, config)
 		}
 	}
 	if len(chains) == 0 {
@@ -210,37 +209,23 @@ func faultHTTPFilter(c resolvedConfig, hosts []indexedVirtualHost) (*hcm.HttpFil
 	return &hcm.HttpFilter{Name: faultCompositeFilterName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: config}}, nil
 }
 
-func addAPIFaultRouteConfigs(routes []*route.Route, apis []gatewayapi.API) error {
-	routesByName := make(map[string]*route.Route, len(routes))
-	for _, generatedRoute := range routes {
-		routesByName[generatedRoute.Name] = generatedRoute
+func faultChainName(serverIndex, bindingIndex int) string {
+	return fmt.Sprintf("server-%d-api-%d", serverIndex, bindingIndex)
+}
+
+func addFaultRouteConfig(generated *route.Route, binding resolvedAPIBinding, serverIndex int) error {
+	if binding.FaultInjection == nil || !binding.FaultInjection.Enabled {
+		return nil
 	}
-	for apiIndex, api := range apis {
-		if api.FaultInjection == nil || !api.FaultInjection.Enabled {
-			continue
-		}
-		selector, err := faultMatcher(*api.FaultInjection, api.Name)
-		if err != nil {
-			return fmt.Errorf("encode fault selector for API %q: %w", api.Name, err)
-		}
-		perRoute, err := compositePerRouteConfig(selector)
-		if err != nil {
-			return fmt.Errorf("encode fault injection for API %q: %w", api.Name, err)
-		}
-		for routeIndex, apiRoute := range api.Routes {
-			for methodIndex := range apiRoute.Methods {
-				name := apiRouteName(apiIndex, api.Name, routeIndex, methodIndex)
-				generatedRoute := routesByName[name]
-				if generatedRoute == nil {
-					return fmt.Errorf("generated route %q is missing", name)
-				}
-				if generatedRoute.TypedPerFilterConfig == nil {
-					generatedRoute.TypedPerFilterConfig = make(map[string]*anypb.Any)
-				}
-				generatedRoute.TypedPerFilterConfig[faultCompositeFilterName] = perRoute
-			}
-		}
+	selector, err := faultMatcher(*binding.FaultInjection, faultChainName(serverIndex, binding.index))
+	if err != nil {
+		return fmt.Errorf("encode fault selector for API %q: %w", binding.Name, err)
 	}
+	perRoute, err := compositePerRouteConfig(selector)
+	if err != nil {
+		return fmt.Errorf("encode fault injection for API %q: %w", binding.Name, err)
+	}
+	generated.TypedPerFilterConfig[faultCompositeFilterName] = perRoute
 	return nil
 }
 
@@ -253,12 +238,21 @@ func faultConfig(c gatewayapi.FaultInjectionConfig) *fault.HTTPFault {
 		DisableDownstreamClusterStats: true,
 	}
 	if c.Match != nil {
-		for _, header := range slices.Sorted(maps.Keys(c.Match.Headers)) {
-			config.Headers = append(config.Headers, &route.HeaderMatcher{
-				Name: strings.ToLower(header), HeaderMatchSpecifier: &route.HeaderMatcher_StringMatch{
-					StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: c.Match.Headers[header]}},
-				},
-			})
+		for _, condition := range sortedMatchExpressions(c.Match.Headers) {
+			header := &route.HeaderMatcher{Name: strings.ToLower(condition.Name)}
+			switch condition.Expression {
+			case gatewayapi.ExpressionPresent:
+				header.HeaderMatchSpecifier = &route.HeaderMatcher_PresentMatch{PresentMatch: true}
+			case gatewayapi.ExpressionIn:
+				alternatives := make([]string, 0, len(condition.Value.Items))
+				for _, value := range condition.Value.Items {
+					alternatives = append(alternatives, regexp.QuoteMeta(value))
+				}
+				header.HeaderMatchSpecifier = &route.HeaderMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_SafeRegex{SafeRegex: &matcher.RegexMatcher{Regex: "^(?:" + strings.Join(alternatives, "|") + ")$"}}}}
+			default:
+				header.HeaderMatchSpecifier = &route.HeaderMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: condition.Value.Text}}}
+			}
+			config.Headers = append(config.Headers, header)
 		}
 	}
 	return config
@@ -274,16 +268,27 @@ func faultMatcher(c gatewayapi.FaultInjectionConfig, chain string) (*xdsmatcher.
 		return &xdsmatcher.Matcher{OnNoMatch: onMatch}, nil
 	}
 	var predicates []*xdsmatcher.Matcher_MatcherList_Predicate
-	for _, attribute := range slices.Sorted(maps.Keys(c.Match.Attributes)) {
-		input, err := filterStateMatcherInput(filterStateKey(attribute))
+	for _, condition := range sortedMatchExpressions(c.Match.Attributes) {
+		input, err := filterStateMatcherInput(filterStateKey(condition.Name))
 		if err != nil {
 			return nil, err
 		}
 		var values []*xdsmatcher.Matcher_MatcherList_Predicate
-		for _, value := range c.Match.Attributes[attribute] {
+		matchers := make([]*xdsmatcher.StringMatcher, 0, 1)
+		if condition.Expression == gatewayapi.ExpressionPresent {
+			matchers = append(matchers, &xdsmatcher.StringMatcher{MatchPattern: &xdsmatcher.StringMatcher_SafeRegex{SafeRegex: &xdsmatcher.RegexMatcher{
+				EngineType: &xdsmatcher.RegexMatcher_GoogleRe2{GoogleRe2: &xdsmatcher.RegexMatcher_GoogleRE2{}},
+				Regex:      ".+",
+			}}})
+		} else {
+			for _, value := range matchValues(condition) {
+				matchers = append(matchers, &xdsmatcher.StringMatcher{MatchPattern: &xdsmatcher.StringMatcher_Exact{Exact: value}})
+			}
+		}
+		for _, valueMatcher := range matchers {
 			values = append(values, &xdsmatcher.Matcher_MatcherList_Predicate{MatchType: &xdsmatcher.Matcher_MatcherList_Predicate_SinglePredicate_{SinglePredicate: &xdsmatcher.Matcher_MatcherList_Predicate_SinglePredicate{
 				Input:   input,
-				Matcher: &xdsmatcher.Matcher_MatcherList_Predicate_SinglePredicate_ValueMatch{ValueMatch: &xdsmatcher.StringMatcher{MatchPattern: &xdsmatcher.StringMatcher_Exact{Exact: value}}},
+				Matcher: &xdsmatcher.Matcher_MatcherList_Predicate_SinglePredicate_ValueMatch{ValueMatch: valueMatcher},
 			}}})
 		}
 		predicate := values[0]

@@ -16,6 +16,16 @@ servers:
 - hostname: fault.jwt.auth-gateway.test
   apis:
   - name: injected
+    fault_injection:
+      enabled: true
+      match:
+        attributes:
+        - name: tenant_id
+          expression: in
+          value: [customer-a, customer-denied]
+      abort:
+        http_status: 503
+        percentage: 100
     access:
     - name: default
       authentication:
@@ -51,16 +61,6 @@ apis:
   metrics:
     labels:
       tenant: tenant_id
-  fault_injection:
-    enabled: true
-    match:
-      attributes:
-        tenant_id:
-        - customer-a
-        - customer-denied
-    abort:
-      http_status: 503
-      percentage: 100
   upstream:
     address: httpbin
     port: 8080

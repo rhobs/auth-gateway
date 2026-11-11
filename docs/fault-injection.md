@@ -1,26 +1,35 @@
 # Fault injection
 
 Fault injection returns configured HTTP errors after authentication,
-authorization, and request-header validation. It supports an exact request
-header trigger and selectors for authenticated attributes such as a tenant
-ID. Status and percentage stay under operator control.
+authorization, and request-header validation. It supports request header
+conditions and selectors for verified attributes such as a tenant ID. Status
+and percentage stay under operator control.
 
-For an API that already requires authentication, configure these fields:
+For an API that already requires authentication, configure the fault on its
+server binding. Each server can set a different policy for the same API:
 
 ```yaml
-metrics:
-  labels:
-    tenant: tenant_id
-fault_injection:
-  enabled: true
-  match:
-    headers:
-      X-Inject-Fault: "true"
-    attributes:
-      tenant_id: [test-tenant]
-  abort:
-    http_status: 503
-    percentage: 100
+servers:
+- hostname: metrics.example.com
+  apis:
+  - name: write
+    fault_injection:
+      enabled: true
+      match:
+        headers:
+        - name: X-Inject-Fault
+          expression: equals
+          value: "true"
+        attributes:
+        - name: tenant_id
+          expression: in
+          value: [test-tenant]
+      abort:
+        http_status: 503
+        percentage: 100
+    access: # existing access entries
+    - name: default
+      # existing authentication and authorization settings
 ```
 
 Here `tenant_id` must be declared by a bound authenticator using a verified
@@ -33,8 +42,10 @@ Deployment. For example, a request authenticated as `test-tenant` with
 `X-Inject-Fault: true` now returns `503`. The same tenant without that header,
 or another tenant with the header, continues normally. Requests that fail
 authentication or authorization keep their usual denial status. All configured
-headers and attributes must match; values within an attribute list are
-alternatives. Missing attributes do not match.
+headers and attributes must match; values in an `in` list are alternatives.
+`equals`, `in`, and `present` are supported. `present` requires the header to
+exist or the verified attribute to have a nonempty value. Missing attributes
+do not match.
 
 Omitting `match` makes every request that passes authentication, authorization,
 and required-header checks eligible. A percentage below `100` samples only

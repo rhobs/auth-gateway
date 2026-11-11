@@ -17,37 +17,31 @@ import (
 
 func TestLoadFaultInjection(t *testing.T) {
 	c := loadConfigCase(t, "fault-injection")
-	want := &gatewayapi.FaultInjectionConfig{Enabled: true, Abort: &gatewayapi.FaultAbortConfig{
-		HTTPStatus: http.StatusServiceUnavailable,
-		Percentage: 25,
-	}}
-	assertConfigDiff(t, "fault injection", want, c.APIs[0].FaultInjection)
-	if c.APIs[1].FaultInjection != nil {
-		t.Fatal("unconfigured API gained fault injection")
+	want := &gatewayapi.FaultInjectionConfig{Enabled: true, Abort: &gatewayapi.FaultAbortConfig{HTTPStatus: http.StatusServiceUnavailable, Percentage: 25}}
+	assertConfigDiff(t, "fault injection", want, c.Servers[0].APIs[0].FaultInjection)
+	if c.Servers[0].APIs[1].FaultInjection != nil {
+		t.Fatal("unconfigured binding gained fault injection")
 	}
 }
 
 func TestFaultInjectionValidation(t *testing.T) {
 	for _, test := range []struct {
-		name  string
-		field string
-		edit  func(*gatewayapi.FaultInjectionConfig)
+		name, field string
+		edit        func(*gatewayapi.FaultInjectionConfig)
 	}{
-		{name: "missing abort", field: "abort", edit: func(c *gatewayapi.FaultInjectionConfig) { c.Abort = nil }},
-		{name: "status below 400", field: "abort.http_status", edit: func(c *gatewayapi.FaultInjectionConfig) { c.Abort.HTTPStatus = 399 }},
-		{name: "status above 599", field: "abort.http_status", edit: func(c *gatewayapi.FaultInjectionConfig) { c.Abort.HTTPStatus = 600 }},
-		{name: "zero percentage", field: "abort.percentage", edit: func(c *gatewayapi.FaultInjectionConfig) { c.Abort.Percentage = 0 }},
-		{name: "percentage above 100", field: "abort.percentage", edit: func(c *gatewayapi.FaultInjectionConfig) { c.Abort.Percentage = 101 }},
-		{name: "invalid disabled policy", field: "abort.percentage", edit: func(c *gatewayapi.FaultInjectionConfig) {
-			c.Enabled = false
-			c.Abort.Percentage = 0
-		}},
+		{"missing abort", "abort", func(c *gatewayapi.FaultInjectionConfig) { c.Abort = nil }},
+		{"status below 400", "abort.http_status", func(c *gatewayapi.FaultInjectionConfig) { c.Abort.HTTPStatus = 399 }},
+		{"status above 599", "abort.http_status", func(c *gatewayapi.FaultInjectionConfig) { c.Abort.HTTPStatus = 600 }},
+		{"zero percentage", "abort.percentage", func(c *gatewayapi.FaultInjectionConfig) { c.Abort.Percentage = 0 }},
+		{"percentage above 100", "abort.percentage", func(c *gatewayapi.FaultInjectionConfig) { c.Abort.Percentage = 101 }},
+		{"invalid disabled policy", "abort.percentage", func(c *gatewayapi.FaultInjectionConfig) { c.Enabled = false; c.Abort.Percentage = 0 }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			c := loadConfigCase(t, "fault-injection")
-			test.edit(c.APIs[0].FaultInjection)
-			if err := Validate(c); err == nil || !strings.Contains(err.Error(), "apis[0].fault_injection."+test.field) {
-				t.Fatalf("validation error = %v, want field apis[0].fault_injection.%s", err, test.field)
+			test.edit(c.Servers[0].APIs[0].FaultInjection)
+			want := "servers[0].apis[0].fault_injection." + test.field
+			if err := Validate(c); err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("validation error = %v, want %q", err, want)
 			}
 		})
 	}
@@ -56,8 +50,8 @@ func TestFaultInjectionValidation(t *testing.T) {
 func TestFaultInjectionDefaultsCloneInput(t *testing.T) {
 	c := loadConfigCase(t, "fault-injection")
 	defaulted := withDefaultsConfig(c)
-	defaulted.APIs[0].FaultInjection.Abort.Percentage = 50
-	if c.APIs[0].FaultInjection.Abort.Percentage != 25 {
+	defaulted.Servers[0].APIs[0].FaultInjection.Abort.Percentage = 50
+	if c.Servers[0].APIs[0].FaultInjection.Abort.Percentage != 25 {
 		t.Fatal("defaulting aliased the caller's fault policy")
 	}
 }
@@ -70,49 +64,53 @@ func faultSelectorConfig(t testing.TB) gatewayapi.Config {
 func TestLoadFaultMatchSelectors(t *testing.T) {
 	c := faultSelectorConfig(t)
 	want := &gatewayapi.FaultMatchConfig{
-		Headers:    map[string]string{"X-Inject-Fault": "true"},
-		Attributes: map[string][]string{"tenant_id": {"tenant-a", "tenant-c"}, "writer_id": {"writer-a"}},
+		Headers: []gatewayapi.MatchExpression{{Name: "X-Inject-Fault", Expression: gatewayapi.ExpressionEquals, Value: gatewayapi.MatchValue{Text: "true"}}},
+		Attributes: []gatewayapi.MatchExpression{
+			{Name: "tenant_id", Expression: gatewayapi.ExpressionIn, Value: gatewayapi.MatchValue{Items: []string{"tenant-a", "tenant-c"}, IsList: true}},
+			{Name: "writer_id", Expression: gatewayapi.ExpressionEquals, Value: gatewayapi.MatchValue{Text: "writer-a"}},
+		},
 	}
-	assertConfigDiff(t, "fault selectors", want, c.APIs[0].FaultInjection.Match)
+	assertConfigDiff(t, "fault selectors", want, c.Servers[0].APIs[0].FaultInjection.Match)
 }
 
 func TestFaultMatchDefaultsCloneInput(t *testing.T) {
 	c := faultSelectorConfig(t)
 	defaulted := withDefaultsConfig(c)
-	defaulted.APIs[0].FaultInjection.Match.Headers["X-Inject-Fault"] = "changed"
-	defaulted.APIs[0].FaultInjection.Match.Attributes["tenant_id"][0] = "changed"
-	defaulted.APIs[0].FaultInjection.Match.Attributes["writer_id"] = []string{"changed"}
-	want := &gatewayapi.FaultMatchConfig{
-		Headers:    map[string]string{"X-Inject-Fault": "true"},
-		Attributes: map[string][]string{"tenant_id": {"tenant-a", "tenant-c"}, "writer_id": {"writer-a"}},
+	match := defaulted.Servers[0].APIs[0].FaultInjection.Match
+	match.Headers[0].Value.Text = "changed"
+	match.Attributes[0].Value.Items[0] = "changed"
+	match.Attributes[1].Value.Text = "changed"
+	original := c.Servers[0].APIs[0].FaultInjection.Match
+	if original.Headers[0].Value.Text != "true" || original.Attributes[0].Value.Items[0] != "tenant-a" || original.Attributes[1].Value.Text != "writer-a" {
+		t.Fatal("defaulting aliased the caller's fault selectors")
 	}
-	assertConfigDiff(t, "original fault selectors", want, c.APIs[0].FaultInjection.Match)
 }
 
 func TestFaultMatchValidation(t *testing.T) {
 	for _, test := range []struct {
-		name  string
-		field string
-		edit  func(*gatewayapi.FaultMatchConfig)
+		name, field string
+		edit        func(*gatewayapi.FaultMatchConfig)
 	}{
-		{name: "empty match", field: "match must contain", edit: func(c *gatewayapi.FaultMatchConfig) { *c = gatewayapi.FaultMatchConfig{} }},
-		{name: "invalid header", field: "match.headers", edit: func(c *gatewayapi.FaultMatchConfig) { c.Headers[":path"] = "/" }},
-		{name: "credential header", field: "match.headers", edit: func(c *gatewayapi.FaultMatchConfig) { c.Headers["Authorization"] = "test" }},
-		{name: "internal header", field: "match.headers", edit: func(c *gatewayapi.FaultMatchConfig) { c.Headers["X-Auth-Gateway-Tenant"] = "test" }},
-		{name: "removed header", field: "match.headers", edit: func(c *gatewayapi.FaultMatchConfig) { c.Headers["X-Envoy-Max-Retries"] = "1" }},
-		{name: "duplicate header case", field: "match.headers", edit: func(c *gatewayapi.FaultMatchConfig) { c.Headers["x-inject-fault"] = "true" }},
-		{name: "empty header value", field: "match.headers.X-Inject-Fault", edit: func(c *gatewayapi.FaultMatchConfig) { c.Headers["X-Inject-Fault"] = "" }},
-		{name: "header control character", field: "match.headers.X-Inject-Fault", edit: func(c *gatewayapi.FaultMatchConfig) { c.Headers["X-Inject-Fault"] = "yes\n" }},
-		{name: "invalid attribute name", field: "match.attributes", edit: func(c *gatewayapi.FaultMatchConfig) { c.Attributes["Tenant"] = []string{"a"} }},
-		{name: "empty values", field: "match.attributes.tenant_id", edit: func(c *gatewayapi.FaultMatchConfig) { c.Attributes["tenant_id"] = nil }},
-		{name: "empty attribute value", field: "match.attributes.tenant_id", edit: func(c *gatewayapi.FaultMatchConfig) { c.Attributes["tenant_id"] = []string{""} }},
-		{name: "attribute control character", field: "match.attributes.tenant_id", edit: func(c *gatewayapi.FaultMatchConfig) { c.Attributes["tenant_id"] = []string{"a\x7f"} }},
-		{name: "duplicate attribute values", field: "match.attributes.tenant_id", edit: func(c *gatewayapi.FaultMatchConfig) { c.Attributes["tenant_id"] = []string{"a", "a"} }},
+		{"empty match", "match must contain", func(c *gatewayapi.FaultMatchConfig) { *c = gatewayapi.FaultMatchConfig{} }},
+		{"invalid header", "match.headers[0]", func(c *gatewayapi.FaultMatchConfig) { c.Headers[0].Name = ":path" }},
+		{"credential header", "match.headers[0]", func(c *gatewayapi.FaultMatchConfig) { c.Headers[0].Name = "Authorization" }},
+		{"internal header", "match.headers[0]", func(c *gatewayapi.FaultMatchConfig) { c.Headers[0].Name = "X-Auth-Gateway-Tenant" }},
+		{"duplicate header case", "match.headers[1]", func(c *gatewayapi.FaultMatchConfig) {
+			c.Headers = append(c.Headers, gatewayapi.MatchExpression{Name: "x-inject-fault", Expression: gatewayapi.ExpressionPresent})
+		}},
+		{"empty header value", "match.headers[0].value", func(c *gatewayapi.FaultMatchConfig) { c.Headers[0].Value.Text = "" }},
+		{"invalid header expression", "match.headers[0].expression", func(c *gatewayapi.FaultMatchConfig) { c.Headers[0].Expression = gatewayapi.ExpressionHas }},
+		{"present with value", "match.headers[0].value", func(c *gatewayapi.FaultMatchConfig) { c.Headers[0].Expression = gatewayapi.ExpressionPresent }},
+		{"invalid attribute name", "match.attributes[0]", func(c *gatewayapi.FaultMatchConfig) { c.Attributes[0].Name = "Tenant" }},
+		{"duplicate attribute", "match.attributes[2]", func(c *gatewayapi.FaultMatchConfig) { c.Attributes = append(c.Attributes, c.Attributes[0]) }},
+		{"empty values", "match.attributes[0].value", func(c *gatewayapi.FaultMatchConfig) { c.Attributes[0].Value.Items = nil }},
+		{"duplicate values", "match.attributes[0].value", func(c *gatewayapi.FaultMatchConfig) { c.Attributes[0].Value.Items[1] = "tenant-a" }},
+		{"invalid attribute expression", "match.attributes[0].expression", func(c *gatewayapi.FaultMatchConfig) { c.Attributes[0].Expression = gatewayapi.ExpressionHasOneOf }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			c := faultSelectorConfig(t)
-			test.edit(c.APIs[0].FaultInjection.Match)
-			want := "apis[0].fault_injection." + test.field
+			test.edit(c.Servers[0].APIs[0].FaultInjection.Match)
+			want := "servers[0].apis[0].fault_injection." + test.field
 			if err := Validate(c); err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("validation error = %v, want %q", err, want)
 			}
@@ -122,33 +120,24 @@ func TestFaultMatchValidation(t *testing.T) {
 
 func TestFaultMatchReferences(t *testing.T) {
 	for _, test := range []struct {
-		name string
-		want string
-		edit func(*gatewayapi.Config)
+		name, want string
+		edit       func(*gatewayapi.Config)
 	}{
-		{name: "API key trigger", want: "apis[0].fault_injection.match.headers.X-Partner-Key is reserved", edit: func(c *gatewayapi.Config) {
-			c.APIs[0].FaultInjection.Match.Headers["X-Partner-Key"] = "key-a"
+		{"API key trigger", "match.headers[0] is reserved", func(c *gatewayapi.Config) {
+			c.Servers[0].APIs[0].FaultInjection.Match.Headers[0].Name = "X-Partner-Key"
 		}},
-		{name: "overwritten trigger", want: "apis[0].fault_injection.match.headers.X-Inject-Fault is overwritten", edit: func(c *gatewayapi.Config) {
+		{"overwritten trigger", "match.headers[0] is overwritten", func(c *gatewayapi.Config) {
 			c.APIs[0].Routes[0].Processing = &gatewayapi.RouteProcessing{RequestHeaders: []gatewayapi.RequestHeaderMapping{{Name: "x-inject-fault", FromAttribute: "tenant_id"}}}
 		}},
-		{name: "unknown attribute", want: "servers[0] authentication does not provide fault_injection.match.attributes.unknown", edit: func(c *gatewayapi.Config) {
-			c.APIs[0].FaultInjection.Match.Attributes["unknown"] = []string{"a"}
+		{"unknown attribute", "fault_injection.match.attributes.unknown", func(c *gatewayapi.Config) { c.Servers[0].APIs[0].FaultInjection.Match.Attributes[0].Name = "unknown" }},
+		{"unbound provider", "fault_injection.match.attributes.writer_id", func(c *gatewayapi.Config) { removeTestAttribute(&c.Authenticators[1], "writer_id") }},
+		{"public binding", "fault_injection.match.attributes.tenant_id", func(c *gatewayapi.Config) { c.Servers[0].APIs[0].Public = true; c.Servers[0].APIs[0].Access = nil }},
+		{"request header source", "fault_injection.match.attributes.requested_tenant requires an identity attribute", func(c *gatewayapi.Config) {
+			c.Servers[0].APIs[0].FaultInjection.Match.Attributes[0].Name = "requested_tenant"
 		}},
-		{name: "unbound provider", want: "servers[0] authentication does not provide fault_injection.match.attributes.writer_id", edit: func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].Access = []gatewayapi.Access{c.Servers[0].APIs[0].Access[1]}
-			removeTestAttribute(&c.Authenticators[1], "writer_id")
-		}},
-		{name: "public binding", want: "servers[0] authentication does not provide fault_injection.match.attributes.tenant_id", edit: func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].Public = true
-			c.Servers[0].APIs[0].Access = nil
-		}},
-		{name: "request header tenant", want: "fault_injection.match.attributes.requested_tenant requires an identity attribute", edit: func(c *gatewayapi.Config) {
-			c.APIs[0].FaultInjection.Match.Attributes["requested_tenant"] = []string{"tenant-a"}
-		}},
-		{name: "invalid disabled match", want: "fault_injection.match.attributes.unknown", edit: func(c *gatewayapi.Config) {
-			c.APIs[0].FaultInjection.Enabled = false
-			c.APIs[0].FaultInjection.Match.Attributes["unknown"] = []string{"a"}
+		{"invalid disabled match", "fault_injection.match.attributes.unknown", func(c *gatewayapi.Config) {
+			c.Servers[0].APIs[0].FaultInjection.Enabled = false
+			c.Servers[0].APIs[0].FaultInjection.Match.Attributes[0].Name = "unknown"
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -166,8 +155,8 @@ func TestFaultInjectionDefaultsOff(t *testing.T) {
 		name string
 		edit func(*gatewayapi.Config)
 	}{
-		{name: "omitted", edit: func(c *gatewayapi.Config) { c.APIs[0].FaultInjection = nil }},
-		{name: "disabled", edit: func(c *gatewayapi.Config) { c.APIs[0].FaultInjection.Enabled = false }},
+		{name: "omitted", edit: func(c *gatewayapi.Config) { c.Servers[0].APIs[0].FaultInjection = nil }},
+		{name: "disabled", edit: func(c *gatewayapi.Config) { c.Servers[0].APIs[0].FaultInjection.Enabled = false }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			c := loadConfigCase(t, "fault-injection")
@@ -210,7 +199,7 @@ func TestGeneratedFaultInjectionIsScopedToAPI(t *testing.T) {
 	if global.GetMatcher() != nil || len(global.GetNamedFilterChains()) != 1 {
 		t.Fatalf("global fault policy = %v, want one API chain and no default selector", &global)
 	}
-	chain := global.GetNamedFilterChains()["injected"].GetTypedConfig()
+	chain := global.GetNamedFilterChains()["server-0-api-0"].GetTypedConfig()
 	if len(chain) != 1 || chain[0].Name != faultFilterName {
 		t.Fatalf("fault chain = %v, want one native fault filter", chain)
 	}
@@ -243,8 +232,8 @@ func TestGeneratedFaultInjectionIsScopedToAPI(t *testing.T) {
 		if err := perRoute.GetMatcher().GetOnNoMatch().GetAction().GetTypedConfig().UnmarshalTo(&action); err != nil {
 			t.Fatal(err)
 		}
-		if action.GetFilterChainName() != "injected" {
-			t.Fatalf("route %q selects fault chain %q, want injected", name, action.GetFilterChainName())
+		if action.GetFilterChainName() != "server-0-api-0" {
+			t.Fatalf("route %q selects fault chain %q, want server-0-api-0", name, action.GetFilterChainName())
 		}
 	}
 	for _, generatedRoute := range routes {
@@ -259,7 +248,7 @@ func TestGeneratedFaultInjectionIsScopedToAPI(t *testing.T) {
 
 func TestFaultInjectionOnlyUsesManagersWithTargetAPI(t *testing.T) {
 	c := loadConfigCase(t, "server-tls")
-	c.APIs[0].FaultInjection = &gatewayapi.FaultInjectionConfig{Enabled: true, Abort: &gatewayapi.FaultAbortConfig{
+	c.Servers[0].APIs[0].FaultInjection = &gatewayapi.FaultInjectionConfig{Enabled: true, Abort: &gatewayapi.FaultAbortConfig{
 		HTTPStatus: http.StatusServiceUnavailable,
 		Percentage: 10,
 	}}
@@ -272,7 +261,7 @@ func TestFaultInjectionOnlyUsesManagersWithTargetAPI(t *testing.T) {
 	for _, chain := range bootstrap.GetStaticResources().GetListeners()[0].GetFilterChains() {
 		manager := decodeHTTPManager(t, chain)
 		host := manager.GetRouteConfig().GetVirtualHosts()[0]
-		if host.Name == "query.example.com" {
+		if host.Name != "auth.example.com" {
 			unconfigured++
 			if hasHTTPFilter(manager, faultCompositeFilterName) {
 				t.Fatal("fault filter was added to the unrelated HTTPS manager")
@@ -284,14 +273,53 @@ func TestFaultInjectionOnlyUsesManagersWithTargetAPI(t *testing.T) {
 			t.Fatalf("manager for %q has no fault filter", host.Name)
 		}
 	}
-	if configured != 2 || unconfigured != 1 {
-		t.Fatalf("configured/unconfigured managers = %d/%d, want 2/1", configured, unconfigured)
+	if configured != 1 || unconfigured != 2 {
+		t.Fatalf("configured/unconfigured managers = %d/%d, want 1/2", configured, unconfigured)
+	}
+}
+
+func TestFaultInjectionUsesDistinctPoliciesForSameAPIOnDifferentServers(t *testing.T) {
+	c := faultSelectorConfig(t)
+	other := cloneAPIBinding(c.Servers[0].APIs[0])
+	other.FaultInjection.Abort.HTTPStatus = http.StatusTooManyRequests
+	c.Servers = append(c.Servers, gatewayapi.Server{Hostname: "fault-other.example.com", APIs: []gatewayapi.APIBinding{other}})
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := firstGeneratedHTTPManager(t, files.EnvoyBootstrap.Contents)
+	index := slices.Index(httpFilterNames(manager), faultCompositeFilterName)
+	var global composite.Composite
+	if err := manager.GetHttpFilters()[index].GetTypedConfig().UnmarshalTo(&global); err != nil {
+		t.Fatal(err)
+	}
+	if len(global.GetNamedFilterChains()) != 2 {
+		t.Fatalf("fault chains = %d, want one for each server binding", len(global.GetNamedFilterChains()))
+	}
+	for _, test := range []struct {
+		chain  string
+		status uint32
+	}{
+		{"server-0-api-0", http.StatusServiceUnavailable},
+		{"server-1-api-0", http.StatusTooManyRequests},
+	} {
+		chain := global.GetNamedFilterChains()[test.chain]
+		if chain == nil {
+			t.Fatalf("fault chain %q is missing", test.chain)
+		}
+		var policy fault.HTTPFault
+		if err := chain.GetTypedConfig()[0].GetTypedConfig().UnmarshalTo(&policy); err != nil {
+			t.Fatal(err)
+		}
+		if policy.GetAbort().GetHttpStatus() != test.status {
+			t.Fatalf("fault chain %q returns %d, want %d", test.chain, policy.GetAbort().GetHttpStatus(), test.status)
+		}
 	}
 }
 
 func TestFaultInjectionPreservesRouteHeaderProcessing(t *testing.T) {
 	c := loadConfigCase(t, "jwt-auth-with-headers")
-	c.APIs[0].FaultInjection = &gatewayapi.FaultInjectionConfig{Enabled: true, Abort: &gatewayapi.FaultAbortConfig{
+	c.Servers[0].APIs[0].FaultInjection = &gatewayapi.FaultInjectionConfig{Enabled: true, Abort: &gatewayapi.FaultAbortConfig{
 		HTTPStatus: http.StatusServiceUnavailable,
 		Percentage: 10,
 	}}
@@ -348,7 +376,7 @@ func TestGeneratedFaultMatchUsesAuthenticatedFilterState(t *testing.T) {
 		t.Fatal(err)
 	}
 	var policy fault.HTTPFault
-	if err := config.GetNamedFilterChains()["injected"].GetTypedConfig()[0].GetTypedConfig().UnmarshalTo(&policy); err != nil {
+	if err := config.GetNamedFilterChains()["server-0-api-0"].GetTypedConfig()[0].GetTypedConfig().UnmarshalTo(&policy); err != nil {
 		t.Fatal(err)
 	}
 	if len(policy.Headers) != 1 || policy.Headers[0].Name != "x-inject-fault" || policy.Headers[0].GetStringMatch().GetExact() != "true" ||
@@ -378,6 +406,43 @@ func TestGeneratedFaultMatchUsesAuthenticatedFilterState(t *testing.T) {
 	assertFaultAttributePredicate(t, tenants[0], "auth_gateway.attributes.tenant_id", "tenant-a")
 	assertFaultAttributePredicate(t, tenants[1], "auth_gateway.attributes.tenant_id", "tenant-c")
 	assertFaultAttributePredicate(t, predicates[1], "auth_gateway.attributes.writer_id", "writer-a")
+}
+
+func TestGeneratedFaultMatchSupportsInAndPresent(t *testing.T) {
+	c := faultSelectorConfig(t)
+	match := c.Servers[0].APIs[0].FaultInjection.Match
+	match.Headers = []gatewayapi.MatchExpression{
+		{Name: "X-Inject-Fault", Expression: gatewayapi.ExpressionIn, Value: gatewayapi.MatchValue{Items: []string{"true", "a.b"}, IsList: true}},
+		{Name: "X-Fault-Test", Expression: gatewayapi.ExpressionPresent},
+	}
+	match.Attributes = []gatewayapi.MatchExpression{{Name: "writer_id", Expression: gatewayapi.ExpressionPresent}}
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := firstGeneratedHTTPManager(t, files.EnvoyBootstrap.Contents)
+	var global composite.Composite
+	filter := manager.GetHttpFilters()[slices.Index(httpFilterNames(manager), faultCompositeFilterName)]
+	if err := filter.GetTypedConfig().UnmarshalTo(&global); err != nil {
+		t.Fatal(err)
+	}
+	var policy fault.HTTPFault
+	if err := global.GetNamedFilterChains()["server-0-api-0"].GetTypedConfig()[0].GetTypedConfig().UnmarshalTo(&policy); err != nil {
+		t.Fatal(err)
+	}
+	if len(policy.Headers) != 2 || policy.Headers[0].Name != "x-fault-test" || !policy.Headers[0].GetPresentMatch() ||
+		policy.Headers[1].Name != "x-inject-fault" || policy.Headers[1].GetStringMatch().GetSafeRegex().GetRegex() != `^(?:true|a\.b)$` {
+		t.Fatalf("fault header conditions = %v", policy.Headers)
+	}
+	route := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes(), "api-0-injected-route-0-method-0-access-0-match-0")
+	var selector composite.CompositePerRoute
+	if err := route.GetTypedPerFilterConfig()[faultCompositeFilterName].UnmarshalTo(&selector); err != nil {
+		t.Fatal(err)
+	}
+	predicate := selector.GetMatcher().GetMatcherList().GetMatchers()[0].GetPredicate().GetSinglePredicate()
+	if predicate.GetValueMatch().GetSafeRegex().GetRegex() != ".+" {
+		t.Fatalf("attribute presence matcher = %v, want nonempty value", predicate.GetValueMatch())
+	}
 }
 
 func TestFaultMatchInitializesAttributesWithoutMetrics(t *testing.T) {

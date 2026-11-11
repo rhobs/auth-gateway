@@ -107,7 +107,7 @@ cannot repeat a method and path matcher.
 | `apis[].upstream`         | object          | None                     | Required; see [upstream](#upstream).                              |
 | `apis[].metrics`          | object          | None                     | Optional per-API counter labels; see [API metrics](#api-metrics). |
 | `apis[].admission_control` | object         | Disabled                 | Optional per-API load shedding; see [Admission control](#admission-control). |
-| `apis[].fault_injection`  | object          | Disabled                 | Optional HTTP error injection; see [Fault injection](#fault-injection). |
+| `servers[].apis[].fault_injection` | object | Disabled | Optional HTTP error injection for this API on this server; see [Fault injection](#fault-injection). |
 | `apis[].circuit_breakers` | object          | Defaults below           | Optional; omission still applies the listed defaults.             |
 | `apis[].timeouts`         | object          | Effective defaults below | Optional defaults for every route in this API.                    |
 
@@ -218,26 +218,28 @@ status without attribute labels.
 
 ### Fault injection
 
-Set `apis[].fault_injection.enabled: true` to abort a percentage of matching
+Set `servers[].apis[].fault_injection.enabled: true` to abort a percentage of matching
 requests with a configured HTTP error after authentication, authorization,
-and required-header checks. Every method route of that API is
-eligible; other APIs and gateway `404`/`405` fallback routes are not. Omit the
+and required-header checks. Every method route of that binding is
+eligible; other bindings and gateway `404`/`405` fallback routes are not. Omit the
 block or set `enabled: false` to disable injection. A disabled block may keep
 its abort settings for the next test.
 
-| Field                                      | Type    | Default | Constraint                                                        |
-|--------------------------------------------|---------|---------|-------------------------------------------------------------------|
-| `apis[].fault_injection.enabled`           | boolean | `false` | Requires `abort` when enabled.                                    |
-| `apis[].fault_injection.match`             | object  | None    | Optional; if supplied, must contain headers or attributes. Omit to select all requests that pass authentication, authorization, and required-header checks. |
-| `apis[].fault_injection.match.headers`     | map of header name to string | Empty | All headers must match exact values. Names are case-insensitive and cannot contain underscores, duplicate another name ignoring case, or use reserved identity, routing, connection, framing, or credential headers. Route processing cannot overwrite these headers. Values must be nonempty and contain no control characters. |
-| `apis[].fault_injection.match.attributes`  | map of attribute name to list of strings | Empty | All attributes must match at least one listed exact value. Each list must contain distinct nonempty values without control characters. Every protected binding must declare each attribute. Sources must be verified claims, credentials, certificate SANs, or external response attributes; header sources are rejected. |
-| `apis[].fault_injection.abort`             | object  | None    | Required when enabled; HTTP errors only.                          |
-| `apis[].fault_injection.abort.http_status` | uint32  | None    | Required error status from `400` to `599`.                         |
-| `apis[].fault_injection.abort.percentage`  | uint32  | None    | Required whole-number percentage from `1` to `100`.               |
+| Field | Type | Default | Constraint |
+|-------|------|---------|------------|
+| `servers[].apis[].fault_injection.enabled` | boolean | `false` | Requires `abort` when enabled. |
+| `servers[].apis[].fault_injection.match` | object | None | Optional; if supplied, must contain headers or attributes. Omit to select all requests that pass authentication, authorization, and required-header checks. |
+| `servers[].apis[].fault_injection.match.headers` | list of match expressions | Empty | Each entry has `name`, `expression`, and a `value` for `equals` or `in`. Supports `equals`, `in`, and `present`. Names are case-insensitive, unique, and cannot contain underscores or use reserved identity, routing, connection, framing, or credential headers. Route processing cannot overwrite them. |
+| `servers[].apis[].fault_injection.match.attributes` | list of match expressions | Empty | Each entry has a verified attribute `name`, `expression`, and a `value` for `equals` or `in`. Supports `equals`, `in`, and `present`. Names must be unique. Every protected access entry must provide each attribute from a verified claim, credential, certificate SAN, or external authorization result; header sources are rejected. |
+| `servers[].apis[].fault_injection.abort` | object | None | Required when enabled; HTTP errors only. |
+| `servers[].apis[].fault_injection.abort.http_status` | uint32 | None | Required error status from `400` to `599`. |
+| `servers[].apis[].fault_injection.abort.percentage` | uint32 | None | Required whole-number percentage from `1` to `100`. |
 
-All header and attribute selectors must match. Missing attributes or headers
-do not match, and values are case-sensitive. Only the entry's verifying
-provider supplies attributes. The configured
+All header and attribute selectors must match. `in` takes a nonempty list of
+distinct strings; `present` omits `value`. Header presence accepts an empty
+header, while attribute presence requires a nonempty verified value. Missing
+attributes or headers do not match, and values are case-sensitive. Only the
+entry's verifying provider supplies attributes. The configured
 percentage applies after selection. Clients cannot change the configured
 status or percentage through Envoy fault-control headers.
 

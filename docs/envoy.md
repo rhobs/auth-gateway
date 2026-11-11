@@ -226,18 +226,18 @@ See the
 
 ## Fault injection
 
-Per-API `fault_injection` can abort a whole-number percentage of requests with
-an HTTP error status. A Composite filter selects one API's native fault filter
+Per-binding `fault_injection` can abort a whole-number percentage of requests with
+an HTTP error status. A Composite filter selects one server API binding's native fault filter
 after authentication, attribute extraction, authorization, and request-header
 processing. It runs before admission control and the router.
 
-Optional exact header matches gate injection. Attribute selectors read the
+Optional `equals`, `in`, and `present` header matches gate injection. Attribute selectors read the
 same filter state as header forwarding and metrics, populated from verified
 claims, API-key credentials, or certificate SANs. All configured selectors
-must match, with alternative allowed values within each attribute. Header
+must match, with alternative allowed values in each `in` expression. Header
 sources cannot supply attribute selectors. Status and percentage remain
 configured by the operator; Envoy's client-controlled abort headers are not
-enabled. Unconfigured APIs and fallback routes have no fault selector.
+enabled. Unconfigured bindings and fallback routes have no fault selector.
 
 Injected aborts do not reach the upstream. The standard per-API response
 counter records each reply once using its status and authenticated attribute

@@ -5,16 +5,16 @@ servers:
   apis:
   - name: injected
     public: true
+    fault_injection:
+      enabled: true
+      abort:
+        http_status: 503
+        percentage: 25
   - name: healthy
     public: true
 apis:
 - name: injected
   metrics: {}
-  fault_injection:
-    enabled: true
-    abort:
-      http_status: 503
-      percentage: 25
   upstream:
     address: httpbin
     port: 8080
