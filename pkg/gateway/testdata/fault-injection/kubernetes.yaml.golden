@@ -186,7 +186,7 @@ data:
                               typed_config:
                                 '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.Composite
                                 named_filter_chains:
-                                    injected:
+                                    server-0-api-0:
                                         typed_config:
                                             - name: envoy.filters.http.fault
                                               typed_config:
@@ -257,7 +257,7 @@ data:
                                                         name: envoy.filters.http.composite.execute_filter_action
                                                         typed_config:
                                                             '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.ExecuteFilterAction
-                                                            filter_chain_name: injected
+                                                            filter_chain_name: server-0-api-0
                                         envoy.filters.http.rbac:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                     - match:
@@ -290,7 +290,7 @@ data:
                                                         name: envoy.filters.http.composite.execute_filter_action
                                                         typed_config:
                                                             '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.ExecuteFilterAction
-                                                            filter_chain_name: injected
+                                                            filter_chain_name: server-0-api-0
                                         envoy.filters.http.rbac:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                     - match:

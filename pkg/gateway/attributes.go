@@ -26,6 +26,7 @@ const (
 	attributeFilterName         = "envoy.filters.http.set_filter_state"
 	managedAttributePrefix      = "auth_gateway.attributes."
 	attributeSourceHeader       = "header"
+	attributeIndexFieldFormat   = "%s.attributes[%d]"
 )
 
 var (
@@ -35,7 +36,7 @@ var (
 func validateAuthenticatorAttributes(name string, authenticator gatewayapi.Authenticator, apiKeyHeader string) error {
 	seen := make(map[string]bool)
 	for i, source := range authenticator.Attributes {
-		field := fmt.Sprintf("%s.attributes[%d]", name, i)
+		field := fmt.Sprintf(attributeIndexFieldFormat, name, i)
 		if !attributeNamePattern.MatchString(source.Name) {
 			return fmt.Errorf("%s.name must be a valid attribute name", field)
 		}
@@ -273,7 +274,7 @@ func apiKeyAttributeExpression(attribute string) string {
 }
 
 func needsWorkingAttributes(c resolvedConfig) bool {
-	return len(c.ExtAuthzServices) != 0 || hasRequestHeaderProcessing(c.APIs) || hasRequestMetricLabels(c.APIs) || hasFaultMatchAttributes(c.APIs)
+	return len(c.ExtAuthzServices) != 0 || hasRequestHeaderProcessing(c.APIs) || hasRequestMetricLabels(c.APIs) || hasFaultMatchAttributes(c.Servers)
 }
 
 func filterStateKey(attribute string) string {

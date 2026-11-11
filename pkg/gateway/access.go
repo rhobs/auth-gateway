@@ -27,7 +27,7 @@ func resolveServerAccess(c *resolvedConfig, index int) error {
 	for i := range server.APIs {
 		binding := &server.APIs[i]
 		bindingField := fmt.Sprintf("%s.apis[%d]", field, i)
-		resolved := resolvedAPIBinding{APIBinding: binding, api: c.apiIndex[binding.Name]}
+		resolved := resolvedAPIBinding{APIBinding: binding, index: i, api: c.apiIndex[binding.Name]}
 		if binding.Public {
 			if binding.Access != nil || server.usesMTLS() {
 				return fmt.Errorf("%s.public cannot be combined with access or server mTLS", bindingField)
@@ -304,7 +304,7 @@ func validateAccessGrants(field string, access resolvedAccess) error {
 		seen := make(map[string]bool)
 		for attributeIndex, condition := range grant.Attributes {
 			name := condition.Name
-			attributeField := fmt.Sprintf("%s.attributes[%d]", grantField, attributeIndex)
+			attributeField := fmt.Sprintf(attributeIndexFieldFormat, grantField, attributeIndex)
 			if seen[name] {
 				return fmt.Errorf("%s duplicates attribute %q", attributeField, name)
 			}
@@ -386,6 +386,7 @@ func validateUniqueReferences[V any](field string, names []string, known map[str
 
 func cloneAPIBinding(binding gatewayapi.APIBinding) gatewayapi.APIBinding {
 	binding.Access = cloneSlice(binding.Access, cloneAccess)
+	binding.FaultInjection = cloneConfigPointer(binding.FaultInjection, cloneFaultInjectionConfig)
 	return binding
 }
 

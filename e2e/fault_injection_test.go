@@ -16,7 +16,10 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-const faultInjectionHost = "fault.auth-gateway.test"
+const (
+	faultInjectionHost      = "fault.auth-gateway.test"
+	faultInjectionPlainHost = "fault-plain.auth-gateway.test"
+)
 
 var faultInjectionNamespace = e2eNamespace("fault-injection-e2e")
 
@@ -41,6 +44,7 @@ var _ = Describe("Fault injection", Label("gateway", "fault-injection", "namespa
 			{Key: "key-a", Attributes: map[string]string{"tenant_id": "tenant-a", "writer_id": "writer-a"}},
 			{Key: "key-b", Attributes: map[string]string{"tenant_id": "tenant-b", "writer_id": "writer-a"}},
 			{Key: "key-c", Attributes: map[string]string{"tenant_id": "tenant-c", "writer_id": "writer-a"}},
+			{Key: "key-writer-b", Attributes: map[string]string{"tenant_id": "tenant-a", "writer_id": "writer-b"}},
 			{Key: "key-denied", Attributes: map[string]string{"tenant_id": "tenant-denied", "writer_id": "writer-a"}},
 			{Key: "key-no-writer", Attributes: map[string]string{"tenant_id": "tenant-a"}},
 		})
@@ -109,6 +113,12 @@ var _ = Describe("Fault injection", Label("gateway", "fault-injection", "namespa
 	It("matches any listed tenant value", func(ctx SpecContext) {
 		expectDeniedBeforeUpstream(ctx, adminAddress, "api-injected", "second selected tenant", http.StatusServiceUnavailable, func() (int, []byte, error) {
 			return requestFaultInjection(ctx, gatewayAddress, http.MethodGet, "/injected/probe", nil, faultInjectionHeaders("key-c", "true"))
+		})
+	}, NodeTimeout(60*time.Second))
+
+	It("accepts another trigger value and any present verified writer", func(ctx SpecContext) {
+		expectDeniedBeforeUpstream(ctx, adminAddress, "api-injected", "alternate trigger and writer", http.StatusServiceUnavailable, func() (int, []byte, error) {
+			return requestFaultInjection(ctx, gatewayAddress, http.MethodGet, "/injected/probe", nil, faultInjectionHeaders("key-writer-b", "canary"))
 		})
 	}, NodeTimeout(60*time.Second))
 
@@ -201,11 +211,20 @@ var _ = Describe("Fault injection", Label("gateway", "fault-injection", "namespa
 		expectFaultInjectionEcho(body, http.MethodPost, "/anything/healthy/probe?source=e2e", payload, "tenant-a")
 	}, NodeTimeout(60*time.Second))
 
+	It("forwards the same API on another server without a fault policy", func(ctx SpecContext) {
+		payload := []byte("same API, different server")
+		status, body := expectUpstreamRequestDelta(ctx, adminAddress, "api-injected", "unconfigured server binding", 1, func() (int, []byte, error) {
+			return requestFaultInjectionToHost(ctx, gatewayAddress, faultInjectionPlainHost, http.MethodPost, "/injected/probe?source=other-server", payload, faultInjectionHeaders("key-a", "true"))
+		})
+		Expect(status).To(Equal(http.StatusOK), string(body))
+		expectFaultInjectionEcho(body, http.MethodPost, "/anything/injected/probe?source=other-server", payload, "tenant-a")
+	}, NodeTimeout(60*time.Second))
+
 	It("stops aborting after a configuration change and explicit rollout", func(ctx SpecContext) {
 		originalUID, err := gatewayPodUID(ctx, faultInjectionNamespace)
 		Expect(err).NotTo(HaveOccurred())
 
-		gatewayConfig.APIs[0].FaultInjection.Enabled = false
+		gatewayConfig.Servers[0].APIs[0].FaultInjection.Enabled = false
 		Expect(applyFaultInjectionGateway(ctx, gatewayConfig)).To(Succeed())
 		currentUID, err := gatewayPodUID(ctx, faultInjectionNamespace)
 		Expect(err).NotTo(HaveOccurred())
@@ -251,11 +270,15 @@ func faultInjectionHeaders(key, trigger string) http.Header {
 }
 
 func requestFaultInjection(ctx context.Context, address, method, path string, payload []byte, headers http.Header) (int, []byte, error) {
+	return requestFaultInjectionToHost(ctx, address, faultInjectionHost, method, path, payload, headers)
+}
+
+func requestFaultInjectionToHost(ctx context.Context, address, host, method, path string, payload []byte, headers http.Header) (int, []byte, error) {
 	request, err := http.NewRequestWithContext(ctx, method, "http://"+address+path, bytes.NewReader(payload))
 	if err != nil {
 		return 0, nil, err
 	}
-	request.Host = faultInjectionHost
+	request.Host = host
 	request.Header = headers.Clone()
 	request.Header.Set("Content-Type", "application/octet-stream")
 	request.Header.Set("X-Fault-Test", "forwarded")

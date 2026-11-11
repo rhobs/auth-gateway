@@ -103,7 +103,7 @@ func validateExtAuthzServices(c gatewayapi.Config) (map[string]gatewayapi.Extern
 func validateExtAuthzAttributes(field string, service gatewayapi.ExternalAuthorizationService, allowed, credentials map[string]bool) error {
 	seen := make(map[string]bool, len(service.Attributes))
 	for index, source := range service.Attributes {
-		name := fmt.Sprintf("%s.attributes[%d]", field, index)
+		name := fmt.Sprintf(attributeIndexFieldFormat, field, index)
 		if !attributeNamePattern.MatchString(source.Name) || seen[source.Name] {
 			return fmt.Errorf("%s.name must be a unique valid attribute name", name)
 		}

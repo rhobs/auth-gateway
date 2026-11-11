@@ -1,0 +1,156 @@
+---
+version: 1
+authenticators:
+- name: issuer-one
+  jwt:
+    issuer: https://issuer-one.jwt.test
+    jwks:
+      uri: https://jwks.jwt.test/issuer-one
+    audiences:
+    - gateway-test
+  attributes:
+    - name: tenant_id
+      from_source: claim
+      value: [organization, id]
+    - name: writer_id
+      from_source: claim
+      value: [sub]
+    - name: requested_tenant
+      from_source: header
+      value: X-Tenant
+- name: partner-key
+  api_key:
+    secret: gateway-api-keys
+    header: X-Partner-Key
+  attributes:
+    - name: tenant_id
+      from_source: credential
+      value: tenant_id
+    - name: writer_id
+      from_source: credential
+      value: writer_id
+    - name: requested_tenant
+      from_source: header
+      value: X-Tenant
+servers:
+- hostname: fault.example.com
+  apis:
+  - name: injected
+    fault_injection:
+      enabled: true
+      match:
+        headers:
+        - name: X-Inject-Fault
+          expression: in
+          value: ['true', canary]
+        - name: X-Fault-Test
+          expression: present
+        attributes:
+        - name: tenant_id
+          expression: in
+          value: [tenant-a, tenant-c]
+        - name: writer_id
+          expression: present
+      abort:
+        http_status: 503
+        percentage: 100
+    access:
+    - name: path-0
+      match:
+        headers:
+          - name: X-Auth-Path
+            expression: equals
+            value: jwt
+      authentication:
+        jwt:
+          providers:
+          - issuer-one
+      authorization:
+        grants:
+        - authenticator: issuer-one
+          attributes:
+            - name: tenant_id
+              expression: in
+              value: [tenant-a, tenant-b, tenant-c]
+    - name: path-1
+      match:
+        headers:
+          - name: X-Auth-Path
+            expression: equals
+            value: api_key
+      authentication:
+        api_key:
+          authenticator: partner-key
+      authorization:
+        grants:
+        - authenticator: partner-key
+          attributes:
+            - name: tenant_id
+              expression: in
+              value: [tenant-a, tenant-b, tenant-c]
+  - name: healthy
+    access:
+    - name: path-0
+      match:
+        headers:
+          - name: X-Auth-Path
+            expression: equals
+            value: jwt
+      authentication:
+        jwt:
+          providers:
+          - issuer-one
+      authorization:
+        grants:
+        - authenticator: issuer-one
+          attributes:
+            - name: tenant_id
+              expression: in
+              value: [tenant-a, tenant-b, tenant-c]
+    - name: path-1
+      match:
+        headers:
+          - name: X-Auth-Path
+            expression: equals
+            value: api_key
+      authentication:
+        api_key:
+          authenticator: partner-key
+      authorization:
+        grants:
+        - authenticator: partner-key
+          attributes:
+            - name: tenant_id
+              expression: in
+              value: [tenant-a, tenant-b, tenant-c]
+apis:
+- name: injected
+  metrics:
+    labels:
+      tenant: tenant_id
+      writer: writer_id
+  upstream:
+    address: httpbin
+    port: 8080
+  routes:
+  - methods:
+    - GET
+    - POST
+    path:
+      prefix: "/injected/"
+    rewrite:
+      prefix: "/anything/injected/"
+- name: healthy
+  upstream:
+    address: httpbin
+    port: 8080
+  routes:
+  - methods:
+    - POST
+    path:
+      prefix: "/healthy/"
+    rewrite:
+      prefix: "/anything/healthy/"
+kubernetes:
+  name: auth-gateway
+  namespace: gateway-test

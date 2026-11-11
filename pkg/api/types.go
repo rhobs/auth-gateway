@@ -16,7 +16,6 @@ type API struct {
 	Upstream         Upstream                `yaml:"upstream"`
 	Metrics          *APIMetrics             `yaml:"metrics,omitempty"`
 	AdmissionControl *AdmissionControlConfig `yaml:"admission_control,omitempty"`
-	FaultInjection   *FaultInjectionConfig   `yaml:"fault_injection,omitempty"`
 	CircuitBreakers  *CircuitBreakerConfig   `yaml:"circuit_breakers,omitempty"`
 	Timeouts         *RouteTimeouts          `yaml:"timeouts,omitempty"`
 }
@@ -94,9 +93,10 @@ type ExternalAuthorizationService struct {
 
 // APIBinding exposes one API with explicit public access or protected entries.
 type APIBinding struct {
-	Name   string   `yaml:"name"`
-	Public bool     `yaml:"public,omitempty"`
-	Access []Access `yaml:"access,omitempty"`
+	Name           string                `yaml:"name"`
+	Public         bool                  `yaml:"public,omitempty"`
+	Access         []Access              `yaml:"access,omitempty"`
+	FaultInjection *FaultInjectionConfig `yaml:"fault_injection,omitempty"`
 }
 
 // Access binds request selectors to one authentication and authorization path.
@@ -133,17 +133,17 @@ type EnvoyNode struct {
 	Cluster string `yaml:"cluster,omitempty"`
 }
 
-// FaultInjectionConfig optionally aborts requests to one API with HTTP errors.
+// FaultInjectionConfig optionally aborts requests on one server API binding.
 type FaultInjectionConfig struct {
 	Enabled bool              `yaml:"enabled,omitempty"`
 	Abort   *FaultAbortConfig `yaml:"abort,omitempty"`
 	Match   *FaultMatchConfig `yaml:"match,omitempty"`
 }
 
-// FaultMatchConfig limits faults to exact headers and authenticated attributes.
+// FaultMatchConfig limits faults to headers and verified attributes.
 type FaultMatchConfig struct {
-	Headers    map[string]string   `yaml:"headers,omitempty"`
-	Attributes map[string][]string `yaml:"attributes,omitempty"`
+	Headers    []MatchExpression `yaml:"headers,omitempty"`
+	Attributes []MatchExpression `yaml:"attributes,omitempty"`
 }
 
 // FaultAbortConfig sets the status and whole-number percentage of injected errors.

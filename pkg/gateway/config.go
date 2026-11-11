@@ -48,6 +48,7 @@ type resolvedServer struct {
 
 type resolvedAPIBinding struct {
 	*gatewayapi.APIBinding
+	index  int
 	api    gatewayapi.API
 	access []resolvedAccess
 }
@@ -79,11 +80,6 @@ func validateAPI(name string, api gatewayapi.API, hasKubernetes bool) error {
 			return err
 		}
 	}
-	if api.FaultInjection != nil {
-		if err := validateFaultInjectionConfig(*api.FaultInjection, name+".fault_injection"); err != nil {
-			return err
-		}
-	}
 	if len(api.Routes) == 0 {
 		return fmt.Errorf("%s.routes must contain at least one route", name)
 	}
@@ -102,7 +98,6 @@ func cloneAPI(a gatewayapi.API) gatewayapi.API {
 	a.Upstream = cloneUpstream(a.Upstream)
 	a.Metrics = cloneConfigPointer(a.Metrics, cloneAPIMetrics)
 	a.AdmissionControl = cloneConfigPointer(a.AdmissionControl, cloneAdmissionControlConfig)
-	a.FaultInjection = cloneConfigPointer(a.FaultInjection, cloneFaultInjectionConfig)
 	if a.CircuitBreakers != nil {
 		circuitBreakers := cloneCircuitBreakerConfig(a.CircuitBreakers)
 		a.CircuitBreakers = &circuitBreakers
@@ -378,9 +373,6 @@ func resolveAuthentication(c *resolvedConfig) error {
 			return err
 		}
 	}
-	if err := validateFaultHeaderReferences(c.APIs, apiKeyHeader); err != nil {
-		return err
-	}
 	if err := validateMetricAttributeReferences(c.APIs, authenticators, c.Servers, c.extAuthzIndex); err != nil {
 		return err
 	}
@@ -392,6 +384,9 @@ func resolveAuthentication(c *resolvedConfig) error {
 	}
 	for i := range c.servers {
 		if err := resolveServerAccess(c, i); err != nil {
+			return err
+		}
+		if err := validateFaultBindings(fmt.Sprintf(serverFieldPathFormat, i), c.servers[i], apiKeyHeader); err != nil {
 			return err
 		}
 		if err := validateFaultAttributeSources(fmt.Sprintf(serverFieldPathFormat, i), c.servers[i], c.extAuthzIndex); err != nil {

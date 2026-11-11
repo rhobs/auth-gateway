@@ -36,6 +36,23 @@ servers:
 - hostname: fault.example.com
   apis:
   - name: injected
+    fault_injection:
+      enabled: true
+      match:
+        headers:
+        - name: X-Inject-Fault
+          expression: equals
+          value: 'true'
+        attributes:
+        - name: tenant_id
+          expression: in
+          value: [tenant-a, tenant-c]
+        - name: writer_id
+          expression: equals
+          value: writer-a
+      abort:
+        http_status: 503
+        percentage: 100
     access:
     - name: path-0
       match:
@@ -111,20 +128,6 @@ apis:
     labels:
       tenant: tenant_id
       writer: writer_id
-  fault_injection:
-    enabled: true
-    match:
-      headers:
-        X-Inject-Fault: 'true'
-      attributes:
-        tenant_id:
-        - tenant-a
-        - tenant-c
-        writer_id:
-        - writer-a
-    abort:
-      http_status: 503
-      percentage: 100
   upstream:
     address: httpbin
     port: 8080
