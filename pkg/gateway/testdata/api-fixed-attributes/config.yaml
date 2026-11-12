@@ -1,0 +1,40 @@
+version: 1
+apis:
+- name: metrics
+  attributes:
+  - name: role
+    from_source: fixed
+    value: "metrics:read"
+  - name: api
+    from_source: fixed
+    value: metrics
+  metrics:
+    labels:
+      operation: role
+  upstream:
+    address: metrics.example.test
+    port: 8080
+  routes:
+  - methods: [GET]
+    path: {exact: /metrics}
+    processing:
+      request_headers:
+      - name: X-Operation
+        from_attribute: role
+- name: plain
+  upstream:
+    address: plain.example.test
+    port: 8080
+  routes:
+  - methods: [GET]
+    path: {exact: /plain}
+servers:
+- hostname: gateway.example.test
+  apis:
+  - name: metrics
+    public: true
+  - name: plain
+    public: true
+kubernetes:
+  name: auth-gateway
+  namespace: observability

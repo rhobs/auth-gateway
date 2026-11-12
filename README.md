@@ -111,7 +111,9 @@ JWT or API-key authentication and grants tied to the verifying authenticator.
 JWT entries can trust multiple providers. Optional attribute equality binds a
 requested tenant header to a verified credential value. mTLS uses dedicated
 HTTPS servers with mandatory client certificates and no API-level authentication.
-Unmatched or unauthorized requests are denied before the backend. Routes forward source attributes to upstream headers, and metrics use
+Unmatched or unauthorized requests are denied before the backend. APIs can also
+declare fixed attributes for all their matched routes, including public routes.
+Routes forward source attributes to upstream headers, and metrics use
 the same source values. Supply an additional source attribute when an upstream
 needs a different value. See the [JWT guide](docs/auth/jwt.md),
 [API-key guide](docs/auth/api-key.md), [mTLS guide](docs/auth/mtls.md), and

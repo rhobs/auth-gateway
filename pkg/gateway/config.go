@@ -60,6 +60,9 @@ type resolvedAccess struct {
 }
 
 func validateAPI(name string, api gatewayapi.API, hasKubernetes bool) error {
+	if err := validateAPIFixedAttributes(name, api.Attributes); err != nil {
+		return err
+	}
 	if !validHost(api.Upstream.Address) {
 		return fmt.Errorf("%s.upstream.address must be an IP address or DNS name", name)
 	}
@@ -94,6 +97,7 @@ func validateAPI(name string, api gatewayapi.API, hasKubernetes bool) error {
 }
 
 func cloneAPI(a gatewayapi.API) gatewayapi.API {
+	a.Attributes = cloneSlice(a.Attributes, cloneAttributeSource)
 	a.Routes = cloneSlice(a.Routes, cloneRoute)
 	a.Upstream = cloneUpstream(a.Upstream)
 	a.Metrics = cloneConfigPointer(a.Metrics, cloneAPIMetrics)

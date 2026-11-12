@@ -65,6 +65,7 @@ var _ = Describe("External authorization", Label("gateway", "ext-authz", "authen
 		Expect(echo.Data).To(BeEmpty())
 		Expect(headerValue(echo.Headers, "Authorization")).To(BeEmpty())
 		Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(Equal("internal"))
+		Expect(headerValue(echo.Headers, "X-Role")).To(Equal("metrics:read"))
 	})
 
 	It("rejects invalid local JWTs and claims denied by the policy", func(ctx SpecContext) {

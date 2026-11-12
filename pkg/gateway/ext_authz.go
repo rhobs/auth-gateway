@@ -251,9 +251,9 @@ func extAuthzAttributeBridgeFilter() (*hcm.HttpFilter, error) {
 	return &hcm.HttpFilter{Name: extAuthzAttributeBridgeName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: config}}, nil
 }
 
-func extAuthzAttributeBridgePerRouteConfig(attributes []gatewayapi.AttributeSource) (*anypb.Any, error) {
-	names := make([]string, 0, len(attributes))
-	for _, source := range attributes {
+func extAuthzAttributeBridgePerRouteConfig(attributes, fixed []gatewayapi.AttributeSource) (*anypb.Any, error) {
+	names := make([]string, 0, len(attributes)+len(fixed))
+	for _, source := range append(slices.Clone(attributes), fixed...) {
 		names = append(names, source.Name)
 	}
 	slices.Sort(names)

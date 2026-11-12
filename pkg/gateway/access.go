@@ -32,8 +32,8 @@ func resolveServerAccess(c *resolvedConfig, index int) error {
 			if binding.Access != nil || server.usesMTLS() {
 				return fmt.Errorf("%s.public cannot be combined with access or server mTLS", bindingField)
 			}
-			if hasRequestHeaderProcessing([]gatewayapi.API{resolved.api}) {
-				return fmt.Errorf("%s.public cannot forward authenticated attributes", bindingField)
+			if err := validatePublicAPIForwarding(bindingField, resolved.api); err != nil {
+				return err
 			}
 		} else if len(binding.Access) == 0 {
 			return fmt.Errorf("%s.access must contain at least one entry (or set public: true)", bindingField)
@@ -70,6 +70,9 @@ func resolveServerAccess(c *resolvedConfig, index int) error {
 				return err
 			}
 			if err := validateExtAuthzAccess(entryField, access, c.extAuthzIndex); err != nil {
+				return err
+			}
+			if err := validateAPIFixedAttributeCollisions(entryField, resolved.api, access, c.extAuthzIndex); err != nil {
 				return err
 			}
 			if err := validateAccessForwarding(entryField, resolved.api, access, c.extAuthzIndex); err != nil {
@@ -351,6 +354,9 @@ func validateAccessForwarding(field string, api gatewayapi.API, access resolvedA
 			continue
 		}
 		for _, mapping := range route.Processing.RequestHeaders {
+			if apiHasFixedAttribute(api, mapping.FromAttribute) {
+				continue
+			}
 			if access.Authorization.ExtAuthz != nil {
 				service := services[access.Authorization.ExtAuthz.Service]
 				if extAuthzProvidesAttribute(access, service, mapping.FromAttribute) {
@@ -364,6 +370,20 @@ func validateAccessForwarding(field string, api gatewayapi.API, access resolvedA
 				if !providesAttributeAuthenticator(authenticator, mapping.FromAttribute) {
 					return fmt.Errorf("%s authenticator %q does not provide processing attribute %q", field, authenticator.Name, mapping.FromAttribute)
 				}
+			}
+		}
+	}
+	return nil
+}
+
+func validatePublicAPIForwarding(field string, api gatewayapi.API) error {
+	for _, route := range api.Routes {
+		if route.Processing == nil {
+			continue
+		}
+		for _, mapping := range route.Processing.RequestHeaders {
+			if !apiHasFixedAttribute(api, mapping.FromAttribute) {
+				return fmt.Errorf("%s.public cannot forward non-fixed attribute %q", field, mapping.FromAttribute)
 			}
 		}
 	}

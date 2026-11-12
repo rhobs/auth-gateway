@@ -303,12 +303,16 @@ func appendAttributeInitialization(config *setfilterstate.Config, authenticator 
 }
 
 func filterStateValue(key, expression string) *setfilterstatecommon.FilterStateValue {
+	return filterStateFormatValue(key, "%CEL("+expression+")%")
+}
+
+func filterStateFormatValue(key, format string) *setfilterstatecommon.FilterStateValue {
 	return &setfilterstatecommon.FilterStateValue{
 		Key:        &setfilterstatecommon.FilterStateValue_ObjectKey{ObjectKey: key},
 		FactoryKey: "envoy.string",
 		Value: &setfilterstatecommon.FilterStateValue_FormatString{FormatString: &core.SubstitutionFormatString{
 			Format: &core.SubstitutionFormatString_TextFormatSource{TextFormatSource: &core.DataSource{
-				Specifier: &core.DataSource_InlineString{InlineString: "%CEL(" + expression + ")%"},
+				Specifier: &core.DataSource_InlineString{InlineString: format},
 			}},
 			OmitEmptyValues: true,
 		}},

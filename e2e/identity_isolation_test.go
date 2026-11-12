@@ -115,6 +115,9 @@ var _ = Describe("Tenant and resource isolation", Label("gateway", "identity-iso
 	registerIdentityDeniedSpecs(func() (*apiKeyE2E, func(string, any, string) string) { return gateway, token })
 
 	It("keeps public APIs explicit on the same host", func(ctx SpecContext) {
+		labels := map[string]string{"api": "journey-health", "http_status_code": "200", "operation": "health:read (100%)"}
+		before, err := requestMetricCount(ctx, gateway.adminAddr, labels)
+		Expect(err).NotTo(HaveOccurred())
 		status, body, err := gateway.request(ctx, accessJourneyHost, false, http.MethodGet, "/health", "", "broken.jwt", "", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).To(Equal(http.StatusOK), string(body))
@@ -125,5 +128,9 @@ var _ = Describe("Tenant and resource isolation", Label("gateway", "identity-iso
 		Expect(echo.Data).To(BeEmpty())
 		Expect(headerValue(echo.Headers, "Authorization")).To(BeEmpty())
 		Expect(headerValue(echo.Headers, "X-Partner-Key")).To(BeEmpty())
+		Expect(headerValue(echo.Headers, "X-Operation")).To(Equal("health:read (100%)"))
+		after, err := requestMetricCount(ctx, gateway.adminAddr, labels)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(after).To(BeNumerically(">", before))
 	}, NodeTimeout(60*time.Second))
 })
