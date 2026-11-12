@@ -48,6 +48,9 @@ be a credential header. An `authenticator` source uses an attribute declared
 by every selected local authenticator on an access entry. The name and value
 must match. Only nonempty scalar strings are sent. A selected access entry
 without local authentication sends no authenticator attributes.
+An authenticator attribute can be a fixed string; it is sent only when that
+authenticator verifies the request, using the same service declaration as any
+other authenticator attribute.
 
 Every fixed attribute declared under `apis[].attributes` on the matched API is
 sent automatically in the same namespace when an access entry uses this service.

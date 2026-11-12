@@ -9,6 +9,9 @@ authenticators:
   - name: tenant_id
     from_source: claim
     value: [tenant]
+  - name: auth_origin
+    from_source: fixed
+    value: "jwt (100%)"
 ext_authz_services:
 - name: policy
   upstream:
@@ -27,6 +30,9 @@ ext_authz_services:
   - name: tenant_id
     from_source: authenticator
     value: tenant_id
+  - name: auth_origin
+    from_source: authenticator
+    value: auth_origin
 apis:
 - name: metrics
   upstream:

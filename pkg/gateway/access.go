@@ -316,8 +316,8 @@ func validateAccessGrants(field string, access resolvedAccess) error {
 			if !ok || !attributeNamePattern.MatchString(name) {
 				return fmt.Errorf("%s is not declared by authenticator %q", attributeField, authenticator.Name)
 			}
-			if source.FromSource == attributeSourceHeader {
-				return fmt.Errorf("%s must use a verified credential attribute, not a header source", attributeField)
+			if source.FromSource == attributeSourceHeader || source.FromSource == attributeSourceFixed {
+				return fmt.Errorf("%s must use a verified credential attribute, not a %s source", attributeField, source.FromSource)
 			}
 			if err := validateMatchExpression(attributeField, condition, true); err != nil {
 				return err
@@ -332,6 +332,9 @@ func validateAccessGrants(field string, access resolvedAccess) error {
 				}
 				if other.FromSource == attributeSourceHeader && !accessMatchesHeader(access.Match, other.Value.Text) {
 					return fmt.Errorf("%s.value header %q must be selected in match.headers", attributeField, other.Value.Text)
+				}
+				if other.FromSource == attributeSourceFixed {
+					return fmt.Errorf("%s.value cannot reference a fixed attribute", attributeField)
 				}
 			}
 		}

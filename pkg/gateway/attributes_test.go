@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	headertometadata "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/header_to_metadata/v3"
+	setfilterstate "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
 )
 
@@ -31,6 +33,10 @@ func TestValidateAuthenticatorAttributeSources(t *testing.T) {
 		{"credential header", 2, testTextAttribute("requested_tenant", "header", "x-partner-key"), "reserved"},
 		{"certificate on JWT", 0, testTextAttribute("tenant_id", "certificate", "uri_san"), ".value"},
 		{"invalid certificate value", 1, testTextAttribute("tenant_id", "certificate", "email_san"), ".value"},
+		{"empty fixed value", 0, testTextAttribute("auth_origin", "fixed", ""), ".value"},
+		{"fixed path", 0, gatewayapi.AttributeSource{Name: "auth_origin", FromSource: "fixed", Value: gatewayapi.AttributeValue{Path: []string{"origin"}, IsPath: true}}, ".value"},
+		{"fixed control", 0, testTextAttribute("auth_origin", "fixed", "bad\u0085value"), ".value"},
+		{"fixed whitespace", 0, testTextAttribute("auth_origin", "fixed", " origin "), ".value"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -43,6 +49,68 @@ func TestValidateAuthenticatorAttributeSources(t *testing.T) {
 				t.Fatalf("validation error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestFixedAuthenticatorAttributesValidateForAllMethods(t *testing.T) {
+	for _, test := range []struct {
+		name, fixture string
+		index         int
+	}{
+		{"jwt", "jwt-auth-with-attributes", 0},
+		{"api key", "api-key-auth", 1},
+		{"mtls", "mtls-auth", 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c := loadConfigCase(t, test.fixture)
+			setTestAttribute(&c.Authenticators[test.index], testTextAttribute("auth_origin", "fixed", "source (100%)"))
+			if err := Validate(c); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestFixedAuthenticatorAttributeGeneratedOnlyForSelectedAuthenticator(t *testing.T) {
+	c := loadConfigCase(t, "ext-authz")
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
+	var checkedJWT, checkedExternal bool
+	for _, generated := range manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes() {
+		if !strings.Contains(generated.Name, "-access-") || strings.HasSuffix(generated.Name, "-access-denied") {
+			continue
+		}
+		var wrapper route.FilterConfig
+		if err := generated.TypedPerFilterConfig[attributeFilterName].UnmarshalTo(&wrapper); err != nil {
+			t.Fatal(err)
+		}
+		var config setfilterstate.Config
+		if err := wrapper.GetConfig().UnmarshalTo(&config); err != nil {
+			t.Fatal(err)
+		}
+		var format string
+		for _, update := range config.OnRequestHeaders {
+			if update.GetObjectKey() == filterStateKey("auth_origin") {
+				format = update.GetFormatString().GetTextFormatSource().GetInlineString()
+			}
+		}
+		if strings.Contains(generated.Name, "-access-0-") {
+			checkedJWT = true
+			if !strings.Contains(format, `\u0025`) || !strings.Contains(format, jwtAuthnFilterName) || strings.Contains(format, "100%") {
+				t.Fatalf("JWT fixed attribute format = %q", format)
+			}
+		} else {
+			checkedExternal = true
+			if format != "" {
+				t.Fatalf("external access initializes authenticator attribute: %q", format)
+			}
+		}
+	}
+	if !checkedJWT || !checkedExternal {
+		t.Fatalf("checked JWT=%t external=%t", checkedJWT, checkedExternal)
 	}
 }
 

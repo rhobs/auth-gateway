@@ -43,6 +43,11 @@ func celStringLiteral(value string) string {
 	return out.String()
 }
 
+func celFormatterStringLiteral(value string) string {
+	// Keep literal percents out of Envoy's formatter syntax.
+	return strings.ReplaceAll(celStringLiteral(value), "%", `\u0025`)
+}
+
 func (b *celExpressionBuilder) id() int64 {
 	b.next++
 	return b.next

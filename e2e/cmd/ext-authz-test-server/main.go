@@ -55,12 +55,12 @@ func (server) Check(ctx context.Context, request *authv3.CheckRequest) (*authv3.
 		tenant := claims["organization"].GetStructValue().GetFields()["id"].GetStringValue()
 		if tenant != requested || requested != "internal" || claims["sub"].GetStringValue() != "writer" ||
 			claims["aud"].GetStringValue() != "gateway-test" || claims["exp"].GetNumberValue() <= 0 ||
-			declared["tenant_id"].GetStringValue() != tenant {
+			declared["tenant_id"].GetStringValue() != tenant || declared["auth_origin"].GetStringValue() != "jwt (100%)" {
 			return deny(envoytype.StatusCode_Forbidden), nil
 		}
 		return allow(mode), nil
 	case "external":
-		if declared["tenant_id"] != nil || metadata["envoy.filters.http.jwt_authn"] != nil {
+		if declared["tenant_id"] != nil || declared["auth_origin"] != nil || metadata["envoy.filters.http.jwt_authn"] != nil {
 			return deny(envoytype.StatusCode_Forbidden), nil
 		}
 		if header(headers, "authorization") != "Bearer e2e-partner" {
@@ -71,7 +71,7 @@ func (server) Check(ctx context.Context, request *authv3.CheckRequest) (*authv3.
 		}
 		return allow(mode), nil
 	case "api-key":
-		if metadata["envoy.filters.http.jwt_authn"] != nil || requested != "client-a" || declared["tenant_id"].GetStringValue() != "client-a" || header(headers, "x-partner-key") != "" {
+		if metadata["envoy.filters.http.jwt_authn"] != nil || requested != "client-a" || declared["tenant_id"].GetStringValue() != "client-a" || declared["auth_origin"].GetStringValue() != "api-key" || header(headers, "x-partner-key") != "" {
 			return deny(envoytype.StatusCode_Forbidden), nil
 		}
 		return allow(mode), nil

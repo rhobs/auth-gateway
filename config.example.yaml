@@ -70,6 +70,9 @@ authenticators:
       - name: writer_id
         from_source: claim
         value: [sub]
+      - name: auth_origin
+        from_source: fixed
+        value: internal-jwt
       - name: role
         from_source: claim
         value: [role]
@@ -165,6 +168,9 @@ ext_authz_services:
       - name: tenant_id
         from_source: authenticator
         value: tenant_id
+      - name: auth_origin
+        from_source: authenticator
+        value: auth_origin
 
 # Metrics collection is enabled by default. Per-API counters still need
 # apis[].metrics. Tracing is disabled by default.
