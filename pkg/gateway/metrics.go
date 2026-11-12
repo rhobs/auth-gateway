@@ -139,6 +139,9 @@ func validateMetricAttributeReferences(apis []gatewayapi.API, authenticators map
 		}
 		for _, label := range slices.Sorted(maps.Keys(api.Metrics.Labels)) {
 			attribute := api.Metrics.Labels[label]
+			if apiHasFixedAttribute(api, attribute) {
+				continue
+			}
 			if _, exists := known[attribute]; !exists {
 				return fmt.Errorf("apis[%d].metrics.labels.%s references unknown authenticator attribute %q", i, label, attribute)
 			}

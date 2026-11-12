@@ -41,6 +41,9 @@ func (server) Check(ctx context.Context, request *authv3.CheckRequest) (*authv3.
 	if declared["requested_tenant"].GetStringValue() != requested {
 		return deny(envoytype.StatusCode_Forbidden), nil
 	}
+	if declared["role"].GetStringValue() != "metrics:read" {
+		return deny(envoytype.StatusCode_Forbidden), nil
+	}
 	route := attributes.GetRouteMetadataContext().GetFilterMetadata()["auth_gateway.ext_authz.access"]
 	if route.GetFields()["api"].GetStringValue() != "ext-authz-api" {
 		return deny(envoytype.StatusCode_Forbidden), nil

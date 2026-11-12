@@ -37,6 +37,10 @@ ext_authz_services:
     value: tenant_id
 apis:
 - name: ext-authz-api
+  attributes:
+  - name: role
+    from_source: fixed
+    value: "metrics:read"
   upstream:
     address: httpbin
     port: 8080
@@ -48,6 +52,8 @@ apis:
       request_headers:
       - name: X-Scope-OrgID
         from_attribute: requested_tenant
+      - name: X-Role
+        from_attribute: role
 servers:
 - hostname: ext.auth-gateway.test
   apis:

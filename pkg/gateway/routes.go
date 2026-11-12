@@ -316,6 +316,9 @@ func serverVirtualHost(c resolvedConfig, index int, server resolvedServer) (*rou
 	if err != nil {
 		return nil, err
 	}
+	if err := addAPIFixedAttributeRouteConfigs(routes, server.apis); err != nil {
+		return nil, err
+	}
 	if err := addAPIAdmissionRouteConfigs(routes, server.apis); err != nil {
 		return nil, err
 	}
@@ -392,6 +395,9 @@ func serverVirtualHost(c resolvedConfig, index int, server resolvedServer) (*rou
 			return nil, err
 		}
 		denied.TypedPerFilterConfig = map[string]*anypb.Any{requestValidationFilterName: validation}
+		if fixed := base.TypedPerFilterConfig[apiFixedAttributeFilterName]; fixed != nil {
+			denied.TypedPerFilterConfig[apiFixedAttributeFilterName] = fixed
+		}
 		host.Routes = append(host.Routes, denied)
 	}
 	return host, nil
@@ -465,7 +471,7 @@ func addAccessRouteConfigs(c resolvedConfig, generated *route.Route, access reso
 		}
 		apiName := generated.Metadata.FilterMetadata[authorizationFilterName].Fields[apiMetadataName].GetStringValue()
 		generated.Metadata.FilterMetadata[extAuthzMetadataName] = extAuthzRouteMetadata(apiName, access)
-		bridge, err := extAuthzAttributeBridgePerRouteConfig(c.extAuthzIndex[external.Service].Attributes)
+		bridge, err := extAuthzAttributeBridgePerRouteConfig(c.extAuthzIndex[external.Service].Attributes, c.apiIndex[apiName].Attributes)
 		if err != nil {
 			return err
 		}

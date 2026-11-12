@@ -48,6 +48,7 @@ be a credential header. An `authenticator` source uses an attribute declared
 by every selected local authenticator on an access entry. The name and value
 must match. Only nonempty scalar strings are sent. A selected access entry
 without local authentication sends no authenticator attributes.
+Fixed attributes declared on the matched API are also sent in this namespace.
 
 ## Select it on an access entry
 

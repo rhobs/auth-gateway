@@ -77,6 +77,12 @@ identity headers before forwarding.
 
 ### Attribute flow
 
+Each API-level `fixed` attribute is stored as route metadata and copied into
+`auth_gateway.attributes.<name>` by a native `set_filter_state` filter before
+authentication. The filter runs on public and protected API routes, but not on
+generated `404` or `405` fallbacks. It reads the literal from route metadata,
+so formatter syntax in the value does not change it.
+
 Envoy keeps source values in per-request dynamic metadata: `jwt_authn` provides
 verified JWT claims, while `header_to_metadata` captures configured request
 headers and values emitted by the API-key and mTLS filters. The native
@@ -99,7 +105,7 @@ client header may exceed that size because it is not stored as one metadata
 value. Missing bindings remain unset, and credentials and the internal
 client header are removed before forwarding.
 
-The filter uses CEL to copy scalar source values into
+The credential attribute filter uses CEL to copy scalar source values into
 `auth_gateway.attributes.<name>`. Its configuration is part of the static
 bootstrap. RBAC evaluates grants against source metadata; filter state feeds
 managed upstream headers and metric labels with the same values. List claims
@@ -114,7 +120,7 @@ authentication and before required-header checks and request processing.
 Entries without local authentication still run the external filter.
 
 The gRPC Check request includes allowlisted request headers, the route's
-API and access labels, declared attributes in
+API and access labels, declared service and fixed API attributes in
 `auth_gateway.ext_authz.attributes`, and parsed JWT claims in
 `envoy.filters.http.jwt_authn` when JWT authentication ran. A route-specific
 Lua filter copies nonempty scalar attributes from filter state into Check
@@ -232,8 +238,8 @@ after authentication, attribute extraction, authorization, and request-header
 processing. It runs before admission control and the router.
 
 Optional `equals`, `in`, and `present` header matches gate injection. Attribute selectors read the
-same filter state as header forwarding and metrics, populated for the selected
-access entry from its declared sources. Missing or empty attributes do not
+same filter state as header forwarding and metrics, populated from the API's
+fixed attributes and the selected access entry's declared sources. Missing or empty attributes do not
 match. All configured selectors must match, with alternative allowed values in
 each `in` expression. Status and percentage remain
 configured by the operator; Envoy's client-controlled abort headers are not

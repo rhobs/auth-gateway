@@ -47,8 +47,21 @@ func httpFilters(c resolvedConfig, hosts []indexedVirtualHost, protected bool) (
 	if err != nil {
 		return nil, err
 	}
+	if hasAPIFixedAttributes(apisForHosts(c, hosts)) {
+		fixed, err := apiFixedAttributeHTTPFilter()
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, fixed)
+	}
 	if protected {
 		filters, err = protectedHTTPFilters(c, filters, hosts)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if hasRequestHeaderProcessing(apisForHosts(c, hosts)) {
+		filters, err = appendRequiredHeaderRBAC(filters)
 		if err != nil {
 			return nil, err
 		}
@@ -194,9 +207,6 @@ func protectedHTTPFilters(c resolvedConfig, filters []*hcm.HttpFilter, hosts []i
 			return nil, err
 		}
 		filters = append(filters, filter)
-	}
-	if hasRequestHeaderProcessing(apisForHosts(c, hosts)) {
-		return appendRequiredHeaderRBAC(filters)
 	}
 	return filters, nil
 }

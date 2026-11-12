@@ -12,6 +12,7 @@ type AdmissionControlConfig struct {
 // API describes one upstream and its routes.
 type API struct {
 	Name             string                  `yaml:"name"`
+	Attributes       []AttributeSource       `yaml:"attributes,omitempty"`
 	Routes           []Route                 `yaml:"routes"`
 	Upstream         Upstream                `yaml:"upstream"`
 	Metrics          *APIMetrics             `yaml:"metrics,omitempty"`
@@ -32,7 +33,7 @@ type APIKeyCredential struct {
 	Attributes map[string]string `yaml:"attributes,omitempty"`
 }
 
-// AttributeSource selects one original value from a verified credential or request header.
+// AttributeSource selects one value from a declared source.
 type AttributeSource struct {
 	Name       string         `yaml:"name"`
 	FromSource string         `yaml:"from_source"`

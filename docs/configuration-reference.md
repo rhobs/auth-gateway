@@ -103,6 +103,7 @@ cannot repeat a method and path matcher.
 | Field                     | Type            | Default                  | Constraint                                                        |
 |---------------------------|-----------------|--------------------------|-------------------------------------------------------------------|
 | `apis[].name`             | string          | None                     | Required; follows the name format above.                          |
+| `apis[].attributes`       | list of objects | Empty                    | Optional fixed request attributes; see [API attributes](#api-attributes). |
 | `apis[].routes`           | list of objects | None                     | Required; at least one route.                                     |
 | `apis[].upstream`         | object          | None                     | Required; see [upstream](#upstream).                              |
 | `apis[].metrics`          | object          | None                     | Optional per-API counter labels; see [API metrics](#api-metrics). |
@@ -110,6 +111,22 @@ cannot repeat a method and path matcher.
 | `servers[].apis[].fault_injection` | object | Disabled | Optional HTTP error injection for this API on this server; see [Fault injection](#fault-injection). |
 | `apis[].circuit_breakers` | object          | Defaults below           | Optional; omission still applies the listed defaults.             |
 | `apis[].timeouts`         | object          | Effective defaults below | Optional defaults for every route in this API.                    |
+
+### API attributes
+
+`apis[].attributes` declares fixed values for every matching method route of
+an API, including public routes. They are available to managed upstream headers,
+metric labels, fault selectors, and external authorization checks. Generated
+`404` and `405` fallbacks have no API attributes. Fixed attributes use the same
+names and values for every server binding of the API. They cannot reuse a name
+provided by an authenticator or external authorization service selected on one
+of those bindings. Changes require an explicit gateway Deployment rollout.
+
+| Field | Type | Default | Constraint |
+|-------|------|---------|------------|
+| `apis[].attributes[].name` | string | None | Required unique attribute name using the attribute name format above. |
+| `apis[].attributes[].from_source` | string | None | Must be `fixed`; dynamic sources belong to authenticators or external authorization services. |
+| `apis[].attributes[].value` | string | None | Required nonempty string without control characters or surrounding whitespace. Used unchanged. |
 
 ### Upstream
 
@@ -187,15 +204,14 @@ object is omitted.
 
 Each API with `metrics` configured emits a request counter. The automatic `api`
 label is the API name and `http_status_code` comes from the response.
-Additional labels use values from authenticator attributes declared under
-`authenticators[].attributes` or response attributes declared by an external
-authorization entry.
+Additional labels use values from this API's fixed attributes, authenticator
+attributes, or attributes declared by an external authorization service.
 Requests carrying both the configured API-key header and `Authorization` are
 rejected before this counter runs.
 
 | Field                   | Type                                | Default | Constraint                                                                                                                                                                                                                  |
 |-------------------------|-------------------------------------|---------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `apis[].metrics.labels` | map of label name to attribute name | Empty   | Label names must be valid Prometheus names, must not start with `__`, and cannot be `api`, `http_status_code`, or `envoy_http_conn_manager_prefix`. Each value must be a valid authenticator or external response attribute. |
+| `apis[].metrics.labels` | map of label name to attribute name | Empty   | Label names must be valid Prometheus names, must not start with `__`, and cannot be `api`, `http_status_code`, or `envoy_http_conn_manager_prefix`. Each value must reference this API's fixed attribute, an authenticator attribute, or an external authorization attribute. |
 
 #### Metric cardinality
 
@@ -230,7 +246,7 @@ its abort settings for the next test.
 | `servers[].apis[].fault_injection.enabled` | boolean | `false` | Requires `abort` when enabled. |
 | `servers[].apis[].fault_injection.match` | object | None | Optional; if supplied, must contain headers or attributes. Omit to select all requests that pass authentication, authorization, and required-header checks. |
 | `servers[].apis[].fault_injection.match.headers` | list of match expressions | Empty | Each entry has `name`, `expression`, and a `value` for `equals` or `in`. Supports `equals`, `in`, and `present`. Names are case-insensitive, unique, and cannot contain underscores or use reserved identity, routing, connection, framing, or credential headers. Route processing cannot overwrite them. |
-| `servers[].apis[].fault_injection.match.attributes` | list of match expressions | Empty | Each entry has an attribute `name`, `expression`, and a `value` for `equals` or `in`. Supports `equals`, `in`, and `present`. Names must be unique. The selected access entry supplies values from its declared sources, including request headers. Missing values do not match. |
+| `servers[].apis[].fault_injection.match.attributes` | list of match expressions | Empty | Each entry has an attribute `name`, `expression`, and a `value` for `equals` or `in`. Supports `equals`, `in`, and `present`. Names must be unique. Values come from fixed API attributes or the selected access entry, including declared request headers. Missing values do not match. |
 | `servers[].apis[].fault_injection.abort` | object | None | Required when enabled; HTTP errors only. |
 | `servers[].apis[].fault_injection.abort.http_status` | uint32 | None | Required error status from `400` to `599`. |
 | `servers[].apis[].fault_injection.abort.percentage` | uint32 | None | Required whole-number percentage from `1` to `100`. |
@@ -259,7 +275,7 @@ gateway configuration, then explicitly roll out the Deployment to toggle them.
 
 | Field                                                         | Type            | Default | Constraint                                                                                                                                  |
 |---------------------------------------------------------------|-----------------|---------|---------------------------------------------------------------------------------------------------------------------------------------------|
-| `apis[].routes[].processing.request_headers`                  | list of objects | None    | If `processing` is present, at least one mapping is required. Every protected entry must provide each referenced attribute; public bindings cannot use these mappings.       |
+| `apis[].routes[].processing.request_headers`                  | list of objects | None    | If `processing` is present, at least one mapping is required. Every protected entry must provide each referenced attribute; public bindings may use fixed API attributes.       |
 | `apis[].routes[].processing.request_headers[].name`           | string          | None    | Required valid HTTP header name; cannot be a reserved identity, routing, connection, or framing header. Names must be unique ignoring case. |
 | `apis[].routes[].processing.request_headers[].from_attribute` | string          | None    | Required valid attribute name.                                                                                                              |
 
@@ -287,7 +303,7 @@ custom CA ConfigMap must exist in the gateway namespace before deployment.
 | `ext_authz_services[].attributes[].from_source` | string | None | `header` or `authenticator`. |
 | `ext_authz_services[].attributes[].value` | string | None | For `header`, a safe `request_headers` entry that is not a credential header. For `authenticator`, the same name as an attribute declared by every selected local authenticator. |
 
-The service receives selected headers, declared attributes, and route metadata
+The service receives selected headers, declared service and fixed API attributes, and route metadata
 identifying the API and access entry. After local JWT verification, it also
 receives the parsed JWT payload under `envoy.filters.http.jwt_authn`, keyed by
 provider name. Declared authenticator attributes are also available after

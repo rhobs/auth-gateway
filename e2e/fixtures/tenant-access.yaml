@@ -79,11 +79,19 @@ apis:
           request_headers:
             - {name: X-Scope-OrgID, from_attribute: requested_tenant}
   - name: journey-health
+    attributes:
+      - {name: operation, from_source: fixed, value: "health:read (100%)"}
+    metrics:
+      labels:
+        operation: operation
     upstream: {address: httpbin, port: 8080}
     routes:
       - methods: [GET]
         path: {exact: /health}
         rewrite: {path: /anything}
+        processing:
+          request_headers:
+            - {name: X-Operation, from_attribute: operation}
 servers:
   - hostname: access.auth-gateway.test
     apis:

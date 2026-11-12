@@ -192,14 +192,23 @@ apis:
       max_rejection_probability: 80
     # Optional per-API request counter. `api` is this API's name and
     # `http_status_code` comes from the response. Additional label names map to
-    # authenticator attributes declared under authenticators[].attributes.
+    # API, authenticator, or external authorization attributes.
     # Injected errors count as standard requests with the same labels.
     # Choose bounded values; each label combination stays in Envoy until restart.
     # There is no cardinality limit. Use metrics: {} for API and status counts only.
+    # Optional values applied to every matched route of this API, including public routes.
+    attributes:
+      - name: operation
+        from_source: fixed
+        value: "metrics:write"
+      - name: api
+        from_source: fixed
+        value: "metrics-write"
     metrics:
       labels:
         tenant: tenant_id
         writer: writer_id
+        operation: operation
     upstream:
       address: thanos-receive
       port: 19291
