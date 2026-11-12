@@ -5,6 +5,8 @@ package e2e
 import (
 	"bytes"
 	"net/http"
+	"os"
+	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -41,13 +43,7 @@ var _ = Describe("External authorization", Label("gateway", "ext-authz", "authen
 			Expect(err).NotTo(HaveOccurred())
 			shape, err := gatewayconfig.Load(bytes.NewReader(fixture))
 			Expect(err).NotTo(HaveOccurred())
-			service := shape.ExtAuthzServices[0]
-			service.Upstream.Address = "policy." + extAuthzNamespace + ".svc.cluster.local"
-			service.Upstream.TLSConfig.ServerName = service.Upstream.Address
-			service.Upstream.TLSConfig.TrustedCA = &gatewayapi.TrustedCA{ConfigMap: &gatewayapi.CAConfigMap{Name: "policy-ca", Key: "ca.pem"}}
-			c.ExtAuthzServices = append(c.ExtAuthzServices, service)
-			c.APIs = append(c.APIs, shape.APIs...)
-			c.Servers = append(c.Servers, shape.Servers...)
+			addExtAuthzScenario(c, shape, extAuthzNamespace)
 		})
 		Expect(err).NotTo(HaveOccurred())
 	}, NodeTimeout(12*time.Minute))
@@ -143,6 +139,51 @@ var _ = Describe("External authorization", Label("gateway", "ext-authz", "authen
 		}
 	}, NodeTimeout(90*time.Second))
 })
+
+func TestExtAuthzScenarioConfig(t *testing.T) {
+	baseFixture, err := os.ReadFile("fixtures/api-key-gateway.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := gatewayconfig.Load(bytes.NewReader(baseFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scenarioFixture, err := os.ReadFile("fixtures/ext-authz.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shape, err := gatewayconfig.Load(bytes.NewReader(scenarioFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	addExtAuthzScenario(&config, shape, "ext-authz-test")
+	if _, err := gatewayconfig.GenerateKubernetes(config); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func addExtAuthzScenario(config *gatewayapi.Config, shape gatewayapi.Config, namespace string) {
+	for index := range config.Authenticators {
+		for _, authenticator := range shape.Authenticators {
+			if config.Authenticators[index].Name != authenticator.Name {
+				continue
+			}
+			for _, attribute := range authenticator.Attributes {
+				if attribute.FromSource == "fixed" {
+					config.Authenticators[index].Attributes = append(config.Authenticators[index].Attributes, attribute)
+				}
+			}
+		}
+	}
+	service := shape.ExtAuthzServices[0]
+	service.Upstream.Address = "policy." + namespace + ".svc.cluster.local"
+	service.Upstream.TLSConfig.ServerName = service.Upstream.Address
+	service.Upstream.TLSConfig.TrustedCA = &gatewayapi.TrustedCA{ConfigMap: &gatewayapi.CAConfigMap{Name: "policy-ca", Key: "ca.pem"}}
+	config.ExtAuthzServices = append(config.ExtAuthzServices, service)
+	config.APIs = append(config.APIs, shape.APIs...)
+	config.Servers = append(config.Servers, shape.Servers...)
+}
 
 func extAuthzServiceManifest(namespace string, certificates *jwtTestCertificates) ([]byte, error) {
 	labels := map[string]string{"app": "policy"}
