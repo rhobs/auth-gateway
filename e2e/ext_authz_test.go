@@ -6,11 +6,13 @@ import (
 	"bytes"
 	"net/http"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/rhobs/auth-gateway/e2e/internal/framework"
 	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
 	gatewayconfig "github.com/rhobs/auth-gateway/pkg/gateway"
 	appsv1 "k8s.io/api/apps/v1"
@@ -141,7 +143,11 @@ var _ = Describe("External authorization", Label("gateway", "ext-authz", "authen
 })
 
 func TestExtAuthzScenarioConfig(t *testing.T) {
-	baseFixture, err := os.ReadFile("fixtures/api-key-gateway.yaml")
+	root, err := framework.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseFixture, err := os.ReadFile(filepath.Join(root, "e2e", "fixtures", "api-key-gateway.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +155,7 @@ func TestExtAuthzScenarioConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scenarioFixture, err := os.ReadFile("fixtures/ext-authz.yaml")
+	scenarioFixture, err := os.ReadFile(filepath.Join(root, "e2e", "fixtures", "ext-authz.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
