@@ -48,7 +48,21 @@ be a credential header. An `authenticator` source uses an attribute declared
 by every selected local authenticator on an access entry. The name and value
 must match. Only nonempty scalar strings are sent. A selected access entry
 without local authentication sends no authenticator attributes.
-Fixed attributes declared on the matched API are also sent in this namespace.
+
+Every fixed attribute declared under `apis[].attributes` on the matched API is
+sent automatically in the same namespace when an access entry uses this service.
+Do not repeat fixed attributes under `ext_authz_services[].attributes`. For
+example, an API attribute `{name: role, from_source: fixed, value: "metrics:read"}`
+is available to the policy service as:
+
+```go
+fields := request.GetAttributes().GetMetadataContext().
+    GetFilterMetadata()["auth_gateway.ext_authz.attributes"].GetFields()
+role := fields["role"].GetStringValue() // "metrics:read"
+```
+
+The policy should check that a required key is present. A route without an
+`ext_authz` access entry sends no Check request.
 
 ## Select it on an access entry
 

@@ -303,8 +303,11 @@ custom CA ConfigMap must exist in the gateway namespace before deployment.
 | `ext_authz_services[].attributes[].from_source` | string | None | `header` or `authenticator`. |
 | `ext_authz_services[].attributes[].value` | string | None | For `header`, a safe `request_headers` entry that is not a credential header. For `authenticator`, the same name as an attribute declared by every selected local authenticator. |
 
-The service receives selected headers, declared service and fixed API attributes, and route metadata
-identifying the API and access entry. After local JWT verification, it also
+The service receives selected headers and declared service attributes. Every
+fixed attribute on the matched API is sent automatically in the same
+`auth_gateway.ext_authz.attributes` metadata namespace, without a matching
+`ext_authz_services[].attributes` entry. Route metadata identifies the API and
+access entry. After local JWT verification, the service also
 receives the parsed JWT payload under `envoy.filters.http.jwt_authn`, keyed by
 provider name. Declared authenticator attributes are also available after
 local JWT, API-key, or mTLS authentication. Missing or non-string declared
