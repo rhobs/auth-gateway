@@ -110,6 +110,8 @@ The credential attribute filter uses CEL to copy scalar source values into
 bootstrap. RBAC evaluates grants against source metadata; filter state feeds
 managed upstream headers and metric labels with the same values. List claims
 remain available to RBAC but are not copied into string filter state.
+Fixed authenticator attributes use the same filter state keys, gated by a
+successful verification of their authenticator. They are not grant sources.
 
 ### External authorization
 

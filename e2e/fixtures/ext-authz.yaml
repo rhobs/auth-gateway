@@ -9,6 +9,9 @@ authenticators:
   - name: tenant_id
     from_source: claim
     value: [organization, id]
+  - name: auth_origin
+    from_source: fixed
+    value: "jwt (100%)"
 - name: partner-key
   api_key:
     secret: auth-gateway-api-keys
@@ -17,6 +20,9 @@ authenticators:
   - name: tenant_id
     from_source: credential
     value: tenant_id
+  - name: auth_origin
+    from_source: fixed
+    value: "api-key"
 ext_authz_services:
 - name: policy
   upstream:
@@ -35,6 +41,9 @@ ext_authz_services:
   - name: tenant_id
     from_source: authenticator
     value: tenant_id
+  - name: auth_origin
+    from_source: authenticator
+    value: auth_origin
 apis:
 - name: ext-authz-api
   attributes:

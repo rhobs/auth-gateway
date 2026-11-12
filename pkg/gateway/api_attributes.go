@@ -29,17 +29,17 @@ func validateAPIFixedAttributes(field string, attributes []gatewayapi.AttributeS
 			return fmt.Errorf("%s.name duplicates attribute %q", name, source.Name)
 		}
 		seen[source.Name] = true
-		if source.FromSource != "fixed" {
+		if source.FromSource != attributeSourceFixed {
 			return fmt.Errorf("%s.from_source must be fixed", name)
 		}
-		if source.Value.IsPath || !validAPIFixedAttributeValue(source.Value.Text) {
+		if source.Value.IsPath || !validFixedAttributeValue(source.Value.Text) {
 			return fmt.Errorf("%s.value must be a nonempty string without controls or surrounding whitespace", name)
 		}
 	}
 	return nil
 }
 
-func validAPIFixedAttributeValue(value string) bool {
+func validFixedAttributeValue(value string) bool {
 	if !utf8.ValidString(value) || !validCredentialText(value) {
 		return false
 	}

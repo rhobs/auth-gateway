@@ -70,6 +70,9 @@ authenticators:
       - name: writer_id
         from_source: claim
         value: [sub]
+      - name: auth_origin
+        from_source: fixed
+        value: internal-jwt
       - name: role
         from_source: claim
         value: [role]
@@ -88,14 +91,9 @@ authenticators:
         uri: https://sso.external.example.com/realms/observability/protocol/openid-connect/certs
       audiences: [observability-ingestion]
     attributes:
-      # jwt supports attributes from the request headers and verified claims.
-      # Claim values are lists of nested keys in the JWT payload.
       - name: tenant_id
         from_source: claim
         value: [organization, id]
-      - name: writer_id
-        from_source: claim
-        value: [sub]
       - name: role
         from_source: claim
         value: [role]
@@ -112,18 +110,12 @@ authenticators:
       - name: tenant_id
         from_source: credential
         value: tenant_id
-      - name: key_id
-        from_source: credential
-        value: key_id
       - name: writer_id
         from_source: credential
         value: writer_id
       - name: requested_tenant
         from_source: header
         value: X-Tenant
-      - name: role
-        from_source: credential
-        value: role
 
   - name: partner-cert
     mtls:
@@ -159,12 +151,16 @@ ext_authz_services:
     request_headers: [authorization, x-tenant]
     credential_headers: [authorization] # Remove before API upstream forwarding.
     attributes:
-      - name: requested_tenant
+      # Header-derived names must not collide with authenticator attributes.
+      - name: request_tenant_header
         from_source: header
         value: X-Tenant
       - name: tenant_id
         from_source: authenticator
         value: tenant_id
+      - name: auth_origin
+        from_source: authenticator
+        value: auth_origin
 
 # Metrics collection is enabled by default. Per-API counters still need
 # apis[].metrics. Tracing is disabled by default.
@@ -201,9 +197,6 @@ apis:
       - name: operation
         from_source: fixed
         value: "metrics:write"
-      - name: api
-        from_source: fixed
-        value: "metrics-write"
     metrics:
       labels:
         tenant: tenant_id
@@ -251,12 +244,7 @@ apis:
         #   response_timeout: 20s
 
   - name: metrics-query
-    admission_control:
-      enabled: true
-      sampling_window: 30s
-      sr_threshold: 95
-      rps_threshold: 10
-      max_rejection_probability: 80
+    metrics: {} # Count responses without attribute labels.
     upstream:
       address: thanos-query.observability.svc.cluster.local
       port: 9090
@@ -281,47 +269,15 @@ apis:
           regex:
             pattern: '^/metrics/(.*)$'
             substitution: '/\1'
+        timeouts:
+          response_timeout: 90s
+          idle_timeout: 95s
+          max_stream_duration: 120s
       - methods: [GET]
         path:
           prefix: /metrics/api/v1/label/
         rewrite:
           prefix: /api/v1/label/
-      - methods: [GET]
-        path:
-          exact: /metrics/api/v1/labels
-        rewrite:
-          path: /api/v1/labels
-      - methods: [GET, POST]
-        path:
-          exact: /metrics/api/v1/query_range
-        rewrite:
-          path: /api/v1/query_range
-        timeouts:
-          response_timeout: 90s
-          idle_timeout: 95s
-          max_stream_duration: 120s
-
-  - name: logs
-    admission_control:
-      enabled: true
-      sampling_window: 30s
-      sr_threshold: 95
-      rps_threshold: 10
-      max_rejection_probability: 80
-    metrics: {} # Count responses without attribute labels.
-    upstream:
-      address: loki
-      port: 3100
-    routes:
-      - methods: [POST]
-        path:
-          prefix: /logs/otlp/
-        rewrite:
-          prefix: /otlp/
-        processing:
-          request_headers:
-            - name: X-Scope-OrgID
-              from_attribute: requested_tenant
 
 servers:
   - hostname: metrics.example.com
@@ -343,35 +299,11 @@ servers:
             attributes:
               - name: tenant_id
                 expression: in
-                value: [client-123]
+                value: [client-456, client-789]
           abort:
             http_status: 503
             percentage: 10
         access:
-          # A concrete tenant keeps an external JWT grant with literal values.
-          - tenant: client-123
-            match:
-              headers:
-                - name: X-Tenant
-                  expression: equals
-                  value: client-123
-                - name: X-Environment
-                  expression: equals
-                  value: production
-            authentication:
-              jwt:
-                providers: [external-jwt]
-            authorization:
-              grants:
-                - authenticator: external-jwt
-                  attributes:
-                    - name: tenant_id
-                      expression: equals
-                      value: organization-789
-                    - name: role
-                      expression: equals
-                      value: writer
-
           # client-456 can use an internal JWT or a partner API key.
           - name: internal-writers
             match:
@@ -408,11 +340,8 @@ servers:
             match:
               headers:
                 - name: X-Tenant
-                  expression: in
-                  value: [client-456, customer-123, customer-456]
-                - name: X-Environment
                   expression: equals
-                  value: production
+                  value: client-456
                 - name: X-Partner-Key
                   expression: present
             authentication:
@@ -428,22 +357,16 @@ servers:
                     - name: writer_id
                       expression: in
                       value: [agent-17, agent-18]
-                    - name: role
-                      expression: equals
-                      value: writer
 
       - name: metrics-query
         access:
-          # Both tenants share the same providers and permission rules.
+          # Both JWT providers share this entry but keep separate grants.
           - name: readers
             match:
               headers:
                 - name: X-Tenant
                   expression: in
                   value: [client-123, customer-456]
-                - name: X-Environment
-                  expression: equals
-                  value: production
             authentication:
               jwt:
                 providers: [internal-jwt, external-jwt]
@@ -463,72 +386,10 @@ servers:
                       expression: equals-attribute
                       value: requested_tenant
                     - name: role
-                      expression: in
-                      value: [viewer]
+                      expression: equals
+                      value: viewer
 
-  # The same query API has a narrower issuer set on this hostname.
-      - name: logs
-        access:
-          - name: log-writers
-            match:
-              headers:
-                - name: X-Tenant
-                  expression: in
-                  value: [client-123, customer-456]
-                - name: X-Environment
-                  expression: equals
-                  value: production
-            authentication:
-              jwt:
-                providers: [internal-jwt, external-jwt]
-            authorization:
-              grants:
-                - authenticator: internal-jwt
-                  attributes:
-                    - name: tenant_id
-                      expression: equals-attribute
-                      value: requested_tenant
-                    - name: role
-                      expression: in
-                      value: [writer]
-                - authenticator: external-jwt
-                  attributes:
-                    - name: tenant_id
-                      expression: equals-attribute
-                      value: requested_tenant
-                    - name: role
-                      expression: in
-                      value: [writer]
-
-  - hostname: internal-query.example.com
-    tls_config:
-      secret: metrics-gateway-tls
-    apis:
-      - name: metrics-query
-        access:
-          - name: internal-readers
-            match:
-              headers:
-                - name: X-Tenant
-                  expression: in
-                  value: [client-123, client-456]
-                - name: X-Environment
-                  expression: equals
-                  value: production
-            authentication:
-              jwt:
-                providers: [internal-jwt]
-            authorization:
-              grants:
-                - authenticator: internal-jwt
-                  attributes:
-                    - name: tenant_id
-                      expression: equals-attribute
-                      value: requested_tenant
-                    - name: role
-                      expression: in
-                      value: [reader, admin]
-
+  # The same query API can use different access rules on another hostname.
   # Local JWT verification can precede external authorization. An entry with
   # no local authentication lets the policy service do both jobs.
   - hostname: policy-query.example.com
@@ -573,9 +434,6 @@ servers:
                 - name: X-Tenant
                   expression: equals
                   value: customer-456
-                - name: X-Environment
-                  expression: equals
-                  value: production
             # Authentication is inherited; any API-level auth is a config error.
             authorization:
               grants:

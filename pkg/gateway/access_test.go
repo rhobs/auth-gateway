@@ -43,6 +43,9 @@ func TestAccessValidation(t *testing.T) {
 		{"header identity condition", "not a header source", func(c *gatewayapi.Config) {
 			setTestAttribute(&c.Authenticators[0], testTextAttribute("role", "header", "X-Role"))
 		}},
+		{"fixed identity condition", "not a fixed source", func(c *gatewayapi.Config) {
+			setTestAttribute(&c.Authenticators[0], testTextAttribute("role", "fixed", "writer"))
+		}},
 		{"missing expression", ".expression", func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1].Expression = ""
 		}},
@@ -58,6 +61,10 @@ func TestAccessValidation(t *testing.T) {
 		}},
 		{"unknown comparison source", "undeclared attribute", func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[0].Value.Text = "unknown"
+		}},
+		{"fixed comparison source", "cannot reference a fixed attribute", func(c *gatewayapi.Config) {
+			setTestAttribute(&c.Authenticators[0], testTextAttribute("auth_origin", "fixed", "writer"))
+			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[0].Value.Text = "auth_origin"
 		}},
 		{"unmatched comparison header", "must be selected in match.headers", func(c *gatewayapi.Config) {
 			setTestAttribute(&c.Authenticators[0], testTextAttribute("requested_tenant", "header", "X-Other-Tenant"))

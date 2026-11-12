@@ -350,6 +350,12 @@ data:
                                                       local state = handle:streamInfo():filterState()
                                                       local metadata = handle:streamInfo():dynamicMetadata()
                                                       do
+                                                        local value = state:get("auth_gateway.attributes.auth_origin")
+                                                        if value ~= nil and value ~= "" then
+                                                          metadata:set("auth_gateway.ext_authz.attributes", "auth_origin", value)
+                                                        end
+                                                      end
+                                                      do
                                                         local value = state:get("auth_gateway.attributes.requested_tenant")
                                                         if value ~= nil and value ~= "" then
                                                           metadata:set("auth_gateway.ext_authz.attributes", "requested_tenant", value)
@@ -503,6 +509,13 @@ data:
                                                       format_string:
                                                         omit_empty_values: true
                                                         text_format_source:
+                                                            inline_string: '%CEL(("envoy.filters.http.jwt_authn" in metadata.filter_metadata && "internal-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "iss" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"] && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["iss"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["iss"] == "https://issuer.example.test") ? "jwt (100\u0025)" : "")%'
+                                                      object_key: auth_gateway.attributes.auth_origin
+                                                      skip_if_empty: true
+                                                    - factory_key: envoy.string
+                                                      format_string:
+                                                        omit_empty_values: true
+                                                        text_format_source:
                                                             inline_string: '%CEL((("internal-jwt" in metadata.filter_metadata["envoy.filters.http.jwt_authn"] && "tenant" in metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]) && type(metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["tenant"]) == string && metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["tenant"] != "") ? metadata.filter_metadata["envoy.filters.http.jwt_authn"]["internal-jwt"]["tenant"] : "")%'
                                                       object_key: auth_gateway.attributes.tenant_id
                                                       skip_if_empty: true
@@ -546,6 +559,12 @@ data:
                                                     function envoy_on_request(handle)
                                                       local state = handle:streamInfo():filterState()
                                                       local metadata = handle:streamInfo():dynamicMetadata()
+                                                      do
+                                                        local value = state:get("auth_gateway.attributes.auth_origin")
+                                                        if value ~= nil and value ~= "" then
+                                                          metadata:set("auth_gateway.ext_authz.attributes", "auth_origin", value)
+                                                        end
+                                                      end
                                                       do
                                                         local value = state:get("auth_gateway.attributes.requested_tenant")
                                                         if value ~= nil and value ~= "" then

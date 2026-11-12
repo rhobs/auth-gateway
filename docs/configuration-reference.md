@@ -303,8 +303,11 @@ custom CA ConfigMap must exist in the gateway namespace before deployment.
 | `ext_authz_services[].attributes[].from_source` | string | None | `header` or `authenticator`. |
 | `ext_authz_services[].attributes[].value` | string | None | For `header`, a safe `request_headers` entry that is not a credential header. For `authenticator`, the same name as an attribute declared by every selected local authenticator. |
 
-The service receives selected headers, declared service and fixed API attributes, and route metadata
-identifying the API and access entry. After local JWT verification, it also
+The service receives selected headers and declared service attributes. Every
+fixed attribute on the matched API is sent automatically in the same
+`auth_gateway.ext_authz.attributes` metadata namespace, without a matching
+`ext_authz_services[].attributes` entry. Route metadata identifies the API and
+access entry. After local JWT verification, the service also
 receives the parsed JWT payload under `envoy.filters.http.jwt_authn`, keyed by
 provider name. Declared authenticator attributes are also available after
 local JWT, API-key, or mTLS authentication. Missing or non-string declared
@@ -408,15 +411,19 @@ with JWT or API-key entries. See the [mTLS guide](auth/mtls.md).
 | `authenticators[].api_key.header`                    | string                          | `X-API-Key`      | Safe HTTP header name; no `_` and no reserved header names.                                                                     |
 | `authenticators[].mtls.trusted_ca`                   | object                          | None             | Required explicit client CA bundle; see [trusted CA](#trusted-ca).                                                               |
 | `authenticators[].attributes`                     | list of objects                 | Empty            | Each entry declares one named attribute. Names must be unique and use lowercase letters, numbers, `_`, or `-`; the first character must be a letter. |
-| `authenticators[].attributes[].name`              | string                          | None             | Required attribute name used by grants, metrics, and request processing. |
-| `authenticators[].attributes[].from_source`       | string                          | None             | Required source: `claim` for JWT, `credential` for API keys, `certificate` for mTLS, or `header` for any authenticator. |
-| `authenticators[].attributes[].value`             | string or list of strings       | None             | A nonempty list of literal object keys for `claim`; a credential attribute name, `uri_san` or `dns_san`, or a safe HTTP request header name for the other sources. |
+| `authenticators[].attributes[].name`              | string                          | None             | Required attribute name used by metrics and request processing; credential sources may also be used by grants. |
+| `authenticators[].attributes[].from_source`       | string                          | None             | Required source: `fixed` for any authenticator, `claim` for JWT, `credential` for API keys, `certificate` for mTLS, or `header` for any authenticator. |
+| `authenticators[].attributes[].value`             | string or list of strings       | None             | For `fixed`, a nonempty string without controls or surrounding whitespace; a nonempty list of literal object keys for `claim`; a credential attribute name, `uri_san` or `dns_san`, or a safe HTTP request header name for the other sources. |
 
 Each certificate may have at most one URI SAN and one DNS SAN; a SAN containing
 a comma is rejected. Header names follow HTTP field-name syntax and cannot use
 reserved identity, routing, connection, or framing headers. A header source
 cannot equal the API-key credential header. Credential values come from the
 named key in the API-key Secret and are used unchanged.
+Fixed authenticator attributes are set only after that authenticator verifies
+the request. They use the declared value unchanged in managed headers and metric
+labels. An external authorization service can receive one by declaring an
+attribute with `from_source: authenticator` and the same name.
 
 ### Authorization grants
 

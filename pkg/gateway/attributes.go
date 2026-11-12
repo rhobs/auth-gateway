@@ -25,6 +25,7 @@ const (
 	jwtMetadataExpressionPrefix = `metadata.filter_metadata["envoy.filters.http.jwt_authn"]`
 	attributeFilterName         = "envoy.filters.http.set_filter_state"
 	managedAttributePrefix      = "auth_gateway.attributes."
+	attributeSourceFixed        = "fixed"
 	attributeSourceHeader       = "header"
 	attributeIndexFieldFormat   = "%s.attributes[%d]"
 )
@@ -45,6 +46,10 @@ func validateAuthenticatorAttributes(name string, authenticator gatewayapi.Authe
 		}
 		seen[source.Name] = true
 		switch source.FromSource {
+		case attributeSourceFixed:
+			if source.Value.IsPath || !validFixedAttributeValue(source.Value.Text) {
+				return fmt.Errorf("%s.value must be a nonempty string without controls or surrounding whitespace", field)
+			}
 		case "claim":
 			if authenticator.JWT == nil || !source.Value.IsPath || len(source.Value.Path) == 0 || slices.Contains(source.Value.Path, "") {
 				return fmt.Errorf("%s.value must contain one or more nonempty JWT claim keys", field)
@@ -70,7 +75,7 @@ func validateAuthenticatorAttributes(name string, authenticator gatewayapi.Authe
 				return fmt.Errorf("%s.value is reserved for API-key credentials", field)
 			}
 		default:
-			return fmt.Errorf("%s.from_source must be claim, credential, certificate, or header", field)
+			return fmt.Errorf("%s.from_source must be fixed, claim, credential, certificate, or header", field)
 		}
 	}
 	return nil
@@ -288,6 +293,8 @@ func appendAttributeInitialization(config *setfilterstate.Config, authenticator 
 		attribute := source.Name
 		var expression string
 		switch {
+		case source.FromSource == attributeSourceFixed:
+			expression = "(" + authenticatorVerifiedExpression(authenticator) + ") ? " + celFormatterStringLiteral(source.Value.Text) + " : \"\""
 		case source.FromSource == attributeSourceHeader:
 			expression = headerAttributeExpression(authenticator, source.Value.Text)
 		case authenticator.JWT != nil:

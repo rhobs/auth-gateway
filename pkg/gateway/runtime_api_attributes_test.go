@@ -10,7 +10,44 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
 )
+
+func TestEnvoyForwardsFixedAuthenticatorAttributes(t *testing.T) {
+	c := runtimeLiveConfig(t)
+	c.APIs = c.APIs[:1]
+	c.Servers = c.Servers[:1]
+	c.Authenticators[0].Attributes = append(c.Authenticators[0].Attributes,
+		gatewayapi.AttributeSource{Name: "auth_origin", FromSource: "fixed", Value: gatewayapi.AttributeValue{Text: "partner (100%)"}})
+	c.APIs[0].Routes[0].Processing.RequestHeaders = append(c.APIs[0].Routes[0].Processing.RequestHeaders,
+		gatewayapi.RequestHeaderMapping{Name: "X-Auth-Origin", FromAttribute: "auth_origin"})
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configDir := runtimeDirectory(t)
+	for _, file := range files.All() {
+		runtimeLiveWriteGeneratedFile(t, configDir, file)
+	}
+	credentials, err := GenerateAPIKeyECDS(c.Authenticators[0], []gatewayapi.APIKeyCredential{{
+		Key: "runtime-key", Attributes: map[string]string{"tenant_id": "client-a", "upstream_tenant": "team-a"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeLiveWriteGeneratedFile(t, configDir, GeneratedFile{Path: APIKeyECDSPath, Contents: credentials})
+	harness := runtimeLiveStart(t, configDir, nil)
+	runtimeLiveAwait(t, harness, "fixed authenticator attribute", time.Time{}, func() (bool, string) {
+		response := harness.request(false, runtimeLiveKeyHost, "runtime-key", http.MethodPost, "/ingest", runtimeLiveBody)
+		return runtimeLiveEchoMatches(response, http.StatusOK, "team-a", http.MethodPost, "/anything", runtimeLiveBody) &&
+			runtimeLiveHeader(response.echo.Headers, "X-Auth-Origin") == "partner (100%)", response.describe()
+	})
+	denied := harness.request(false, runtimeLiveKeyHost, "invalid-key", http.MethodPost, "/ingest", runtimeLiveBody)
+	if denied.err != nil || denied.status != http.StatusUnauthorized {
+		t.Fatalf("invalid credential response = %s", denied.describe())
+	}
+}
 
 func TestEnvoyForwardsFixedAPIAttributes(t *testing.T) {
 	listener, err := net.Listen("tcp", "0.0.0.0:0")
