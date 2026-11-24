@@ -57,6 +57,7 @@ apis:
   routes:
   - methods:
     - GET
+    - POST
     path:
       exact: "/protected"
     rewrite:

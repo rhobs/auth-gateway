@@ -551,24 +551,22 @@ func apiRoutesWithRequestHeaderMutations(apis []gatewayapi.API, includeMetadata 
 			if apiRoute.Processing == nil || len(apiRoute.Processing.RequestHeaders) == 0 {
 				continue
 			}
-			for methodIndex := range apiRoute.Methods {
-				name := apiRouteName(apiIndex, api.Name, routeIndex, methodIndex)
-				generatedRoute := routesByName[name]
-				if generatedRoute == nil {
-					return nil, fmt.Errorf("generated route %q is missing", name)
-				}
-				perRouteConfig, err := requestHeaderPerRouteConfig(apiRoute.Processing.RequestHeaders)
-				if err != nil {
-					return nil, fmt.Errorf("encode request header mutations for route %q: %w", name, err)
-				}
-				headerRBACConfig, err := requiredHeaderPerRouteConfig(name, apiRoute.Processing.RequestHeaders)
-				if err != nil {
-					return nil, err
-				}
-				generatedRoute.TypedPerFilterConfig = map[string]*anypb.Any{
-					headerMutationFilterName: perRouteConfig,
-					requiredHeaderFilterName: headerRBACConfig,
-				}
+			name := apiRouteName(apiIndex, api.Name, routeIndex, 0)
+			generatedRoute := routesByName[name]
+			if generatedRoute == nil {
+				return nil, fmt.Errorf("generated route %q is missing", name)
+			}
+			perRouteConfig, err := requestHeaderPerRouteConfig(apiRoute.Processing.RequestHeaders)
+			if err != nil {
+				return nil, fmt.Errorf("encode request header mutations for route %q: %w", name, err)
+			}
+			headerRBACConfig, err := requiredHeaderPerRouteConfig(name, apiRoute.Processing.RequestHeaders)
+			if err != nil {
+				return nil, err
+			}
+			generatedRoute.TypedPerFilterConfig = map[string]*anypb.Any{
+				headerMutationFilterName: perRouteConfig,
+				requiredHeaderFilterName: headerRBACConfig,
 			}
 		}
 	}
@@ -593,17 +591,15 @@ func apiMethodRoutes(apis []gatewayapi.API, includeMetadata bool) ([]*route.Rout
 				fallbackIndexes[key] = fallbackIndex
 				fallbacks = append(fallbacks, methodFallback{path: apiRoute.Path})
 			}
-			for methodIndex, method := range apiRoute.Methods {
-				routes = append(routes, apiMethodRoute(api, apiIndex, routeIndex, methodIndex, method, apiRoute, includeMetadata))
-				fallbacks[fallbackIndex].methods = append(fallbacks[fallbackIndex].methods, method)
-			}
+			routes = append(routes, apiMethodRoute(api, apiIndex, routeIndex, apiRoute, includeMetadata))
+			fallbacks[fallbackIndex].methods = append(fallbacks[fallbackIndex].methods, apiRoute.Methods...)
 		}
 	}
 	return routes, fallbacks
 }
 
-func apiMethodRoute(api gatewayapi.API, apiIndex, routeIndex, methodIndex int, method string, apiRoute gatewayapi.Route, includeMetadata bool) *route.Route {
-	name := apiRouteName(apiIndex, api.Name, routeIndex, methodIndex)
+func apiMethodRoute(api gatewayapi.API, apiIndex, routeIndex int, apiRoute gatewayapi.Route, includeMetadata bool) *route.Route {
+	name := apiRouteName(apiIndex, api.Name, routeIndex, 0)
 	action := &route.RouteAction{
 		ClusterSpecifier:  &route.RouteAction_Cluster{Cluster: apiClusterName(api.Name)},
 		Timeout:           protobufDuration(apiRoute.Timeouts.ResponseTimeout),
@@ -612,7 +608,7 @@ func apiMethodRoute(api gatewayapi.API, apiIndex, routeIndex, methodIndex int, m
 	}
 	applyPathRewrite(action, apiRoute.Rewrite)
 	match := routeMatch(apiRoute.Path)
-	match.Headers = []*route.HeaderMatcher{methodHeader(method)}
+	match.Headers = []*route.HeaderMatcher{methodsHeader(apiRoute.Methods)}
 	routeConfig := &route.Route{
 		Name: name, StatPrefix: name, Match: match,
 		Action: &route.Route_Route{Route: action},
@@ -672,11 +668,17 @@ func apiRouteMetadata(apiName string) *core.Metadata {
 	return &core.Metadata{FilterMetadata: map[string]*structpb.Struct{authorizationFilterName: api}}
 }
 
-func methodHeader(method string) *route.HeaderMatcher {
+func methodsHeader(methods []string) *route.HeaderMatcher {
+	match := &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: methods[0]}}
+	if len(methods) > 1 {
+		match.MatchPattern = &matcher.StringMatcher_SafeRegex{
+			SafeRegex: envoySafeRegex("^(?:" + strings.Join(methods, "|") + ")$"),
+		}
+	}
 	return &route.HeaderMatcher{
 		Name: ":method",
 		HeaderMatchSpecifier: &route.HeaderMatcher_StringMatch{
-			StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: method}},
+			StringMatch: match,
 		},
 	}
 }

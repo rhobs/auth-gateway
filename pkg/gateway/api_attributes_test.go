@@ -90,6 +90,7 @@ func TestAPIFixedAttributesCloneInput(t *testing.T) {
 
 func TestAPIFixedAttributesGenerateForPublicRoutes(t *testing.T) {
 	c := loadConfigCase(t, "api-fixed-attributes")
+	c.APIs[0].Routes[0].Methods = []string{"GET", "POST"}
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)
@@ -128,6 +129,7 @@ func TestAPIFixedAttributesGenerateForPublicRoutes(t *testing.T) {
 
 func TestAPIFixedAttributesGenerateForProtectedRoutes(t *testing.T) {
 	c := loadConfigCase(t, "jwt-auth-with-attributes")
+	c.APIs[0].Routes[0].Methods = []string{"GET", "POST"}
 	c.APIs[0].Attributes = []gatewayapi.AttributeSource{testTextAttribute("role", "fixed", "metrics:write")}
 	c.APIs[0].Metrics.Labels["operation"] = "role"
 	c.APIs[0].Routes[0].Processing.RequestHeaders = append(c.APIs[0].Routes[0].Processing.RequestHeaders,

@@ -218,8 +218,8 @@ func TestAdmissionControlRouteSelectors(t *testing.T) {
 			}
 		}
 	}
-	if selected != 8 || unselected != 18 {
-		t.Fatalf("selected/unselected routes = %d/%d, want 8/18", selected, unselected)
+	if selected != 6 || unselected != 18 {
+		t.Fatalf("selected/unselected routes = %d/%d, want 6/18", selected, unselected)
 	}
 }
 

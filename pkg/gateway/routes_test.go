@@ -1,12 +1,44 @@
 package gateway
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
 )
+
+func TestGeneratedRouteMatchesWholeMethods(t *testing.T) {
+	config := loadConfigCase(t, "route-lists")
+	files, err := Generate(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := firstGeneratedHTTPManager(t, files.EnvoyBootstrap.Contents)
+	generated := manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()[0]
+	pattern := generated.GetMatch().GetHeaders()[0].GetStringMatch().GetSafeRegex().GetRegex()
+	if pattern == "" {
+		t.Fatal("route has no matcher for multiple methods")
+	}
+	methods, err := regexp.Compile(pattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		method string
+		want   bool
+	}{
+		{"GET", true}, {"POST", true}, {"PUT", false}, {"HEAD", false},
+		{"GETPOST", false}, {"XGET", false}, {"POSTX", false}, {"get", false},
+	} {
+		t.Run(test.method, func(t *testing.T) {
+			if got := methods.MatchString(test.method); got != test.want {
+				t.Fatalf("method %q matched = %t, want %t", test.method, got, test.want)
+			}
+		})
+	}
+}
 
 func TestLoadRejectsMissingRouteMethods(t *testing.T) {
 	input := `version: 1
@@ -210,16 +242,16 @@ func TestGenerateBuildsRoutesFromRouteLists(t *testing.T) {
 		t.Fatal(err)
 	}
 	routes := manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()
-	if len(routes) != 8 {
-		t.Fatalf("route count = %d, want 8", len(routes))
+	if len(routes) != 7 {
+		t.Fatalf("route count = %d, want 7", len(routes))
 	}
 
 	query := routes[0]
 	if got := query.GetMatch().GetSafeRegex().GetRegex(); got != `^/metrics/api/v1/(query|query_range)$` {
 		t.Fatalf("query regex = %q", got)
 	}
-	if got := query.GetMatch().GetHeaders()[0].GetStringMatch().GetExact(); got != "GET" {
-		t.Fatalf("query method = %q, want GET", got)
+	if got := query.GetMatch().GetHeaders()[0].GetStringMatch().GetSafeRegex().GetRegex(); got != "^(?:GET|POST)$" {
+		t.Fatalf("query methods = %q, want GET and POST", got)
 	}
 	if got := query.GetRoute().GetCluster(); got != "api-metrics-query" {
 		t.Fatalf("query cluster = %q", got)
@@ -229,7 +261,10 @@ func TestGenerateBuildsRoutesFromRouteLists(t *testing.T) {
 		t.Fatalf("query rewrite = %#v", regexRewrite)
 	}
 
-	prefix := routes[2]
+	prefix := routes[1]
+	if got := prefix.GetMatch().GetHeaders()[0].GetStringMatch().GetExact(); got != "GET" {
+		t.Fatalf("label method = %q, want exact GET", got)
+	}
 	if got := prefix.GetMatch().GetPrefix(); got != "/metrics/api/v1/label/" {
 		t.Fatalf("label prefix = %q", got)
 	}
@@ -237,20 +272,20 @@ func TestGenerateBuildsRoutesFromRouteLists(t *testing.T) {
 		t.Fatalf("label prefix rewrite = %q", got)
 	}
 
-	exact := routes[3]
+	exact := routes[2]
 	if got := exact.GetMatch().GetPath(); got != "/metrics/api/v1/labels" {
 		t.Fatalf("labels path = %q", got)
 	}
 	if got := exact.GetRoute().GetPathRewrite(); got != "/api/v1/labels" {
 		t.Fatalf("labels path rewrite = %q", got)
 	}
-	if got := routes[4].GetDirectResponse().GetStatus(); got != 405 {
+	if got := routes[3].GetDirectResponse().GetStatus(); got != 405 {
 		t.Fatalf("query wrong method status = %d", got)
 	}
-	if got := routes[4].GetResponseHeadersToAdd()[0].GetHeader().GetValue(); got != "GET, POST" {
+	if got := routes[3].GetResponseHeadersToAdd()[0].GetHeader().GetValue(); got != "GET, POST" {
 		t.Fatalf("query Allow header = %q", got)
 	}
-	if got := routes[7].GetDirectResponse().GetStatus(); got != 404 {
+	if got := routes[6].GetDirectResponse().GetStatus(); got != 404 {
 		t.Fatalf("not found status = %d", got)
 	}
 }

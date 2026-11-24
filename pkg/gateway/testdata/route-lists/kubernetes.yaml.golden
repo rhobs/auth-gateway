@@ -145,7 +145,8 @@ data:
                                         headers:
                                             - name: :method
                                               string_match:
-                                                exact: GET
+                                                safe_regex:
+                                                    regex: ^(?:GET|POST)$
                                         safe_regex:
                                             regex: ^/metrics/api/v1/(query|query_range)$
                                       metadata:
@@ -164,32 +165,6 @@ data:
                                             substitution: /\1
                                         timeout: 30s
                                       stat_prefix: api-0-metrics-query-route-0-method-0
-                                      typed_per_filter_config:
-                                        envoy.filters.http.rbac:
-                                            '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
-                                    - match:
-                                        headers:
-                                            - name: :method
-                                              string_match:
-                                                exact: POST
-                                        safe_regex:
-                                            regex: ^/metrics/api/v1/(query|query_range)$
-                                      metadata:
-                                        filter_metadata:
-                                            envoy.filters.http.rbac:
-                                                api: metrics-query
-                                      name: api-0-metrics-query-route-0-method-1
-                                      route:
-                                        cluster: api-metrics-query
-                                        idle_timeout: 60s
-                                        max_stream_duration:
-                                            max_stream_duration: 30s
-                                        regex_rewrite:
-                                            pattern:
-                                                regex: ^/metrics/(.*)$
-                                            substitution: /\1
-                                        timeout: 30s
-                                      stat_prefix: api-0-metrics-query-route-0-method-1
                                       typed_per_filter_config:
                                         envoy.filters.http.rbac:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute

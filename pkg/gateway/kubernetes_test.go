@@ -441,7 +441,7 @@ func TestResolvedRouteTimeoutsAndReuse(t *testing.T) {
 	}
 	m := decodeHTTPManager(t, decodeBootstrap(t, files.EnvoyBootstrap.Contents).StaticResources.Listeners[0].FilterChains[0])
 	for _, host := range m.GetRouteConfig().VirtualHosts {
-		for i, route := range host.Routes {
+		for _, route := range host.Routes {
 			if route.GetRoute() == nil {
 				if route.StatPrefix != "" {
 					t.Fatal("local responses should not get forwarding stats")
@@ -449,7 +449,7 @@ func TestResolvedRouteTimeoutsAndReuse(t *testing.T) {
 				continue
 			}
 			want := []time.Duration{60 * time.Second, 75 * time.Second, 90 * time.Second}
-			if i == 2 {
+			if route.GetMatch().GetPath() == "/range" {
 				want = []time.Duration{80 * time.Second, 95 * time.Second, 120 * time.Second}
 			}
 			a := route.GetRoute()

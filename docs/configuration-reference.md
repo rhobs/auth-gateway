@@ -160,6 +160,11 @@ of those bindings. Changes require an explicit gateway Deployment rollout.
 | `apis[].routes[].processing`                 | object          | None                     | Optional per-route request header mappings; see [route processing](#route-processing).                                             |
 | `apis[].routes[].timeouts`                   | object          | Effective defaults below | Optional per-route overrides, which take precedence over API-level values.                                                         |
 
+Methods listed on the same route share its rewrite, processing, and timeouts.
+List methods together when those settings are identical: the generated Envoy
+route matches all declared methods without repeating its access configuration.
+Other methods receive `405` with the allowed methods in the `Allow` header.
+
 ### Route timeouts
 
 The fields below appear under either `apis[].timeouts` or

@@ -328,6 +328,43 @@ var _ = Describe("JWT access and identity processing", Label("gateway", "jwt", "
 		jwtGateway.metricsAddr = env.ForwardWithCleanup(ctx, jwtNamespace, "service/auth-gateway", 8889)
 	}, NodeTimeout(12*time.Minute))
 
+	It("shares authorization and header processing across route methods", func(ctx SpecContext) {
+		token := jwtGateway.token("issuer-one", jwtTestClaims("customer-a"), nil)
+		deniedToken := jwtGateway.token("issuer-one", jwtTestClaims("customer-b"), nil)
+		for _, method := range []string{http.MethodGet, http.MethodPost} {
+			send := func(token string) (int, []byte, error) {
+				return jwtGateway.requestMethodPathHeaders(ctx, jwtGateway.httpAddr, jwtHTTPHost, false, method,
+					"/protected?source=multi-method", token, http.Header{
+						"X-Scope-Orgid": {"forged-tenant"},
+						"X-Writer-Id":   {"forged-writer"},
+					})
+			}
+			status, body := expectUpstreamRequestDelta(ctx, jwtGateway.adminAddr, "api-metrics", method+" allowed", 1, func() (int, []byte, error) {
+				return send(token)
+			})
+			Expect(status).To(Equal(http.StatusOK), string(body))
+			echo, err := decodeHTTPBinEcho(body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(echo.Method).To(Equal(method))
+			Expect(echo.URL).To(HaveSuffix("/anything?source=multi-method"))
+			Expect(echo.Data).To(BeEmpty())
+			Expect(headerValue(echo.Headers, "X-Scope-OrgID")).To(Equal("customer-a"))
+			Expect(headerValue(echo.Headers, "X-Writer-ID")).To(Equal("writer-17"))
+			Expect(headerValue(echo.Headers, "Authorization")).To(BeEmpty())
+			for _, denied := range []struct {
+				name, token string
+				status      int
+			}{
+				{"denied tenant", deniedToken, http.StatusForbidden},
+				{"missing credentials", "", http.StatusUnauthorized},
+			} {
+				expectDeniedBeforeUpstream(ctx, jwtGateway.adminAddr, "api-metrics", method+" "+denied.name, denied.status, func() (int, []byte, error) {
+					return send(denied.token)
+				})
+			}
+		}
+	}, SpecTimeout(90*time.Second))
+
 	It("authorizes and forwards source attributes over HTTP and HTTPS", func(ctx SpecContext) {
 		for _, target := range []struct {
 			address string

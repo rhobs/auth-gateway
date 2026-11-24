@@ -140,7 +140,7 @@ func registerJWTRequestMetricSpecs() {
 			return gateway.requestPath(ctx, gateway.httpAddr, jwtHTTPHost, false, "/unknown", metricsToken, false)
 		})
 		expectDeniedBeforeUpstream(ctx, adminAddress, "api-metrics", "method fallback", http.StatusMethodNotAllowed, func() (int, []byte, error) {
-			return gateway.requestMethodPath(ctx, gateway.httpAddr, jwtHTTPHost, false, http.MethodPost, "/protected", metricsToken, false)
+			return gateway.requestMethodPath(ctx, gateway.httpAddr, jwtHTTPHost, false, http.MethodPut, "/protected", metricsToken, false)
 		})
 		totalAfter, err = requestMetricTotal(ctx, adminAddress)
 		Expect(err).NotTo(HaveOccurred())
