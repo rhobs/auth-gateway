@@ -19,6 +19,9 @@ Notable changes to RHOBS Auth Gateway are recorded here.
 
 ### Fixed
 
+- Share generated routes across list-valued header selectors, combining their
+  per-route counters. Long patterns retain exact-match routes. Regenerate the
+  bootstrap and explicitly roll out gateway Deployments to apply the change.
 - Remove obsolete method indexes from generated route names and statistic
   prefixes. Regenerate the bootstrap and explicitly roll out gateway
   Deployments to apply the names.

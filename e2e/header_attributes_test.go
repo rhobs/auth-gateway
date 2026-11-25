@@ -36,7 +36,7 @@ var _ = Describe("Header-to-credential tenant equality", Label("gateway", "authe
 		Expect(err).NotTo(HaveOccurred())
 	}, NodeTimeout(12*time.Minute))
 
-	It("forwards each authorized requested tenant from the original header and records it in metrics", func(ctx SpecContext) {
+	It("forwards every allowed tenant and region combination and records the original tenant in metrics", func(ctx SpecContext) {
 		for _, tenant := range []string{"client-a", "client-b"} {
 			for _, method := range []string{"jwt", "api-key"} {
 				host, source, token, key := headerJWTOnlyHost, "X-JWT-Tenant", gateway.token(tenant, "writer-a"), ""
@@ -46,18 +46,20 @@ var _ = Describe("Header-to-credential tenant equality", Label("gateway", "authe
 						key = "header-key-b"
 					}
 				}
-				labels := map[string]string{"api": "header-ingest", "http_status_code": strconv.Itoa(http.StatusOK), "tenant": tenant}
-				before, err := requestMetricCount(ctx, gateway.adminAddr, labels)
-				Expect(err).NotTo(HaveOccurred())
-				headers := http.Header{source: []string{tenant}, "X-Forwarded-Tenant": []string{"caller-controlled"}}
-				status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, "api-header-ingest", method+" "+tenant, 1, func() (int, []byte, error) {
-					return gateway.request(ctx, host, false, http.MethodPost, "/header-ingest", headerAttributeBody, token, key, headers)
-				})
-				Expect(status).To(Equal(http.StatusOK), string(body))
-				expectHeaderAttributeEcho(body, tenant, map[string]string{source: tenant})
-				after, err := requestMetricCount(ctx, gateway.adminAddr, labels)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(after).To(BeNumerically(">", before))
+				for _, region := range []string{"eu.west", "us+east"} {
+					labels := map[string]string{"api": "header-ingest", "http_status_code": strconv.Itoa(http.StatusOK), "tenant": tenant}
+					before, err := requestMetricCount(ctx, gateway.adminAddr, labels)
+					Expect(err).NotTo(HaveOccurred())
+					headers := http.Header{source: []string{tenant}, "X-Region": []string{region}, "X-Forwarded-Tenant": []string{"caller-controlled"}}
+					status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, "api-header-ingest", method+" "+tenant+" "+region, 1, func() (int, []byte, error) {
+						return gateway.request(ctx, host, false, http.MethodPost, "/header-ingest", headerAttributeBody, token, key, headers)
+					})
+					Expect(status).To(Equal(http.StatusOK), string(body))
+					expectHeaderAttributeEcho(body, tenant, map[string]string{source: tenant, "X-Region": region})
+					after, err := requestMetricCount(ctx, gateway.adminAddr, labels)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(after).To(BeNumerically(">", before))
+				}
 			}
 		}
 	}, NodeTimeout(2*time.Minute))
@@ -83,7 +85,7 @@ var _ = Describe("Header-to-credential tenant equality", Label("gateway", "authe
 				{name: "identical repeated tenant", values: []string{"client-a", "client-a"}, status: http.StatusBadRequest},
 				{name: "comma-separated tenant", values: []string{"client-a,client-b"}, status: http.StatusBadRequest},
 			} {
-				headers := http.Header{"X-Forwarded-Tenant": []string{"client-a"}}
+				headers := http.Header{"X-Forwarded-Tenant": []string{"client-a"}, "X-Region": []string{"eu.west"}}
 				if test.values != nil {
 					headers[source] = test.values
 				}
@@ -96,11 +98,42 @@ var _ = Describe("Header-to-credential tenant equality", Label("gateway", "authe
 		}
 	}, NodeTimeout(2*time.Minute))
 
+	It("requires a literal allowed value for every list selector before the backend", func(ctx SpecContext) {
+		for _, method := range []string{"jwt", "api-key"} {
+			host, source, token, key := headerJWTOnlyHost, "X-JWT-Tenant", gateway.token("client-a", "writer-a"), ""
+			if method == "api-key" {
+				host, source, token, key = headerKeyOnlyHost, "X-Key-Tenant", "", "header-key"
+			}
+			for _, test := range []struct {
+				name   string
+				values []string
+				status int
+			}{
+				{"missing region", nil, http.StatusForbidden},
+				{"empty region", []string{""}, http.StatusForbidden},
+				{"unlisted region", []string{"other"}, http.StatusForbidden},
+				{"regex dot lookalike", []string{"euXwest"}, http.StatusForbidden},
+				{"regex plus lookalike", []string{"ussseast"}, http.StatusForbidden},
+				{"region prefix", []string{"prefix-eu.west"}, http.StatusForbidden},
+				{"region suffix", []string{"eu.west-extra"}, http.StatusForbidden},
+				{"repeated region", []string{"eu.west", "us+east"}, http.StatusBadRequest},
+				{"identical repeated region", []string{"eu.west", "eu.west"}, http.StatusBadRequest},
+				{"comma-separated region", []string{"eu.west,us+east"}, http.StatusBadRequest},
+			} {
+				headers := http.Header{source: []string{"client-a"}}
+				if test.values != nil {
+					headers["X-Region"] = test.values
+				}
+				expectHeaderAttributeDenied(ctx, gateway, method+" "+test.name, host, token, key, headers, test.status)
+			}
+		}
+	}, NodeTimeout(2*time.Minute))
+
 	It("requires a nonempty scalar JWT tenant for equality", func(ctx SpecContext) {
 		for _, tenant := range []any{nil, "", []string{"client-a"}, 123, map[string]any{"id": "client-a"}} {
 			claims := map[string]any{"organization": map[string]any{"id": tenant}, "aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix()}
 			token := (&jwtE2E{keys: gateway.keys}).token("issuer-one", claims, nil)
-			expectHeaderAttributeDenied(ctx, gateway, "non-scalar or empty tenant", headerJWTOnlyHost, token, "", http.Header{"X-JWT-Tenant": []string{"client-a"}}, http.StatusForbidden)
+			expectHeaderAttributeDenied(ctx, gateway, "non-scalar or empty tenant", headerJWTOnlyHost, token, "", http.Header{"X-JWT-Tenant": []string{"client-a"}, "X-Region": []string{"eu.west"}}, http.StatusForbidden)
 		}
 	}, NodeTimeout(90*time.Second))
 })
@@ -123,9 +156,10 @@ func shapeHeaderAttributeGateway(c *gatewayapi.Config) {
 	} {
 		access := gatewayapi.Access{
 			Name: "writers",
-			Match: gatewayapi.AccessMatch{Headers: []gatewayapi.MatchExpression{{
-				Name: method.header, Expression: "in", Value: gatewayapi.MatchValue{IsList: true, Items: []string{"client-a", "client-b"}},
-			}}},
+			Match: gatewayapi.AccessMatch{Headers: []gatewayapi.MatchExpression{
+				{Name: method.header, Expression: "in", Value: gatewayapi.MatchValue{IsList: true, Items: []string{"client-a", "client-b"}}},
+				{Name: "X-Region", Expression: "in", Value: gatewayapi.MatchValue{IsList: true, Items: []string{"eu.west", "us+east"}}},
+			}},
 			Authentication: &method.authentication,
 			Authorization: gatewayapi.Authorization{Grants: []gatewayapi.AuthorizationGrant{{
 				Authenticator: method.authenticator,

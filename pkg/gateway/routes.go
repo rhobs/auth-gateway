@@ -30,6 +30,8 @@ const (
 	localResponseAPIName  = "__local"
 	apiMetadataName       = "api"
 	serverFieldPathFormat = "servers[%d]"
+	// Bound literal regexes below Envoy's default 100-instruction RE2 limit.
+	maxAccessHeaderRegexBytes = 64
 )
 
 type indexedVirtualHost struct {
@@ -406,21 +408,50 @@ func serverVirtualHost(c resolvedConfig, index int, server resolvedServer) (*rou
 func accessHeaderCombinations(match gatewayapi.AccessMatch) [][]*route.HeaderMatcher {
 	combinations := [][]*route.HeaderMatcher{nil}
 	for _, condition := range sortedMatchExpressions(match.Headers) {
+		matchers := accessHeaderMatchers(condition)
 		var expanded [][]*route.HeaderMatcher
 		for _, headers := range combinations {
-			if condition.Expression == gatewayapi.ExpressionPresent {
-				matcher := &route.HeaderMatcher{Name: strings.ToLower(condition.Name), HeaderMatchSpecifier: &route.HeaderMatcher_PresentMatch{PresentMatch: true}}
-				expanded = append(expanded, append(slices.Clone(headers), matcher))
-				continue
-			}
-			for _, value := range matchValues(condition) {
-				matcher := &route.HeaderMatcher{Name: strings.ToLower(condition.Name), HeaderMatchSpecifier: &route.HeaderMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: value}}}}
-				expanded = append(expanded, append(slices.Clone(headers), matcher))
+			for _, header := range matchers {
+				expanded = append(expanded, append(slices.Clone(headers), header))
 			}
 		}
 		combinations = expanded
 	}
 	return combinations
+}
+
+func accessHeaderMatchers(condition gatewayapi.MatchExpression) []*route.HeaderMatcher {
+	name := strings.ToLower(condition.Name)
+	if condition.Expression == gatewayapi.ExpressionPresent {
+		return []*route.HeaderMatcher{{Name: name, HeaderMatchSpecifier: &route.HeaderMatcher_PresentMatch{PresentMatch: true}}}
+	}
+	values := matchValues(condition)
+	if len(values) > 1 {
+		var pattern strings.Builder
+		pattern.WriteString("^(?:")
+		for index, value := range values {
+			if index > 0 {
+				pattern.WriteByte('|')
+			}
+			pattern.WriteString(regexp.QuoteMeta(value))
+			if pattern.Len()+len(")$") > maxAccessHeaderRegexBytes {
+				break
+			}
+		}
+		pattern.WriteString(")$")
+		if pattern.Len() <= maxAccessHeaderRegexBytes {
+			return []*route.HeaderMatcher{{Name: name, HeaderMatchSpecifier: &route.HeaderMatcher_StringMatch{
+				StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_SafeRegex{SafeRegex: envoySafeRegex(pattern.String())}},
+			}}}
+		}
+	}
+	headers := make([]*route.HeaderMatcher, 0, len(values))
+	for _, value := range values {
+		headers = append(headers, &route.HeaderMatcher{Name: name, HeaderMatchSpecifier: &route.HeaderMatcher_StringMatch{
+			StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: value}},
+		}})
+	}
+	return headers
 }
 
 func sortedMatchExpressions(expressions []gatewayapi.MatchExpression) []gatewayapi.MatchExpression {

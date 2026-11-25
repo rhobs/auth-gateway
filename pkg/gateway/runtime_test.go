@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,6 +62,27 @@ func TestPinnedImagesValidateGoldenFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 		validatePinnedEnvoyFiles(t, c, files, "", certificate, key)
+	})
+	t.Run("header-selector-budget", func(t *testing.T) {
+		for _, test := range []struct {
+			name   string
+			values []string
+		}{
+			{"ASCII boundary", []string{strings.Repeat("a", 28), strings.Repeat("b", 29)}},
+			{"Unicode literals", []string{strings.Repeat("\u754c", 9), strings.Repeat("\u96ea", 9)}},
+			{"escaped literals", []string{strings.Repeat(".", 14), strings.Repeat("+", 14)}},
+			{"exact fallback", []string{strings.Repeat("a", 200), strings.Repeat("b", 200)}},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				c := loadConfigCase(t, "access-control")
+				c.Servers[0].APIs[0].Access[0].Match.Headers[0].Value = gatewayapi.MatchValue{IsList: true, Items: test.values}
+				files, err := Generate(c)
+				if err != nil {
+					t.Fatal(err)
+				}
+				validatePinnedEnvoyFiles(t, c, files, "", certificate, key)
+			})
+		}
 	})
 	t.Run("tracing", func(t *testing.T) {
 		c := loadConfigCase(t, "public-routing")
