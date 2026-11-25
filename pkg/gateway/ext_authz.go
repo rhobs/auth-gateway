@@ -28,6 +28,22 @@ const (
 	extAuthzInputMetadataName     = "auth_gateway.ext_authz.attributes"
 	extAuthzAttributeBridgeName   = "auth_gateway.ext_authz.attribute_bridge"
 	extAuthzCredentialCleanupName = "auth_gateway.ext_authz.credentials"
+	extAuthzAttributeBridgeScript = `function envoy_on_request(handle)
+  local context = handle:filterContext()
+  local attributes = context and context:get("attributes")
+  if attributes == nil then
+    return
+  end
+  local state = handle:streamInfo():filterState()
+  local metadata = handle:streamInfo():dynamicMetadata()
+  for _, name in ipairs(attributes) do
+    local value = state:get("auth_gateway.attributes." .. name)
+    if value ~= nil and value ~= "" then
+      metadata:set("auth_gateway.ext_authz.attributes", name, value)
+    end
+  end
+end
+`
 )
 
 func extAuthzFilterName(service string) string  { return extAuthzFilterPrefix + service }
@@ -242,7 +258,7 @@ func extAuthzPerRouteConfig() (*anypb.Any, error) {
 
 func extAuthzAttributeBridgeFilter() (*hcm.HttpFilter, error) {
 	config, err := packEnvoy(&lua.Lua{
-		DefaultSourceCode: &core.DataSource{Specifier: &core.DataSource_InlineString{InlineString: "function envoy_on_request(handle) end"}},
+		DefaultSourceCode: &core.DataSource{Specifier: &core.DataSource_InlineString{InlineString: extAuthzAttributeBridgeScript}},
 		ClearRouteCache:   wrapperspb.Bool(false),
 	})
 	if err != nil {
@@ -257,13 +273,15 @@ func extAuthzAttributeBridgePerRouteConfig(attributes, fixed []gatewayapi.Attrib
 		names = append(names, source.Name)
 	}
 	slices.Sort(names)
-	var script strings.Builder
-	script.WriteString("function envoy_on_request(handle)\n  local state = handle:streamInfo():filterState()\n  local metadata = handle:streamInfo():dynamicMetadata()\n")
-	for _, name := range names {
-		fmt.Fprintf(&script, "  do\n    local value = state:get(%q)\n    if value ~= nil and value ~= \"\" then\n      metadata:set(%q, %q, value)\n    end\n  end\n", filterStateKey(name), extAuthzInputMetadataName, name)
+	values := make([]*structpb.Value, len(names))
+	for index, name := range names {
+		values[index] = structpb.NewStringValue(name)
 	}
-	script.WriteString("end\n")
-	return packEnvoy(&lua.LuaPerRoute{Override: &lua.LuaPerRoute_SourceCode{SourceCode: &core.DataSource{Specifier: &core.DataSource_InlineString{InlineString: script.String()}}}})
+	return packEnvoy(&lua.LuaPerRoute{
+		FilterContext: &structpb.Struct{Fields: map[string]*structpb.Value{
+			"attributes": structpb.NewListValue(&structpb.ListValue{Values: values}),
+		}},
+	})
 }
 
 func extAuthzRouteMetadata(apiName string, access resolvedAccess) *structpb.Struct {

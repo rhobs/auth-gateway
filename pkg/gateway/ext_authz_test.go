@@ -116,6 +116,10 @@ func TestExternalAuthorizationGeneratedFilterAndRoutes(t *testing.T) {
 			if bridge.GetClearRouteCache().GetValue() {
 				t.Fatal("attribute bridge may clear the route cache")
 			}
+			if script := bridge.GetDefaultSourceCode().GetInlineString(); !strings.Contains(script, `context:get("attributes")`) ||
+				!strings.Contains(script, "ipairs(attributes)") {
+				t.Fatal("attribute bridge does not use the route's attribute list")
+			}
 		case authorizationFilterName:
 			rbacPosition = index
 		}
@@ -144,12 +148,13 @@ func TestExternalAuthorizationGeneratedFilterAndRoutes(t *testing.T) {
 		if err := generated.GetTypedPerFilterConfig()[extAuthzAttributeBridgeName].UnmarshalTo(&bridge); err != nil {
 			t.Fatal(err)
 		}
-		script := bridge.GetSourceCode().GetInlineString()
 		if perRoute.GetDisabled() || generated.GetMetadata().GetFilterMetadata()[extAuthzMetadataName] == nil ||
-			!strings.Contains(script, filterStateKey("requested_tenant")) || !strings.Contains(script, filterStateKey("tenant_id")) ||
-			!strings.Contains(script, extAuthzInputMetadataName) {
+			bridge.GetOverride() != nil {
 			t.Fatalf("route %q lacks the external check or declared attributes", generated.GetName())
 		}
+		assertConfigDiff(t, "external authorization attribute context", map[string]any{
+			"attributes": []any{"auth_origin", "requested_tenant", "tenant_id"},
+		}, bridge.GetFilterContext().AsMap())
 	}
 }
 
@@ -181,13 +186,64 @@ func TestExternalAuthorizationAfterMTLS(t *testing.T) {
 				if err := generated.GetTypedPerFilterConfig()[extAuthzAttributeBridgeName].UnmarshalTo(&bridge); err != nil {
 					t.Fatal(err)
 				}
-				script := bridge.GetSourceCode().GetInlineString()
-				if !strings.Contains(script, filterStateKey("tenant_id")) || !strings.Contains(script, filterStateKey("requested_tenant")) {
-					t.Fatalf("mTLS route %q does not send its declared attributes", generated.GetName())
-				}
+				assertConfigDiff(t, "mTLS attribute context", map[string]any{
+					"attributes": []any{"requested_tenant", "tenant_id"},
+				}, bridge.GetFilterContext().AsMap())
 				return
 			}
 		}
 	}
 	t.Fatal("mTLS access route has no external authorization filter")
+}
+
+func TestExternalAuthorizationBridgeContextIsRouteScoped(t *testing.T) {
+	c := loadConfigCase(t, "ext-authz")
+	c.APIs[0].Attributes = []gatewayapi.AttributeSource{testTextAttribute("role", "fixed", "metrics:read")}
+	headersOnly := c.ExtAuthzServices[0]
+	headersOnly.Name = "headers-only"
+	headersOnly.Attributes = []gatewayapi.AttributeSource{testTextAttribute("requested_tenant", "header", "X-Tenant")}
+	c.ExtAuthzServices = append(c.ExtAuthzServices, headersOnly)
+	c.Servers[0].APIs[0].Access[1].Authorization.ExtAuthz.Service = "headers-only"
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := firstHTTPManager(t, files.EnvoyBootstrap.Contents).GetRouteConfig().GetVirtualHosts()[0]
+	for _, test := range []struct {
+		name string
+		want []any
+	}{
+		{"api-0-metrics-route-0-access-0-match-0", []any{"auth_origin", "requested_tenant", "role", "tenant_id"}},
+		{"api-0-metrics-route-0-access-1-match-0", []any{"requested_tenant", "role"}},
+	} {
+		generated := namedRoute(host.Routes, test.name)
+		if generated == nil {
+			t.Fatalf("route %q is missing", test.name)
+		}
+		var bridge lua.LuaPerRoute
+		if err := generated.GetTypedPerFilterConfig()[extAuthzAttributeBridgeName].UnmarshalTo(&bridge); err != nil {
+			t.Fatal(err)
+		}
+		if bridge.GetOverride() != nil {
+			t.Fatalf("route %q overrides the shared Lua script", test.name)
+		}
+		assertConfigDiff(t, test.name, map[string]any{"attributes": test.want}, bridge.GetFilterContext().AsMap())
+	}
+	for _, generated := range host.Routes {
+		if generated.GetDirectResponse() != nil && generated.GetTypedPerFilterConfig()[extAuthzAttributeBridgeName] != nil {
+			t.Fatalf("local response %q received attribute context", generated.Name)
+		}
+	}
+}
+
+func TestExternalAuthorizationBridgeSupportsEmptyAttributes(t *testing.T) {
+	packed, err := extAuthzAttributeBridgePerRouteConfig(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bridge lua.LuaPerRoute
+	if err := packed.UnmarshalTo(&bridge); err != nil {
+		t.Fatal(err)
+	}
+	assertConfigDiff(t, "empty attribute context", map[string]any{"attributes": []any{}}, bridge.GetFilterContext().AsMap())
 }
