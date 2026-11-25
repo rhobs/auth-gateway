@@ -163,6 +163,7 @@ of those bindings. Changes require an explicit gateway Deployment rollout.
 Methods listed on the same route share its rewrite, processing, and timeouts.
 List methods together when those settings are identical: the generated Envoy
 route matches all declared methods without repeating its access configuration.
+Per-route counters aggregate all methods listed on the same route.
 Other methods receive `405` with the allowed methods in the `Allow` header.
 
 ### Route timeouts

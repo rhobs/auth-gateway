@@ -369,7 +369,7 @@ func TestAPIKeyRouteForwardsVerifiedClientMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
-	selected := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].Routes, "api-0-write-route-0-method-0-access-1-match-0")
+	selected := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].Routes, "api-0-write-route-0-access-1-match-0")
 	var wrapper route.FilterConfig
 	if err := selected.TypedPerFilterConfig[apiKeyFilterName].UnmarshalTo(&wrapper); err != nil {
 		t.Fatal(err)

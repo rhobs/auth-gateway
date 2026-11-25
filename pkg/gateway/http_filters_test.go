@@ -44,10 +44,10 @@ func TestAccessRoutesUseOnlyTheirSelectedNativeFilters(t *testing.T) {
 		routeName, jwtRequirement, tenant string
 		key                               bool
 	}{
-		{"api-0-write-route-0-method-0-access-0-match-0", "server-0-api-0-access-0", "tenant-a", false},
-		{"api-0-write-route-0-method-0-access-0-match-1", "server-0-api-0-access-0", "tenant-b", false},
-		{"api-0-write-route-0-method-0-access-1-match-0", "", "partner-a", true},
-		{"api-1-read-route-0-method-0-access-0-match-0", "server-0-api-1-access-0", "tenant-a", false},
+		{"api-0-write-route-0-access-0-match-0", "server-0-api-0-access-0", "tenant-a", false},
+		{"api-0-write-route-0-access-0-match-1", "server-0-api-0-access-0", "tenant-b", false},
+		{"api-0-write-route-0-access-1-match-0", "", "partner-a", true},
+		{"api-1-read-route-0-access-0-match-0", "server-0-api-1-access-0", "tenant-a", false},
 	} {
 		generated := namedRoute(host.Routes, test.routeName)
 		if generated == nil {
@@ -81,11 +81,11 @@ func TestAccessRoutesUseOnlyTheirSelectedNativeFilters(t *testing.T) {
 			t.Fatalf("route tenant = %q, want %q", tenant, test.tenant)
 		}
 	}
-	denied := namedRoute(host.Routes, "api-0-write-route-0-method-0-access-denied")
+	denied := namedRoute(host.Routes, "api-0-write-route-0-access-denied")
 	if denied.GetDirectResponse().GetStatus() != 403 || len(denied.TypedPerFilterConfig) != 1 || denied.TypedPerFilterConfig[requestValidationFilterName] == nil {
 		t.Fatalf("unmatched access must deny before processing: %v", denied)
 	}
-	public := namedRoute(host.Routes, "api-2-health-route-0-method-0")
+	public := namedRoute(host.Routes, "api-2-health-route-0")
 	var publicRBAC httpRBAC.RBACPerRoute
 	if err := public.TypedPerFilterConfig[authorizationFilterName].UnmarshalTo(&publicRBAC); err != nil {
 		t.Fatal(err)

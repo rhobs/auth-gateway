@@ -125,7 +125,7 @@ func TestRequestMetricsGenerateTagsAndRouteMetadata(t *testing.T) {
 	}
 
 	routes := manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()
-	metricRoute := namedRoute(routes, apiRouteName(0, "metrics-write", 0, 0)+"-access-0-match-0")
+	metricRoute := namedRoute(routes, apiRouteName(0, "metrics-write", 0)+"-access-0-match-0")
 	if metricRoute == nil {
 		t.Fatal("metrics-write route is missing")
 	}
@@ -134,7 +134,7 @@ func TestRequestMetricsGenerateTagsAndRouteMetadata(t *testing.T) {
 		metricMetadata.Fields["labels"].GetStructValue().Fields["tenant"].GetStringValue() != "tenant_id" {
 		t.Fatalf("metrics-write route metadata = %#v", metricMetadata)
 	}
-	statusOnlyRoute := namedRoute(routes, apiRouteName(1, "logs", 0, 0)+"-access-0-match-0")
+	statusOnlyRoute := namedRoute(routes, apiRouteName(1, "logs", 0)+"-access-0-match-0")
 	if statusOnlyRoute == nil {
 		t.Fatal("logs route is missing")
 	}

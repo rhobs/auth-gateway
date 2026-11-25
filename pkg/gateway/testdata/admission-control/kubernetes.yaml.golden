@@ -255,14 +255,14 @@ data:
                                         filter_metadata:
                                             envoy.filters.http.rbac:
                                                 api: protected
-                                      name: api-0-protected-route-0-method-0
+                                      name: api-0-protected-route-0
                                       route:
                                         cluster: api-protected
                                         idle_timeout: 60s
                                         max_stream_duration:
                                             max_stream_duration: 30s
                                         timeout: 30s
-                                      stat_prefix: api-0-protected-route-0-method-0
+                                      stat_prefix: api-0-protected-route-0
                                       typed_per_filter_config:
                                         envoy.filters.http.composite:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.CompositePerRoute
@@ -285,14 +285,14 @@ data:
                                         filter_metadata:
                                             envoy.filters.http.rbac:
                                                 api: protected
-                                      name: api-0-protected-route-1-method-0
+                                      name: api-0-protected-route-1
                                       route:
                                         cluster: api-protected
                                         idle_timeout: 60s
                                         max_stream_duration:
                                             max_stream_duration: 30s
                                         timeout: 30s
-                                      stat_prefix: api-0-protected-route-1-method-0
+                                      stat_prefix: api-0-protected-route-1
                                       typed_per_filter_config:
                                         envoy.filters.http.composite:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.CompositePerRoute
@@ -315,14 +315,14 @@ data:
                                         filter_metadata:
                                             envoy.filters.http.rbac:
                                                 api: other
-                                      name: api-1-other-route-0-method-0
+                                      name: api-1-other-route-0
                                       route:
                                         cluster: api-other
                                         idle_timeout: 60s
                                         max_stream_duration:
                                             max_stream_duration: 30s
                                         timeout: 30s
-                                      stat_prefix: api-1-other-route-0-method-0
+                                      stat_prefix: api-1-other-route-0
                                       typed_per_filter_config:
                                         envoy.filters.http.composite:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.CompositePerRoute
@@ -345,14 +345,14 @@ data:
                                         filter_metadata:
                                             envoy.filters.http.rbac:
                                                 api: plain
-                                      name: api-2-plain-route-0-method-0
+                                      name: api-2-plain-route-0
                                       route:
                                         cluster: api-plain
                                         idle_timeout: 60s
                                         max_stream_duration:
                                             max_stream_duration: 30s
                                         timeout: 30s
-                                      stat_prefix: api-2-plain-route-0-method-0
+                                      stat_prefix: api-2-plain-route-0
                                       typed_per_filter_config:
                                         envoy.filters.http.rbac:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -366,14 +366,14 @@ data:
                                         filter_metadata:
                                             envoy.filters.http.rbac:
                                                 api: disabled
-                                      name: api-3-disabled-route-0-method-0
+                                      name: api-3-disabled-route-0
                                       route:
                                         cluster: api-disabled
                                         idle_timeout: 60s
                                         max_stream_duration:
                                             max_stream_duration: 30s
                                         timeout: 30s
-                                      stat_prefix: api-3-disabled-route-0-method-0
+                                      stat_prefix: api-3-disabled-route-0
                                       typed_per_filter_config:
                                         envoy.filters.http.rbac:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -492,14 +492,14 @@ data:
                                         filter_metadata:
                                             envoy.filters.http.rbac:
                                                 api: protected
-                                      name: api-0-protected-route-0-method-0
+                                      name: api-0-protected-route-0
                                       route:
                                         cluster: api-protected
                                         idle_timeout: 60s
                                         max_stream_duration:
                                             max_stream_duration: 30s
                                         timeout: 30s
-                                      stat_prefix: api-0-protected-route-0-method-0
+                                      stat_prefix: api-0-protected-route-0
                                       typed_per_filter_config:
                                         envoy.filters.http.composite:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.CompositePerRoute
@@ -522,14 +522,14 @@ data:
                                         filter_metadata:
                                             envoy.filters.http.rbac:
                                                 api: protected
-                                      name: api-0-protected-route-1-method-0
+                                      name: api-0-protected-route-1
                                       route:
                                         cluster: api-protected
                                         idle_timeout: 60s
                                         max_stream_duration:
                                             max_stream_duration: 30s
                                         timeout: 30s
-                                      stat_prefix: api-0-protected-route-1-method-0
+                                      stat_prefix: api-0-protected-route-1
                                       typed_per_filter_config:
                                         envoy.filters.http.composite:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.CompositePerRoute
@@ -719,14 +719,14 @@ data:
                                         filter_metadata:
                                             envoy.filters.http.rbac:
                                                 api: other
-                                      name: api-0-other-route-0-method-0
+                                      name: api-0-other-route-0
                                       route:
                                         cluster: api-other
                                         idle_timeout: 60s
                                         max_stream_duration:
                                             max_stream_duration: 30s
                                         timeout: 30s
-                                      stat_prefix: api-0-other-route-0-method-0
+                                      stat_prefix: api-0-other-route-0
                                       typed_per_filter_config:
                                         envoy.filters.http.composite:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.composite.v3.CompositePerRoute
@@ -907,14 +907,14 @@ data:
                                         filter_metadata:
                                             envoy.filters.http.rbac:
                                                 api: plain
-                                      name: api-0-plain-route-0-method-0
+                                      name: api-0-plain-route-0
                                       route:
                                         cluster: api-plain
                                         idle_timeout: 60s
                                         max_stream_duration:
                                             max_stream_duration: 30s
                                         timeout: 30s
-                                      stat_prefix: api-0-plain-route-0-method-0
+                                      stat_prefix: api-0-plain-route-0
                                       typed_per_filter_config:
                                         envoy.filters.http.rbac:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -928,14 +928,14 @@ data:
                                         filter_metadata:
                                             envoy.filters.http.rbac:
                                                 api: disabled
-                                      name: api-1-disabled-route-0-method-0
+                                      name: api-1-disabled-route-0
                                       route:
                                         cluster: api-disabled
                                         idle_timeout: 60s
                                         max_stream_duration:
                                             max_stream_duration: 30s
                                         timeout: 30s
-                                      stat_prefix: api-1-disabled-route-0-method-0
+                                      stat_prefix: api-1-disabled-route-0
                                       typed_per_filter_config:
                                         envoy.filters.http.rbac:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute

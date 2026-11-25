@@ -467,7 +467,7 @@ static_resources:
                                             labels: {}
                                         envoy.filters.http.rbac:
                                             api: write
-                                  name: api-0-write-route-0-method-0-access-0-match-0
+                                  name: api-0-write-route-0-access-0-match-0
                                   route:
                                     cluster: api-write
                                     idle_timeout: 60s
@@ -475,7 +475,7 @@ static_resources:
                                         max_stream_duration: 30s
                                     path_rewrite: /anything
                                     timeout: 30s
-                                  stat_prefix: api-0-write-route-0-method-0-access-0-match-0
+                                  stat_prefix: api-0-write-route-0-access-0-match-0
                                   typed_per_filter_config:
                                     auth_gateway.request_validation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -790,7 +790,7 @@ static_resources:
                                             labels: {}
                                         envoy.filters.http.rbac:
                                             api: write
-                                  name: api-0-write-route-0-method-0-access-0-match-1
+                                  name: api-0-write-route-0-access-0-match-1
                                   route:
                                     cluster: api-write
                                     idle_timeout: 60s
@@ -798,7 +798,7 @@ static_resources:
                                         max_stream_duration: 30s
                                     path_rewrite: /anything
                                     timeout: 30s
-                                  stat_prefix: api-0-write-route-0-method-0-access-0-match-1
+                                  stat_prefix: api-0-write-route-0-access-0-match-1
                                   typed_per_filter_config:
                                     auth_gateway.request_validation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -1113,7 +1113,7 @@ static_resources:
                                             labels: {}
                                         envoy.filters.http.rbac:
                                             api: write
-                                  name: api-0-write-route-0-method-0-access-1-match-0
+                                  name: api-0-write-route-0-access-1-match-0
                                   route:
                                     cluster: api-write
                                     idle_timeout: 60s
@@ -1121,7 +1121,7 @@ static_resources:
                                         max_stream_duration: 30s
                                     path_rewrite: /anything
                                     timeout: 30s
-                                  stat_prefix: api-0-write-route-0-method-0-access-1-match-0
+                                  stat_prefix: api-0-write-route-0-access-1-match-0
                                   typed_per_filter_config:
                                     auth_gateway.request_validation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -1426,8 +1426,8 @@ static_resources:
                                             labels: {}
                                         envoy.filters.http.rbac:
                                             api: write
-                                  name: api-0-write-route-0-method-0-access-denied
-                                  stat_prefix: api-0-write-route-0-method-0-access-denied
+                                  name: api-0-write-route-0-access-denied
+                                  stat_prefix: api-0-write-route-0-access-denied
                                   typed_per_filter_config:
                                     auth_gateway.request_validation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -1544,7 +1544,7 @@ static_resources:
                                             labels: {}
                                         envoy.filters.http.rbac:
                                             api: read
-                                  name: api-1-read-route-0-method-0-access-0-match-0
+                                  name: api-1-read-route-0-access-0-match-0
                                   route:
                                     cluster: api-read
                                     idle_timeout: 60s
@@ -1552,7 +1552,7 @@ static_resources:
                                         max_stream_duration: 30s
                                     path_rewrite: /anything
                                     timeout: 30s
-                                  stat_prefix: api-1-read-route-0-method-0-access-0-match-0
+                                  stat_prefix: api-1-read-route-0-access-0-match-0
                                   typed_per_filter_config:
                                     auth_gateway.request_validation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -1994,7 +1994,7 @@ static_resources:
                                             labels: {}
                                         envoy.filters.http.rbac:
                                             api: read
-                                  name: api-1-read-route-0-method-0-access-0-match-1
+                                  name: api-1-read-route-0-access-0-match-1
                                   route:
                                     cluster: api-read
                                     idle_timeout: 60s
@@ -2002,7 +2002,7 @@ static_resources:
                                         max_stream_duration: 30s
                                     path_rewrite: /anything
                                     timeout: 30s
-                                  stat_prefix: api-1-read-route-0-method-0-access-0-match-1
+                                  stat_prefix: api-1-read-route-0-access-0-match-1
                                   typed_per_filter_config:
                                     auth_gateway.request_validation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -2440,8 +2440,8 @@ static_resources:
                                             labels: {}
                                         envoy.filters.http.rbac:
                                             api: read
-                                  name: api-1-read-route-0-method-0-access-denied
-                                  stat_prefix: api-1-read-route-0-method-0-access-denied
+                                  name: api-1-read-route-0-access-denied
+                                  stat_prefix: api-1-read-route-0-access-denied
                                   typed_per_filter_config:
                                     auth_gateway.request_validation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -2549,14 +2549,14 @@ static_resources:
                                     filter_metadata:
                                         envoy.filters.http.rbac:
                                             api: health
-                                  name: api-2-health-route-0-method-0
+                                  name: api-2-health-route-0
                                   route:
                                     cluster: api-health
                                     idle_timeout: 60s
                                     max_stream_duration:
                                         max_stream_duration: 30s
                                     timeout: 30s
-                                  stat_prefix: api-2-health-route-0-method-0
+                                  stat_prefix: api-2-health-route-0
                                   typed_per_filter_config:
                                     envoy.filters.http.rbac:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -2946,7 +2946,7 @@ static_resources:
                                             labels: {}
                                         envoy.filters.http.rbac:
                                             api: write
-                                  name: api-0-write-route-0-method-0-access-0-match-0
+                                  name: api-0-write-route-0-access-0-match-0
                                   route:
                                     cluster: api-write
                                     idle_timeout: 60s
@@ -2954,7 +2954,7 @@ static_resources:
                                         max_stream_duration: 30s
                                     path_rewrite: /anything
                                     timeout: 30s
-                                  stat_prefix: api-0-write-route-0-method-0-access-0-match-0
+                                  stat_prefix: api-0-write-route-0-access-0-match-0
                                   typed_per_filter_config:
                                     auth_gateway.request_validation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -3148,8 +3148,8 @@ static_resources:
                                             labels: {}
                                         envoy.filters.http.rbac:
                                             api: write
-                                  name: api-0-write-route-0-method-0-access-denied
-                                  stat_prefix: api-0-write-route-0-method-0-access-denied
+                                  name: api-0-write-route-0-access-denied
+                                  stat_prefix: api-0-write-route-0-access-denied
                                   typed_per_filter_config:
                                     auth_gateway.request_validation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute

@@ -19,6 +19,9 @@ Notable changes to RHOBS Auth Gateway are recorded here.
 
 ### Fixed
 
+- Remove obsolete method indexes from generated route names and statistic
+  prefixes. Regenerate the bootstrap and explicitly roll out gateway
+  Deployments to apply the names.
 - Add the missing collector security context and Pod seccomp profile so
   generated Pods pass restricted admission. Apply regenerated manifests to
   roll out the settings; OpenShift needs the documented

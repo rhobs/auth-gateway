@@ -153,7 +153,7 @@ data:
                                         filter_metadata:
                                             envoy.filters.http.rbac:
                                                 api: metrics-query
-                                      name: api-0-metrics-query-route-0-method-0
+                                      name: api-0-metrics-query-route-0
                                       route:
                                         cluster: api-metrics-query
                                         idle_timeout: 60s
@@ -164,7 +164,7 @@ data:
                                                 regex: ^/metrics/(.*)$
                                             substitution: /\1
                                         timeout: 30s
-                                      stat_prefix: api-0-metrics-query-route-0-method-0
+                                      stat_prefix: api-0-metrics-query-route-0
                                       typed_per_filter_config:
                                         envoy.filters.http.rbac:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -178,7 +178,7 @@ data:
                                         filter_metadata:
                                             envoy.filters.http.rbac:
                                                 api: metrics-query
-                                      name: api-0-metrics-query-route-1-method-0
+                                      name: api-0-metrics-query-route-1
                                       route:
                                         cluster: api-metrics-query
                                         idle_timeout: 60s
@@ -186,7 +186,7 @@ data:
                                             max_stream_duration: 30s
                                         prefix_rewrite: /api/v1/label/
                                         timeout: 30s
-                                      stat_prefix: api-0-metrics-query-route-1-method-0
+                                      stat_prefix: api-0-metrics-query-route-1
                                       typed_per_filter_config:
                                         envoy.filters.http.rbac:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -200,7 +200,7 @@ data:
                                         filter_metadata:
                                             envoy.filters.http.rbac:
                                                 api: metrics-query
-                                      name: api-0-metrics-query-route-2-method-0
+                                      name: api-0-metrics-query-route-2
                                       route:
                                         cluster: api-metrics-query
                                         idle_timeout: 60s
@@ -208,7 +208,7 @@ data:
                                             max_stream_duration: 30s
                                         path_rewrite: /api/v1/labels
                                         timeout: 30s
-                                      stat_prefix: api-0-metrics-query-route-2-method-0
+                                      stat_prefix: api-0-metrics-query-route-2
                                       typed_per_filter_config:
                                         envoy.filters.http.rbac:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute

@@ -96,7 +96,7 @@ func TestJWTRequiredHeadersAreRouteScopedAndManaged(t *testing.T) {
 	var protected, methodFallback, notFound bool
 	for _, generatedRoute := range host.GetRoutes() {
 		switch generatedRoute.Name {
-		case "api-0-metrics-route-0-method-0-access-0-match-0":
+		case "api-0-metrics-route-0-access-0-match-0":
 			protected = true
 			headerConfig := generatedRoute.TypedPerFilterConfig["envoy.filters.http.header_mutation"]
 			if headerConfig == nil {
