@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"regexp"
 	"slices"
 	"testing"
 
@@ -45,7 +46,7 @@ func TestAccessRoutesUseOnlyTheirSelectedNativeFilters(t *testing.T) {
 		key                               bool
 	}{
 		{"api-0-write-route-0-access-0-match-0", "server-0-api-0-access-0", "tenant-a", false},
-		{"api-0-write-route-0-access-0-match-1", "server-0-api-0-access-0", "tenant-b", false},
+		{"api-0-write-route-0-access-0-match-0", "server-0-api-0-access-0", "tenant-b", false},
 		{"api-0-write-route-0-access-1-match-0", "", "partner-a", true},
 		{"api-1-read-route-0-access-0-match-0", "server-0-api-1-access-0", "tenant-a", false},
 	} {
@@ -71,14 +72,18 @@ func TestAccessRoutesUseOnlyTheirSelectedNativeFilters(t *testing.T) {
 		if configs["envoy.filters.http.set_filter_state"] == nil {
 			t.Fatalf("route %q is missing its attribute initializer", test.routeName)
 		}
-		var tenant string
+		var tenantMatches bool
 		for _, header := range generated.Match.Headers {
 			if header.Name == "x-tenant" {
-				tenant = header.GetStringMatch().GetExact()
+				match := header.GetStringMatch()
+				tenantMatches = match.GetExact() == test.tenant
+				if pattern := match.GetSafeRegex().GetRegex(); pattern != "" {
+					tenantMatches = regexp.MustCompile(pattern).MatchString(test.tenant)
+				}
 			}
 		}
-		if tenant != test.tenant {
-			t.Fatalf("route tenant = %q, want %q", tenant, test.tenant)
+		if !tenantMatches {
+			t.Fatalf("route %q does not match tenant %q", test.routeName, test.tenant)
 		}
 	}
 	denied := namedRoute(host.Routes, "api-0-write-route-0-access-denied")

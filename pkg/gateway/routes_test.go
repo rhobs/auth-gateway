@@ -9,6 +9,128 @@ import (
 	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
 )
 
+func TestGeneratedAccessListsShareRoute(t *testing.T) {
+	c := loadConfigCase(t, "access-control")
+	c.Servers[0].APIs[0].Access[0].Match.Headers = []gatewayapi.MatchExpression{
+		{Name: "X-Tenant", Expression: "in", Value: gatewayapi.MatchValue{IsList: true, Items: []string{"tenant.a", "tenant+b"}}},
+		{Name: "X-Region", Expression: "in", Value: gatewayapi.MatchValue{IsList: true, Items: []string{"eu", "us"}}},
+		{Name: "X-Mode", Expression: "equals", Value: gatewayapi.MatchValue{Text: "write"}},
+		{Name: "X-Ready", Expression: "present"},
+	}
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := firstHTTPManager(t, files.EnvoyBootstrap.Contents).GetRouteConfig().GetVirtualHosts()[0]
+	count := 0
+	for _, generated := range host.Routes {
+		if strings.HasPrefix(generated.Name, "api-0-write-route-0-access-0-match-") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("generated access routes = %d, want 1", count)
+	}
+	generated := namedRoute(host.Routes, "api-0-write-route-0-access-0-match-0")
+	patterns := make(map[string]*regexp.Regexp)
+	var exact, present bool
+	for _, header := range generated.Match.Headers {
+		switch header.Name {
+		case "x-mode":
+			exact = header.GetStringMatch().GetExact() == "write"
+		case "x-ready":
+			present = header.GetPresentMatch()
+		case "x-tenant", "x-region":
+			pattern := header.GetStringMatch().GetSafeRegex().GetRegex()
+			if pattern == "" {
+				t.Fatalf("header %q has no list matcher", header.Name)
+			}
+			patterns[header.Name] = regexp.MustCompile(pattern)
+		}
+	}
+	if !exact || !present || len(patterns) != 2 {
+		t.Fatal("route did not preserve all header conditions")
+	}
+	for _, test := range []struct {
+		tenant, region string
+		want           bool
+	}{
+		{"tenant.a", "eu", true}, {"tenant.a", "us", true},
+		{"tenant+b", "eu", true}, {"tenant+b", "us", true},
+		{"tenantXa", "eu", false}, {"tenantb", "eu", false},
+		{"tenant.a", "europe", false}, {"tenant.a", "", false},
+		{"prefix-tenant.a", "eu", false}, {"tenant.a-extra", "eu", false},
+		{"Tenant.a", "eu", false}, {"", "eu", false},
+	} {
+		got := patterns["x-tenant"].MatchString(test.tenant) && patterns["x-region"].MatchString(test.region)
+		if got != test.want {
+			t.Errorf("tenant %q, region %q matched = %t, want %t", test.tenant, test.region, got, test.want)
+		}
+	}
+}
+
+func TestAccessHeaderListsUseBoundedMatchers(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		values    []string
+		wantCount int
+		wantRegex bool
+	}{
+		{"one value", []string{"tenant-a"}, 1, false},
+		{"literal metacharacters", []string{"a.*", "left|right", "(a)", `a\b`}, 1, true},
+		{"Unicode literals", []string{"\u00e9", "\u754c"}, 1, true},
+		{"at byte budget", []string{strings.Repeat("a", 28), strings.Repeat("b", 29)}, 1, true},
+		{"over byte budget", []string{strings.Repeat("a", 28), strings.Repeat("b", 30)}, 2, false},
+		{"long literals", []string{strings.Repeat("a", 200), strings.Repeat("b", 200)}, 2, false},
+		{"quoted literals exceed budget", []string{strings.Repeat(".", 15), strings.Repeat("+", 15)}, 2, false},
+		{"large list", []string{"tenant-a", "tenant-b", "tenant-c", "tenant-d", "tenant-e", "tenant-f", "tenant-g"}, 7, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			headers := accessHeaderMatchers(gatewayapi.MatchExpression{Name: "X-Tenant", Expression: "in", Value: gatewayapi.MatchValue{IsList: true, Items: test.values}})
+			if len(headers) != test.wantCount {
+				t.Fatalf("header matchers = %d, want %d", len(headers), test.wantCount)
+			}
+			for _, value := range test.values {
+				matches := 0
+				for _, header := range headers {
+					if header.Name != "x-tenant" {
+						t.Fatalf("header name = %q", header.Name)
+					}
+					match := header.GetStringMatch()
+					pattern := match.GetSafeRegex().GetRegex()
+					if (pattern != "") != test.wantRegex {
+						t.Fatalf("regex = %q, want regex = %t", pattern, test.wantRegex)
+					}
+					if match.GetExact() == value || pattern != "" && regexp.MustCompile(pattern).MatchString(value) {
+						matches++
+					}
+				}
+				if matches != 1 {
+					t.Errorf("value %q matches %d routes, want 1", value, matches)
+				}
+			}
+		})
+	}
+}
+
+func TestAccessHeaderCombinationsCompactEachListIndependently(t *testing.T) {
+	combinations := accessHeaderCombinations(gatewayapi.AccessMatch{Headers: []gatewayapi.MatchExpression{
+		{Name: "X-Tenant", Expression: "in", Value: gatewayapi.MatchValue{IsList: true, Items: []string{strings.Repeat("a", 100), strings.Repeat("b", 100)}}},
+		{Name: "X-Region", Expression: "in", Value: gatewayapi.MatchValue{IsList: true, Items: []string{"eu", "us"}}},
+	}})
+	if len(combinations) != 2 {
+		t.Fatalf("header combinations = %d, want 2", len(combinations))
+	}
+	for index, headers := range combinations {
+		if len(headers) != 2 || headers[0].Name != "x-region" || headers[0].GetStringMatch().GetSafeRegex().GetRegex() != "^(?:eu|us)$" {
+			t.Fatalf("combination %d lost the compact region matcher", index)
+		}
+		if got := headers[1].GetStringMatch().GetExact(); got != strings.Repeat(string(rune('a'+index)), 100) {
+			t.Fatalf("combination %d tenant = %q", index, got)
+		}
+	}
+}
+
 func TestGeneratedRouteMatchesWholeMethods(t *testing.T) {
 	config := loadConfigCase(t, "route-lists")
 	files, err := Generate(config)

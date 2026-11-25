@@ -40,9 +40,13 @@ Envoy validates JWT signatures, issuer, expiry, and `nbf`; configured
 API-key filter validates the configured header against the complete
 Secret-backed credential set.
 
-Each server/API binding expands its original-header selectors into native
-exact-match routes. List selectors produce repeated routes for the allowed
-values. Each route selects its JWT requirement or enables the native API-key
+Each server/API binding matches its original-header selectors with native
+route matchers. List selectors share one route using escaped literal RE2
+alternatives. Generated patterns use a conservative 64-byte budget to stay
+below Envoy's default 100-instruction regex limit; longer patterns retain
+separate exact-match routes. Each header list is compacted independently.
+Per-route statistics aggregate the list values matched by a shared route.
+Each route selects its JWT requirement or enables the native API-key
 filter and supplies its own RBAC grants or external authorization service.
 Authentication is disabled by default
 and enabled only on selected routes. Public APIs require an explicit binding.

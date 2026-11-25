@@ -351,6 +351,11 @@ must be unique within a binding; a label does not itself match a request.
 | `authorization.grants` | list of objects | None | Nonempty grants when local authorization is selected. See [authorization grants](#authorization-grants). |
 | `authorization.ext_authz` | object | None | Selects one named external service instead of local grants. See [external authorization](#external-authorization). |
 
+Values in an `in` header selector are literal strings. Multiple list selectors
+require one allowed value from each list. Generated routes can share these
+values, combining their per-route counters; large lists retain separate
+exact-match routes. See [Envoy request handling](envoy.md#authentication-and-request-handling).
+
 Outside dedicated mTLS servers, `authentication` selects exactly one of
 `jwt` or `api_key` when local grants are used. It may be omitted for external
 authorization, allowing the service to authenticate as well as authorize.
