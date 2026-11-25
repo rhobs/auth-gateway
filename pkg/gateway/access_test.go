@@ -309,8 +309,8 @@ func TestSharedCredentialAccessRoutesMatchHeaderPresence(t *testing.T) {
 	for _, test := range []struct {
 		name, header string
 	}{
-		{"api-0-write-route-0-method-0-access-0-match-0", "authorization"},
-		{"api-0-write-route-0-method-0-access-1-match-0", "x-writer-key"},
+		{"api-0-write-route-0-access-0-match-0", "authorization"},
+		{"api-0-write-route-0-access-1-match-0", "x-writer-key"},
 	} {
 		generated := namedRoute(host.Routes, test.name)
 		if generated == nil {

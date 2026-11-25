@@ -283,14 +283,14 @@ data:
                                         filter_metadata:
                                             envoy.filters.http.rbac:
                                                 api: metrics
-                                      name: api-0-metrics-route-0-method-0-access-0-match-0
+                                      name: api-0-metrics-route-0-access-0-match-0
                                       route:
                                         cluster: api-metrics
                                         idle_timeout: 65s
                                         max_stream_duration:
                                             max_stream_duration: 90s
                                         timeout: 60s
-                                      stat_prefix: api-0-metrics-route-0-method-0-access-0-match-0
+                                      stat_prefix: api-0-metrics-route-0-access-0-match-0
                                       typed_per_filter_config:
                                         auth_gateway.request_validation:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -390,8 +390,8 @@ data:
                                         filter_metadata:
                                             envoy.filters.http.rbac:
                                                 api: metrics
-                                      name: api-0-metrics-route-0-method-0-access-denied
-                                      stat_prefix: api-0-metrics-route-0-method-0-access-denied
+                                      name: api-0-metrics-route-0-access-denied
+                                      stat_prefix: api-0-metrics-route-0-access-denied
                                       typed_per_filter_config:
                                         auth_gateway.request_validation:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -405,14 +405,14 @@ data:
                                         filter_metadata:
                                             envoy.filters.http.rbac:
                                                 api: metrics
-                                      name: api-0-metrics-route-1-method-0-access-0-match-0
+                                      name: api-0-metrics-route-1-access-0-match-0
                                       route:
                                         cluster: api-metrics
                                         idle_timeout: 65s
                                         max_stream_duration:
                                             max_stream_duration: 30s
                                         timeout: 20s
-                                      stat_prefix: api-0-metrics-route-1-method-0-access-0-match-0
+                                      stat_prefix: api-0-metrics-route-1-access-0-match-0
                                       typed_per_filter_config:
                                         auth_gateway.request_validation:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -511,8 +511,8 @@ data:
                                         filter_metadata:
                                             envoy.filters.http.rbac:
                                                 api: metrics
-                                      name: api-0-metrics-route-1-method-0-access-denied
-                                      stat_prefix: api-0-metrics-route-1-method-0-access-denied
+                                      name: api-0-metrics-route-1-access-denied
+                                      stat_prefix: api-0-metrics-route-1-access-denied
                                       typed_per_filter_config:
                                         auth_gateway.request_validation:
                                             '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute

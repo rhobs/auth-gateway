@@ -21,6 +21,11 @@ declared order. Routes match an exact path, prefix, or RE2 expression and can
 rewrite the path. A known path with an unsupported method returns `405` with
 an `Allow` header. An unknown host or path returns `404`.
 
+Generated route names and `stat_prefix` values identify the API and configured
+route, with additional suffixes for access selectors. Envoy's
+[per-route statistics](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/route/v3/route_components.proto.html#config-route-v3-route)
+aggregate all declared methods on each generated route.
+
 Upstreams use HTTP/1 unless `http_protocol: http2` is set. HTTP/2 connection
 options apply only when HTTP/2 is enabled. TLS upstreams verify both the
 certificate chain and the configured DNS or IP identity. A custom

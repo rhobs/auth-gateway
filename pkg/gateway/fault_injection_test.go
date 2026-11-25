@@ -156,8 +156,8 @@ func TestFaultMatchUsesAttributesFromSelectedAccess(t *testing.T) {
 		name       string
 		wantWriter bool
 	}{
-		{"api-0-injected-route-0-method-0-access-0-match-0", false},
-		{"api-0-injected-route-0-method-0-access-1-match-0", true},
+		{"api-0-injected-route-0-access-0-match-0", false},
+		{"api-0-injected-route-0-access-1-match-0", true},
 	} {
 		generated := namedRoute(routes, test.name)
 		if generated == nil || generated.GetTypedPerFilterConfig()[faultCompositeFilterName] == nil {
@@ -274,7 +274,7 @@ func TestGeneratedFaultInjectionIsScopedToAPI(t *testing.T) {
 	}
 
 	routes := manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()
-	generatedRoute := namedRoute(routes, "api-0-injected-route-0-method-0")
+	generatedRoute := namedRoute(routes, "api-0-injected-route-0")
 	if generatedRoute == nil {
 		t.Fatal("injected route is missing")
 	}
@@ -395,7 +395,7 @@ func TestFaultInjectionPreservesRouteHeaderProcessing(t *testing.T) {
 			t.Fatalf("filter %q must precede fault injection: %v", name, names)
 		}
 	}
-	route := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes(), "api-0-metrics-route-0-method-0-access-0-match-0")
+	route := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes(), "api-0-metrics-route-0-access-0-match-0")
 	if route == nil {
 		t.Fatal("processed route is missing")
 	}
@@ -443,7 +443,7 @@ func TestGeneratedFaultMatchUsesAuthenticatedFilterState(t *testing.T) {
 		policy.GetAbort().GetHttpStatus() != http.StatusServiceUnavailable || policy.GetAbort().GetHeaderAbort() != nil {
 		t.Fatalf("native fault policy = %v, want exact trigger and configured status", &policy)
 	}
-	generatedRoute := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes(), "api-0-injected-route-0-method-0-access-0-match-0")
+	generatedRoute := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes(), "api-0-injected-route-0-access-0-match-0")
 	var selector composite.CompositePerRoute
 	if err := generatedRoute.GetTypedPerFilterConfig()[faultCompositeFilterName].UnmarshalTo(&selector); err != nil {
 		t.Fatal(err)
@@ -494,7 +494,7 @@ func TestGeneratedFaultMatchSupportsInAndPresent(t *testing.T) {
 		policy.Headers[1].Name != "x-inject-fault" || policy.Headers[1].GetStringMatch().GetSafeRegex().GetRegex() != `^(?:true|a\.b)$` {
 		t.Fatalf("fault header conditions = %v", policy.Headers)
 	}
-	route := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes(), "api-0-injected-route-0-method-0-access-0-match-0")
+	route := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes(), "api-0-injected-route-0-access-0-match-0")
 	var selector composite.CompositePerRoute
 	if err := route.GetTypedPerFilterConfig()[faultCompositeFilterName].UnmarshalTo(&selector); err != nil {
 		t.Fatal(err)

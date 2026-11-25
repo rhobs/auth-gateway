@@ -338,7 +338,7 @@ static_resources:
                                                 tenant: tenant_id
                                         envoy.filters.http.rbac:
                                             api: ingest
-                                  name: api-0-ingest-route-0-method-0-access-0-match-0
+                                  name: api-0-ingest-route-0-access-0-match-0
                                   route:
                                     cluster: api-ingest
                                     idle_timeout: 60s
@@ -346,7 +346,7 @@ static_resources:
                                         max_stream_duration: 30s
                                     path_rewrite: /anything
                                     timeout: 30s
-                                  stat_prefix: api-0-ingest-route-0-method-0-access-0-match-0
+                                  stat_prefix: api-0-ingest-route-0-access-0-match-0
                                   typed_per_filter_config:
                                     auth_gateway.request_validation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -447,8 +447,8 @@ static_resources:
                                                 tenant: tenant_id
                                         envoy.filters.http.rbac:
                                             api: ingest
-                                  name: api-0-ingest-route-0-method-0-access-denied
-                                  stat_prefix: api-0-ingest-route-0-method-0-access-denied
+                                  name: api-0-ingest-route-0-access-denied
+                                  stat_prefix: api-0-ingest-route-0-access-denied
                                   typed_per_filter_config:
                                     auth_gateway.request_validation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -819,7 +819,7 @@ static_resources:
                                                 tenant: tenant_id
                                         envoy.filters.http.rbac:
                                             api: ingest
-                                  name: api-0-ingest-route-0-method-0-access-0-match-0
+                                  name: api-0-ingest-route-0-access-0-match-0
                                   route:
                                     cluster: api-ingest
                                     idle_timeout: 60s
@@ -827,7 +827,7 @@ static_resources:
                                         max_stream_duration: 30s
                                     path_rewrite: /anything
                                     timeout: 30s
-                                  stat_prefix: api-0-ingest-route-0-method-0-access-0-match-0
+                                  stat_prefix: api-0-ingest-route-0-access-0-match-0
                                   typed_per_filter_config:
                                     auth_gateway.request_validation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
@@ -910,8 +910,8 @@ static_resources:
                                                 tenant: tenant_id
                                         envoy.filters.http.rbac:
                                             api: ingest
-                                  name: api-0-ingest-route-0-method-0-access-denied
-                                  stat_prefix: api-0-ingest-route-0-method-0-access-denied
+                                  name: api-0-ingest-route-0-access-denied
+                                  stat_prefix: api-0-ingest-route-0-access-denied
                                   typed_per_filter_config:
                                     auth_gateway.request_validation:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute

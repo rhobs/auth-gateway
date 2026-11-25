@@ -105,7 +105,7 @@ func TestAPIFixedAttributesGenerateForPublicRoutes(t *testing.T) {
 		t.Fatal("fixed attribute filter is missing from the public HTTP manager")
 	}
 	routes := manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()
-	matched := namedRoute(routes, apiRouteName(0, "metrics", 0, 0))
+	matched := namedRoute(routes, apiRouteName(0, "metrics", 0))
 	if matched == nil {
 		t.Fatal("metrics route is missing")
 	}
@@ -140,7 +140,7 @@ func TestAPIFixedAttributesGenerateForProtectedRoutes(t *testing.T) {
 	}
 	manager := firstHTTPManager(t, files.EnvoyBootstrap.Contents)
 	routes := manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()
-	base := apiRouteName(0, "metrics-write", 0, 0)
+	base := apiRouteName(0, "metrics-write", 0)
 	for _, name := range []string{base + "-access-0-match-0", base + "-access-denied"} {
 		generated := namedRoute(routes, name)
 		if generated == nil {

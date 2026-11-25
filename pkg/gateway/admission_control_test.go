@@ -292,7 +292,7 @@ func TestAdmissionControlPreservesRouteProcessing(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := firstGeneratedHTTPManager(t, files.EnvoyBootstrap.Contents)
-	route := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes(), "api-0-metrics-route-0-method-0-access-0-match-0")
+	route := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes(), "api-0-metrics-route-0-access-0-match-0")
 	if route == nil {
 		t.Fatal("processed route is missing")
 	}

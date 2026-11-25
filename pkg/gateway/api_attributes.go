@@ -129,7 +129,7 @@ func addAPIFixedAttributeRouteConfigs(routes []*route.Route, apis []gatewayapi.A
 			values[source.Name] = structpb.NewStringValue(source.Value.Text)
 		}
 		for routeIndex := range api.Routes {
-			name := apiRouteName(apiIndex, api.Name, routeIndex, 0)
+			name := apiRouteName(apiIndex, api.Name, routeIndex)
 			generated := routesByName[name]
 			if generated == nil {
 				return fmt.Errorf("generated route %q is missing", name)

@@ -299,8 +299,8 @@ func cloneServer(s gatewayapi.Server) gatewayapi.Server {
 	return s
 }
 
-func apiRouteName(apiIndex int, apiName string, routeIndex, methodIndex int) string {
-	return "api-" + strconv.Itoa(apiIndex) + "-" + apiName + "-route-" + strconv.Itoa(routeIndex) + "-method-" + strconv.Itoa(methodIndex)
+func apiRouteName(apiIndex int, apiName string, routeIndex int) string {
+	return "api-" + strconv.Itoa(apiIndex) + "-" + apiName + "-route-" + strconv.Itoa(routeIndex)
 }
 
 func routeVirtualHosts(hosts []indexedVirtualHost) []*route.VirtualHost {
@@ -551,7 +551,7 @@ func apiRoutesWithRequestHeaderMutations(apis []gatewayapi.API, includeMetadata 
 			if apiRoute.Processing == nil || len(apiRoute.Processing.RequestHeaders) == 0 {
 				continue
 			}
-			name := apiRouteName(apiIndex, api.Name, routeIndex, 0)
+			name := apiRouteName(apiIndex, api.Name, routeIndex)
 			generatedRoute := routesByName[name]
 			if generatedRoute == nil {
 				return nil, fmt.Errorf("generated route %q is missing", name)
@@ -599,7 +599,7 @@ func apiMethodRoutes(apis []gatewayapi.API, includeMetadata bool) ([]*route.Rout
 }
 
 func apiMethodRoute(api gatewayapi.API, apiIndex, routeIndex int, apiRoute gatewayapi.Route, includeMetadata bool) *route.Route {
-	name := apiRouteName(apiIndex, api.Name, routeIndex, 0)
+	name := apiRouteName(apiIndex, api.Name, routeIndex)
 	action := &route.RouteAction{
 		ClusterSpecifier:  &route.RouteAction_Cluster{Cluster: apiClusterName(api.Name)},
 		Timeout:           protobufDuration(apiRoute.Timeouts.ResponseTimeout),
