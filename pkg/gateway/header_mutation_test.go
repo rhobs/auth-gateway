@@ -47,6 +47,7 @@ func TestRewrittenRouteUsesEnvoyOriginalPathHeader(t *testing.T) {
 
 func TestJWTRequiredHeadersAreRouteScopedAndManaged(t *testing.T) {
 	c := loadConfigCase(t, "jwt-auth-with-headers")
+	c.APIs[0].Routes[0].Methods = []string{"GET", "POST"}
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)
@@ -89,6 +90,9 @@ func TestJWTRequiredHeadersAreRouteScopedAndManaged(t *testing.T) {
 	}
 
 	host := manager.GetRouteConfig().GetVirtualHosts()[0]
+	if len(host.Routes) != 4 {
+		t.Fatalf("route count = %d, want one allowed route, one denied route, 405, and 404", len(host.Routes))
+	}
 	var protected, methodFallback, notFound bool
 	for _, generatedRoute := range host.GetRoutes() {
 		switch generatedRoute.Name {

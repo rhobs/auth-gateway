@@ -274,26 +274,27 @@ func TestGeneratedFaultInjectionIsScopedToAPI(t *testing.T) {
 	}
 
 	routes := manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()
-	for _, name := range []string{"api-0-injected-route-0-method-0", "api-0-injected-route-0-method-1"} {
-		generatedRoute := namedRoute(routes, name)
-		if generatedRoute == nil {
-			t.Fatalf("route %q is missing", name)
-		}
-		perRouteConfig := generatedRoute.GetTypedPerFilterConfig()[faultCompositeFilterName]
-		if perRouteConfig == nil {
-			t.Fatalf("route %q has no fault policy", name)
-		}
-		var perRoute composite.CompositePerRoute
-		if err := perRouteConfig.UnmarshalTo(&perRoute); err != nil {
-			t.Fatal(err)
-		}
-		var action composite.ExecuteFilterAction
-		if err := perRoute.GetMatcher().GetOnNoMatch().GetAction().GetTypedConfig().UnmarshalTo(&action); err != nil {
-			t.Fatal(err)
-		}
-		if action.GetFilterChainName() != "server-0-api-0" {
-			t.Fatalf("route %q selects fault chain %q, want server-0-api-0", name, action.GetFilterChainName())
-		}
+	generatedRoute := namedRoute(routes, "api-0-injected-route-0-method-0")
+	if generatedRoute == nil {
+		t.Fatal("injected route is missing")
+	}
+	if got := generatedRoute.Match.Headers[0].GetStringMatch().GetSafeRegex().GetRegex(); got != "^(?:GET|POST)$" {
+		t.Fatalf("injected route methods = %q, want GET and POST", got)
+	}
+	perRouteConfig := generatedRoute.GetTypedPerFilterConfig()[faultCompositeFilterName]
+	if perRouteConfig == nil {
+		t.Fatal("injected route has no fault policy")
+	}
+	var perRoute composite.CompositePerRoute
+	if err := perRouteConfig.UnmarshalTo(&perRoute); err != nil {
+		t.Fatal(err)
+	}
+	var action composite.ExecuteFilterAction
+	if err := perRoute.GetMatcher().GetOnNoMatch().GetAction().GetTypedConfig().UnmarshalTo(&action); err != nil {
+		t.Fatal(err)
+	}
+	if action.GetFilterChainName() != "server-0-api-0" {
+		t.Fatalf("injected route selects fault chain %q, want server-0-api-0", action.GetFilterChainName())
 	}
 	for _, generatedRoute := range routes {
 		if strings.HasPrefix(generatedRoute.Name, "api-0-injected-") {

@@ -19,6 +19,7 @@ type httpCase struct {
 	wantStatus       int
 	wantUpstreamPath string
 	upstreamCluster  string
+	wantAllow        string
 	forwardedHeaders map[string]string
 }
 
@@ -65,7 +66,7 @@ var _ = Describe("HTTP routing and metrics", Label("gateway", "routing", "metric
 		Expect(status).To(Equal(test.wantStatus), string(responseBody))
 		switch test.wantStatus {
 		case http.StatusMethodNotAllowed:
-			Expect(allowHeader).To(Equal("POST"))
+			Expect(allowHeader).To(Equal(test.wantAllow))
 		case http.StatusNotFound:
 			Expect(allowHeader).To(BeEmpty())
 		}
@@ -130,6 +131,14 @@ var _ = Describe("HTTP routing and metrics", Label("gateway", "routing", "metric
 			wantStatus:       http.StatusOK,
 			wantUpstreamPath: "/anything/multi-method/ingest",
 		}),
+		Entry("rejects an undeclared method on a route with multiple methods", httpCase{
+			method:          http.MethodPut,
+			path:            "/multi-method/status",
+			host:            httpHost,
+			wantStatus:      http.StatusMethodNotAllowed,
+			wantAllow:       "GET, POST",
+			upstreamCluster: "api-metrics",
+		}),
 		Entry("uses the first declared matching route", httpCase{
 			method:           http.MethodGet,
 			path:             "/routes/order/specific",
@@ -151,7 +160,7 @@ var _ = Describe("HTTP routing and metrics", Label("gateway", "routing", "metric
 			wantStatus:      http.StatusNotFound,
 			upstreamCluster: "api-metrics",
 		}),
-		Entry("rejects other methods", httpCase{method: http.MethodGet, path: "/metrics/api/v1/receive", host: httpHost, wantStatus: http.StatusMethodNotAllowed, upstreamCluster: "api-metrics"}),
+		Entry("rejects other methods", httpCase{method: http.MethodGet, path: "/metrics/api/v1/receive", host: httpHost, wantStatus: http.StatusMethodNotAllowed, wantAllow: "POST", upstreamCluster: "api-metrics"}),
 		Entry("rejects unknown paths", httpCase{method: http.MethodPost, path: "/unknown", host: httpHost, wantStatus: http.StatusNotFound, upstreamCluster: "api-metrics"}),
 		Entry("serves the query host's bound API", httpCase{method: http.MethodGet, path: "/upstream-health", host: queryHTTPHost, wantStatus: http.StatusOK, wantUpstreamPath: "/anything"}),
 		Entry("rejects an API not bound to the query host", httpCase{method: http.MethodPost, path: "/metrics/api/v1/receive", host: queryHTTPHost, wantStatus: http.StatusNotFound, upstreamCluster: "api-metrics"}),

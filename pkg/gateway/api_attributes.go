@@ -128,25 +128,23 @@ func addAPIFixedAttributeRouteConfigs(routes []*route.Route, apis []gatewayapi.A
 		for _, source := range api.Attributes {
 			values[source.Name] = structpb.NewStringValue(source.Value.Text)
 		}
-		for routeIndex, apiRoute := range api.Routes {
-			for methodIndex := range apiRoute.Methods {
-				name := apiRouteName(apiIndex, api.Name, routeIndex, methodIndex)
-				generated := routesByName[name]
-				if generated == nil {
-					return fmt.Errorf("generated route %q is missing", name)
-				}
-				if generated.Metadata == nil {
-					generated.Metadata = &core.Metadata{}
-				}
-				if generated.Metadata.FilterMetadata == nil {
-					generated.Metadata.FilterMetadata = make(map[string]*structpb.Struct)
-				}
-				generated.Metadata.FilterMetadata[apiFixedAttributeFilterName] = &structpb.Struct{Fields: values}
-				if generated.TypedPerFilterConfig == nil {
-					generated.TypedPerFilterConfig = make(map[string]*anypb.Any)
-				}
-				generated.TypedPerFilterConfig[apiFixedAttributeFilterName] = perRoute
+		for routeIndex := range api.Routes {
+			name := apiRouteName(apiIndex, api.Name, routeIndex, 0)
+			generated := routesByName[name]
+			if generated == nil {
+				return fmt.Errorf("generated route %q is missing", name)
 			}
+			if generated.Metadata == nil {
+				generated.Metadata = &core.Metadata{}
+			}
+			if generated.Metadata.FilterMetadata == nil {
+				generated.Metadata.FilterMetadata = make(map[string]*structpb.Struct)
+			}
+			generated.Metadata.FilterMetadata[apiFixedAttributeFilterName] = &structpb.Struct{Fields: values}
+			if generated.TypedPerFilterConfig == nil {
+				generated.TypedPerFilterConfig = make(map[string]*anypb.Any)
+			}
+			generated.TypedPerFilterConfig[apiFixedAttributeFilterName] = perRoute
 		}
 	}
 	return nil
