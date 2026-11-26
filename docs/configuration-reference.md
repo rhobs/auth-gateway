@@ -7,6 +7,9 @@ top-level `version` must be `1`.
 See [config.example.yaml](../config.example.yaml) for a full configuration.
 Optional settings are commented where the example uses their defaults.
 
+See [expressions and keywords](expressions.md) for tables of supported
+operations, attribute sources, and keyword choices at each layer.
+
 Fields written as `[]` are repeated list entries. Fields written as
 `<name>` are user-defined mapping keys. `None` in the Default column means the
 field has no configured default. Durations are strings in Go duration syntax,
@@ -212,8 +215,11 @@ Each API with `metrics` configured emits a request counter. The automatic `api`
 label is the API name and `http_status_code` comes from the response.
 Additional labels use values from this API's fixed attributes, authenticator
 attributes, or attributes declared by an external authorization service.
+External service attributes come from declared request headers or local
+authenticators.
 Requests carrying both the configured API-key header and `Authorization` are
-rejected before this counter runs.
+rejected before authentication. A matched API with request metrics configured
+still counts the `403` response.
 
 | Field                     | Type                                  | Default   | Constraint                                                                                                                                                                                                                                                                    |
 | ------------------------- | ------------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -11,6 +11,8 @@ Shared `authenticators` define credential validation and original attribute
 sources. Access belongs to each `servers[].apis[]` binding. See the
 [complete example](../../config.example.yaml) and
 [configuration reference](../configuration-reference.md).
+The [expressions and keywords reference](../expressions.md) lists the supported
+operations and source types at each layer.
 
 ## Request selection
 
@@ -20,6 +22,9 @@ An entry's `match.headers` selects the request context using `equals`, `in`, or
 whether the header exists and takes no `value`. `tenant` labels a
 concrete entry; `name` labels a shared entry. Labels themselves do not match
 requests.
+
+See [header selector expressions](../expressions.md#request-header-selectors)
+for accepted values and credential-header restrictions.
 
 Two entries may cover the same tenant and API path when the JWT entry requires
 `Authorization: present` and the API-key entry requires the configured key
@@ -63,6 +68,9 @@ Local grants name their verifying authenticator and
 credential attribute conditions. Any applicable grant can allow the request;
 every condition within that grant must match. Roles are literal attribute
 values, with no implicit inheritance.
+
+See the [expression table](../expressions.md#expression-availability) for the
+complete list, value types, and where each expression is supported.
 
 `equals` compares a scalar attribute to one string, and `in` checks whether a
 scalar attribute is in a configured list. For verified JWT list claims, `has`

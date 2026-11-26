@@ -27,6 +27,8 @@ requests must pass authentication and authorization before reaching the upstream
 
 - [Gateway concepts](docs/concepts.md) explains how servers, APIs, authenticators,
   attributes, and access rules fit together.
+- [Expressions and keywords](docs/expressions.md) lists the operations, source
+  types, and configuration choices available at each layer.
 - [Authentication and authorization](docs/auth/README.md) covers credentials,
   attribute-based access rules, and forwarding attributes to upstream headers.
 - [Traffic protection](docs/traffic-protection.md) covers circuit breakers,

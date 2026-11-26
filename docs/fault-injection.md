@@ -56,6 +56,10 @@ it, then regenerate, apply, and roll out again. See the
 [configuration reference](configuration-reference.md#fault-injection) for
 field constraints.
 
+Fault selectors use `equals`, `in`, and `present` conditions. See the
+[selector syntax reference](expressions.md#forwarding-metrics-and-fault-selectors)
+for value types and source availability.
+
 ## SLO accounting
 
 With `metrics` configured, an injected reply counts once in the standard

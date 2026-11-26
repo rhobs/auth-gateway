@@ -4,6 +4,8 @@ Gateway configuration defines which APIs each hostname exposes, who can use
 them, and where allowed requests go. See the
 [full example](../config.example.yaml) for these settings together and the
 [configuration reference](configuration-reference.md) for individual fields.
+See [expressions and keywords](expressions.md) for the choices available at each
+layer.
 
 ## Table of contents
 
@@ -46,6 +48,8 @@ Each API defines:
 
 - `routes`: HTTP methods and paths to match, with optional path rewrites.
 - `upstream`: the backend address, port, protocol, and optional TLS settings.
+- `attributes`: optional fixed values shared by its matching routes and server
+  bindings, including public routes.
 
 An API becomes available on a hostname when a server binds it by name. Clients
 use the hostname, method, and path; API names are configuration identifiers.
@@ -64,6 +68,9 @@ Protected entries use `match.headers` to select a request context, such as a
 tenant, then select authentication and authorization. The selector chooses
 which rules apply; the request must still satisfy those rules.
 
+Optional `fault_injection` also belongs to the binding, so each server can set
+a different fault policy for the same API. See [fault injection](fault-injection.md).
+
 See [request selection](auth/README.md#request-selection) for matching requests
 to access entries and [access entry fields](configuration-reference.md#access-entries)
 for configuration.
@@ -71,8 +78,8 @@ for configuration.
 ## Authenticators
 
 Shared `authenticators[]` define how credentials are validated and which
-attributes can be extracted from them. Defining an authenticator does not grant
-access; a protected entry or mTLS server must select it.
+attributes become available after verification. Defining an authenticator does
+not grant access; a protected entry or mTLS server must select it.
 
 - [JWT](auth/jwt.md) validates tokens from a configured issuer. An access entry
   can trust one or more JWT providers.
@@ -87,19 +94,30 @@ authentication is selected on the server. See
 
 ## Attributes
 
-Attributes name values used in authorization, upstream headers, and metric
-labels. Declare them under `authenticators[].attributes`, with a source such
-as a verified JWT claim, API-key credential field, certificate SAN, or original
-request header.
+Attributes name values used in authorization, upstream headers, metric labels,
+and fault selectors. Their declaration controls when they become available:
+
+- `apis[].attributes` defines fixed values for all matching routes, including
+  public routes.
+- `authenticators[].attributes` defines values from verified JWT claims,
+  API-key credentials, certificate SANs, original request headers, or fixed
+  strings. These become available after the selected authenticator verifies
+  the request.
 
 For example, `tenant_id` can come from a verified credential while
 `requested_tenant` comes from a request header. Authorization can compare them
 to ensure the client is allowed to act for the requested tenant. A header
 value alone does not establish the client's identity.
 
+Fixed values can describe an API or a verified authenticator for forwarding,
+telemetry, fault selection, and external authorization. Local grants require
+verified credential attributes. See
+[API attributes](configuration-reference.md#api-attributes) for fixed API values.
+
 Values are used unchanged from their declared sources. Declare a separate
 source attribute when another value is needed. See
-[attribute source fields](configuration-reference.md#authenticators) and the
+[supported attribute sources](expressions.md#authenticators-and-attribute-sources),
+[attribute source fields](configuration-reference.md#authenticators), and the
 [JWT tenant example](auth/jwt.md#tenant-access) for configuration.
 
 ## Authorization
@@ -116,7 +134,8 @@ External authorization references a named service under `ext_authz_services[]`.
 The service receives selected request information and returns an allow or deny
 decision. It can run after local authentication or handle authentication itself.
 
-See [authorization rules](auth/README.md#authorization) for local grants and the
+See [grant expressions](expressions.md#authorization-grants) and
+[authorization rules](auth/README.md#authorization) for local grants, and the
 [external authorization guide](auth/ext-authz.md) for service setup and behavior.
 
 ## Request processing
@@ -125,6 +144,9 @@ Each route can set `processing.request_headers` to forward declared attributes
 as upstream headers after authorization. The gateway replaces caller-supplied
 values for those managed headers and removes credentials before forwarding.
 Missing required attribute values prevent the request from reaching the backend.
+
+Public bindings can forward fixed API attributes. Protected bindings can also
+forward attributes supplied by their selected access entries.
 
 See [forwarding](auth/README.md#forwarding) for behavior and
 [route processing fields](configuration-reference.md#route-processing) for
