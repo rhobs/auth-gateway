@@ -259,12 +259,14 @@ See [forwarding](auth/README.md#forwarding),
 |-----------------------------------------------|-----------------------------------------------------------------------------------------------------|
 | Top-level `version`                           | Integer `1`.                                                                                        |
 | `apis[].upstream.http_protocol`               | `http1` or `http2`; defaults to `http1`. The `http2` options block requires `http_protocol: http2`. |
+| `ext_proc_services[].upstream.http_protocol` | `http2`; plaintext or verified TLS. |
 | `ext_authz_services[].upstream.http_protocol` | `http2`, with `tls_config` required.                                                                |
 | `authenticators[].jwt.jwks.dns_lookup_family` | `AUTO`, `V4_ONLY`, `V6_ONLY`, `V4_PREFERRED`, or `ALL`; defaults to `V4_ONLY`.                      |
 | `trusted_ca`                                  | Exactly one of `filename` or `config_map`. `config_map` requires Kubernetes output.                 |
 | `servers[].tls_config`                        | Omit for HTTP; set for HTTPS. Its `mtls` block requires client certificates.                        |
 
 Boolean switches use `true` or `false`. Duration fields use strings with units,
-such as `250ms`, `5s`, or `1m`, and must be at least `1ms`. See
+such as `250ms`, `5s`, or `1m`, and must be at least `1ms` except where a field
+explicitly allows `0s`. See
 [trusted CA settings](configuration-reference.md#trusted-ca) and
 [traffic protection](traffic-protection.md) for related configuration.

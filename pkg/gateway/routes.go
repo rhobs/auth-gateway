@@ -262,6 +262,7 @@ func cloneRegexRewrite(r gatewayapi.RegexRewrite) gatewayapi.RegexRewrite {
 }
 
 func cloneRouteProcessing(p gatewayapi.RouteProcessing) gatewayapi.RouteProcessing {
+	p.ExtProc = cloneConfigPointer(p.ExtProc, cloneExtProc)
 	p.RequestHeaders = cloneSlice(p.RequestHeaders, func(mapping gatewayapi.RequestHeaderMapping) gatewayapi.RequestHeaderMapping {
 		mapping.From = cloneSourceReference(mapping.From)
 		return mapping
@@ -308,6 +309,9 @@ func routeVirtualHosts(hosts []indexedVirtualHost) []*route.VirtualHost {
 func serverVirtualHost(c resolvedConfig, index int, server resolvedServer) (*route.VirtualHost, error) {
 	routes, err := apiRoutesWithRequestHeaderMutations(server.apis, true)
 	if err != nil {
+		return nil, err
+	}
+	if err := addExtProcAPIRouteConfigs(routes, server.apis); err != nil {
 		return nil, err
 	}
 	if err := addAPIFixedAttributeRouteConfigs(routes, server.apis); err != nil {
@@ -373,6 +377,9 @@ func serverVirtualHost(c resolvedConfig, index int, server resolvedServer) (*rou
 				generated.Match.Headers = append(generated.Match.Headers, headers...)
 				if err := addAccessRouteConfigs(c, generated, access); err != nil {
 					return nil, fmt.Errorf("servers[%d] route %q: %w", index, generated.Name, err)
+				}
+				if err := addExtProcAccessRouteConfig(c, generated, binding.api, access); err != nil {
+					return nil, err
 				}
 				if err := addFaultRouteConfig(generated, binding, index); err != nil {
 					return nil, err

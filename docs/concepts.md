@@ -148,6 +148,10 @@ Missing required attribute values prevent the request from reaching the backend.
 Public bindings can forward fixed API attributes. Protected bindings can also
 forward attributes supplied by their selected access entries.
 
+A route can also select a named gRPC processor with `processing.ext_proc`.
+It runs after authorization, credential cleanup, and managed header mappings.
+See [request processing](request-processing.md) for stages, inputs, and deployment.
+
 See [forwarding](auth/README.md#forwarding) for behavior and
 [route processing fields](configuration-reference.md#route-processing) for
 configuration.

@@ -1,0 +1,107 @@
+version: 1
+authenticators:
+- name: local-jwt
+  jwt:
+    issuer: https://issuer.example.test
+    jwks:
+      uri: https://issuer.example.test/jwks
+  attributes:
+  - name: subject
+    from: {claim: [sub]}
+  - name: origin
+    from: {fixed: "jwt (100%)"}
+- name: keys
+  api_key: {secret: gateway-keys, header: X-API-Key}
+  attributes:
+  - name: subject
+    from: {credential: client_id}
+ext_proc_services:
+- name: transform
+  upstream:
+    address: processor.observability.svc.cluster.local
+    port: 9000
+    http_protocol: http2
+  request_attributes: [request.method, request.path]
+  mutable_request_headers: [x-processed, ':path', content-length]
+- name: inspect
+  upstream:
+    address: inspector.example.test
+    port: 9443
+    http_protocol: http2
+    tls_config:
+      server_name: inspector.example.test
+      trusted_ca:
+        config_map: {name: processor-ca, key: ca.pem}
+  message_timeout: 500ms
+  failure_mode_allow: true
+apis:
+- name: processed
+  attributes:
+  - name: role
+    from: {fixed: "metrics:read (100%)"}
+  upstream: {address: httpbin, port: 8080}
+  routes:
+  - methods: [POST]
+    path: {expression: equals, value: /buffered}
+    processing:
+      request_headers:
+      - name: X-Subject
+        from: {attribute: subject}
+      ext_proc:
+        service: transform
+        request_body_mode: buffered
+        request_body_buffer_limit_bytes: 2097152
+  - methods: [POST]
+    path: {expression: equals, value: /streamed}
+    processing:
+      ext_proc:
+        service: transform
+        request_body_mode: streamed
+  - methods: [GET]
+    path: {expression: equals, value: /headers}
+    processing:
+      ext_proc: {service: inspect}
+  - methods: [GET]
+    path: {expression: equals, value: /unprocessed}
+- name: public
+  attributes:
+  - name: audience
+    from: {fixed: public}
+  upstream: {address: httpbin, port: 8080}
+  routes:
+  - methods: [GET]
+    path: {expression: equals, value: /public}
+    processing:
+      ext_proc: {service: inspect}
+servers:
+- hostname: processor.example.test
+  apis:
+  - name: processed
+    access:
+    - name: jwt
+      match:
+        headers:
+        - {name: X-Auth, expression: equals, value: jwt}
+      authentication:
+        jwt: {providers: [local-jwt]}
+      authorization:
+        grants:
+        - authenticator: local-jwt
+          match:
+            attributes: [{name: subject, expression: nonempty}]
+    - name: key
+      match:
+        headers:
+        - {name: X-Auth, expression: equals, value: key}
+      authentication:
+        api_key: {authenticator: keys}
+      authorization:
+        grants:
+        - authenticator: keys
+          match:
+            attributes: [{name: subject, expression: nonempty}]
+  - name: public
+    public: true
+kubernetes:
+  name: auth-gateway
+  namespace: observability

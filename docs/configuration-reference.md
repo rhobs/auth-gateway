@@ -14,7 +14,7 @@ Fields written as `[]` are repeated list entries. Fields written as
 `<name>` are user-defined mapping keys. `None` in the Default column means the
 field has no configured default. Durations are strings in Go duration syntax,
 such as `250ms`, `5s`, or `1m`. Every duration in gateway configuration must
-be at least `1ms`.
+be at least `1ms`, except where a field explicitly allows `0s`.
 
 ## Top-level fields
 
@@ -25,6 +25,7 @@ be at least `1ms`.
 | `listener`                 | object            | Defaults below   | Listener fields use the defaults below if omitted.                                                          |
 | `overload`                 | object            | Disabled         | If present, both capacity limits are required.                                                              |
 | `authenticators`           | list of objects   | Empty            | Names must be unique. Each entry sets exactly one of `jwt`, `api_key`, or `mtls`.                           |
+| `ext_proc_services` | list of objects | Empty | Named gRPC request processors; see [external processing services](#external-processing-services). |
 | `ext_authz_services`       | list of objects   | Empty            | Named gRPC authorization services; see [external authorization services](#external-authorization-services). |
 | `servers`                  | list of objects   | None             | Required; at least one server.                                                                              |
 | `apis`                     | list of objects   | None             | Required; at least one API.                                                                                 |
@@ -285,15 +286,58 @@ gateway configuration, then explicitly roll out the Deployment to toggle them.
 
 | Field                                                           | Type              | Default   | Constraint                                                                                                                                                                |
 | --------------------------------------------------------------- | ----------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apis[].routes[].processing.request_headers`                    | list of objects   | None      | If `processing` is present, at least one mapping is required. Every protected entry must provide each referenced attribute; public bindings may use fixed API attributes. |
+| `apis[].routes[].processing.request_headers`                    | list of objects   | None      | If `processing` is present, configure at least one mapping or `ext_proc`. Every protected entry must provide each referenced attribute; public bindings may use fixed API attributes. |
 | `apis[].routes[].processing.request_headers[].name`             | string            | None      | Required valid HTTP header name; cannot be a reserved identity, routing, connection, or framing header. Names must be unique ignoring case.                               |
 | `apis[].routes[].processing.request_headers[].from.attribute`   | string            | None      | Required valid attribute name.                                                                                                                                            |
+| `apis[].routes[].processing.ext_proc` | object | None | Optional request processor; may coexist with `request_headers`. |
+| `apis[].routes[].processing.ext_proc.service` | string | None | Required name from `ext_proc_services`. |
+| `apis[].routes[].processing.ext_proc.request_header_mode` | string | `send` | `send` or `skip`. |
+| `apis[].routes[].processing.ext_proc.request_body_mode` | string | `none` | `none`, `buffered`, `buffered_partial`, `streamed`, or `full_duplex_streamed`. |
+| `apis[].routes[].processing.ext_proc.request_trailer_mode` | string | `skip` | `send` or `skip`; must be `send` with `full_duplex_streamed`. |
+| `apis[].routes[].processing.ext_proc.request_body_buffer_limit_bytes` | uint64 | Listener limit | Must be at least `listener.per_connection_buffer_limit_bytes`; raises the request body buffer limit for this route. |
 
 Headers and metric labels use attribute values directly from their declared
 sources. When an upstream needs a different value from the one used in a grant,
 supply an additional source attribute and reference it in `from.attribute` or
 `apis[].metrics.labels`. See the [JWT](auth/jwt.md), [API-key](auth/api-key.md),
 and [external authorization](auth/ext-authz.md) guides for examples.
+
+### External processing services
+
+Each `ext_proc_services[]` entry selects an external gRPC request processor.
+Deploy the processor separately and make it reachable from Envoy. No tenant
+attribute or application policy is required. See [request processing](request-processing.md).
+
+| Field | Type | Default | Constraint |
+| ----- | ---- | ------- | ---------- |
+| `ext_proc_services[].name` | string | None | Required unique gateway name. |
+| `ext_proc_services[].upstream` | object | None | [Upstream fields](#upstream); requires `http_protocol: http2`. Plaintext or verified TLS. |
+| `ext_proc_services[].message_timeout` | duration | `200ms` | Per-message response timeout, at least `1ms` or `0s` for immediate timeout. Envoy does not apply this timer in full duplex mode. |
+| `ext_proc_services[].failure_mode_allow` | bool | `false` | Continue on native ext_proc processing failures. Explicit processor rejections remain rejections. |
+| `ext_proc_services[].request_attributes` | list of strings | Empty | Distinct nonempty native Envoy property names sent in `ProcessingRequest.attributes`. |
+| `ext_proc_services[].mutable_request_headers` | list of strings | Empty | Case-insensitive unique header names. Credentials, gateway controls, Envoy headers, routing headers other than `:path`, connection headers, and managed output headers are forbidden. Underscores are forbidden. `:path` and `content-length` may be explicitly allowed. |
+
+Processing runs after authorization, credential cleanup, and managed header
+mappings. Only attached routes invoke their selected processor, including public
+routes. Generated denial, `404`, and `405` routes do not invoke processors.
+Remaining upstream request headers are sent in full when header mode is `send`.
+
+Resolved scalar API and selected access attributes retain their declared names and values
+in `auth_gateway.ext_proc.attributes`. Verified JWT payloads are forwarded
+separately under `envoy.filters.http.jwt_authn`. Native properties use
+`ProcessingRequest.attributes["envoy.filters.http.ext_proc"]`. Missing or empty
+scalar working attributes are omitted. Full verified JWT metadata also retains
+list and object claims.
+
+Native mutation rules reject forbidden header changes with an error. Envoy keeps
+the authorized route even if a processor requests route-cache clearing. Allowing
+`:path` trusts the processor to change the forwarded path and query on that route;
+it cannot select another route or upstream. Normal route rewrites still apply.
+
+Response processing, observation mode, processor-driven mode overrides, and
+received metadata writes are disabled. Service configuration, route attachments,
+and buffer limits are static bootstrap settings: regenerate, apply, and explicitly
+roll out the Deployment. TLS CA ConfigMaps must already exist in the namespace.
 
 ### External authorization services
 
@@ -487,7 +531,8 @@ Header attributes can feed managed upstream headers and metric labels.
 ## Trusted CA
 
 Trusted CA settings appear under `apis[].upstream.tls_config.trusted_ca`,
-`ext_authz_services[].upstream.tls_config.trusted_ca`, or
+`ext_authz_services[].upstream.tls_config.trusted_ca`,
+`ext_proc_services[].upstream.tls_config.trusted_ca`, or
 `authenticators[].jwt.jwks.trusted_ca`, and are required under
 `authenticators[].mtls.trusted_ca`. Upstream and JWKS trust use the system CA
 bundle when this object is omitted. mTLS client trust has no system CA fallback.

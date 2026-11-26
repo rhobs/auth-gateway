@@ -1,0 +1,110 @@
+version: 1
+authenticators:
+- name: issuer-one
+  jwt:
+    issuer: https://issuer-one.jwt.test
+    jwks: {uri: https://jwks.jwt.test/issuer-one}
+  attributes:
+  - name: tenant_id
+    from: {claim: [organization, id]}
+  - name: writer_id
+    from: {claim: [sub]}
+- name: partner-key
+  api_key: {secret: auth-gateway-api-keys, header: X-Partner-Key}
+  attributes:
+  - name: tenant_id
+    from: {credential: tenant_id}
+  - name: writer_id
+    from: {credential: writer_id}
+ext_proc_services:
+- name: transform
+  upstream: {address: processor, port: 9000, http_protocol: http2}
+  message_timeout: 2s
+  request_attributes: [request.method, request.path]
+  mutable_request_headers: [x-processed, x-processor-input]
+- name: lenient
+  upstream: {address: processor, port: 9000, http_protocol: http2}
+  message_timeout: 2s
+  failure_mode_allow: true
+  mutable_request_headers: [x-processed, x-processor-input]
+apis:
+- name: ext-proc-api
+  attributes:
+  - name: operation
+    from: {fixed: "transform (100%)"}
+  upstream: {address: httpbin, port: 8080}
+  routes:
+  - methods: [GET]
+    path: {expression: equals, value: /headers}
+    rewrite: {path: /anything}
+    processing:
+      request_headers:
+      - {name: X-Writer-ID, from: {attribute: writer_id}}
+      ext_proc: {service: transform}
+  - methods: [POST]
+    path: {expression: equals, value: /buffered}
+    rewrite: {path: /anything}
+    processing:
+      ext_proc:
+        service: transform
+        request_body_mode: buffered
+        request_body_buffer_limit_bytes: 2097152
+  - methods: [POST]
+    path: {expression: equals, value: /partial}
+    rewrite: {path: /anything}
+    processing:
+      ext_proc: {service: transform, request_body_mode: buffered_partial}
+  - methods: [POST]
+    path: {expression: equals, value: /streamed}
+    rewrite: {path: /anything}
+    processing:
+      ext_proc: {service: transform, request_body_mode: streamed}
+  - methods: [POST]
+    path: {expression: equals, value: /duplex}
+    rewrite: {path: /anything}
+    processing:
+      ext_proc:
+        service: transform
+        request_body_mode: full_duplex_streamed
+        request_trailer_mode: send
+- name: ext-proc-public
+  attributes:
+  - name: audience
+    from: {fixed: public}
+  upstream: {address: httpbin, port: 8080}
+  routes:
+  - methods: [GET]
+    path: {expression: equals, value: /public}
+    rewrite: {path: /anything}
+    processing:
+      ext_proc: {service: lenient}
+  - methods: [GET]
+    path: {expression: equals, value: /unprocessed}
+    rewrite: {path: /anything}
+servers:
+- hostname: proc.auth-gateway.test
+  apis:
+  - name: ext-proc-api
+    access:
+    - name: jwt
+      match:
+        headers: [{name: X-Auth, expression: equals, value: jwt}]
+      authentication:
+        jwt: {providers: [issuer-one]}
+      authorization:
+        grants:
+        - authenticator: issuer-one
+          match:
+            attributes: [{name: tenant_id, expression: nonempty}]
+    - name: key
+      match:
+        headers: [{name: X-Auth, expression: equals, value: key}]
+      authentication:
+        api_key: {authenticator: partner-key}
+      authorization:
+        grants:
+        - authenticator: partner-key
+          match:
+            attributes: [{name: tenant_id, expression: nonempty}]
+  - name: ext-proc-public
+    public: true

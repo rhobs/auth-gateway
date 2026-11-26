@@ -150,8 +150,13 @@ func validateRouteProcessing(name string, processing *gatewayapi.RouteProcessing
 	if processing == nil {
 		return nil
 	}
-	if len(processing.RequestHeaders) == 0 {
-		return fmt.Errorf("%s.request_headers must contain at least one header mapping", name)
+	if len(processing.RequestHeaders) == 0 && processing.ExtProc == nil {
+		return fmt.Errorf("%s.request_headers must contain at least one header mapping or ext_proc must be configured", name)
+	}
+	if processing.ExtProc != nil {
+		if err := validateExtProc(name+".ext_proc", *processing.ExtProc); err != nil {
+			return err
+		}
 	}
 	seen := make(map[string]struct{}, len(processing.RequestHeaders))
 	for i, mapping := range processing.RequestHeaders {

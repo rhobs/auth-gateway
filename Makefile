@@ -16,7 +16,7 @@ tools:
 	$(MAKE) -C e2e cmctl kind-tool
 
 test-runtime:
-	go test -tags=envoyruntime ./pkg/gateway -run 'TestPinnedImagesValidateGoldenFiles|TestEnvoyReloadsFileBasedResources|TestEnvoyReloadsClientCAForNewConnections|TestEnvoyAdmissionControlIsolatesAPIs|TestEnvoyAPIKeyAttributeLayouts|TestEnvoyForwardsFixedAPIAttributes|TestEnvoyForwardsFixedAuthenticatorAttributes|TestEnvoyExternalAuthorizationBridgeUsesRouteContext' -count=1
+	go test -tags=envoyruntime ./pkg/gateway -run 'TestPinnedImagesValidateGoldenFiles|TestEnvoyReloadsFileBasedResources|TestEnvoyReloadsClientCAForNewConnections|TestEnvoyAdmissionControlIsolatesAPIs|TestEnvoyAPIKeyAttributeLayouts|TestEnvoyForwardsFixedAPIAttributes|TestEnvoyForwardsFixedAuthenticatorAttributes|TestEnvoyExternalAuthorizationBridgeUsesRouteContext|TestEnvoyExternalProcessing' -count=1
 
 update-golden:
 	go test ./pkg/gateway -update

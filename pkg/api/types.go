@@ -96,6 +96,25 @@ type ExternalAuthorizationService struct {
 	Attributes        []AttributeSource `yaml:"attributes,omitempty"`
 }
 
+// ExternalProcessingService describes a gRPC request processor.
+type ExternalProcessingService struct {
+	Name                  string    `yaml:"name"`
+	Upstream              Upstream  `yaml:"upstream"`
+	MessageTimeout        *Duration `yaml:"message_timeout,omitempty"`
+	FailureModeAllow      bool      `yaml:"failure_mode_allow,omitempty"`
+	RequestAttributes     []string  `yaml:"request_attributes,omitempty"`
+	MutableRequestHeaders []string  `yaml:"mutable_request_headers,omitempty"`
+}
+
+// ExternalProcessing selects request stages for one processor.
+type ExternalProcessing struct {
+	Service                     string  `yaml:"service"`
+	RequestHeaderMode           string  `yaml:"request_header_mode,omitempty"`
+	RequestBodyMode             string  `yaml:"request_body_mode,omitempty"`
+	RequestTrailerMode          string  `yaml:"request_trailer_mode,omitempty"`
+	RequestBodyBufferLimitBytes *uint64 `yaml:"request_body_buffer_limit_bytes,omitempty"`
+}
+
 // APIBinding exposes one API with explicit public access or protected entries.
 type APIBinding struct {
 	Name           string                `yaml:"name"`
@@ -126,6 +145,7 @@ type Config struct {
 	Overload         *OverloadConfig                `yaml:"overload,omitempty"`
 	Authenticators   []Authenticator                `yaml:"authenticators,omitempty"`
 	ExtAuthzServices []ExternalAuthorizationService `yaml:"ext_authz_services,omitempty"`
+	ExtProcServices  []ExternalProcessingService    `yaml:"ext_proc_services,omitempty"`
 	Servers          []Server                       `yaml:"servers"`
 	APIs             []API                          `yaml:"apis"`
 	Observability    ObservabilityConfig            `yaml:"observability,omitempty"`
@@ -300,6 +320,7 @@ type RegexRewrite struct {
 
 // RouteProcessing describes optional per-route request processing.
 type RouteProcessing struct {
+	ExtProc        *ExternalProcessing    `yaml:"ext_proc,omitempty"`
 	RequestHeaders []RequestHeaderMapping `yaml:"request_headers,omitempty"`
 }
 
