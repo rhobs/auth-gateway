@@ -29,6 +29,8 @@ requests must pass authentication and authorization before reaching the upstream
   attributes, and access rules fit together.
 - [Authentication and authorization](docs/auth/README.md) covers credentials,
   attribute-based access rules, and forwarding attributes to upstream headers.
+- [Traffic protection](docs/traffic-protection.md) covers circuit breakers,
+  admission control, overload protection, and timeouts.
 - [Logs, metrics, and traces](docs/envoy.md#logs-metrics-and-traces) describes
   how to observe gateway traffic.
 - [Fault injection](docs/fault-injection.md) covers controlled HTTP errors for

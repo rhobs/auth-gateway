@@ -14,6 +14,7 @@ them, and where allowed requests go. See the
 - [Attributes](#attributes)
 - [Authorization](#authorization)
 - [Request processing](#request-processing)
+- [Traffic protection](#traffic-protection)
 - [Observability](#observability)
 - [Deployment](#deployment)
 
@@ -128,6 +129,16 @@ Missing required attribute values prevent the request from reaching the backend.
 See [forwarding](auth/README.md#forwarding) for behavior and
 [route processing fields](configuration-reference.md#route-processing) for
 configuration.
+
+## Traffic protection
+
+APIs can set upstream circuit breaker limits and enable admission control based
+on their recent success rate. Top-level `overload` protects Envoy's own
+resources. Listener, API, and route timeouts bound connection and request
+lifetimes.
+
+See [traffic protection](traffic-protection.md) for the scope of each control,
+configuration fields, and links to Envoy's documentation.
 
 ## Observability
 

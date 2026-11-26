@@ -199,6 +199,9 @@ in [resource update monitoring](resource-update-monitoring.md).
 
 ## Timeouts and overload protection
 
+See [traffic protection](traffic-protection.md) for a configuration overview and
+links to the Envoy documentation.
+
 Listener defaults include a `5s` request-header timeout, `30s` request timeout,
 `1m` connection and stream idle timeouts, and a `30s` maximum stream duration.
 API and route overrides apply independently; route values take precedence.
