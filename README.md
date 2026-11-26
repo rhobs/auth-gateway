@@ -1,21 +1,48 @@
-# RHOBS Auth Gateway
+# Auth Gateway
 
-RHOBS Auth Gateway is a Go library that loads one YAML configuration and
-generates Envoy files or Kubernetes resources. It does not run Envoy or a
-controller.
+Auth Gateway is an API for configuring Envoy Proxy as an authentication and
+authorization proxy, primarily for observability workloads. It also suits other
+APIs with simple access patterns, such as reading or writing a resource.
 
-The supported features include exact-host routing, HTTP and HTTPS listeners,
-HTTP/1 and HTTP/2 upstreams, JWT, API-key, and client-certificate mTLS
-authentication, attribute-based authorization, request header forwarding, per-API
-response counters, opt-in per-API fault injection, access logs, Prometheus
-metrics, and OpenTelemetry traces.
+It uses attribute-based access control (ABAC), deriving attributes throughout
+the request lifecycle for authorization, upstream headers, and further processing.
+
+The API is provided as a Go library that loads YAML and generates Envoy files
+or Kubernetes resources. It does not run Envoy or a controller.
+
+## Table of contents
+
+- [Gateway behavior](#gateway-behavior)
+- [Requirements](#requirements)
+- [Generate configuration](#generate-configuration)
+- [Local playground](#local-playground)
+- [Development and contributions](#development-and-contributions)
+- [License](#license)
+
+## Gateway behavior
+
+The gateway matches a request to a server by hostname, then to an API route by
+method and path. The server's API binding defines who can use it. Protected
+requests must pass authentication and authorization before reaching the upstream.
+
+- [Gateway concepts](docs/concepts.md) explains how servers, APIs, authenticators,
+  attributes, and access rules fit together.
+- [Expressions and keywords](docs/expressions.md) lists the operations, source
+  types, and configuration choices available at each layer.
+- [Authentication and authorization](docs/auth/README.md) covers credentials,
+  attribute-based access rules, and forwarding attributes to upstream headers.
+- [Traffic protection](docs/traffic-protection.md) covers circuit breakers,
+  admission control, overload protection, and timeouts.
+- [Logs, metrics, and traces](docs/envoy.md#logs-metrics-and-traces) describes
+  how to observe gateway traffic.
+- [Fault injection](docs/fault-injection.md) covers controlled HTTP errors for
+  SLO tests.
+- [Deployment and updates](docs/envoy.md#files-and-reloads) explains required
+  external resources, live reloads, and when to roll out the Deployment.
 
 ## Requirements
 
-Importing this module requires Go 1.26 or later. The module is pre-v1.0 and
-does not promise a stable Go API. The YAML schema accepts only `version: 1`;
-the loader rejects unknown fields and extra YAML documents and does not migrate
-older formats.
+Importing this module requires Go 1.26 or later.
 
 ## Generate configuration
 
@@ -97,39 +124,6 @@ For file-based API-key deployments, omit `api_key.secret` and provide the
 separate API-key ECDS file. mTLS deployments must provide the configured client
 CA bundle. See the [API-key guide](docs/auth/api-key.md) for the credential
 format and the [mTLS guide](docs/auth/mtls.md) for client certificate setup.
-
-## Gateway behavior
-
-Each server binds one exact hostname to an ordered list of APIs. API routes use
-an exact path, prefix, or regular expression. A matching path with an
-unsupported method returns `405`; an unknown host or path returns `404`.
-HTTPS uses SNI to select a certificate and then checks the request host.
-
-Each server/API binding explicitly selects public access or protected entries.
-Original request headers select one tenant access entry; that entry selects
-JWT or API-key authentication and grants tied to the verifying authenticator.
-JWT entries can trust multiple providers. Optional attribute equality binds a
-requested tenant header to a verified credential value. mTLS uses dedicated
-HTTPS servers with mandatory client certificates and no API-level authentication.
-Unmatched or unauthorized requests are denied before the backend. APIs can also
-declare fixed attributes for all their matched routes, including public routes.
-Routes forward source attributes to upstream headers, and metrics use
-the same source values. Supply an additional source attribute when an upstream
-needs a different value. See the [JWT guide](docs/auth/jwt.md),
-[API-key guide](docs/auth/api-key.md), [mTLS guide](docs/auth/mtls.md), and
-[Envoy behavior guide](docs/envoy.md) for request and update behavior.
-
-For SLO tests, an API can inject HTTP errors after authentication and
-authorization, optionally matching a request header and authenticated tenant.
-The policy is off by default and requires an explicit gateway rollout.
-Injected replies count as standard requests in the per-API counter, using the
-same status and attribute labels as backend replies. See the
-[fault injection guide](docs/fault-injection.md).
-
-API-key changes update the Secret. Downstream certificate and client CA
-ConfigMap changes reload through SDS for new connections. Static Envoy
-configuration changes require an explicit Deployment rollout; the generated
-Deployment has no checksum annotation.
 
 ## Local playground
 

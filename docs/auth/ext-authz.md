@@ -67,6 +67,9 @@ role := fields["role"].GetStringValue() // "metrics:read"
 The policy should check that a required key is present. A route without an
 `ext_authz` access entry sends no Check request.
 
+See [external authorization keywords](../expressions.md#external-authorization)
+for the source choices and their restrictions.
+
 ## Select it on an access entry
 
 Set `authorization.ext_authz` instead of `authorization.grants`. The entries
