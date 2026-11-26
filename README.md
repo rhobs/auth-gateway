@@ -25,8 +25,8 @@ The gateway matches a request to a server by hostname, then to an API route by
 method and path. The server's API binding defines who can use it. Protected
 requests must pass authentication and authorization before reaching the upstream.
 
-- [Gateway concepts](docs/concepts.md) explains how servers, APIs, routes, and
-  upstreams fit together, including separate read and write access.
+- [Gateway concepts](docs/concepts.md) explains how servers, APIs, authenticators,
+  attributes, and access rules fit together.
 - [Authentication and authorization](docs/auth/README.md) covers credentials,
   attribute-based access rules, and forwarding attributes to upstream headers.
 - [Logs, metrics, and traces](docs/envoy.md#logs-metrics-and-traces) describes

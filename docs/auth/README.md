@@ -1,11 +1,16 @@
 # Authentication and authorization
 
-The gateway supports [JWT](jwt.md), [API keys](api-key.md),
-[client-certificate mTLS](mtls.md), and [external authorization](ext-authz.md).
-Shared `authenticators` define credential
-validation and original attribute sources. Access belongs to each
-`servers[].apis[]` binding. See the [complete example](../../config.example.yaml)
-and [configuration reference](../configuration-reference.md).
+The gateway supports:
+
+- [JWT](jwt.md)
+- [API keys](api-key.md)
+- [Client-certificate mTLS](mtls.md)
+- [External authorization](ext-authz.md)
+
+Shared `authenticators` define credential validation and original attribute
+sources. Access belongs to each `servers[].apis[]` binding. See the
+[complete example](../../config.example.yaml) and
+[configuration reference](../configuration-reference.md).
 
 ## Request selection
 
