@@ -29,11 +29,11 @@ func validateAPIFixedAttributes(field string, attributes []gatewayapi.AttributeS
 			return fmt.Errorf("%s.name duplicates attribute %q", name, source.Name)
 		}
 		seen[source.Name] = true
-		if source.FromSource != attributeSourceFixed {
-			return fmt.Errorf("%s.from_source must be fixed", name)
+		if source.From.Kind() != attributeSourceFixed {
+			return fmt.Errorf("%s.from must select only fixed", name)
 		}
-		if source.Value.IsPath || !validFixedAttributeValue(source.Value.Text) {
-			return fmt.Errorf("%s.value must be a nonempty string without controls or surrounding whitespace", name)
+		if !validFixedAttributeValue(source.From.Scalar()) {
+			return fmt.Errorf("%s.from.fixed must be a nonempty string without controls or surrounding whitespace", name)
 		}
 	}
 	return nil
@@ -126,7 +126,7 @@ func addAPIFixedAttributeRouteConfigs(routes []*route.Route, apis []gatewayapi.A
 		}
 		values := make(map[string]*structpb.Value, len(api.Attributes))
 		for _, source := range api.Attributes {
-			values[source.Name] = structpb.NewStringValue(source.Value.Text)
+			values[source.Name] = structpb.NewStringValue(source.From.Scalar())
 		}
 		for routeIndex := range api.Routes {
 			name := apiRouteName(apiIndex, api.Name, routeIndex)

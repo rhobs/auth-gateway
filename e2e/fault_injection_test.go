@@ -116,9 +116,9 @@ var _ = Describe("Fault injection", Label("gateway", "fault-injection", "namespa
 		})
 	}, NodeTimeout(60*time.Second))
 
-	It("accepts another trigger value and any present verified writer", func(ctx SpecContext) {
-		expectDeniedBeforeUpstream(ctx, adminAddress, "api-injected", "alternate trigger and writer", http.StatusServiceUnavailable, func() (int, []byte, error) {
-			return requestFaultInjection(ctx, gatewayAddress, http.MethodGet, "/injected/probe", nil, faultInjectionHeaders("key-writer-b", "canary"))
+	It("matches another listed verified writer", func(ctx SpecContext) {
+		expectDeniedBeforeUpstream(ctx, adminAddress, "api-injected", "second listed writer", http.StatusServiceUnavailable, func() (int, []byte, error) {
+			return requestFaultInjection(ctx, gatewayAddress, http.MethodGet, "/injected/probe", nil, faultInjectionHeaders("key-writer-b", "true"))
 		})
 	}, NodeTimeout(60*time.Second))
 

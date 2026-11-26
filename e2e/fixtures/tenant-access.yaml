@@ -7,38 +7,38 @@ authenticators:
       audiences: [gateway-test]
     attributes:
       - name: tenant_id
-        from_source: claim
-        value: [organization, id]
+        from:
+          claim: [organization, id]
       - name: role
-        from_source: claim
-        value: [role]
+        from:
+          claim: [role]
       - name: writer_id
-        from_source: claim
-        value: [sub]
+        from:
+          claim: [sub]
       - name: fault_writer
-        from_source: header
-        value: X-Writer
+        from:
+          claim: [fault_writer]
       - name: requested_tenant
-        from_source: header
-        value: X-Tenant
+        from:
+          header: X-Tenant
   - name: partner-key
     api_key: {secret: auth-gateway-api-keys, header: X-Partner-Key}
     attributes:
       - name: tenant_id
-        from_source: credential
-        value: tenant_id
+        from:
+          credential: tenant_id
       - name: role
-        from_source: credential
-        value: role
+        from:
+          credential: role
       - name: writer_id
-        from_source: credential
-        value: writer_id
+        from:
+          credential: writer_id
       - name: fault_writer
-        from_source: credential
-        value: writer_id
+        from:
+          credential: writer_id
       - name: requested_tenant
-        from_source: header
-        value: X-Tenant
+        from:
+          header: X-Tenant
   - name: issuer-two
     jwt:
       issuer: https://issuer-two.jwt.test
@@ -46,52 +46,55 @@ authenticators:
       audiences: [gateway-test]
     attributes:
       - name: tenant_id
-        from_source: claim
-        value: [account, tenant]
+        from:
+          claim: [account, tenant]
       - name: role
-        from_source: claim
-        value: [permissions, role]
+        from:
+          claim: [permissions, role]
       - name: writer_id
-        from_source: claim
-        value: [sub]
+        from:
+          claim: [sub]
+      - name: fault_writer
+        from:
+          claim: [fault_writer]
       - name: requested_tenant
-        from_source: header
-        value: X-Tenant
+        from:
+          header: X-Tenant
 apis:
   - name: journey-write
     upstream: {address: httpbin, port: 8080}
     metrics: {}
     routes:
       - methods: [POST]
-        path: {exact: /write}
+        path: {expression: equals, value: /write}
         rewrite: {path: /anything}
         processing:
           request_headers:
-            - {name: X-Scope-OrgID, from_attribute: requested_tenant}
-            - {name: X-Verified-Tenant, from_attribute: tenant_id}
+            - {name: X-Scope-OrgID, from: {attribute: requested_tenant}}
+            - {name: X-Verified-Tenant, from: {attribute: tenant_id}}
   - name: journey-read
     upstream: {address: httpbin, port: 8080}
     routes:
       - methods: [GET]
-        path: {exact: /read}
+        path: {expression: equals, value: /read}
         rewrite: {path: /anything}
         processing:
           request_headers:
-            - {name: X-Scope-OrgID, from_attribute: requested_tenant}
+            - {name: X-Scope-OrgID, from: {attribute: requested_tenant}}
   - name: journey-health
     attributes:
-      - {name: operation, from_source: fixed, value: "health:read (100%)"}
+      - {name: operation, from: {fixed: "health:read (100%)"}}
     metrics:
       labels:
-        operation: operation
+        operation: {from: {attribute: operation}}
     upstream: {address: httpbin, port: 8080}
     routes:
       - methods: [GET]
-        path: {exact: /health}
+        path: {expression: equals, value: /health}
         rewrite: {path: /anything}
         processing:
           request_headers:
-            - {name: X-Operation, from_attribute: operation}
+            - {name: X-Operation, from: {attribute: operation}}
 servers:
   - hostname: access.auth-gateway.test
     apis:
@@ -105,8 +108,8 @@ servers:
                 value: "true"
             attributes:
               - name: fault_writer
-                expression: equals
-                value: key-writer
+                expression: in
+                value: [key-writer]
           abort:
             http_status: 503
             percentage: 100
@@ -125,13 +128,14 @@ servers:
             authorization:
               grants:
                 - authenticator: issuer-two
-                  attributes:
-                    - name: tenant_id
-                      expression: equals
-                      value: external-org
-                    - name: role
-                      expression: equals
-                      value: writer
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value: external-org
+                      - name: role
+                        expression: equals
+                        value: writer
           - name: internal-writers
             match:
               headers:
@@ -146,13 +150,15 @@ servers:
             authorization:
               grants:
                 - authenticator: issuer-one
-                  attributes:
-                    - name: tenant_id
-                      expression: equals-attribute
-                      value: requested_tenant
-                    - name: role
-                      expression: equals
-                      value: writer
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value_from:
+                          attribute: requested_tenant
+                      - name: role
+                        expression: equals
+                        value: writer
           - tenant: key-a
             match:
               headers:
@@ -167,13 +173,15 @@ servers:
             authorization:
               grants:
                 - authenticator: partner-key
-                  attributes:
-                    - name: tenant_id
-                      expression: equals-attribute
-                      value: requested_tenant
-                    - name: role
-                      expression: equals
-                      value: writer
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value_from:
+                          attribute: requested_tenant
+                      - name: role
+                        expression: equals
+                        value: writer
       - name: journey-read
         access:
           - name: readers
@@ -190,21 +198,25 @@ servers:
             authorization:
               grants:
                 - authenticator: issuer-one
-                  attributes:
-                    - name: tenant_id
-                      expression: equals-attribute
-                      value: requested_tenant
-                    - name: role
-                      expression: equals
-                      value: reader
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value_from:
+                          attribute: requested_tenant
+                      - name: role
+                        expression: equals
+                        value: reader
                 - authenticator: issuer-two
-                  attributes:
-                    - name: tenant_id
-                      expression: equals-attribute
-                      value: requested_tenant
-                    - name: role
-                      expression: equals
-                      value: viewer
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value_from:
+                          attribute: requested_tenant
+                      - name: role
+                        expression: equals
+                        value: viewer
       - name: journey-health
         public: true
 kubernetes:

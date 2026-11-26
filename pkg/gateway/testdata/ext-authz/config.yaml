@@ -7,11 +7,11 @@ authenticators:
       uri: https://issuer.example.test/jwks
   attributes:
   - name: tenant_id
-    from_source: claim
-    value: [tenant]
+    from:
+      claim: [tenant]
   - name: auth_origin
-    from_source: fixed
-    value: "jwt (100%)"
+    from:
+      fixed: "jwt (100%)"
 ext_authz_services:
 - name: policy
   upstream:
@@ -25,14 +25,14 @@ ext_authz_services:
   credential_headers: [authorization]
   attributes:
   - name: requested_tenant
-    from_source: header
-    value: X-Tenant
+    from:
+      header: X-Tenant
   - name: tenant_id
-    from_source: authenticator
-    value: tenant_id
+    from:
+      attribute: tenant_id
   - name: auth_origin
-    from_source: authenticator
-    value: auth_origin
+    from:
+      attribute: auth_origin
 apis:
 - name: metrics
   upstream:
@@ -40,12 +40,12 @@ apis:
     port: 19291
   routes:
   - methods: [GET]
-    path: {exact: /protected}
+    path: {expression: equals, value: /protected}
     rewrite: {path: /anything}
     processing:
       request_headers:
       - name: X-Scope-OrgID
-        from_attribute: requested_tenant
+        from: {attribute: requested_tenant}
 servers:
 - hostname: writer.example.test
   apis:

@@ -22,7 +22,8 @@ func TestAPIMetricsConfigurationAndValidation(t *testing.T) {
 		settings := apiMetricsDefaults{}
 		if api.Metrics != nil {
 			settings.Configured = true
-			settings.Tenant = api.Metrics.Labels["tenant"]
+			binding := api.Metrics.Labels["tenant"]
+			settings.Tenant = binding.From.Scalar()
 			settings.LabelCount = len(api.Metrics.Labels)
 		}
 		gotMetrics = append(gotMetrics, settings)
@@ -38,13 +39,27 @@ func TestAPIMetricsConfigurationAndValidation(t *testing.T) {
 		want string
 		edit func(*gatewayapi.Config)
 	}{
-		{name: "invalid label name", want: "apis[0].metrics.labels", edit: func(c *gatewayapi.Config) { c.APIs[0].Metrics.Labels["bad-name"] = "tenant_id" }},
-		{name: "reserved API label", want: "apis[0].metrics.labels", edit: func(c *gatewayapi.Config) { c.APIs[0].Metrics.Labels["api"] = "tenant_id" }},
-		{name: "reserved status label", want: "apis[0].metrics.labels", edit: func(c *gatewayapi.Config) { c.APIs[0].Metrics.Labels["http_status_code"] = "tenant_id" }},
-		{name: "reserved Prometheus prefix", want: "apis[0].metrics.labels", edit: func(c *gatewayapi.Config) { c.APIs[0].Metrics.Labels["__internal"] = "tenant_id" }},
-		{name: "reserved Envoy label", want: "apis[0].metrics.labels", edit: func(c *gatewayapi.Config) { c.APIs[0].Metrics.Labels["envoy_http_conn_manager_prefix"] = "tenant_id" }},
-		{name: "invalid attribute name", want: "apis[0].metrics.labels.tenant", edit: func(c *gatewayapi.Config) { c.APIs[0].Metrics.Labels["tenant"] = "TenantID" }},
-		{name: "unknown attribute", want: "apis[0].metrics.labels.tenant references unknown authenticator attribute", edit: func(c *gatewayapi.Config) { c.APIs[0].Metrics.Labels["tenant"] = "unknown" }},
+		{name: "invalid label name", want: "apis[0].metrics.labels", edit: func(c *gatewayapi.Config) {
+			c.APIs[0].Metrics.Labels["bad-name"] = gatewayapi.AttributeReference{From: gatewayapi.SourceReference{Attribute: new("tenant_id")}}
+		}},
+		{name: "reserved API label", want: "apis[0].metrics.labels", edit: func(c *gatewayapi.Config) {
+			c.APIs[0].Metrics.Labels["api"] = gatewayapi.AttributeReference{From: gatewayapi.SourceReference{Attribute: new("tenant_id")}}
+		}},
+		{name: "reserved status label", want: "apis[0].metrics.labels", edit: func(c *gatewayapi.Config) {
+			c.APIs[0].Metrics.Labels["http_status_code"] = gatewayapi.AttributeReference{From: gatewayapi.SourceReference{Attribute: new("tenant_id")}}
+		}},
+		{name: "reserved Prometheus prefix", want: "apis[0].metrics.labels", edit: func(c *gatewayapi.Config) {
+			c.APIs[0].Metrics.Labels["__internal"] = gatewayapi.AttributeReference{From: gatewayapi.SourceReference{Attribute: new("tenant_id")}}
+		}},
+		{name: "reserved Envoy label", want: "apis[0].metrics.labels", edit: func(c *gatewayapi.Config) {
+			c.APIs[0].Metrics.Labels["envoy_http_conn_manager_prefix"] = gatewayapi.AttributeReference{From: gatewayapi.SourceReference{Attribute: new("tenant_id")}}
+		}},
+		{name: "invalid attribute name", want: "apis[0].metrics.labels.tenant", edit: func(c *gatewayapi.Config) {
+			c.APIs[0].Metrics.Labels["tenant"] = gatewayapi.AttributeReference{From: gatewayapi.SourceReference{Attribute: new("TenantID")}}
+		}},
+		{name: "unknown attribute", want: "apis[0].metrics.labels.tenant references unknown authenticator attribute", edit: func(c *gatewayapi.Config) {
+			c.APIs[0].Metrics.Labels["tenant"] = gatewayapi.AttributeReference{From: gatewayapi.SourceReference{Attribute: new("unknown")}}
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -188,7 +203,7 @@ func TestRequestMetricNameAloneDoesNotEnableCounter(t *testing.T) {
 
 func TestRequestMetricsUseAttributesWithoutHeaderProcessing(t *testing.T) {
 	c := loadConfigCase(t, "jwt-auth")
-	c.APIs[0].Metrics = &gatewayapi.APIMetrics{Labels: map[string]string{"tenant": "tenant_id"}}
+	c.APIs[0].Metrics = &gatewayapi.APIMetrics{Labels: map[string]gatewayapi.AttributeReference{"tenant": {From: gatewayapi.SourceReference{Attribute: new("tenant_id")}}}}
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)
@@ -244,5 +259,13 @@ func TestRequestMetricsOnlyOnSelectedAPIs(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestMetricLabelRequiresAttributeSource(t *testing.T) {
+	c := loadConfigCase(t, "jwt-auth-with-attributes")
+	c.APIs[0].Metrics.Labels["tenant"] = gatewayapi.AttributeReference{From: gatewayapi.SourceReference{Header: new("X-Tenant")}}
+	if err := Validate(c); err == nil || !strings.Contains(err.Error(), ".metrics.labels.tenant.from.attribute") {
+		t.Fatalf("validation = %v, want attribute reference error", err)
 	}
 }

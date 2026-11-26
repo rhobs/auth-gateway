@@ -14,7 +14,8 @@ apis:
   - methods:
     - POST
     path:
-      exact: "/metrics/api/v1/receive"
+      expression: equals
+      value: "/metrics/api/v1/receive"
     rewrite:
       path: "/api/v1/receive"
 kubernetes:

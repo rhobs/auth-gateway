@@ -129,49 +129,37 @@ func addRouteKey(routes map[string]struct{}, path gatewayapi.PathMatch, method s
 }
 
 func pathMatchKey(path gatewayapi.PathMatch) string {
-	switch {
-	case path.Exact != "":
-		return "exact\x00" + path.Exact
-	case path.Prefix != "":
-		return "prefix\x00" + path.Prefix
-	default:
-		return "regex\x00" + path.Regex
-	}
+	return path.Expression + "\x00" + pathMatchValue(path)
 }
 
 func pathMatchValue(path gatewayapi.PathMatch) string {
-	switch {
-	case path.Exact != "":
-		return path.Exact
-	case path.Prefix != "":
-		return path.Prefix
-	default:
-		return path.Regex
+	if path.Value == nil {
+		return ""
 	}
+	return path.Value.Text
 }
 
 func validatePathMatch(name string, path gatewayapi.PathMatch) error {
-	count := 0
-	if path.Exact != "" {
-		count++
-		if err := validatePath(name+".exact", path.Exact); err != nil {
-			return err
-		}
+	if path.Name != "" {
+		return fmt.Errorf("%s.name must be omitted", name)
 	}
-	if path.Prefix != "" {
-		count++
-		if err := validatePathPrefix(name+".prefix", path.Prefix); err != nil {
-			return err
-		}
+	if path.ValueFrom != nil || path.Value == nil || path.Value.IsList || len(path.Value.Items) != 0 {
+		return fmt.Errorf("%s.value must be a literal string", name)
 	}
-	if path.Regex != "" {
-		count++
-		if _, err := regexp.Compile(path.Regex); err != nil {
-			return fmt.Errorf("%s.regex must be a valid RE2 expression: %w", name, err)
+	switch path.Expression {
+	case gatewayapi.ExpressionEquals:
+		return validatePath(name+".value", path.Value.Text)
+	case gatewayapi.ExpressionPrefix:
+		return validatePathPrefix(name+".value", path.Value.Text)
+	case gatewayapi.ExpressionRegex:
+		if path.Value.Text == "" {
+			return fmt.Errorf("%s.value must not be empty", name)
 		}
-	}
-	if count != 1 {
-		return fmt.Errorf("%s must set exactly one of exact, prefix, or regex", name)
+		if _, err := regexp.Compile(path.Value.Text); err != nil {
+			return fmt.Errorf("%s.value must be a valid RE2 expression: %w", name, err)
+		}
+	default:
+		return fmt.Errorf("%s.expression must be equals, prefix, or regex", name)
 	}
 	return nil
 }
@@ -257,6 +245,7 @@ func validatePathPrefix(name, value string) error {
 
 func cloneRoute(r gatewayapi.Route) gatewayapi.Route {
 	r.Methods = slices.Clone(r.Methods)
+	r.Path = cloneMatchExpression(r.Path)
 	r.Rewrite = cloneConfigPointer(r.Rewrite, clonePathRewrite)
 	r.Processing = cloneConfigPointer(r.Processing, cloneRouteProcessing)
 	r.Timeouts = cloneConfigPointer(r.Timeouts, cloneRouteTimeouts)
@@ -273,7 +262,10 @@ func cloneRegexRewrite(r gatewayapi.RegexRewrite) gatewayapi.RegexRewrite {
 }
 
 func cloneRouteProcessing(p gatewayapi.RouteProcessing) gatewayapi.RouteProcessing {
-	p.RequestHeaders = slices.Clone(p.RequestHeaders)
+	p.RequestHeaders = cloneSlice(p.RequestHeaders, func(mapping gatewayapi.RequestHeaderMapping) gatewayapi.RequestHeaderMapping {
+		mapping.From = cloneSourceReference(mapping.From)
+		return mapping
+	})
 	return p
 }
 
@@ -534,8 +526,8 @@ func addAccessRouteConfigs(c resolvedConfig, generated *route.Route, access reso
 			}
 		}
 		for _, source := range service.Attributes {
-			if source.FromSource == attributeSourceHeader && !slices.ContainsFunc(headers, func(existing string) bool { return strings.EqualFold(existing, source.Value.Text) }) {
-				headers = append(headers, source.Value.Text)
+			if source.From.Kind() == attributeSourceHeader && !slices.ContainsFunc(headers, func(existing string) bool { return strings.EqualFold(existing, source.From.Scalar()) }) {
+				headers = append(headers, source.From.Scalar())
 			}
 		}
 	}
@@ -554,7 +546,7 @@ func addAccessRouteConfigs(c resolvedConfig, generated *route.Route, access reso
 		}
 		if external := access.Authorization.ExtAuthz; external != nil {
 			for _, source := range c.extAuthzIndex[external.Service].Attributes {
-				if source.FromSource == attributeSourceHeader {
+				if source.From.Kind() == attributeSourceHeader {
 					hasAttributes = true
 					break
 				}
@@ -738,12 +730,12 @@ func applyPathRewrite(action *route.RouteAction, rewrite *gatewayapi.PathRewrite
 }
 
 func routeMatch(path gatewayapi.PathMatch) *route.RouteMatch {
-	switch {
-	case path.Exact != "":
-		return &route.RouteMatch{PathSpecifier: &route.RouteMatch_Path{Path: path.Exact}}
-	case path.Prefix != "":
-		return &route.RouteMatch{PathSpecifier: &route.RouteMatch_Prefix{Prefix: path.Prefix}}
+	switch path.Expression {
+	case gatewayapi.ExpressionEquals:
+		return &route.RouteMatch{PathSpecifier: &route.RouteMatch_Path{Path: path.Value.Text}}
+	case gatewayapi.ExpressionPrefix:
+		return &route.RouteMatch{PathSpecifier: &route.RouteMatch_Prefix{Prefix: path.Value.Text}}
 	default:
-		return &route.RouteMatch{PathSpecifier: &route.RouteMatch_SafeRegex{SafeRegex: envoySafeRegex(path.Regex)}}
+		return &route.RouteMatch{PathSpecifier: &route.RouteMatch_SafeRegex{SafeRegex: envoySafeRegex(path.Value.Text)}}
 	}
 }

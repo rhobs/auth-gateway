@@ -94,7 +94,7 @@ func TestEnvoyExternalAuthorizationBridgeUsesRouteContext(t *testing.T) {
 	} {
 		c.APIs = append(c.APIs, gatewayapi.API{Name: test.name, Attributes: test.fixed,
 			Upstream: gatewayapi.Upstream{Address: "host.docker.internal", Port: uint32(backendListener.Addr().(*net.TCPAddr).Port)},
-			Routes:   []gatewayapi.Route{{Methods: []string{http.MethodGet}, Path: gatewayapi.PathMatch{Exact: "/" + test.name}}},
+			Routes:   []gatewayapi.Route{{Methods: []string{http.MethodGet}, Path: gatewayapi.PathMatch{Expression: "equals", Value: &gatewayapi.MatchValue{Text: "/" + test.name}}}},
 		})
 		binding := gatewayapi.APIBinding{Name: test.name, Public: test.name == "public"}
 		if !binding.Public {

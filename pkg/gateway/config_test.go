@@ -51,9 +51,9 @@ func TestValidateRejectsInvalidConfiguration(t *testing.T) {
 		{name: "no routes", want: "apis[0].routes", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes = nil }},
 		{name: "lowercase method", want: "apis[0].routes[0].methods", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Methods = []string{"post"} }},
 		{name: "invalid method", want: "apis[0].routes[0].methods", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Methods = []string{"POST /metrics"} }},
-		{name: "relative path", want: "apis[0].routes[0].path.exact", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Path.Exact = "metrics/write" }},
-		{name: "path traversal", want: "apis[0].routes[0].path.exact", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Path.Exact = "/metrics/../admin" }},
-		{name: "path query", want: "apis[0].routes[0].path.exact", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Path.Exact = "/metrics?tenant=one" }},
+		{name: "relative path", want: "apis[0].routes[0].path.value", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Path.Value.Text = "metrics/write" }},
+		{name: "path traversal", want: "apis[0].routes[0].path.value", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Path.Value.Text = "/metrics/../admin" }},
+		{name: "path query", want: "apis[0].routes[0].path.value", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Path.Value.Text = "/metrics?tenant=one" }},
 		{name: "invalid upstream", want: "apis[0].upstream.address", edit: func(c *gatewayapi.Config) { c.APIs[0].Upstream.Address = "bad_host" }},
 		{name: "invalid port", want: "apis[0].upstream.port", edit: func(c *gatewayapi.Config) { c.APIs[0].Upstream.Port = 65536 }},
 		{name: "invalid rewrite path", want: "apis[0].routes[0].rewrite.path", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Rewrite.Path = "/api/%invalid" }},
@@ -137,23 +137,23 @@ func TestDefaultsCloneInputs(t *testing.T) {
 		c := loadAuthValidationFixture(t)
 		defaulted := withDefaultsConfig(c)
 		defaulted.Authenticators[0].JWT.Audiences[0] = "changed"
-		testAttribute(&defaulted.Authenticators[0], "tenant_id").Value.Path[0] = "changed"
+		testAttribute(&defaulted.Authenticators[0], "tenant_id").From.Claim[0] = "changed"
 		keySource := testAttribute(&defaulted.Authenticators[2], "tenant_id")
-		keySource.Value.Text = "changed"
+		*keySource.From.Credential = "changed"
 		headerSource := testAttribute(&defaulted.Authenticators[2], "requested_tenant")
-		headerSource.Value.Text = "changed"
+		*headerSource.From.Header = "changed"
 		defaulted.Servers[0].APIs[0].Name = "changed"
-		defaulted.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[0].Value.Items[0] = "changed"
+		defaulted.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[0].Value.Items[0] = "changed"
 		defaulted.Servers[0].APIs[0].Access[0].Authentication.JWT.Providers[0] = "changed"
 		defaulted.Servers[0].APIs[0].Access[0].Name = "changed"
 		defaulted.APIs[0].Routes[0].Processing.RequestHeaders[0].Name = "changed"
 
 		if c.Authenticators[0].JWT.Audiences[0] == "changed" ||
-			testAttribute(&c.Authenticators[0], "tenant_id").Value.Path[0] == "changed" ||
-			testAttribute(&c.Authenticators[2], "tenant_id").Value.Text == "changed" ||
-			testAttribute(&c.Authenticators[2], "requested_tenant").Value.Text == "changed" ||
+			testAttribute(&c.Authenticators[0], "tenant_id").From.Claim[0] == "changed" ||
+			*testAttribute(&c.Authenticators[2], "tenant_id").From.Credential == "changed" ||
+			*testAttribute(&c.Authenticators[2], "requested_tenant").From.Header == "changed" ||
 			c.Servers[0].APIs[0].Name == "changed" ||
-			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[0].Value.Items[0] == "changed" ||
+			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[0].Value.Items[0] == "changed" ||
 			c.Servers[0].APIs[0].Access[0].Authentication.JWT.Providers[0] == "changed" ||
 			c.Servers[0].APIs[0].Access[0].Name == "changed" ||
 			c.APIs[0].Routes[0].Processing.RequestHeaders[0].Name == "changed" {

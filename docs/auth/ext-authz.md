@@ -27,11 +27,11 @@ ext_authz_services:
     credential_headers: [authorization]
     attributes:
       - name: requested_tenant
-        from_source: header
-        value: X-Tenant
+        from:
+          header: X-Tenant
       - name: tenant_id
-        from_source: authenticator
-        value: tenant_id
+        from:
+          attribute: tenant_id
 ```
 
 `request_headers` is the explicit allowlist of request headers sent in the
@@ -44,8 +44,8 @@ the policy service receives its declared attributes instead.
 Each `attributes` entry names a value sent in the Check request's
 `auth_gateway.ext_authz.attributes` metadata namespace. A `header` source
 reads the named safe request header; it must be in `request_headers` and cannot
-be a credential header. An `authenticator` source uses an attribute declared
-by every selected local authenticator on an access entry. The name and value
+be a credential header. An `attribute` source uses an attribute declared
+by every selected local authenticator on an access entry. The input name and `from.attribute`
 must match. Only nonempty scalar strings are sent. A selected access entry
 without local authentication sends no authenticator attributes.
 An authenticator attribute can be a fixed string; it is sent only when that
@@ -55,7 +55,7 @@ other authenticator attribute.
 Every fixed attribute declared under `apis[].attributes` on the matched API is
 sent automatically in the same namespace when an access entry uses this service.
 Do not repeat fixed attributes under `ext_authz_services[].attributes`. For
-example, an API attribute `{name: role, from_source: fixed, value: "metrics:read"}`
+example, an API attribute `{name: role, from: {fixed: "metrics:read"}}`
 is available to the policy service as:
 
 ```go

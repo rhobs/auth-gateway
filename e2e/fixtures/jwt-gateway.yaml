@@ -15,14 +15,14 @@ authenticators:
     - gateway-test
   attributes:
     - name: tenant_id
-      from_source: claim
-      value: [organization, id]
+      from:
+        claim: [organization, id]
     - name: writer_id
-      from_source: claim
-      value: [sub]
+      from:
+        claim: [sub]
     - name: escaped_id
-      from_source: claim
-      value: [literal.claim]
+      from:
+        claim: [literal.claim]
 - name: issuer-two
   jwt:
     issuer: https://issuer-two.jwt.test
@@ -32,14 +32,14 @@ authenticators:
     - gateway-test
   attributes:
     - name: tenant_id
-      from_source: claim
-      value: [organization, id]
+      from:
+        claim: [organization, id]
     - name: writer_id
-      from_source: claim
-      value: [sub]
+      from:
+        claim: [sub]
     - name: escaped_id
-      from_source: claim
-      value: [literal.claim]
+      from:
+        claim: [literal.claim]
 observability:
   metrics:
     custom_metric_name: gateway_http_requests_total
@@ -49,8 +49,8 @@ apis:
 - name: metrics
   metrics:
     labels:
-      tenant: tenant_id
-      writer: writer_id
+      tenant: {from: {attribute: tenant_id}}
+      writer: {from: {attribute: writer_id}}
   upstream:
     address: httpbin
     port: 8080
@@ -59,37 +59,41 @@ apis:
     - GET
     - POST
     path:
-      exact: "/protected"
+      expression: equals
+      value: "/protected"
     rewrite:
       path: "/anything"
     processing:
       request_headers:
       - name: X-Scope-OrgID
-        from_attribute: tenant_id
+        from: {attribute: tenant_id}
       - name: X-Writer-ID
-        from_attribute: writer_id
+        from: {attribute: writer_id}
       - name: X-Literal
-        from_attribute: escaped_id
+        from: {attribute: escaped_id}
   - methods:
     - GET
     path:
-      exact: "/headerless"
+      expression: equals
+      value: "/headerless"
     rewrite:
       path: "/anything"
   - methods:
     - GET
     path:
-      exact: "/required-writer"
+      expression: equals
+      value: "/required-writer"
     rewrite:
       path: "/anything"
     processing:
       request_headers:
       - name: X-Writer-ID
-        from_attribute: writer_id
+        from: {attribute: writer_id}
   - methods:
     - GET
     path:
-      exact: "/upstream-status"
+      expression: equals
+      value: "/upstream-status"
     rewrite:
       path: "/status/418"
 - name: status-only
@@ -101,17 +105,18 @@ apis:
   - methods:
     - GET
     path:
-      exact: "/status-only"
+      expression: equals
+      value: "/status-only"
     rewrite:
       path: "/anything"
     processing:
       request_headers:
       - name: X-Scope-OrgID
-        from_attribute: tenant_id
+        from: {attribute: tenant_id}
       - name: X-Writer-ID
-        from_attribute: writer_id
+        from: {attribute: writer_id}
       - name: X-Literal
-        from_attribute: escaped_id
+        from: {attribute: escaped_id}
 - name: unmetered
   upstream:
     address: httpbin
@@ -120,7 +125,8 @@ apis:
   - methods:
     - GET
     path:
-      exact: "/unmetered"
+      expression: equals
+      value: "/unmetered"
     rewrite:
       path: "/anything"
 servers:
@@ -136,10 +142,11 @@ servers:
       authorization:
         grants:
         - authenticator: issuer-one
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: customer-a
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: customer-a
   - name: status-only
     access:
     - name: default
@@ -150,10 +157,11 @@ servers:
       authorization:
         grants:
         - authenticator: issuer-two
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: customer-b
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: customer-b
   - name: unmetered
     access:
     - name: default
@@ -164,10 +172,11 @@ servers:
       authorization:
         grants:
         - authenticator: issuer-one
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: customer-a
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: customer-a
 - hostname: writer-tls.jwt.auth-gateway.test
   tls_config:
     secret: jwt-gateway-tls
@@ -184,10 +193,11 @@ servers:
       authorization:
         grants:
         - authenticator: issuer-one
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: customer-a
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: customer-a
   - name: status-only
     access:
     - name: default
@@ -198,10 +208,11 @@ servers:
       authorization:
         grants:
         - authenticator: issuer-two
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: customer-b
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: customer-b
   - name: unmetered
     access:
     - name: default
@@ -212,10 +223,11 @@ servers:
       authorization:
         grants:
         - authenticator: issuer-one
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: customer-a
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: customer-a
 - hostname: issuer-one-only.jwt.auth-gateway.test
   apis:
   - name: metrics
@@ -228,10 +240,11 @@ servers:
       authorization:
         grants:
         - authenticator: issuer-one
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: customer-a
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: customer-a
   - name: unmetered
     access:
     - name: default
@@ -242,10 +255,11 @@ servers:
       authorization:
         grants:
         - authenticator: issuer-one
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: customer-a
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: customer-a
 kubernetes:
   name: auth-gateway
   namespace: default

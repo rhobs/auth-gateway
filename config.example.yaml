@@ -65,24 +65,24 @@ authenticators:
       # jwt supports attributes from the request headers and the verified claims.
       # Claim values are lists of nested keys in the JWT payload.
       - name: tenant_id
-        from_source: claim
-        value: [organization, id]
+        from:
+          claim: [organization, id]
       - name: writer_id
-        from_source: claim
-        value: [sub]
+        from:
+          claim: [sub]
       - name: auth_origin
-        from_source: fixed
-        value: internal-jwt
+        from:
+          fixed: internal-jwt
       - name: role
-        from_source: claim
-        value: [role]
+        from:
+          claim: [role]
       # A list-valued claim can be checked with has or has-one-of in a grant.
       # - name: groups
-      #   from_source: claim
-      #   value: [token, groups]
+      #   from:
+      #     claim: [token, groups]
       - name: requested_tenant
-        from_source: header
-        value: X-Tenant
+        from:
+          header: X-Tenant
 
   - name: external-jwt
     jwt:
@@ -92,14 +92,14 @@ authenticators:
       audiences: [observability-ingestion]
     attributes:
       - name: tenant_id
-        from_source: claim
-        value: [organization, id]
+        from:
+          claim: [organization, id]
       - name: role
-        from_source: claim
-        value: [role]
+        from:
+          claim: [role]
       - name: requested_tenant
-        from_source: header
-        value: X-Tenant
+        from:
+          header: X-Tenant
 
   - name: partner-key
     api_key:
@@ -108,14 +108,14 @@ authenticators:
     attributes:
       # api_key supports attributes from the request headers and the API key credential.
       - name: tenant_id
-        from_source: credential
-        value: tenant_id
+        from:
+          credential: tenant_id
       - name: writer_id
-        from_source: credential
-        value: writer_id
+        from:
+          credential: writer_id
       - name: requested_tenant
-        from_source: header
-        value: X-Tenant
+        from:
+          header: X-Tenant
 
   - name: partner-cert
     mtls:
@@ -126,14 +126,14 @@ authenticators:
     attributes:
       # mtls supports attributes from the request headers and the client certificate SANs.
       - name: tenant_id
-        from_source: certificate
-        value: uri_san
+        from:
+          certificate: uri_san
       - name: writer_id
-        from_source: certificate
-        value: dns_san
+        from:
+          certificate: dns_san
       - name: requested_tenant
-        from_source: header
-        value: X-Tenant
+        from:
+          header: X-Tenant
 
 # Optional gRPC Check service for access entries using authorization.ext_authz.
 # Envoy verifies the service certificate, and forwards only listed headers.
@@ -153,14 +153,14 @@ ext_authz_services:
     attributes:
       # Header-derived names must not collide with authenticator attributes.
       - name: request_tenant_header
-        from_source: header
-        value: X-Tenant
+        from:
+          header: X-Tenant
       - name: tenant_id
-        from_source: authenticator
-        value: tenant_id
+        from:
+          attribute: tenant_id
       - name: auth_origin
-        from_source: authenticator
-        value: auth_origin
+        from:
+          attribute: auth_origin
 
 # Metrics collection is enabled by default. Per-API counters still need
 # apis[].metrics. Tracing is disabled by default.
@@ -195,13 +195,13 @@ apis:
     # Optional values applied to every matched route of this API, including public routes.
     attributes:
       - name: operation
-        from_source: fixed
-        value: "metrics:write"
+        from:
+          fixed: "metrics:write"
     metrics:
       labels:
-        tenant: tenant_id
-        writer: writer_id
-        operation: operation
+        tenant: {from: {attribute: tenant_id}}
+        writer: {from: {attribute: writer_id}}
+        operation: {from: {attribute: operation}}
     upstream:
       address: thanos-receive
       port: 19291
@@ -229,15 +229,16 @@ apis:
     routes:
       - methods: [POST]
         path:
-          exact: /metrics/api/v1/receive
+          expression: equals
+          value: /metrics/api/v1/receive
         rewrite:
           path: /api/v1/receive
         processing:
           request_headers:
             - name: X-Scope-OrgID
-              from_attribute: requested_tenant
+              from: {attribute: requested_tenant}
             - name: X-Writer-ID
-              from_attribute: writer_id
+              from: {attribute: writer_id}
         # Optional per-route timeout overrides have the same fields as
         # API-level timeouts and take precedence over them.
         # timeouts:
@@ -264,7 +265,8 @@ apis:
     routes:
       - methods: [GET, POST]
         path:
-          regex: '^/metrics/api/v1/query$'
+          expression: regex
+          value: '^/metrics/api/v1/query$'
         rewrite:
           regex:
             pattern: '^/metrics/(.*)$'
@@ -275,7 +277,8 @@ apis:
           max_stream_duration: 120s
       - methods: [GET]
         path:
-          prefix: /metrics/api/v1/label/
+          expression: prefix
+          value: /metrics/api/v1/label/
         rewrite:
           prefix: /api/v1/label/
 
@@ -322,18 +325,20 @@ servers:
             authorization:
               grants:
                 - authenticator: internal-jwt
-                  attributes:
-                    - name: tenant_id
-                      expression: equals-attribute
-                      value: requested_tenant
-                    - name: writer_id
-                      expression: present
-                    - name: role
-                      expression: equals
-                      value: writer
-                    # - name: groups
-                    #   expression: has-one-of
-                    #   value: [metrics-writers, metrics-admins]
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value_from:
+                          attribute: requested_tenant
+                      - name: writer_id
+                        expression: nonempty
+                      - name: role
+                        expression: equals
+                        value: writer
+                      # - name: groups
+                      #   expression: has-one-of
+                      #   value: [metrics-writers, metrics-admins]
 
           # Presence selectors keep the shared tenant's access entries distinct.
           - name: partner-writers
@@ -350,13 +355,15 @@ servers:
             authorization:
               grants:
                 - authenticator: partner-key
-                  attributes:
-                    - name: tenant_id
-                      expression: equals-attribute
-                      value: requested_tenant
-                    - name: writer_id
-                      expression: in
-                      value: [agent-17, agent-18]
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value_from:
+                          attribute: requested_tenant
+                      - name: writer_id
+                        expression: in
+                        value: [agent-17, agent-18]
 
       - name: metrics-query
         access:
@@ -373,21 +380,25 @@ servers:
             authorization:
               grants:
                 - authenticator: internal-jwt
-                  attributes:
-                    - name: tenant_id
-                      expression: equals-attribute
-                      value: requested_tenant
-                    - name: role
-                      expression: in
-                      value: [reader, admin]
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value_from:
+                          attribute: requested_tenant
+                      - name: role
+                        expression: in
+                        value: [reader, admin]
                 - authenticator: external-jwt
-                  attributes:
-                    - name: tenant_id
-                      expression: equals-attribute
-                      value: requested_tenant
-                    - name: role
-                      expression: equals
-                      value: viewer
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value_from:
+                          attribute: requested_tenant
+                      - name: role
+                        expression: equals
+                        value: viewer
 
   # The same query API can use different access rules on another hostname.
   # Local JWT verification can precede external authorization. An entry with
@@ -438,13 +449,14 @@ servers:
             authorization:
               grants:
                 - authenticator: partner-cert
-                  attributes:
-                    - name: tenant_id
-                      expression: equals
-                      value: spiffe://partners.example.com/customer-456
-                    - name: writer_id
-                      expression: equals
-                      value: writer-17.partners.example.com
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value: spiffe://partners.example.com/customer-456
+                      - name: writer_id
+                        expression: equals
+                        value: writer-17.partners.example.com
 
 
 # Public APIs require an explicit public binding and no access entries.

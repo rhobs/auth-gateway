@@ -3,7 +3,6 @@ package gateway
 import (
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
 
 	xdsmatcher "github.com/cncf/xds/go/xds/type/matcher/v3"
@@ -72,7 +71,7 @@ func validateFaultMatchConfig(c gatewayapi.FaultMatchConfig, field string) error
 			return fmt.Errorf("%s duplicates header %q ignoring case", conditionField, condition.Name)
 		}
 		seen[lower] = true
-		if err := validateFaultExpression(conditionField, condition); err != nil {
+		if err := validateFaultExpression(conditionField, condition, gatewayapi.ExpressionEquals); err != nil {
 			return err
 		}
 	}
@@ -86,16 +85,16 @@ func validateFaultMatchConfig(c gatewayapi.FaultMatchConfig, field string) error
 			return fmt.Errorf("%s duplicates attribute %q", conditionField, condition.Name)
 		}
 		seen[condition.Name] = true
-		if err := validateFaultExpression(conditionField, condition); err != nil {
+		if err := validateFaultExpression(conditionField, condition, gatewayapi.ExpressionIn); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateFaultExpression(field string, condition gatewayapi.MatchExpression) error {
-	if condition.Expression != gatewayapi.ExpressionEquals && condition.Expression != gatewayapi.ExpressionIn && condition.Expression != gatewayapi.ExpressionPresent {
-		return fmt.Errorf("%s.expression must be equals, in, or present", field)
+func validateFaultExpression(field string, condition gatewayapi.MatchExpression, expression string) error {
+	if condition.Expression != expression {
+		return fmt.Errorf("%s.expression must be %s", field, expression)
 	}
 	return validateMatchExpression(field, condition, false)
 }
@@ -111,6 +110,23 @@ func validateFaultBindings(serverName string, server resolvedServer, apiKeyHeade
 		}
 		if binding.FaultInjection.Match == nil {
 			continue
+		}
+		for j, condition := range binding.FaultInjection.Match.Attributes {
+			conditionField := fmt.Sprintf("%s.match.attributes[%d]", field, j)
+			if binding.Public || len(binding.access) == 0 {
+				return fmt.Errorf("%s requires protected access with verified scalar attributes", conditionField)
+			}
+			for _, access := range binding.access {
+				if len(access.authenticators) == 0 {
+					return fmt.Errorf("%s requires a local authenticator on every access entry", conditionField)
+				}
+				for _, authenticator := range access.authenticators {
+					source, ok := authenticatorAttribute(authenticator, condition.Name)
+					if !ok || (source.From.Kind() != "claim" && source.From.Kind() != "credential" && source.From.Kind() != "certificate") {
+						return fmt.Errorf("%s requires a verified scalar source from authenticator %q", conditionField, authenticator.Name)
+					}
+				}
+			}
 		}
 		for j, condition := range binding.FaultInjection.Match.Headers {
 			header := condition.Name
@@ -199,18 +215,7 @@ func faultConfig(c gatewayapi.FaultInjectionConfig) *fault.HTTPFault {
 	if c.Match != nil {
 		for _, condition := range sortedMatchExpressions(c.Match.Headers) {
 			header := &route.HeaderMatcher{Name: strings.ToLower(condition.Name)}
-			switch condition.Expression {
-			case gatewayapi.ExpressionPresent:
-				header.HeaderMatchSpecifier = &route.HeaderMatcher_PresentMatch{PresentMatch: true}
-			case gatewayapi.ExpressionIn:
-				alternatives := make([]string, 0, len(condition.Value.Items))
-				for _, value := range condition.Value.Items {
-					alternatives = append(alternatives, regexp.QuoteMeta(value))
-				}
-				header.HeaderMatchSpecifier = &route.HeaderMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_SafeRegex{SafeRegex: &matcher.RegexMatcher{Regex: "^(?:" + strings.Join(alternatives, "|") + ")$"}}}}
-			default:
-				header.HeaderMatchSpecifier = &route.HeaderMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: condition.Value.Text}}}
-			}
+			header.HeaderMatchSpecifier = &route.HeaderMatcher_StringMatch{StringMatch: &matcher.StringMatcher{MatchPattern: &matcher.StringMatcher_Exact{Exact: condition.Value.Text}}}
 			config.Headers = append(config.Headers, header)
 		}
 	}
@@ -234,15 +239,8 @@ func faultMatcher(c gatewayapi.FaultInjectionConfig, chain string) (*xdsmatcher.
 		}
 		var values []*xdsmatcher.Matcher_MatcherList_Predicate
 		matchers := make([]*xdsmatcher.StringMatcher, 0, 1)
-		if condition.Expression == gatewayapi.ExpressionPresent {
-			matchers = append(matchers, &xdsmatcher.StringMatcher{MatchPattern: &xdsmatcher.StringMatcher_SafeRegex{SafeRegex: &xdsmatcher.RegexMatcher{
-				EngineType: &xdsmatcher.RegexMatcher_GoogleRe2{GoogleRe2: &xdsmatcher.RegexMatcher_GoogleRE2{}},
-				Regex:      ".+",
-			}}})
-		} else {
-			for _, value := range matchValues(condition) {
-				matchers = append(matchers, &xdsmatcher.StringMatcher{MatchPattern: &xdsmatcher.StringMatcher_Exact{Exact: value}})
-			}
+		for _, value := range condition.Value.Items {
+			matchers = append(matchers, &xdsmatcher.StringMatcher{MatchPattern: &xdsmatcher.StringMatcher_Exact{Exact: value}})
 		}
 		for _, valueMatcher := range matchers {
 			values = append(values, &xdsmatcher.Matcher_MatcherList_Predicate{MatchType: &xdsmatcher.Matcher_MatcherList_Predicate_SinglePredicate_{SinglePredicate: &xdsmatcher.Matcher_MatcherList_Predicate_SinglePredicate{

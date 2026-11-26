@@ -161,11 +161,13 @@ apis:
   - methods:
     - POST
     path:
-      exact: "/loki/0"
+      expression: equals
+      value: "/loki/0"
   - methods:
     - POST
     path:
-      exact: "/loki/1"
+      expression: equals
+      value: "/loki/1"
 - name: thanos
   admission_control:
     enabled: true
@@ -179,11 +181,13 @@ apis:
   - methods:
     - POST
     path:
-      exact: "/thanos/0"
+      expression: equals
+      value: "/thanos/0"
   - methods:
     - POST
     path:
-      exact: "/thanos/1"
+      expression: equals
+      value: "/thanos/1"
 - name: disabled
   admission_control:
     enabled: false
@@ -194,7 +198,8 @@ apis:
   - methods:
     - POST
     path:
-      exact: "/disabled"
+      expression: equals
+      value: "/disabled"
 `
 	c, err := Load(strings.NewReader(input))
 	if err != nil {

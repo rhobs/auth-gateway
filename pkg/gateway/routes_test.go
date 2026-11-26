@@ -12,9 +12,9 @@ import (
 func TestGeneratedAccessListsShareRoute(t *testing.T) {
 	c := loadConfigCase(t, "access-control")
 	c.Servers[0].APIs[0].Access[0].Match.Headers = []gatewayapi.MatchExpression{
-		{Name: "X-Tenant", Expression: "in", Value: gatewayapi.MatchValue{IsList: true, Items: []string{"tenant.a", "tenant+b"}}},
-		{Name: "X-Region", Expression: "in", Value: gatewayapi.MatchValue{IsList: true, Items: []string{"eu", "us"}}},
-		{Name: "X-Mode", Expression: "equals", Value: gatewayapi.MatchValue{Text: "write"}},
+		{Name: "X-Tenant", Expression: "in", Value: &gatewayapi.MatchValue{IsList: true, Items: []string{"tenant.a", "tenant+b"}}},
+		{Name: "X-Region", Expression: "in", Value: &gatewayapi.MatchValue{IsList: true, Items: []string{"eu", "us"}}},
+		{Name: "X-Mode", Expression: "equals", Value: &gatewayapi.MatchValue{Text: "write"}},
 		{Name: "X-Ready", Expression: "present"},
 	}
 	files, err := Generate(c)
@@ -86,7 +86,7 @@ func TestAccessHeaderListsUseBoundedMatchers(t *testing.T) {
 		{"large list", []string{"tenant-a", "tenant-b", "tenant-c", "tenant-d", "tenant-e", "tenant-f", "tenant-g"}, 7, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			headers := accessHeaderMatchers(gatewayapi.MatchExpression{Name: "X-Tenant", Expression: "in", Value: gatewayapi.MatchValue{IsList: true, Items: test.values}})
+			headers := accessHeaderMatchers(gatewayapi.MatchExpression{Name: "X-Tenant", Expression: "in", Value: &gatewayapi.MatchValue{IsList: true, Items: test.values}})
 			if len(headers) != test.wantCount {
 				t.Fatalf("header matchers = %d, want %d", len(headers), test.wantCount)
 			}
@@ -115,8 +115,8 @@ func TestAccessHeaderListsUseBoundedMatchers(t *testing.T) {
 
 func TestAccessHeaderCombinationsCompactEachListIndependently(t *testing.T) {
 	combinations := accessHeaderCombinations(gatewayapi.AccessMatch{Headers: []gatewayapi.MatchExpression{
-		{Name: "X-Tenant", Expression: "in", Value: gatewayapi.MatchValue{IsList: true, Items: []string{strings.Repeat("a", 100), strings.Repeat("b", 100)}}},
-		{Name: "X-Region", Expression: "in", Value: gatewayapi.MatchValue{IsList: true, Items: []string{"eu", "us"}}},
+		{Name: "X-Tenant", Expression: "in", Value: &gatewayapi.MatchValue{IsList: true, Items: []string{strings.Repeat("a", 100), strings.Repeat("b", 100)}}},
+		{Name: "X-Region", Expression: "in", Value: &gatewayapi.MatchValue{IsList: true, Items: []string{"eu", "us"}}},
 	}})
 	if len(combinations) != 2 {
 		t.Fatalf("header combinations = %d, want 2", len(combinations))
@@ -176,7 +176,8 @@ apis:
     port: 19291
   routes:
   - path:
-      exact: "/metrics/api/v1/receive"
+      expression: equals
+      value: "/metrics/api/v1/receive"
 `
 	if _, err := Load(strings.NewReader(input)); err == nil || !strings.Contains(err.Error(), ".methods") {
 		t.Fatalf("Load error = %v, want a missing route methods error", err)
@@ -190,8 +191,13 @@ func TestValidateRejectsInvalidRouteConfiguration(t *testing.T) {
 		want string
 		edit func(*gatewayapi.Config)
 	}{
-		{name: "multiple path matchers", want: "apis[0].routes[0].path", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Path.Prefix = "/metrics/" }},
-		{name: "invalid path regex", want: "apis[0].routes[0].path.regex", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Path.Regex = "[" }},
+		{name: "multiple path matchers", want: "apis[0].routes[0].path", edit: func(c *gatewayapi.Config) {
+			c.APIs[0].Routes[0].Path.ValueFrom = &gatewayapi.SourceReference{Attribute: new("tenant_id")}
+		}},
+		{name: "invalid path regex", want: "apis[0].routes[0].path.value", edit: func(c *gatewayapi.Config) {
+			c.APIs[0].Routes[0].Path.Expression = gatewayapi.ExpressionRegex
+			c.APIs[0].Routes[0].Path.Value.Text = "["
+		}},
 		{name: "duplicate method", want: "apis[0].routes[0].methods", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Methods = []string{"GET", "GET"} }},
 		{name: "missing path matcher", want: "apis[0].routes[0].path", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Path = gatewayapi.PathMatch{} }},
 		{name: "multiple rewrite types", want: "apis[0].routes[0].rewrite", edit: func(c *gatewayapi.Config) {
@@ -220,7 +226,8 @@ apis:
     routes:
       - methods: [POST]
         path:
-          exact: /metrics/api/v1/receive
+          expression: equals
+          value: /metrics/api/v1/receive
 `
 	if _, err := Load(strings.NewReader(input)); err == nil || !strings.Contains(err.Error(), "servers") {
 		t.Fatalf("Load error = %v, want missing servers error", err)
@@ -409,5 +416,26 @@ func TestGenerateBuildsRoutesFromRouteLists(t *testing.T) {
 	}
 	if got := routes[6].GetDirectResponse().GetStatus(); got != 404 {
 		t.Fatalf("not found status = %d", got)
+	}
+}
+
+func TestPathConditionsRejectUnsupportedOperandsAndExpressions(t *testing.T) {
+	for _, test := range []struct {
+		name, want string
+		path       gatewayapi.PathMatch
+	}{
+		{"named path", ".path.name", gatewayapi.PathMatch{Name: "path", Expression: "equals", Value: &gatewayapi.MatchValue{Text: "/status"}}},
+		{"reference", ".path.value", gatewayapi.PathMatch{Expression: "equals", ValueFrom: &gatewayapi.SourceReference{Attribute: new("tenant_id")}}},
+		{"list", ".path.value", gatewayapi.PathMatch{Expression: "equals", Value: &gatewayapi.MatchValue{IsList: true, Items: []string{"/status"}}}},
+		{"header expression", ".path.expression", gatewayapi.PathMatch{Expression: "present", Value: &gatewayapi.MatchValue{Text: "/status"}}},
+		{"scalar membership", ".path.expression", gatewayapi.PathMatch{Expression: "in", Value: &gatewayapi.MatchValue{Text: "/status"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c := loadConfigCase(t, "public-routing")
+			c.APIs[0].Routes[0].Path = test.path
+			if err := Validate(c); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validation = %v, want %q", err, test.want)
+			}
+		})
 	}
 }

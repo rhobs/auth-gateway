@@ -34,15 +34,15 @@ func TestEnvoyAPIKeyAttributeLayouts(t *testing.T) {
 				name := strings.Repeat("z", 64)
 				source := *testAttribute(&c.Authenticators[0], "attribute00")
 				source.Name = name
-				source.Value.Text = name
+				source.From.Credential = new(name)
 				setTestAttribute(&c.Authenticators[0], source)
 				removeTestAttribute(&c.Authenticators[0], "attribute00")
-				c.APIs[0].Routes[0].Processing.RequestHeaders[0].FromAttribute = name
+				c.APIs[0].Routes[0].Processing.RequestHeaders[0].From.Attribute = new(name)
 				grant := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0]
-				grant.Attributes[0].Name = name
+				grant.Match.Attributes[0].Name = name
 			}
 			if test.valueBytes > 0 {
-				c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[0].Value.Text = "value00" + strings.Repeat("v", test.valueBytes-len("value00"))
+				c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[0].Value.Text = "value00" + strings.Repeat("v", test.valueBytes-len("value00"))
 			}
 			files, err := Generate(c)
 			if err != nil {
@@ -64,7 +64,7 @@ func TestEnvoyAPIKeyAttributeLayouts(t *testing.T) {
 				if test.valueBytes > 0 {
 					value += strings.Repeat("v", test.valueBytes-len(value))
 				}
-				values[mapping.FromAttribute] = value
+				values[mapping.From.Scalar()] = value
 			}
 			authenticator := c.Authenticators[0]
 			credential := gatewayapi.APIKeyCredential{Key: "attribute-key", Attributes: values}
@@ -90,7 +90,7 @@ func TestEnvoyAPIKeyAttributeLayouts(t *testing.T) {
 				return
 			}
 			for _, mapping := range mappings {
-				if got, want := runtimeLiveHeader(response.echo.Headers, mapping.Name), values[mapping.FromAttribute]; got != want {
+				if got, want := runtimeLiveHeader(response.echo.Headers, mapping.Name), values[mapping.From.Scalar()]; got != want {
 					t.Errorf("%s = %q, want %q", mapping.Name, got, want)
 				}
 			}

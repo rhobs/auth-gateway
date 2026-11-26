@@ -3,31 +3,31 @@ apis:
 - name: metrics
   attributes:
   - name: role
-    from_source: fixed
-    value: "metrics:read"
+    from:
+      fixed: "metrics:read"
   - name: api
-    from_source: fixed
-    value: metrics
+    from:
+      fixed: metrics
   metrics:
     labels:
-      operation: role
+      operation: {from: {attribute: role}}
   upstream:
     address: metrics.example.test
     port: 8080
   routes:
   - methods: [GET]
-    path: {exact: /metrics}
+    path: {expression: equals, value: /metrics}
     processing:
       request_headers:
       - name: X-Operation
-        from_attribute: role
+        from: {attribute: role}
 - name: plain
   upstream:
     address: plain.example.test
     port: 8080
   routes:
   - methods: [GET]
-    path: {exact: /plain}
+    path: {expression: equals, value: /plain}
 servers:
 - hostname: gateway.example.test
   apis:

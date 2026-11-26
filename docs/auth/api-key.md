@@ -14,23 +14,23 @@ authenticators:
       header: X-Partner-Key
     attributes:
       - name: tenant_id
-        from_source: credential
-        value: tenant_id
+        from:
+          credential: tenant_id
       - name: upstream_tenant
-        from_source: credential
-        value: upstream_tenant
+        from:
+          credential: upstream_tenant
       - name: writer_id
-        from_source: credential
-        value: writer_id
+        from:
+          credential: writer_id
       - name: requested_tenant
-        from_source: header
-        value: X-Tenant
+        from:
+          header: X-Tenant
 ```
 
-`from_source: credential` reads the named value bound to the issued key in the Secret.
-`from_source: header` reads the original request header; it is separate from
+`from.credential` reads the named value bound to the issued key in the Secret.
+`from.header` reads the original request header; it is separate from
 the `X-Partner-Key` credential header. The entry's `name` is the gateway
-attribute. Its `value` names the key in the credential, so the two names can
+attribute. Its `from.credential` names the key in the credential, so the two names can
 differ. For example, one Secret binding could contain these values:
 
 | Issued key | `tenant_id` | `upstream_tenant` | `writer_id` |
@@ -145,13 +145,15 @@ servers:
             authorization:
               grants:
                 - authenticator: partner-key
-                  attributes:
-                    - name: tenant_id
-                      expression: equals-attribute
-                      value: requested_tenant
-                    - name: writer_id
-                      expression: equals
-                      value: writer-17
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value_from:
+                          attribute: requested_tenant
+                      - name: writer_id
+                        expression: equals
+                        value: writer-17
 ```
 
 All listed conditions must match. A client cannot request another tenant just
@@ -162,7 +164,7 @@ matched API with request metrics configured still counts the `403` response.
 A valid JWT cannot replace a missing key. Known credential headers are removed
 before forwarding.
 
-Use `expression: present` without `value` to require a nonempty credential
+Use `expression: nonempty` without an operand to require a nonempty credential
 attribute when no particular value is needed.
 
 An API-key access entry can select the same API path and tenant as a JWT entry
@@ -181,17 +183,17 @@ apis:
   - name: metrics-write
     metrics:
       labels:
-        tenant: upstream_tenant
+        tenant: {from: {attribute: upstream_tenant}}
     upstream:
       address: thanos-receive
       port: 19291
     routes:
       - methods: [POST]
-        path: {exact: /metrics/api/v1/receive}
+        path: {expression: equals, value: /metrics/api/v1/receive}
         processing:
           request_headers:
             - name: X-Scope-OrgID
-              from_attribute: upstream_tenant
+              from: {attribute: upstream_tenant}
 ```
 
 The grant checks `client-123`, while the route sends `X-Scope-OrgID: team-a`

@@ -17,7 +17,8 @@ apis:
   - methods:
     - POST
     path:
-      exact: "/tls-echo"
+      expression: equals
+      value: "/tls-echo"
     rewrite:
       path: "/anything/tls-echo"
 - name: tls-mismatch
@@ -34,7 +35,8 @@ apis:
   - methods:
     - POST
     path:
-      exact: "/tls-mismatch"
+      expression: equals
+      value: "/tls-mismatch"
     rewrite:
       path: "/anything/tls-mismatch"
 - name: http2-echo
@@ -46,7 +48,8 @@ apis:
   - methods:
     - POST
     path:
-      exact: "/http2-echo"
+      expression: equals
+      value: "/http2-echo"
     rewrite:
       path: "/anything/http2-echo"
 servers:

@@ -181,47 +181,61 @@ func validateAccessMatch(field string, entry gatewayapi.Access, apiKeyHeader str
 }
 
 func validateMatchExpression(field string, condition gatewayapi.MatchExpression, allowAttribute bool) error {
-	switch condition.Expression {
-	case gatewayapi.ExpressionPresent:
-		if condition.Value.Text != "" || condition.Value.IsList || len(condition.Value.Items) != 0 {
-			return fmt.Errorf("%s.value must be omitted for present", field)
+	allowed := []string{gatewayapi.ExpressionEquals, gatewayapi.ExpressionIn, gatewayapi.ExpressionPresent}
+	if allowAttribute {
+		allowed = []string{gatewayapi.ExpressionEquals, gatewayapi.ExpressionIn, gatewayapi.ExpressionNonempty, gatewayapi.ExpressionHas, gatewayapi.ExpressionHasOneOf}
+	}
+	if !slices.Contains(allowed, condition.Expression) {
+		return fmt.Errorf("%s.expression must be one of %s", field, strings.Join(allowed, ", "))
+	}
+	if condition.Expression == gatewayapi.ExpressionPresent || condition.Expression == gatewayapi.ExpressionNonempty {
+		if condition.Value != nil || condition.ValueFrom != nil {
+			return fmt.Errorf("%s.value and value_from must be omitted for %s", field, condition.Expression)
 		}
-	case gatewayapi.ExpressionEquals, gatewayapi.ExpressionEqualsAttribute, gatewayapi.ExpressionHas:
-		if condition.Expression == gatewayapi.ExpressionEqualsAttribute && !allowAttribute {
-			return fmt.Errorf("%s.expression equals-attribute is only valid for attributes", field)
+		return nil
+	}
+	if condition.ValueFrom != nil {
+		if condition.Value != nil {
+			return fmt.Errorf("%s must set exactly one of value or value_from", field)
 		}
-		if condition.Expression == gatewayapi.ExpressionHas && !allowAttribute {
-			return fmt.Errorf("%s.expression has is only valid for attributes", field)
+		if !allowAttribute || condition.Expression != gatewayapi.ExpressionEquals {
+			return fmt.Errorf("%s.value_from is only valid for attribute equals", field)
 		}
-		if condition.Value.IsList || len(condition.Value.Items) != 0 || !validCredentialText(condition.Value.Text) {
+		return validateAttributeReference(field+".value_from", *condition.ValueFrom)
+	}
+	value := condition.Value
+	if condition.Expression == gatewayapi.ExpressionEquals || condition.Expression == gatewayapi.ExpressionHas {
+		if value == nil || value.IsList || len(value.Items) != 0 || !validCredentialText(value.Text) {
 			return fmt.Errorf("%s.value must be a nonempty string without controls", field)
 		}
-	case gatewayapi.ExpressionIn, gatewayapi.ExpressionHasOneOf:
-		if condition.Expression == gatewayapi.ExpressionHasOneOf && !allowAttribute {
-			return fmt.Errorf("%s.expression has-one-of is only valid for attributes", field)
+		return nil
+	}
+	if value == nil || !value.IsList || value.Text != "" || len(value.Items) == 0 {
+		return fmt.Errorf("%s.value must be a nonempty list of strings", field)
+	}
+	seen := make(map[string]bool)
+	for _, item := range value.Items {
+		if !validCredentialText(item) || seen[item] {
+			return fmt.Errorf("%s.value must contain distinct nonempty strings without controls", field)
 		}
-		if !condition.Value.IsList || condition.Value.Text != "" || len(condition.Value.Items) == 0 {
-			return fmt.Errorf("%s.value must be a nonempty list of strings", field)
-		}
-		seen := make(map[string]bool)
-		for _, value := range condition.Value.Items {
-			if !validCredentialText(value) || seen[value] {
-				return fmt.Errorf("%s.value must contain distinct nonempty strings without controls", field)
-			}
-			seen[value] = true
-		}
-	default:
-		return fmt.Errorf("%s.expression must be equals, equals-attribute, has, has-one-of, in, or present", field)
+		seen[item] = true
+	}
+	return nil
+}
+
+func validateAttributeReference(field string, source gatewayapi.SourceReference) error {
+	if source.Kind() != "attribute" || !attributeNamePattern.MatchString(source.Scalar()) {
+		return fmt.Errorf("%s.attribute must reference a valid attribute name and be the only source", field)
 	}
 	return nil
 }
 
 func matchValues(condition gatewayapi.MatchExpression) []string {
-	if condition.Expression == gatewayapi.ExpressionIn || condition.Expression == gatewayapi.ExpressionHasOneOf {
-		return condition.Value.Items
-	}
-	if condition.Expression == gatewayapi.ExpressionPresent {
+	if condition.Value == nil {
 		return nil
+	}
+	if condition.Value.IsList {
+		return condition.Value.Items
 	}
 	return []string{condition.Value.Text}
 }
@@ -301,13 +315,13 @@ func validateAccessGrants(field string, access resolvedAccess) error {
 		if !exists {
 			return fmt.Errorf("%s.authenticator %q is not enabled by this access entry", grantField, grant.Authenticator)
 		}
-		if len(grant.Attributes) == 0 && authenticator.MTLS == nil {
-			return fmt.Errorf("%s.attributes must not be empty", grantField)
+		if len(grant.Match.Attributes) == 0 && authenticator.MTLS == nil {
+			return fmt.Errorf("%s.match.attributes must not be empty", grantField)
 		}
 		seen := make(map[string]bool)
-		for attributeIndex, condition := range grant.Attributes {
+		for attributeIndex, condition := range grant.Match.Attributes {
 			name := condition.Name
-			attributeField := fmt.Sprintf(attributeIndexFieldFormat, grantField, attributeIndex)
+			attributeField := fmt.Sprintf(attributeIndexFieldFormat, grantField+".match", attributeIndex)
 			if seen[name] {
 				return fmt.Errorf("%s duplicates attribute %q", attributeField, name)
 			}
@@ -316,25 +330,25 @@ func validateAccessGrants(field string, access resolvedAccess) error {
 			if !ok || !attributeNamePattern.MatchString(name) {
 				return fmt.Errorf("%s is not declared by authenticator %q", attributeField, authenticator.Name)
 			}
-			if source.FromSource == attributeSourceHeader || source.FromSource == attributeSourceFixed {
-				return fmt.Errorf("%s must use a verified credential attribute, not a %s source", attributeField, source.FromSource)
+			if source.From.Kind() == attributeSourceHeader || source.From.Kind() == attributeSourceFixed {
+				return fmt.Errorf("%s must use a verified credential attribute, not a %s source", attributeField, source.From.Kind())
 			}
 			if err := validateMatchExpression(attributeField, condition, true); err != nil {
 				return err
 			}
-			if (condition.Expression == gatewayapi.ExpressionHas || condition.Expression == gatewayapi.ExpressionHasOneOf) && source.FromSource != "claim" {
+			if (condition.Expression == gatewayapi.ExpressionHas || condition.Expression == gatewayapi.ExpressionHasOneOf) && source.From.Kind() != "claim" {
 				return fmt.Errorf("%s.expression %s requires a JWT claim source", attributeField, condition.Expression)
 			}
-			if condition.Expression == gatewayapi.ExpressionEqualsAttribute {
-				other, ok := authenticatorAttribute(authenticator, condition.Value.Text)
+			if condition.ValueFrom != nil {
+				other, ok := authenticatorAttribute(authenticator, condition.ValueFrom.Scalar())
 				if !ok {
-					return fmt.Errorf("%s.value references undeclared attribute %q", attributeField, condition.Value.Text)
+					return fmt.Errorf("%s.value_from.attribute references undeclared attribute %q", attributeField, condition.ValueFrom.Scalar())
 				}
-				if other.FromSource == attributeSourceHeader && !accessMatchesHeader(access.Match, other.Value.Text) {
-					return fmt.Errorf("%s.value header %q must be selected in match.headers", attributeField, other.Value.Text)
+				if other.From.Kind() == attributeSourceHeader && !accessMatchesHeader(access.Match, other.From.Scalar()) {
+					return fmt.Errorf("%s.value_from.attribute header %q must be selected in match.headers", attributeField, other.From.Scalar())
 				}
-				if other.FromSource == attributeSourceFixed {
-					return fmt.Errorf("%s.value cannot reference a fixed attribute", attributeField)
+				if other.From.Kind() == attributeSourceFixed {
+					return fmt.Errorf("%s.value_from.attribute cannot reference a fixed attribute", attributeField)
 				}
 			}
 		}
@@ -357,21 +371,21 @@ func validateAccessForwarding(field string, api gatewayapi.API, access resolvedA
 			continue
 		}
 		for _, mapping := range route.Processing.RequestHeaders {
-			if apiHasFixedAttribute(api, mapping.FromAttribute) {
+			if apiHasFixedAttribute(api, mapping.From.Scalar()) {
 				continue
 			}
 			if access.Authorization.ExtAuthz != nil {
 				service := services[access.Authorization.ExtAuthz.Service]
-				if extAuthzProvidesAttribute(access, service, mapping.FromAttribute) {
+				if extAuthzProvidesAttribute(access, service, mapping.From.Scalar()) {
 					continue
 				}
 			}
 			if len(access.authenticators) == 0 {
-				return fmt.Errorf("%s does not provide processing attribute %q", field, mapping.FromAttribute)
+				return fmt.Errorf("%s does not provide processing attribute %q", field, mapping.From.Scalar())
 			}
 			for _, authenticator := range access.authenticators {
-				if !providesAttributeAuthenticator(authenticator, mapping.FromAttribute) {
-					return fmt.Errorf("%s authenticator %q does not provide processing attribute %q", field, authenticator.Name, mapping.FromAttribute)
+				if !providesAttributeAuthenticator(authenticator, mapping.From.Scalar()) {
+					return fmt.Errorf("%s authenticator %q does not provide processing attribute %q", field, authenticator.Name, mapping.From.Scalar())
 				}
 			}
 		}
@@ -385,8 +399,8 @@ func validatePublicAPIForwarding(field string, api gatewayapi.API) error {
 			continue
 		}
 		for _, mapping := range route.Processing.RequestHeaders {
-			if !apiHasFixedAttribute(api, mapping.FromAttribute) {
-				return fmt.Errorf("%s.public cannot forward non-fixed attribute %q", field, mapping.FromAttribute)
+			if !apiHasFixedAttribute(api, mapping.From.Scalar()) {
+				return fmt.Errorf("%s.public cannot forward non-fixed attribute %q", field, mapping.From.Scalar())
 			}
 		}
 	}
@@ -430,14 +444,19 @@ func cloneAuthentication(authentication gatewayapi.Authentication) gatewayapi.Au
 }
 
 func cloneAuthorizationGrant(grant gatewayapi.AuthorizationGrant) gatewayapi.AuthorizationGrant {
-	grant.Attributes = cloneMatchExpressions(grant.Attributes)
+	grant.Match.Attributes = cloneMatchExpressions(grant.Match.Attributes)
 	return grant
 }
 
 func cloneMatchExpressions(expressions []gatewayapi.MatchExpression) []gatewayapi.MatchExpression {
-	cloned := slices.Clone(expressions)
-	for index := range cloned {
-		cloned[index].Value.Items = slices.Clone(cloned[index].Value.Items)
-	}
-	return cloned
+	return cloneSlice(expressions, cloneMatchExpression)
+}
+
+func cloneMatchExpression(condition gatewayapi.MatchExpression) gatewayapi.MatchExpression {
+	condition.Value = cloneConfigPointer(condition.Value, func(value gatewayapi.MatchValue) gatewayapi.MatchValue {
+		value.Items = slices.Clone(value.Items)
+		return value
+	})
+	condition.ValueFrom = cloneConfigPointer(condition.ValueFrom, cloneSourceReference)
+	return condition
 }

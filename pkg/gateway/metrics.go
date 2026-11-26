@@ -88,6 +88,10 @@ func requestMetricName(c gatewayapi.Config) string {
 
 func cloneAPIMetrics(m gatewayapi.APIMetrics) gatewayapi.APIMetrics {
 	m.Labels = maps.Clone(m.Labels)
+	for key, reference := range m.Labels {
+		reference.From = cloneSourceReference(reference.From)
+		m.Labels[key] = reference
+	}
 	return m
 }
 
@@ -107,8 +111,8 @@ func validateAPIMetrics(name string, value *gatewayapi.APIMetrics) error {
 			label == apiMetadataName || label == requestMetricStatusLabelName || label == "envoy_http_conn_manager_prefix" {
 			return fmt.Errorf("%s.labels contains invalid or reserved Prometheus label name %q", name, label)
 		}
-		if !attributeNamePattern.MatchString(value.Labels[label]) {
-			return fmt.Errorf("%s.labels.%s must reference a valid attribute name", name, label)
+		if err := validateAttributeReference(name+".labels."+label+".from", value.Labels[label].From); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -138,7 +142,7 @@ func validateMetricAttributeReferences(apis []gatewayapi.API, authenticators map
 			continue
 		}
 		for _, label := range slices.Sorted(maps.Keys(api.Metrics.Labels)) {
-			attribute := api.Metrics.Labels[label]
+			attribute := *api.Metrics.Labels[label].From.Attribute
 			if apiHasFixedAttribute(api, attribute) {
 				continue
 			}
@@ -240,7 +244,7 @@ func requestMetricsHTTPFilter(c resolvedConfig) (*hcm.HttpFilter, error) {
 func requestMetricsRouteMetadata(api gatewayapi.API) *structpb.Struct {
 	labels := make(map[string]*structpb.Value, len(api.Metrics.Labels))
 	for label, attribute := range api.Metrics.Labels {
-		labels[label] = structpb.NewStringValue(attribute)
+		labels[label] = structpb.NewStringValue(attribute.From.Scalar())
 	}
 	return &structpb.Struct{Fields: map[string]*structpb.Value{
 		apiMetadataName: structpb.NewStringValue(api.Name),

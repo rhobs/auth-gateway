@@ -7,22 +7,22 @@ authenticators:
       uri: https://jwks.jwt.test/issuer-one
   attributes:
   - name: tenant_id
-    from_source: claim
-    value: [organization, id]
+    from:
+      claim: [organization, id]
   - name: auth_origin
-    from_source: fixed
-    value: "jwt (100%)"
+    from:
+      fixed: "jwt (100%)"
 - name: partner-key
   api_key:
     secret: auth-gateway-api-keys
     header: X-Partner-Key
   attributes:
   - name: tenant_id
-    from_source: credential
-    value: tenant_id
+    from:
+      credential: tenant_id
   - name: auth_origin
-    from_source: fixed
-    value: "api-key"
+    from:
+      fixed: "api-key"
 ext_authz_services:
 - name: policy
   upstream:
@@ -36,33 +36,33 @@ ext_authz_services:
   credential_headers: [authorization]
   attributes:
   - name: requested_tenant
-    from_source: header
-    value: X-Tenant
+    from:
+      header: X-Tenant
   - name: tenant_id
-    from_source: authenticator
-    value: tenant_id
+    from:
+      attribute: tenant_id
   - name: auth_origin
-    from_source: authenticator
-    value: auth_origin
+    from:
+      attribute: auth_origin
 apis:
 - name: ext-authz-api
   attributes:
   - name: role
-    from_source: fixed
-    value: "metrics:read"
+    from:
+      fixed: "metrics:read"
   upstream:
     address: httpbin
     port: 8080
   routes:
   - methods: [GET]
-    path: {exact: /protected}
+    path: {expression: equals, value: /protected}
     rewrite: {path: /anything}
     processing:
       request_headers:
       - name: X-Scope-OrgID
-        from_attribute: requested_tenant
+        from: {attribute: requested_tenant}
       - name: X-Role
-        from_attribute: role
+        from: {attribute: role}
 servers:
 - hostname: ext.auth-gateway.test
   apis:

@@ -253,20 +253,18 @@ an HTTP error status. A Composite filter selects one server API binding's native
 after authentication, attribute extraction, authorization, and request-header
 processing. It runs before admission control and the router.
 
-Optional `equals`, `in`, and `present` header matches gate injection. Attribute selectors read the
-same filter state as header forwarding and metrics, populated from the API's
-fixed attributes and the selected access entry's declared sources. Missing or empty attributes do not
-match. All configured selectors must match, with alternative allowed values in
-each `in` expression. Status and percentage remain
-configured by the operator; Envoy's client-controlled abort headers are not
-enabled. Unconfigured bindings and fallback routes have no fault selector.
+Optional literal `equals` header conditions gate injection. Attribute selectors
+use `in` lists against filter state populated from verified scalar attributes.
+Every protected entry must declare those sources on every selected local
+authenticator. Missing, empty, or incorrectly typed values do not match. All
+conditions must succeed. Status and percentage remain operator-controlled;
+Envoy's client-controlled abort headers are disabled. Fallback routes have no
+fault selector.
 
 Injected aborts do not reach the upstream. The standard per-API response
-counter records each reply once using its status and authenticated attribute
-labels, just as it records a backend reply. SLOs using this counter need no
-special handling for injected failures. Error access logs identify aborts
-with `fault_filter_abort` in `response_code_details`. See
-[SLO accounting](fault-injection.md#slo-accounting).
+counter records each reply once with its status and authenticated labels.
+Error access logs identify aborts with `fault_filter_abort` in
+`response_code_details`. See [SLO accounting](fault-injection.md#slo-accounting).
 
 Fault settings live in the bootstrap ConfigMap. Enabling, changing, or
 disabling them requires regenerating and applying the gateway resources and

@@ -299,8 +299,8 @@ authenticators:
   api_key: {}
   attributes:
     - name: tenant_id
-      from_source: credential
-      value: tenant_id
+      from:
+        credential: tenant_id
 apis:
 - name: ingest
   upstream:
@@ -310,7 +310,8 @@ apis:
   - methods:
     - POST
     path:
-      exact: "/ingest"
+      expression: equals
+      value: "/ingest"
 servers:
 - hostname: key.local.test
   apis:
@@ -322,10 +323,11 @@ servers:
       authorization:
         grants:
         - authenticator: local-key
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: client-a
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: client-a
 `
 	c, err := Load(strings.NewReader(input))
 	if err != nil {

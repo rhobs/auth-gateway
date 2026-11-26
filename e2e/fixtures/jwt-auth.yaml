@@ -13,14 +13,14 @@ authenticators:
       uri: https://jwks.jwt.test/issuer-one
   attributes:
     - name: my_list
-      from_source: claim
-      value: [x, my_list]
+      from:
+        claim: [x, my_list]
     - name: groups
-      from_source: claim
-      value: [token, groups]
+      from:
+        claim: [token, groups]
     - name: feature
-      from_source: claim
-      value: [feature]
+      from:
+        claim: [feature]
 apis:
 - name: metrics
   upstream:
@@ -30,7 +30,8 @@ apis:
   - methods:
     - GET
     path:
-      exact: "/protected"
+      expression: equals
+      value: "/protected"
     rewrite:
       path: "/anything"
 - name: groups-exact
@@ -39,7 +40,7 @@ apis:
     port: 8080
   routes:
   - methods: [GET]
-    path: {exact: /groups-exact}
+    path: {expression: equals, value: /groups-exact}
     rewrite: {path: /anything}
 - name: groups-any
   upstream:
@@ -47,7 +48,7 @@ apis:
     port: 8080
   routes:
   - methods: [GET]
-    path: {exact: /groups-any}
+    path: {expression: equals, value: /groups-any}
     rewrite: {path: /anything}
 - name: presence
   upstream:
@@ -55,7 +56,7 @@ apis:
     port: 8080
   routes:
   - methods: [GET]
-    path: {exact: /presence}
+    path: {expression: equals, value: /presence}
     rewrite: {path: /anything}
 servers:
 - hostname: plain.jwt.auth-gateway.test
@@ -70,10 +71,11 @@ servers:
       authorization:
         grants:
         - authenticator: issuer-one
-          attributes:
-            - name: my_list
-              expression: in
-              value: [y, z]
+          match:
+            attributes:
+              - name: my_list
+                expression: in
+                value: [y, z]
   - name: groups-exact
     access:
     - name: default
@@ -82,10 +84,11 @@ servers:
       authorization:
         grants:
         - authenticator: issuer-one
-          attributes:
-          - name: groups
-            expression: has
-            value: metrics-admins
+          match:
+            attributes:
+            - name: groups
+              expression: has
+              value: metrics-admins
   - name: groups-any
     access:
     - name: default
@@ -94,10 +97,11 @@ servers:
       authorization:
         grants:
         - authenticator: issuer-one
-          attributes:
-          - name: groups
-            expression: has-one-of
-            value: [metrics-readers, metrics-writers]
+          match:
+            attributes:
+            - name: groups
+              expression: has-one-of
+              value: [metrics-readers, metrics-writers]
   - name: presence
     access:
     - name: default
@@ -106,9 +110,10 @@ servers:
       authorization:
         grants:
         - authenticator: issuer-one
-          attributes:
-          - name: feature
-            expression: present
+          match:
+            attributes:
+            - name: feature
+              expression: nonempty
 kubernetes:
   name: auth-gateway
   namespace: default

@@ -20,8 +20,8 @@ authenticators:
     header: X-Trace-Key
   attributes:
     - name: tenant_id
-      from_source: credential
-      value: tenant_id
+      from:
+        credential: tenant_id
 apis:
 - name: tracing
   metrics: {}
@@ -32,7 +32,8 @@ apis:
   - methods:
     - GET
     path:
-      exact: "/trace"
+      expression: equals
+      value: "/trace"
     rewrite:
       path: "/anything/trace"
 servers:
@@ -47,10 +48,11 @@ servers:
       authorization:
         grants:
         - authenticator: tracing-key
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: trace-client
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: trace-client
 kubernetes:
   name: auth-gateway
   namespace: auth-gateway-tracing-e2e

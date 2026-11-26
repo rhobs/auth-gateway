@@ -45,37 +45,34 @@ func validateAuthenticatorAttributes(name string, authenticator gatewayapi.Authe
 			return fmt.Errorf("%s.name duplicates attribute %q", field, source.Name)
 		}
 		seen[source.Name] = true
-		switch source.FromSource {
+		switch source.From.Kind() {
 		case attributeSourceFixed:
-			if source.Value.IsPath || !validFixedAttributeValue(source.Value.Text) {
-				return fmt.Errorf("%s.value must be a nonempty string without controls or surrounding whitespace", field)
+			if !validFixedAttributeValue(source.From.Scalar()) {
+				return fmt.Errorf("%s.from.fixed must be a nonempty string without controls or surrounding whitespace", field)
 			}
 		case "claim":
-			if authenticator.JWT == nil || !source.Value.IsPath || len(source.Value.Path) == 0 || slices.Contains(source.Value.Path, "") {
-				return fmt.Errorf("%s.value must contain one or more nonempty JWT claim keys", field)
+			if authenticator.JWT == nil || len(source.From.Claim) == 0 || slices.Contains(source.From.Claim, "") {
+				return fmt.Errorf("%s.from.claim must contain one or more nonempty JWT claim keys", field)
 			}
 		case "credential":
-			if authenticator.APIKey == nil || source.Value.IsPath || !attributeNamePattern.MatchString(source.Value.Text) {
-				return fmt.Errorf("%s.value must name an API-key credential attribute", field)
+			if authenticator.APIKey == nil || !attributeNamePattern.MatchString(source.From.Scalar()) {
+				return fmt.Errorf("%s.from.credential must name an API-key credential attribute", field)
 			}
 		case "certificate":
-			if authenticator.MTLS == nil || source.Value.IsPath || (source.Value.Text != "uri_san" && source.Value.Text != "dns_san") {
-				return fmt.Errorf("%s.value must be uri_san or dns_san for mTLS", field)
+			if authenticator.MTLS == nil || (source.From.Scalar() != "uri_san" && source.From.Scalar() != "dns_san") {
+				return fmt.Errorf("%s.from.certificate must be uri_san or dns_san for mTLS", field)
 			}
 		case attributeSourceHeader:
-			if source.Value.IsPath {
-				return fmt.Errorf("%s.value must be a request header name", field)
-			}
-			header := source.Value.Text
+			header := source.From.Scalar()
 			lower := strings.ToLower(header)
 			if !validHeaderFieldName(header) || strings.Contains(header, "_") || forbiddenIdentityHeader(lower) {
-				return fmt.Errorf("%s.value must be a safe HTTP request header name", field)
+				return fmt.Errorf("%s.from.header must be a safe HTTP request header name", field)
 			}
 			if strings.EqualFold(header, apiKeyHeader) {
-				return fmt.Errorf("%s.value is reserved for API-key credentials", field)
+				return fmt.Errorf("%s.from.header is reserved for API-key credentials", field)
 			}
 		default:
-			return fmt.Errorf("%s.from_source must be fixed, claim, credential, certificate, or header", field)
+			return fmt.Errorf("%s.from must select exactly one of fixed, claim, credential, certificate, or header", field)
 		}
 	}
 	return nil
@@ -92,24 +89,34 @@ func authenticatorAttribute(authenticator gatewayapi.Authenticator, name string)
 
 func attributeMetadataPath(authenticator gatewayapi.Authenticator, attribute string) (string, []string) {
 	source, _ := authenticatorAttribute(authenticator, attribute)
-	if source.FromSource == attributeSourceHeader {
-		return requestHeaderMetadataNamespace, []string{strings.ToLower(source.Value.Text)}
+	if source.From.Kind() == attributeSourceHeader {
+		return requestHeaderMetadataNamespace, []string{strings.ToLower(source.From.Scalar())}
 	}
 	if authenticator.JWT != nil {
-		return jwtAuthnFilterName, append([]string{authenticator.Name}, source.Value.Path...)
+		return jwtAuthnFilterName, append([]string{authenticator.Name}, source.From.Claim...)
 	}
 	if authenticator.MTLS != nil {
-		if source.Value.Text == "uri_san" {
+		if source.From.Scalar() == "uri_san" {
 			return mtlsMetadataNamespace, []string{mtlsURIMetadataKey}
 		}
 		return mtlsMetadataNamespace, []string{mtlsDNSMetadataKey}
 	}
-	return apiKeyMetadataNamespace, []string{apiKeyAttributeMetadataKey(source.Value.Text)}
+	return apiKeyMetadataNamespace, []string{apiKeyAttributeMetadataKey(source.From.Scalar())}
 }
 
 func cloneAttributeSource(a gatewayapi.AttributeSource) gatewayapi.AttributeSource {
-	a.Value.Path = slices.Clone(a.Value.Path)
+	a.From = cloneSourceReference(a.From)
 	return a
+}
+
+func cloneSourceReference(source gatewayapi.SourceReference) gatewayapi.SourceReference {
+	source.Claim = slices.Clone(source.Claim)
+	source.Fixed = clonePointer(source.Fixed)
+	source.Header = clonePointer(source.Header)
+	source.Credential = clonePointer(source.Credential)
+	source.Certificate = clonePointer(source.Certificate)
+	source.Attribute = clonePointer(source.Attribute)
+	return source
 }
 
 func validateAuthenticatorAttributesConfig(c gatewayapi.Config, apiKeyHeader string) error {
@@ -170,8 +177,8 @@ func requestHeaderSources(c resolvedConfig, serverIndexes []int) []string {
 	for _, index := range serverIndexes {
 		for _, authenticator := range c.servers[index].authenticators {
 			for _, source := range authenticator.Attributes {
-				if source.FromSource == attributeSourceHeader {
-					headers[strings.ToLower(source.Value.Text)] = struct{}{}
+				if source.From.Kind() == attributeSourceHeader {
+					headers[strings.ToLower(source.From.Scalar())] = struct{}{}
 				}
 			}
 		}
@@ -182,8 +189,8 @@ func requestHeaderSources(c resolvedConfig, serverIndexes []int) []string {
 				}
 				service := c.extAuthzIndex[access.Authorization.ExtAuthz.Service]
 				for _, source := range service.Attributes {
-					if source.FromSource == attributeSourceHeader {
-						headers[strings.ToLower(source.Value.Text)] = struct{}{}
+					if source.From.Kind() == attributeSourceHeader {
+						headers[strings.ToLower(source.From.Scalar())] = struct{}{}
 					}
 				}
 			}
@@ -251,7 +258,7 @@ func mtlsPresentExpression() string {
 
 func mtlsSANAttributeExpression(source gatewayapi.AttributeSource) string {
 	key := mtlsDNSMetadataKey
-	if source.Value.Text == "uri_san" {
+	if source.From.Scalar() == "uri_san" {
 		key = mtlsURIMetadataKey
 	}
 	current, checks := metadataStringPathExpression(mtlsMetadataNamespace, []string{key})
@@ -293,16 +300,16 @@ func appendAttributeInitialization(config *setfilterstate.Config, authenticator 
 		attribute := source.Name
 		var expression string
 		switch {
-		case source.FromSource == attributeSourceFixed:
-			expression = "(" + authenticatorVerifiedExpression(authenticator) + ") ? " + celFormatterStringLiteral(source.Value.Text) + " : \"\""
-		case source.FromSource == attributeSourceHeader:
-			expression = headerAttributeExpression(authenticator, source.Value.Text)
+		case source.From.Kind() == attributeSourceFixed:
+			expression = "(" + authenticatorVerifiedExpression(authenticator) + ") ? " + celFormatterStringLiteral(source.From.Scalar()) + " : \"\""
+		case source.From.Kind() == attributeSourceHeader:
+			expression = headerAttributeExpression(authenticator, source.From.Scalar())
 		case authenticator.JWT != nil:
-			expression = jwtClaimExpression(append([]string{authenticator.Name}, source.Value.Path...))
+			expression = jwtClaimExpression(append([]string{authenticator.Name}, source.From.Claim...))
 		case authenticator.MTLS != nil:
 			expression = mtlsSANAttributeExpression(source)
 		default:
-			expression = apiKeyAttributeExpression(source.Value.Text)
+			expression = apiKeyAttributeExpression(source.From.Scalar())
 		}
 
 		config.OnRequestHeaders = append(config.OnRequestHeaders, filterStateValue(filterStateKey(attribute), expression))
@@ -342,10 +349,10 @@ func attributePerRouteConfig(c resolvedConfig, access resolvedAccess) (*anypb.An
 	}
 	if external := access.Authorization.ExtAuthz; external != nil {
 		for _, source := range c.extAuthzIndex[external.Service].Attributes {
-			if source.FromSource != attributeSourceHeader {
+			if source.From.Kind() != attributeSourceHeader {
 				continue
 			}
-			value, check := metadataStringPathExpression(requestHeaderMetadataNamespace, []string{strings.ToLower(source.Value.Text)})
+			value, check := metadataStringPathExpression(requestHeaderMetadataNamespace, []string{strings.ToLower(source.From.Scalar())})
 			expression := "((" + check + " && " + value + " != \"\") ? " + value + " : \"\")"
 			config.OnRequestHeaders = append(config.OnRequestHeaders, filterStateValue(filterStateKey(source.Name), expression))
 		}

@@ -6,68 +6,68 @@ authenticators:
     header: X-Partner-Key
   attributes:
     - name: attribute00
-      from_source: credential
-      value: attribute00
+      from:
+        credential: attribute00
     - name: attribute01
-      from_source: credential
-      value: attribute01
+      from:
+        credential: attribute01
     - name: attribute02
-      from_source: credential
-      value: attribute02
+      from:
+        credential: attribute02
     - name: attribute03
-      from_source: credential
-      value: attribute03
+      from:
+        credential: attribute03
     - name: attribute04
-      from_source: credential
-      value: attribute04
+      from:
+        credential: attribute04
     - name: attribute05
-      from_source: credential
-      value: attribute05
+      from:
+        credential: attribute05
     - name: attribute06
-      from_source: credential
-      value: attribute06
+      from:
+        credential: attribute06
     - name: attribute07
-      from_source: credential
-      value: attribute07
+      from:
+        credential: attribute07
     - name: attribute08
-      from_source: credential
-      value: attribute08
+      from:
+        credential: attribute08
     - name: attribute09
-      from_source: credential
-      value: attribute09
+      from:
+        credential: attribute09
     - name: attribute10
-      from_source: credential
-      value: attribute10
+      from:
+        credential: attribute10
     - name: attribute11
-      from_source: credential
-      value: attribute11
+      from:
+        credential: attribute11
     - name: attribute12
-      from_source: credential
-      value: attribute12
+      from:
+        credential: attribute12
     - name: attribute13
-      from_source: credential
-      value: attribute13
+      from:
+        credential: attribute13
     - name: attribute14
-      from_source: credential
-      value: attribute14
+      from:
+        credential: attribute14
     - name: attribute15
-      from_source: credential
-      value: attribute15
+      from:
+        credential: attribute15
     - name: attribute16
-      from_source: credential
-      value: attribute16
+      from:
+        credential: attribute16
     - name: attribute17
-      from_source: credential
-      value: attribute17
+      from:
+        credential: attribute17
     - name: attribute18
-      from_source: credential
-      value: attribute18
+      from:
+        credential: attribute18
     - name: attribute19
-      from_source: credential
-      value: attribute19
+      from:
+        credential: attribute19
     - name: requested_tenant
-      from_source: header
-      value: X-Scope-OrgID
+      from:
+        header: X-Scope-OrgID
 apis:
 - name: ingest
   upstream:
@@ -77,51 +77,52 @@ apis:
   - methods:
     - POST
     path:
-      exact: "/ingest"
+      expression: equals
+      value: "/ingest"
     rewrite:
       path: "/anything"
     processing:
       request_headers:
       - name: X-Attribute00
-        from_attribute: attribute00
+        from: {attribute: attribute00}
       - name: X-Attribute01
-        from_attribute: attribute01
+        from: {attribute: attribute01}
       - name: X-Attribute02
-        from_attribute: attribute02
+        from: {attribute: attribute02}
       - name: X-Attribute03
-        from_attribute: attribute03
+        from: {attribute: attribute03}
       - name: X-Attribute04
-        from_attribute: attribute04
+        from: {attribute: attribute04}
       - name: X-Attribute05
-        from_attribute: attribute05
+        from: {attribute: attribute05}
       - name: X-Attribute06
-        from_attribute: attribute06
+        from: {attribute: attribute06}
       - name: X-Attribute07
-        from_attribute: attribute07
+        from: {attribute: attribute07}
       - name: X-Attribute08
-        from_attribute: attribute08
+        from: {attribute: attribute08}
       - name: X-Attribute09
-        from_attribute: attribute09
+        from: {attribute: attribute09}
       - name: X-Attribute10
-        from_attribute: attribute10
+        from: {attribute: attribute10}
       - name: X-Attribute11
-        from_attribute: attribute11
+        from: {attribute: attribute11}
       - name: X-Attribute12
-        from_attribute: attribute12
+        from: {attribute: attribute12}
       - name: X-Attribute13
-        from_attribute: attribute13
+        from: {attribute: attribute13}
       - name: X-Attribute14
-        from_attribute: attribute14
+        from: {attribute: attribute14}
       - name: X-Attribute15
-        from_attribute: attribute15
+        from: {attribute: attribute15}
       - name: X-Attribute16
-        from_attribute: attribute16
+        from: {attribute: attribute16}
       - name: X-Attribute17
-        from_attribute: attribute17
+        from: {attribute: attribute17}
       - name: X-Attribute18
-        from_attribute: attribute18
+        from: {attribute: attribute18}
       - name: X-Attribute19
-        from_attribute: attribute19
+        from: {attribute: attribute19}
 servers:
 - hostname: key.runtime.test
   apis:
@@ -139,7 +140,8 @@ servers:
       authorization:
         grants:
         - authenticator: partner-key
-          attributes:
-            - name: attribute00
-              expression: equals
-              value: value00
+          match:
+            attributes:
+              - name: attribute00
+                expression: equals
+                value: value00

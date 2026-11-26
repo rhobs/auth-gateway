@@ -7,10 +7,8 @@ import (
 	"testing"
 
 	xdsmatcher "github.com/cncf/xds/go/xds/type/matcher/v3"
-	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	composite "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/composite/v3"
 	fault "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/fault/v3"
-	setfilterstate "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	networkinput "github.com/envoyproxy/go-control-plane/envoy/extensions/matching/common_inputs/network/v3"
 	envoytype "github.com/envoyproxy/go-control-plane/envoy/type/v3"
@@ -66,10 +64,10 @@ func faultSelectorConfig(t testing.TB) gatewayapi.Config {
 func TestLoadFaultMatchSelectors(t *testing.T) {
 	c := faultSelectorConfig(t)
 	want := &gatewayapi.FaultMatchConfig{
-		Headers: []gatewayapi.MatchExpression{{Name: "X-Inject-Fault", Expression: gatewayapi.ExpressionEquals, Value: gatewayapi.MatchValue{Text: "true"}}},
+		Headers: []gatewayapi.MatchExpression{{Name: "X-Inject-Fault", Expression: gatewayapi.ExpressionEquals, Value: &gatewayapi.MatchValue{Text: "true"}}},
 		Attributes: []gatewayapi.MatchExpression{
-			{Name: "tenant_id", Expression: gatewayapi.ExpressionIn, Value: gatewayapi.MatchValue{Items: []string{"tenant-a", "tenant-c"}, IsList: true}},
-			{Name: "writer_id", Expression: gatewayapi.ExpressionEquals, Value: gatewayapi.MatchValue{Text: "writer-a"}},
+			{Name: "tenant_id", Expression: gatewayapi.ExpressionIn, Value: &gatewayapi.MatchValue{Items: []string{"tenant-a", "tenant-c"}, IsList: true}},
+			{Name: "writer_id", Expression: gatewayapi.ExpressionIn, Value: &gatewayapi.MatchValue{IsList: true, Items: []string{"writer-a"}}},
 		},
 	}
 	assertConfigDiff(t, "fault selectors", want, c.Servers[0].APIs[0].FaultInjection.Match)
@@ -81,9 +79,9 @@ func TestFaultMatchDefaultsCloneInput(t *testing.T) {
 	match := defaulted.Servers[0].APIs[0].FaultInjection.Match
 	match.Headers[0].Value.Text = "changed"
 	match.Attributes[0].Value.Items[0] = "changed"
-	match.Attributes[1].Value.Text = "changed"
+	match.Attributes[1].Value.Items[0] = "changed"
 	original := c.Servers[0].APIs[0].FaultInjection.Match
-	if original.Headers[0].Value.Text != "true" || original.Attributes[0].Value.Items[0] != "tenant-a" || original.Attributes[1].Value.Text != "writer-a" {
+	if original.Headers[0].Value.Text != "true" || original.Attributes[0].Value.Items[0] != "tenant-a" || original.Attributes[1].Value.Items[0] != "writer-a" {
 		t.Fatal("defaulting aliased the caller's fault selectors")
 	}
 }
@@ -102,7 +100,7 @@ func TestFaultMatchValidation(t *testing.T) {
 		}},
 		{"empty header value", "match.headers[0].value", func(c *gatewayapi.FaultMatchConfig) { c.Headers[0].Value.Text = "" }},
 		{"invalid header expression", "match.headers[0].expression", func(c *gatewayapi.FaultMatchConfig) { c.Headers[0].Expression = gatewayapi.ExpressionHas }},
-		{"present with value", "match.headers[0].value", func(c *gatewayapi.FaultMatchConfig) { c.Headers[0].Expression = gatewayapi.ExpressionPresent }},
+		{"present header rejected", "match.headers[0].expression", func(c *gatewayapi.FaultMatchConfig) { c.Headers[0].Expression = gatewayapi.ExpressionPresent }},
 		{"invalid attribute name", "match.attributes[0]", func(c *gatewayapi.FaultMatchConfig) { c.Attributes[0].Name = "Tenant" }},
 		{"duplicate attribute", "match.attributes[2]", func(c *gatewayapi.FaultMatchConfig) { c.Attributes = append(c.Attributes, c.Attributes[0]) }},
 		{"empty values", "match.attributes[0].value", func(c *gatewayapi.FaultMatchConfig) { c.Attributes[0].Value.Items = nil }},
@@ -129,7 +127,7 @@ func TestFaultMatchReferences(t *testing.T) {
 			c.Servers[0].APIs[0].FaultInjection.Match.Headers[0].Name = "X-Partner-Key"
 		}},
 		{"overwritten trigger", "match.headers[0] is overwritten", func(c *gatewayapi.Config) {
-			c.APIs[0].Routes[0].Processing = &gatewayapi.RouteProcessing{RequestHeaders: []gatewayapi.RequestHeaderMapping{{Name: "x-inject-fault", FromAttribute: "tenant_id"}}}
+			c.APIs[0].Routes[0].Processing = &gatewayapi.RouteProcessing{RequestHeaders: []gatewayapi.RequestHeaderMapping{{Name: "x-inject-fault", From: gatewayapi.SourceReference{Attribute: new("tenant_id")}}}}
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -142,68 +140,26 @@ func TestFaultMatchReferences(t *testing.T) {
 	}
 }
 
-func TestFaultMatchUsesAttributesFromSelectedAccess(t *testing.T) {
-	c := faultSelectorConfig(t)
-	c.APIs[0].Metrics = nil
-	removeTestAttribute(&c.Authenticators[0], "writer_id")
-	files, err := Generate(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manager := firstGeneratedHTTPManager(t, files.EnvoyBootstrap.Contents)
-	routes := manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()
-	for _, test := range []struct {
-		name       string
-		wantWriter bool
-	}{
-		{"api-0-injected-route-0-access-0-match-0", false},
-		{"api-0-injected-route-0-access-1-match-0", true},
-	} {
-		generated := namedRoute(routes, test.name)
-		if generated == nil || generated.GetTypedPerFilterConfig()[faultCompositeFilterName] == nil {
-			t.Fatalf("route %q has no fault selector", test.name)
-		}
-		var wrapper route.FilterConfig
-		if err := generated.GetTypedPerFilterConfig()[attributeFilterName].UnmarshalTo(&wrapper); err != nil {
-			t.Fatal(err)
-		}
-		var attributes setfilterstate.Config
-		if err := wrapper.GetConfig().UnmarshalTo(&attributes); err != nil {
-			t.Fatal(err)
-		}
-		hasWriter := false
-		for _, value := range attributes.GetOnRequestHeaders() {
-			hasWriter = hasWriter || value.GetObjectKey() == filterStateKey("writer_id")
-		}
-		if hasWriter != test.wantWriter {
-			t.Fatalf("route %q sets writer_id = %t, want %t", test.name, hasWriter, test.wantWriter)
-		}
-	}
-}
-
-func TestFaultMatchAllowsHeaderSourceAndMissingAttribute(t *testing.T) {
+func TestFaultMatchRequiresVerifiedSourcesAcrossAccessEntries(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		edit func(*gatewayapi.Config)
 	}{
+		{"missing provider attribute", func(c *gatewayapi.Config) { removeTestAttribute(&c.Authenticators[0], "writer_id") }},
 		{"header source", func(c *gatewayapi.Config) {
-			for i := range c.Authenticators[0].Attributes {
-				if c.Authenticators[0].Attributes[i].Name == "writer_id" {
-					c.Authenticators[0].Attributes[i].FromSource = attributeSourceHeader
-					c.Authenticators[0].Attributes[i].Value = gatewayapi.AttributeValue{Text: "X-Writer"}
-				}
-			}
+			setTestAttribute(&c.Authenticators[0], testTextAttribute("writer_id", "header", "X-Writer"))
 		}},
-		{"unknown attribute", func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].FaultInjection.Match.Attributes[1].Name = "unknown"
+		{"fixed source", func(c *gatewayapi.Config) {
+			setTestAttribute(&c.Authenticators[0], testTextAttribute("writer_id", "fixed", "writer-a"))
 		}},
+		{"unknown attribute", func(c *gatewayapi.Config) { c.Servers[0].APIs[0].FaultInjection.Match.Attributes[1].Name = "unknown" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			c := faultSelectorConfig(t)
 			c.APIs[0].Metrics = nil
 			test.edit(&c)
-			if _, err := Generate(c); err != nil {
-				t.Fatalf("generation rejected a runtime fault match: %v", err)
+			if err := Validate(c); err == nil || !strings.Contains(err.Error(), "verified scalar source") {
+				t.Fatalf("validation = %v, want verified scalar source", err)
 			}
 		})
 	}
@@ -468,40 +424,27 @@ func TestGeneratedFaultMatchUsesAuthenticatedFilterState(t *testing.T) {
 	assertFaultAttributePredicate(t, predicates[1], "auth_gateway.attributes.writer_id", "writer-a")
 }
 
-func TestGeneratedFaultMatchSupportsInAndPresent(t *testing.T) {
-	c := faultSelectorConfig(t)
-	match := c.Servers[0].APIs[0].FaultInjection.Match
-	match.Headers = []gatewayapi.MatchExpression{
-		{Name: "X-Inject-Fault", Expression: gatewayapi.ExpressionIn, Value: gatewayapi.MatchValue{Items: []string{"true", "a.b"}, IsList: true}},
-		{Name: "X-Fault-Test", Expression: gatewayapi.ExpressionPresent},
-	}
-	match.Attributes = []gatewayapi.MatchExpression{{Name: "writer_id", Expression: gatewayapi.ExpressionPresent}}
-	files, err := Generate(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manager := firstGeneratedHTTPManager(t, files.EnvoyBootstrap.Contents)
-	var global composite.Composite
-	filter := manager.GetHttpFilters()[slices.Index(httpFilterNames(manager), faultCompositeFilterName)]
-	if err := filter.GetTypedConfig().UnmarshalTo(&global); err != nil {
-		t.Fatal(err)
-	}
-	var policy fault.HTTPFault
-	if err := global.GetNamedFilterChains()["server-0-api-0"].GetTypedConfig()[0].GetTypedConfig().UnmarshalTo(&policy); err != nil {
-		t.Fatal(err)
-	}
-	if len(policy.Headers) != 2 || policy.Headers[0].Name != "x-fault-test" || !policy.Headers[0].GetPresentMatch() ||
-		policy.Headers[1].Name != "x-inject-fault" || policy.Headers[1].GetStringMatch().GetSafeRegex().GetRegex() != `^(?:true|a\.b)$` {
-		t.Fatalf("fault header conditions = %v", policy.Headers)
-	}
-	route := namedRoute(manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes(), "api-0-injected-route-0-access-0-match-0")
-	var selector composite.CompositePerRoute
-	if err := route.GetTypedPerFilterConfig()[faultCompositeFilterName].UnmarshalTo(&selector); err != nil {
-		t.Fatal(err)
-	}
-	predicate := selector.GetMatcher().GetMatcherList().GetMatchers()[0].GetPredicate().GetSinglePredicate()
-	if predicate.GetValueMatch().GetSafeRegex().GetRegex() != ".+" {
-		t.Fatalf("attribute presence matcher = %v, want nonempty value", predicate.GetValueMatch())
+func TestFaultMatchRejectsExpressionsOutsideLayer(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		headers    bool
+		expression string
+	}{
+		{"header in", true, gatewayapi.ExpressionIn}, {"header present", true, gatewayapi.ExpressionPresent},
+		{"attribute equals", false, gatewayapi.ExpressionEquals}, {"attribute present", false, gatewayapi.ExpressionPresent},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c := faultSelectorConfig(t)
+			match := c.Servers[0].APIs[0].FaultInjection.Match
+			if test.headers {
+				match.Headers[0].Expression = test.expression
+			} else {
+				match.Attributes[0].Expression = test.expression
+			}
+			if err := Validate(c); err == nil || !strings.Contains(err.Error(), ".expression must be") {
+				t.Fatalf("validation = %v, want expression error", err)
+			}
+		})
 	}
 }
 

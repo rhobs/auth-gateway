@@ -7,14 +7,14 @@ authenticators:
       audiences: [access-test]
     attributes:
       - name: tenant_id
-        from_source: claim
-        value: [tenant]
+        from:
+          claim: [tenant]
       - name: role
-        from_source: claim
-        value: [role]
+        from:
+          claim: [role]
       - name: requested_tenant
-        from_source: header
-        value: X-Tenant
+        from:
+          header: X-Tenant
   - name: issuer-two
     jwt:
       issuer: https://issuer-two.access.test
@@ -22,66 +22,66 @@ authenticators:
       audiences: [access-test]
     attributes:
       - name: tenant_id
-        from_source: claim
-        value: [organization, id]
+        from:
+          claim: [organization, id]
       - name: role
-        from_source: claim
-        value: [access, role]
+        from:
+          claim: [access, role]
       - name: requested_tenant
-        from_source: header
-        value: X-Tenant
+        from:
+          header: X-Tenant
   - name: writer-key
     api_key: {secret: access-test-keys, header: X-Writer-Key}
     attributes:
       - name: tenant_id
-        from_source: credential
-        value: tenant_id
+        from:
+          credential: tenant_id
       - name: role
-        from_source: credential
-        value: role
+        from:
+          credential: role
       - name: requested_tenant
-        from_source: header
-        value: X-Tenant
+        from:
+          header: X-Tenant
   - name: writer-cert
     mtls:
       trusted_ca:
         config_map: {name: access-test-client-ca, key: ca.crt}
     attributes:
       - name: tenant_id
-        from_source: certificate
-        value: uri_san
+        from:
+          certificate: uri_san
       - name: writer_id
-        from_source: certificate
-        value: dns_san
+        from:
+          certificate: dns_san
       - name: requested_tenant
-        from_source: header
-        value: X-Tenant
+        from:
+          header: X-Tenant
 apis:
   - name: write
     upstream: {address: httpbin, port: 8080}
     metrics: {}
     routes:
       - methods: [POST]
-        path: {exact: /write}
+        path: {expression: equals, value: /write}
         rewrite: {path: /anything}
         processing:
           request_headers:
-            - {name: X-Scope-OrgID, from_attribute: requested_tenant}
+            - {name: X-Scope-OrgID, from: {attribute: requested_tenant}}
   - name: read
     upstream: {address: httpbin, port: 8080}
     metrics: {}
     routes:
       - methods: [GET]
-        path: {exact: /read}
+        path: {expression: equals, value: /read}
         rewrite: {path: /anything}
         processing:
           request_headers:
-            - {name: X-Scope-OrgID, from_attribute: requested_tenant}
+            - {name: X-Scope-OrgID, from: {attribute: requested_tenant}}
   - name: health
     upstream: {address: httpbin, port: 8080}
     routes:
       - methods: [GET]
-        path: {exact: /health}
+        path: {expression: equals, value: /health}
 servers:
   - hostname: gateway.access.test
     apis:
@@ -101,13 +101,15 @@ servers:
             authorization:
               grants:
                 - authenticator: issuer-one
-                  attributes:
-                    - name: tenant_id
-                      expression: equals-attribute
-                      value: requested_tenant
-                    - name: role
-                      expression: equals
-                      value: writer
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value_from:
+                          attribute: requested_tenant
+                      - name: role
+                        expression: equals
+                        value: writer
           - name: key-writers
             match:
               headers:
@@ -122,13 +124,15 @@ servers:
             authorization:
               grants:
                 - authenticator: writer-key
-                  attributes:
-                    - name: tenant_id
-                      expression: equals-attribute
-                      value: requested_tenant
-                    - name: role
-                      expression: equals
-                      value: writer
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value_from:
+                          attribute: requested_tenant
+                      - name: role
+                        expression: equals
+                        value: writer
       - name: read
         access:
           - name: readers
@@ -145,21 +149,25 @@ servers:
             authorization:
               grants:
                 - authenticator: issuer-one
-                  attributes:
-                    - name: tenant_id
-                      expression: equals-attribute
-                      value: requested_tenant
-                    - name: role
-                      expression: equals
-                      value: reader
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value_from:
+                          attribute: requested_tenant
+                      - name: role
+                        expression: equals
+                        value: reader
                 - authenticator: issuer-two
-                  attributes:
-                    - name: tenant_id
-                      expression: equals-attribute
-                      value: requested_tenant
-                    - name: role
-                      expression: equals
-                      value: viewer
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value_from:
+                          attribute: requested_tenant
+                      - name: role
+                        expression: equals
+                        value: viewer
       - name: health
         public: true
   - hostname: cert.access.test
@@ -181,13 +189,14 @@ servers:
             authorization:
               grants:
                 - authenticator: writer-cert
-                  attributes:
-                    - name: tenant_id
-                      expression: equals
-                      value: 'spiffe://writers.access.test/partner-a'
-                    - name: writer_id
-                      expression: equals
-                      value: writer-1.access.test
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value: 'spiffe://writers.access.test/partner-a'
+                      - name: writer_id
+                        expression: equals
+                        value: writer-1.access.test
 kubernetes:
   name: access-test
   namespace: gateway-test

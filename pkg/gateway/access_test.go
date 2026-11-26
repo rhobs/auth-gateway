@@ -47,70 +47,70 @@ func TestAccessValidation(t *testing.T) {
 			setTestAttribute(&c.Authenticators[0], testTextAttribute("role", "fixed", "writer"))
 		}},
 		{"missing expression", ".expression", func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1].Expression = ""
+			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[1].Expression = ""
 		}},
 		{"empty list", "nonempty list", func(c *gatewayapi.Config) {
-			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1]
+			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[1]
 			condition.Expression = "in"
-			condition.Value = gatewayapi.MatchValue{IsList: true}
+			condition.Value = &gatewayapi.MatchValue{IsList: true}
 		}},
 		{"duplicate allowed values", "distinct nonempty strings", func(c *gatewayapi.Config) {
-			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1]
+			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[1]
 			condition.Expression = "in"
-			condition.Value = gatewayapi.MatchValue{IsList: true, Items: []string{"writer", "writer"}}
+			condition.Value = &gatewayapi.MatchValue{IsList: true, Items: []string{"writer", "writer"}}
 		}},
 		{"unknown comparison source", "undeclared attribute", func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[0].Value.Text = "unknown"
+			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[0].ValueFrom.Attribute = new("unknown")
 		}},
 		{"fixed comparison source", "cannot reference a fixed attribute", func(c *gatewayapi.Config) {
 			setTestAttribute(&c.Authenticators[0], testTextAttribute("auth_origin", "fixed", "writer"))
-			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[0].Value.Text = "auth_origin"
+			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[0].ValueFrom.Attribute = new("auth_origin")
 		}},
 		{"unmatched comparison header", "must be selected in match.headers", func(c *gatewayapi.Config) {
 			setTestAttribute(&c.Authenticators[0], testTextAttribute("requested_tenant", "header", "X-Other-Tenant"))
 		}},
-		{"wrong value type", "nonempty string", func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[0].Value = gatewayapi.MatchValue{IsList: true, Items: []string{"tenant-a"}}
+		{"wrong value type", "exactly one of value or value_from", func(c *gatewayapi.Config) {
+			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[0].Value = &gatewayapi.MatchValue{IsList: true, Items: []string{"tenant-a"}}
 		}},
 		{"attribute in with scalar value", "nonempty list", func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1].Expression = "in"
+			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[1].Expression = "in"
 		}},
 		{"has with list value", "nonempty string", func(c *gatewayapi.Config) {
-			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1]
+			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[1]
 			condition.Expression = gatewayapi.ExpressionHas
-			condition.Value = gatewayapi.MatchValue{IsList: true, Items: []string{"writer"}}
+			condition.Value = &gatewayapi.MatchValue{IsList: true, Items: []string{"writer"}}
 		}},
 		{"has-one-of with scalar value", "nonempty list", func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1].Expression = gatewayapi.ExpressionHasOneOf
+			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[1].Expression = gatewayapi.ExpressionHasOneOf
 		}},
 		{"has-one-of with duplicate values", "distinct nonempty strings", func(c *gatewayapi.Config) {
-			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1]
+			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[1]
 			condition.Expression = gatewayapi.ExpressionHasOneOf
-			condition.Value = gatewayapi.MatchValue{IsList: true, Items: []string{"writer", "writer"}}
+			condition.Value = &gatewayapi.MatchValue{IsList: true, Items: []string{"writer", "writer"}}
 		}},
 		{"has on API-key attribute", "requires a JWT claim source", func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].Access[1].Authorization.Grants[0].Attributes[1].Expression = gatewayapi.ExpressionHas
+			c.Servers[0].APIs[0].Access[1].Authorization.Grants[0].Match.Attributes[1].Expression = gatewayapi.ExpressionHas
 		}},
 		{"has-one-of on certificate attribute", "requires a JWT claim source", func(c *gatewayapi.Config) {
-			condition := &c.Servers[1].APIs[0].Access[0].Authorization.Grants[0].Attributes[0]
+			condition := &c.Servers[1].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[0]
 			condition.Expression = gatewayapi.ExpressionHasOneOf
-			condition.Value = gatewayapi.MatchValue{IsList: true, Items: []string{"writer", "reader"}}
+			condition.Value = &gatewayapi.MatchValue{IsList: true, Items: []string{"writer", "reader"}}
 		}},
 		{"duplicate attribute", "duplicates attribute", func(c *gatewayapi.Config) {
 			grant := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0]
-			grant.Attributes = append(grant.Attributes, grant.Attributes[1])
+			grant.Match.Attributes = append(grant.Match.Attributes, grant.Match.Attributes[1])
 		}},
 		{"unknown attribute expression", ".expression", func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1].Expression = "contains"
+			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[1].Expression = "contains"
 		}},
 		{"duplicate header casing", "duplicates header", func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].Access[0].Match.Headers = append(c.Servers[0].APIs[0].Access[0].Match.Headers, gatewayapi.MatchExpression{Name: "x-tenant", Expression: "equals", Value: gatewayapi.MatchValue{Text: "tenant-a"}})
+			c.Servers[0].APIs[0].Access[0].Match.Headers = append(c.Servers[0].APIs[0].Access[0].Match.Headers, gatewayapi.MatchExpression{Name: "x-tenant", Expression: "equals", Value: &gatewayapi.MatchValue{Text: "tenant-a"}})
 		}},
 		{"credential selector", "unsafe header", func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].Access[0].Match.Headers = append(c.Servers[0].APIs[0].Access[0].Match.Headers, gatewayapi.MatchExpression{Name: "X-Writer-Key", Expression: "equals", Value: gatewayapi.MatchValue{Text: "secret"}})
+			c.Servers[0].APIs[0].Access[0].Match.Headers = append(c.Servers[0].APIs[0].Access[0].Match.Headers, gatewayapi.MatchExpression{Name: "X-Writer-Key", Expression: "equals", Value: &gatewayapi.MatchValue{Text: "secret"}})
 		}},
 		{"Authorization value selector", "unsafe header", func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].Access[0].Match.Headers = append(c.Servers[0].APIs[0].Access[0].Match.Headers, gatewayapi.MatchExpression{Name: "Authorization", Expression: "equals", Value: gatewayapi.MatchValue{Text: "Bearer token"}})
+			c.Servers[0].APIs[0].Access[0].Match.Headers = append(c.Servers[0].APIs[0].Access[0].Match.Headers, gatewayapi.MatchExpression{Name: "Authorization", Expression: "equals", Value: &gatewayapi.MatchValue{Text: "Bearer token"}})
 		}},
 		{"Authorization on key entry", "requires JWT authentication", func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Access[1].Match.Headers = append(c.Servers[0].APIs[0].Access[1].Match.Headers, gatewayapi.MatchExpression{Name: "Authorization", Expression: "present"})
@@ -118,48 +118,57 @@ func TestAccessValidation(t *testing.T) {
 		{"key header on JWT entry", "requires API-key authentication", func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Access[0].Match.Headers = append(c.Servers[0].APIs[0].Access[0].Match.Headers, gatewayapi.MatchExpression{Name: "X-Writer-Key", Expression: "present"})
 		}},
-		{"present with value", "value must be omitted", func(c *gatewayapi.Config) {
+		{"present with value", "value and value_from must be omitted", func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Access[0].Match.Headers[1].Expression = "present"
 		}},
-		{"present attribute with value", "value must be omitted for present", func(c *gatewayapi.Config) {
-			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1]
-			condition.Expression = "present"
-			condition.Value = gatewayapi.MatchValue{Text: "writer"}
+		{"present with empty value", "must be omitted for present", func(c *gatewayapi.Config) {
+			c.Servers[0].APIs[0].Access[0].Match.Headers[1] = gatewayapi.MatchExpression{Name: "X-Mode", Expression: "present", Value: &gatewayapi.MatchValue{}}
 		}},
-		{"present attribute with list value", "value must be omitted for present", func(c *gatewayapi.Config) {
-			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1]
-			condition.Expression = "present"
-			condition.Value = gatewayapi.MatchValue{IsList: true, Items: []string{"writer"}}
+		{"nonempty header expression", ".expression", func(c *gatewayapi.Config) {
+			c.Servers[0].APIs[0].Access[0].Match.Headers[1] = gatewayapi.MatchExpression{Name: "X-Mode", Expression: "nonempty"}
 		}},
-		{"present header attribute", "not a header source", func(c *gatewayapi.Config) {
-			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1]
-			condition.Expression = "present"
-			condition.Value = gatewayapi.MatchValue{}
+		{"attribute operand on header", ".value_from", func(c *gatewayapi.Config) {
+			c.Servers[0].APIs[0].Access[0].Match.Headers[1] = gatewayapi.MatchExpression{Name: "X-Mode", Expression: "equals", ValueFrom: &gatewayapi.SourceReference{Attribute: new("role")}}
+		}},
+		{"nonempty attribute with value", "value and value_from must be omitted for nonempty", func(c *gatewayapi.Config) {
+			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[1]
+			condition.Expression = "nonempty"
+			condition.Value = &gatewayapi.MatchValue{Text: "writer"}
+		}},
+		{"nonempty attribute with list value", "value and value_from must be omitted for nonempty", func(c *gatewayapi.Config) {
+			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[1]
+			condition.Expression = "nonempty"
+			condition.Value = &gatewayapi.MatchValue{IsList: true, Items: []string{"writer"}}
+		}},
+		{"nonempty header attribute", "not a header source", func(c *gatewayapi.Config) {
+			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[1]
+			condition.Expression = "nonempty"
+			condition.Value = nil
 			setTestAttribute(&c.Authenticators[0], testTextAttribute("role", "header", "X-Role"))
 		}},
 		{"empty header values", "nonempty list", func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].Access[0].Match.Headers[0].Value = gatewayapi.MatchValue{IsList: true}
+			c.Servers[0].APIs[0].Access[0].Match.Headers[0].Value = &gatewayapi.MatchValue{IsList: true}
 		}},
 		{"header equality with list", "nonempty string", func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].Access[0].Match.Headers[0] = gatewayapi.MatchExpression{Name: "X-Tenant", Expression: "equals", Value: gatewayapi.MatchValue{IsList: true, Items: []string{"tenant-a"}}}
+			c.Servers[0].APIs[0].Access[0].Match.Headers[0] = gatewayapi.MatchExpression{Name: "X-Tenant", Expression: "equals", Value: &gatewayapi.MatchValue{IsList: true, Items: []string{"tenant-a"}}}
 		}},
 		{"header in with scalar value", "nonempty list", func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].Access[0].Match.Headers[0].Value = gatewayapi.MatchValue{Text: "tenant-a"}
+			c.Servers[0].APIs[0].Access[0].Match.Headers[0].Value = &gatewayapi.MatchValue{Text: "tenant-a"}
 		}},
-		{"attribute comparison on header", "only valid for attributes", func(c *gatewayapi.Config) {
+		{"attribute comparison on header", ".expression", func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Access[0].Match.Headers[0].Expression = "equals-attribute"
 		}},
-		{"has on header", "only valid for attributes", func(c *gatewayapi.Config) {
+		{"has on header", ".expression", func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Access[0].Match.Headers[0].Expression = gatewayapi.ExpressionHas
 		}},
-		{"has-one-of on header", "only valid for attributes", func(c *gatewayapi.Config) {
+		{"has-one-of on header", ".expression", func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Access[0].Match.Headers[0].Expression = gatewayapi.ExpressionHasOneOf
 		}},
 		{"comma in selector", "must not contain commas", func(c *gatewayapi.Config) {
 			c.Servers[0].APIs[0].Access[0].Match.Headers[0].Value.Items = []string{"tenant-a,tenant-b"}
 		}},
 		{"overlapping entries", ".match overlaps", func(c *gatewayapi.Config) {
-			c.Servers[0].APIs[0].Access[1].Match.Headers[0] = gatewayapi.MatchExpression{Name: "X-Tenant", Expression: "equals", Value: gatewayapi.MatchValue{Text: "tenant-a"}}
+			c.Servers[0].APIs[0].Access[1].Match.Headers[0] = gatewayapi.MatchExpression{Name: "X-Tenant", Expression: "equals", Value: &gatewayapi.MatchValue{Text: "tenant-a"}}
 		}},
 		{"unselected CA verifier", "must reference an mTLS", func(c *gatewayapi.Config) { c.Servers[1].TLSConfig.MTLS.Authenticator = "issuer-one" }},
 		{"missing client CA", "mtls.trusted_ca", func(c *gatewayapi.Config) { c.Authenticators[3].MTLS.TrustedCA = nil }},
@@ -189,7 +198,7 @@ func TestAccessValidation(t *testing.T) {
 	}
 }
 
-func TestPresentGrantValidation(t *testing.T) {
+func TestNonemptyGrantValidation(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		server int
@@ -202,9 +211,9 @@ func TestPresentGrantValidation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			c := loadConfigCase(t, "access-control")
 			grant := &c.Servers[test.server].APIs[0].Access[test.access].Authorization.Grants[0]
-			grant.Attributes = []gatewayapi.MatchExpression{{Name: "tenant_id", Expression: gatewayapi.ExpressionPresent}}
+			grant.Match.Attributes = []gatewayapi.MatchExpression{{Name: "tenant_id", Expression: gatewayapi.ExpressionNonempty}}
 			if err := Validate(c); err != nil {
-				t.Fatalf("valid present grant was rejected: %v", err)
+				t.Fatalf("valid nonempty grant was rejected: %v", err)
 			}
 		})
 	}
@@ -221,9 +230,9 @@ func TestJWTListGrantValidation(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			c := loadConfigCase(t, "access-control")
-			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Attributes[1]
+			condition := &c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[1]
 			condition.Expression = test.expression
-			condition.Value = test.value
+			condition.Value = new(test.value)
 			if err := Validate(c); err != nil {
 				t.Fatalf("valid JWT list grant was rejected: %v", err)
 			}
@@ -234,8 +243,8 @@ func TestJWTListGrantValidation(t *testing.T) {
 func TestDisjointEnvironmentCannotChangeTenantAuthentication(t *testing.T) {
 	c := loadConfigCase(t, "access-control")
 	c.Servers[0].APIs[0].Access[1].Match.Headers = []gatewayapi.MatchExpression{
-		{Name: "X-Tenant", Expression: "equals", Value: gatewayapi.MatchValue{Text: "tenant-a"}},
-		{Name: "X-Mode", Expression: "equals", Value: gatewayapi.MatchValue{Text: "different"}},
+		{Name: "X-Tenant", Expression: "equals", Value: &gatewayapi.MatchValue{Text: "tenant-a"}},
+		{Name: "X-Mode", Expression: "equals", Value: &gatewayapi.MatchValue{Text: "different"}},
 	}
 	if err := Validate(c); err == nil || !strings.Contains(err.Error(), "overlaps tenant values") {
 		t.Fatalf("Validate() = %v, want overlapping tenant selections", err)
@@ -248,7 +257,7 @@ func sharedCredentialAccessConfig(t *testing.T) gatewayapi.Config {
 	jwt := &c.Servers[0].APIs[0].Access[0]
 	jwt.Match.Headers = append(jwt.Match.Headers, gatewayapi.MatchExpression{Name: "Authorization", Expression: gatewayapi.ExpressionPresent})
 	key := &c.Servers[0].APIs[0].Access[1]
-	key.Match.Headers[0] = gatewayapi.MatchExpression{Name: "X-Tenant", Expression: gatewayapi.ExpressionEquals, Value: gatewayapi.MatchValue{Text: "tenant-a"}}
+	key.Match.Headers[0] = gatewayapi.MatchExpression{Name: "X-Tenant", Expression: gatewayapi.ExpressionEquals, Value: &gatewayapi.MatchValue{Text: "tenant-a"}}
 	key.Match.Headers = append(key.Match.Headers, gatewayapi.MatchExpression{Name: "X-Writer-Key", Expression: gatewayapi.ExpressionPresent})
 	return c
 }
@@ -342,8 +351,8 @@ func TestAccessDefaultsDoNotAliasSourcesOrConditions(t *testing.T) {
 	access.Match.Headers[0].Value.Items[0] = "changed"
 	access.Match.Headers[1].Value.Text = "changed"
 	access.Authentication.JWT.Providers[0] = "changed"
-	access.Authorization.Grants[0].Attributes[0].Value.Text = "changed"
-	access.Authorization.Grants[0].Attributes[1].Value.Text = "changed"
+	access.Authorization.Grants[0].Match.Attributes[0].ValueFrom.Attribute = new("changed")
+	access.Authorization.Grants[0].Match.Attributes[1].Value.Text = "changed"
 	cloned.Servers[1].TLSConfig.MTLS.Authenticator = "changed"
 	after, err := yaml.Marshal(c)
 	if err != nil {
@@ -351,5 +360,39 @@ func TestAccessDefaultsDoNotAliasSourcesOrConditions(t *testing.T) {
 	}
 	if !bytes.Equal(before, after) {
 		t.Fatal("defaulting aliases the caller's access configuration")
+	}
+}
+
+func TestGrantOperandsAndLayerRestrictions(t *testing.T) {
+	for _, test := range []struct {
+		name, want string
+		condition  gatewayapi.MatchExpression
+	}{
+		{"missing literal", ".value", gatewayapi.MatchExpression{Name: "role", Expression: "equals"}},
+		{"both operands", "exactly one", gatewayapi.MatchExpression{Name: "role", Expression: "equals", Value: &gatewayapi.MatchValue{Text: "writer"}, ValueFrom: &gatewayapi.SourceReference{Attribute: new("requested_tenant")}}},
+		{"direct header reference", ".value_from.attribute", gatewayapi.MatchExpression{Name: "role", Expression: "equals", ValueFrom: &gatewayapi.SourceReference{Header: new("X-Tenant")}}},
+		{"multiple source keys", ".value_from.attribute", gatewayapi.MatchExpression{Name: "role", Expression: "equals", ValueFrom: &gatewayapi.SourceReference{Attribute: new("requested_tenant"), Header: new("X-Tenant")}}},
+		{"list reference", ".value_from", gatewayapi.MatchExpression{Name: "role", Expression: "in", ValueFrom: &gatewayapi.SourceReference{Attribute: new("requested_tenant")}}},
+		{"nonempty reference", "must be omitted", gatewayapi.MatchExpression{Name: "role", Expression: "nonempty", ValueFrom: &gatewayapi.SourceReference{Attribute: new("requested_tenant")}}},
+		{"nonempty empty literal", "must be omitted", gatewayapi.MatchExpression{Name: "role", Expression: "nonempty", Value: &gatewayapi.MatchValue{Text: ""}}},
+		{"legacy present", ".expression", gatewayapi.MatchExpression{Name: "role", Expression: "present"}},
+		{"legacy attribute equality", ".expression", gatewayapi.MatchExpression{Name: "role", Expression: "equals-attribute", Value: &gatewayapi.MatchValue{Text: "requested_tenant"}}},
+		{"path expression", ".expression", gatewayapi.MatchExpression{Name: "role", Expression: "prefix", Value: &gatewayapi.MatchValue{Text: "writer"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c := loadConfigCase(t, "access-control")
+			c.Servers[0].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[1] = test.condition
+			if err := Validate(c); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validation = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestAttributeEqualityCannotUseAnotherProviderDeclaration(t *testing.T) {
+	c := loadConfigCase(t, "access-control")
+	removeTestAttribute(&c.Authenticators[0], "requested_tenant")
+	if err := Validate(c); err == nil || !strings.Contains(err.Error(), "references undeclared attribute") {
+		t.Fatalf("validation = %v, want same-provider reference error", err)
 	}
 }

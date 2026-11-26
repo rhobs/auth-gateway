@@ -27,7 +27,8 @@ apis:
   - methods:
     - POST
     path:
-      exact: "/metrics/api/v1/receive"
+      expression: equals
+      value: "/metrics/api/v1/receive"
 `
 	exampleKubernetesGatewayYAML = `version: 1
 servers:
@@ -44,7 +45,8 @@ apis:
   - methods:
     - POST
     path:
-      exact: "/metrics/api/v1/receive"
+      expression: equals
+      value: "/metrics/api/v1/receive"
 kubernetes:
   name: auth-gateway
   namespace: observability

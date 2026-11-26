@@ -35,9 +35,8 @@ type APIKeyCredential struct {
 
 // AttributeSource selects one value from a declared source.
 type AttributeSource struct {
-	Name       string         `yaml:"name"`
-	FromSource string         `yaml:"from_source"`
-	Value      AttributeValue `yaml:"value"`
+	Name string          `yaml:"name"`
+	From SourceReference `yaml:"from"`
 }
 
 // Authenticator defines one named credential validator.
@@ -67,8 +66,13 @@ type AuthenticatorReference struct {
 
 // AuthorizationGrant checks attributes supplied by its verifying authenticator.
 type AuthorizationGrant struct {
-	Authenticator string            `yaml:"authenticator"`
-	Attributes    []MatchExpression `yaml:"attributes"`
+	Authenticator string     `yaml:"authenticator"`
+	Match         GrantMatch `yaml:"match"`
+}
+
+// GrantMatch requires every attribute condition to succeed.
+type GrantMatch struct {
+	Attributes []MatchExpression `yaml:"attributes,omitempty"`
 }
 
 // Authorization grants access within one server/API entry.
@@ -225,7 +229,12 @@ type Listener struct {
 
 // APIMetrics enables one request counter and optionally binds labels to working attributes.
 type APIMetrics struct {
-	Labels map[string]string `yaml:"labels,omitempty"`
+	Labels map[string]AttributeReference `yaml:"labels,omitempty"`
+}
+
+// AttributeReference binds a consumer to one declared attribute.
+type AttributeReference struct {
+	From SourceReference `yaml:"from"`
 }
 
 // MTLSAuthenticator validates client certificates against an explicit CA bundle.
@@ -273,12 +282,8 @@ type Route struct {
 	Timeouts   *RouteTimeouts   `yaml:"timeouts,omitempty"`
 }
 
-// PathMatch selects one exact path, path prefix, or safe regular expression.
-type PathMatch struct {
-	Exact  string `yaml:"exact,omitempty"`
-	Prefix string `yaml:"prefix,omitempty"`
-	Regex  string `yaml:"regex,omitempty"`
-}
+// PathMatch evaluates a condition against the request path.
+type PathMatch = MatchExpression
 
 // PathRewrite optionally replaces a path, prefix, or regex match.
 type PathRewrite struct {
@@ -300,8 +305,8 @@ type RouteProcessing struct {
 
 // RequestHeaderMapping sets an upstream header from a processed attribute.
 type RequestHeaderMapping struct {
-	Name          string `yaml:"name"`
-	FromAttribute string `yaml:"from_attribute"`
+	Name string          `yaml:"name"`
+	From SourceReference `yaml:"from"`
 }
 
 // Server binds an exact hostname and protocol to API access rules.

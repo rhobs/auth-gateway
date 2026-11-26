@@ -9,14 +9,14 @@ authenticators:
         key: ca.crt
   attributes:
     - name: tenant_id
-      from_source: certificate
-      value: uri_san
+      from:
+        certificate: uri_san
     - name: dns_id
-      from_source: certificate
-      value: dns_san
+      from:
+        certificate: dns_san
     - name: requested_tenant
-      from_source: header
-      value: X-Tenant
+      from:
+        header: X-Tenant
 apis:
 - name: ingest
   upstream:
@@ -26,13 +26,14 @@ apis:
   - methods:
     - POST
     path:
-      exact: "/ingest"
+      expression: equals
+      value: "/ingest"
     rewrite:
       path: "/anything"
     processing:
       request_headers:
       - name: X-Scope-OrgID
-        from_attribute: tenant_id
+        from: {attribute: tenant_id}
 - name: probe
   upstream:
     address: httpbin
@@ -41,7 +42,8 @@ apis:
   - methods:
     - POST
     path:
-      exact: "/trust"
+      expression: equals
+      value: "/trust"
     rewrite:
       path: "/anything"
 servers:
@@ -62,13 +64,14 @@ servers:
       authorization:
         grants:
         - authenticator: client-cert
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: spiffe://clients.example.test/client-a
-            - name: dns_id
-              expression: equals
-              value: client-a.example.test
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: spiffe://clients.example.test/client-a
+              - name: dns_id
+                expression: equals
+                value: client-a.example.test
 - hostname: trust.mtls.auth-gateway.test
   tls_config:
     secret: mtls-gateway-tls
@@ -81,7 +84,8 @@ servers:
       authorization:
         grants:
         - authenticator: client-cert
-          attributes: []
+          match:
+            attributes: []
 kubernetes:
   name: auth-gateway
   namespace: default

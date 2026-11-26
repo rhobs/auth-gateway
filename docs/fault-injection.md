@@ -32,12 +32,10 @@ servers:
       # existing authentication and authorization settings
 ```
 
-The selected access entry supplies `tenant_id` from its declared source, such
-as a JWT claim, API-key credential, certificate SAN, or request header. The
-attribute does not need to exist on every access entry in the binding. If the
-selected entry does not produce it, the condition does not match. A
-header-sourced value is client supplied, so use it only when that is the value
-you intend to select.
+Every selected local authenticator on every protected access entry must declare
+`tenant_id` from a verified JWT claim, API-key credential, or certificate SAN.
+Header and fixed sources cannot supply fault attributes. Missing, empty, or
+incorrectly typed values do not match at runtime.
 
 Regenerate and apply the gateway resources, then explicitly roll out the
 Deployment. For example, a request authenticated as `test-tenant` with
@@ -45,9 +43,8 @@ Deployment. For example, a request authenticated as `test-tenant` with
 or another tenant with the header, continues normally. Requests that fail
 authentication or authorization keep their usual denial status. All configured
 headers and attributes must match; values in an `in` list are alternatives.
-`equals`, `in`, and `present` are supported. `present` requires the header to
-exist or the attribute to have a nonempty value. Missing attributes
-do not match.
+Header conditions support literal `equals`; attribute conditions support
+literal `in`. Missing attributes do not match.
 
 Omitting `match` makes every request that passes authentication, authorization,
 and required-header checks eligible. A percentage below `100` samples only
@@ -56,7 +53,7 @@ it, then regenerate, apply, and roll out again. See the
 [configuration reference](configuration-reference.md#fault-injection) for
 field constraints.
 
-Fault selectors use `equals`, `in`, and `present` conditions. See the
+Fault selectors use header `equals` and attribute `in` conditions. See the
 [selector syntax reference](expressions.md#forwarding-metrics-and-fault-selectors)
 for value types and source availability.
 

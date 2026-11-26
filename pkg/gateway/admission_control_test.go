@@ -47,7 +47,8 @@ apis:
   - methods:
     - GET
     path:
-      exact: "/plain"
+      expression: equals
+      value: "/plain"
 `
 	c, err := Load(strings.NewReader(input))
 	if err != nil {

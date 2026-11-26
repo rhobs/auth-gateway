@@ -10,27 +10,27 @@ authenticators:
     - gateway-test
   attributes:
     - name: tenant_id
-      from_source: claim
-      value: [organization, id]
+      from:
+        claim: [organization, id]
     - name: requested_tenant
-      from_source: header
-      value: X-Tenant
+      from:
+        header: X-Tenant
 - name: partner-key
   api_key:
     secret: gateway-api-keys
     header: X-Partner-Key
   attributes:
     - name: tenant_id
-      from_source: credential
-      value: tenant_id
+      from:
+        credential: tenant_id
     - name: requested_tenant
-      from_source: header
-      value: X-Tenant
+      from:
+        header: X-Tenant
 apis:
 - name: ingest
   metrics:
     labels:
-      tenant: requested_tenant
+      tenant: {from: {attribute: requested_tenant}}
   upstream:
     address: httpbin
     port: 8080
@@ -38,13 +38,14 @@ apis:
   - methods:
     - POST
     path:
-      exact: "/ingest"
+      expression: equals
+      value: "/ingest"
     rewrite:
       path: "/anything"
     processing:
       request_headers:
       - name: X-Scope-OrgID
-        from_attribute: requested_tenant
+        from: {attribute: requested_tenant}
 servers:
 - hostname: jwt.headers.test
   apis:
@@ -61,10 +62,12 @@ servers:
       authorization:
         grants:
         - authenticator: issuer-one
-          attributes:
-            - name: tenant_id
-              expression: equals-attribute
-              value: requested_tenant
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value_from:
+                  attribute: requested_tenant
 - hostname: key.headers.test
   apis:
   - name: ingest
@@ -80,10 +83,12 @@ servers:
       authorization:
         grants:
         - authenticator: partner-key
-          attributes:
-            - name: tenant_id
-              expression: equals-attribute
-              value: requested_tenant
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value_from:
+                  attribute: requested_tenant
 kubernetes:
   name: auth-gateway
   namespace: gateway-test

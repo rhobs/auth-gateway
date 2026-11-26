@@ -75,9 +75,9 @@ complete list, value types, and where each expression is supported.
 `equals` compares a scalar attribute to one string, and `in` checks whether a
 scalar attribute is in a configured list. For verified JWT list claims, `has`
 checks one exact string element and `has-one-of` accepts any string from a
-configured list. `present` requires a nonempty scalar value from a verified
-claim, API-key credential, or certificate SAN. `equals-attribute` on
-`tenant_id` with `value: requested_tenant` binds the verified tenant to
+configured list. `nonempty` requires a nonempty scalar value from a verified
+claim, API-key credential, or certificate SAN. On `tenant_id`, `equals` with
+`value_from: {attribute: requested_tenant}` binds the verified tenant to
 an original request header declared by the same authenticator. Both values
 must be nonempty scalar strings. A header used in equality must also appear
 in `match.headers`. Listing two tenants never permits a credential for one to
@@ -93,7 +93,7 @@ External denials use the service's status; Check errors and timeouts return
 
 Route processing replaces caller-supplied managed headers with declared source
 values after authorization. Forward the authorized request tenant with
-`from_attribute: requested_tenant`, or declare a separate verified source when
+`from: {attribute: requested_tenant}`, or declare a separate verified source when
 an upstream needs another value. Required values must exist before a request
 can reach the backend. Bearer tokens, configured API keys, and internal identity
 headers are removed before forwarding. Header attributes declared by an

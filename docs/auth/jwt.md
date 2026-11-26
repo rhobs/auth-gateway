@@ -19,20 +19,20 @@ authenticators:
       audiences: [observability-ingestion]
     attributes:
       - name: tenant_id
-        from_source: claim
-        value: [organization, id]
+        from:
+          claim: [organization, id]
       - name: role
-        from_source: claim
-        value: [role]
+        from:
+          claim: [role]
       - name: upstream_tenant
-        from_source: claim
-        value: [organization, upstream_tenant]
+        from:
+          claim: [organization, upstream_tenant]
       - name: requested_tenant
-        from_source: header
-        value: X-Tenant
+        from:
+          header: X-Tenant
 ```
 
-Claim `value` follows literal object keys, including keys containing dots.
+`from.claim` follows literal object keys, including keys containing dots.
 Headers retain their original values until authorization completes. JWKS
 clusters default to IPv4-only DNS; `V6_ONLY`, `AUTO`, `V4_PREFERRED`, and `ALL`
 are also supported in `jwks.dns_lookup_family`.
@@ -59,13 +59,15 @@ servers:
             authorization:
               grants:
                 - authenticator: internal-jwt
-                  attributes:
-                    - name: tenant_id
-                      expression: equals-attribute
-                      value: requested_tenant
-                    - name: role
-                      expression: equals
-                      value: writer
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value_from:
+                          attribute: requested_tenant
+                      - name: role
+                        expression: equals
+                        value: writer
 ```
 
 Define `metrics-write` under `apis` as in the [full example](../../config.example.yaml).
@@ -91,12 +93,12 @@ to write for the requested tenant.
 
 ## Claim presence
 
-Use `present` when a verified claim must contain a nonempty string but no
+Use `nonempty` when a verified claim must contain a nonempty string but no
 particular value is required:
 
 ```yaml
 - name: writer_id
-  expression: present
+  expression: nonempty
 ```
 
 The attribute must be declared by the selected JWT authenticator. Missing,
@@ -109,8 +111,8 @@ Declare a verified list claim with the same nested key path syntax:
 
 ```yaml
 - name: groups
-  from_source: claim
-  value: [token, groups]
+  from:
+    claim: [token, groups]
 ```
 
 For a JWT claim `{"token":{"groups":["metrics-readers","metrics-admins"]}}`,
@@ -144,7 +146,7 @@ tenant determine which providers are trusted before token validation.
 
 ## Forwarding
 
-Use `from_attribute: requested_tenant` to forward the authorized original
+Use `from: {attribute: requested_tenant}` to forward the authorized original
 request tenant as `X-Scope-OrgID`. When an upstream needs another value,
 declare another verified claim source. For example,
 `{"organization":{"id":"client-123","upstream_tenant":"team-a"}}` supplies
@@ -153,7 +155,7 @@ the additional attribute declared above:
 ```yaml
 request_headers:
   - name: X-Scope-OrgID
-    from_attribute: upstream_tenant
+    from: {attribute: upstream_tenant}
 ```
 
 The gateway sends the source value `team-a` unchanged, replacing any caller

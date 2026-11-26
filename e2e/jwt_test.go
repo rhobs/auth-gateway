@@ -138,7 +138,7 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 		}
 	}, SpecTimeout(2*time.Minute))
 
-	It("requires a nonempty scalar claim for a present grant", func(ctx SpecContext) {
+	It("requires a nonempty scalar claim for a nonempty grant", func(ctx SpecContext) {
 		for _, test := range []struct {
 			name    string
 			value   any
@@ -151,6 +151,7 @@ var _ = Describe("Plain JWT authorization", Label("gateway", "jwt", "authenticat
 			{name: "list claim", value: []string{"enabled"}},
 			{name: "null claim"},
 			{name: "number claim", value: 1},
+			{name: "boolean claim", value: true},
 		} {
 			claims := map[string]any{"exp": time.Now().Add(5 * time.Minute).Unix()}
 			if !test.missing {

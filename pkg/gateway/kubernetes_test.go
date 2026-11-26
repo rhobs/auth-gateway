@@ -423,8 +423,8 @@ func TestResolvedRouteTimeoutsAndReuse(t *testing.T) {
 	c.Listener.MaxStreamDuration = duration(45 * time.Second)
 	c.APIs[0].Timeouts = &gatewayapi.RouteTimeouts{ResponseTimeout: duration(60 * time.Second), MaxStreamDuration: duration(90 * time.Second)}
 	c.APIs[0].Routes = []gatewayapi.Route{
-		{Methods: []string{"GET", "POST"}, Path: gatewayapi.PathMatch{Exact: "/query"}},
-		{Methods: []string{"GET"}, Path: gatewayapi.PathMatch{Exact: "/range"}, Timeouts: &gatewayapi.RouteTimeouts{ResponseTimeout: duration(80 * time.Second), IdleTimeout: duration(95 * time.Second), MaxStreamDuration: duration(120 * time.Second)}},
+		{Methods: []string{"GET", "POST"}, Path: gatewayapi.PathMatch{Expression: "equals", Value: &gatewayapi.MatchValue{Text: "/query"}}},
+		{Methods: []string{"GET"}, Path: gatewayapi.PathMatch{Expression: "equals", Value: &gatewayapi.MatchValue{Text: "/range"}}, Timeouts: &gatewayapi.RouteTimeouts{ResponseTimeout: duration(80 * time.Second), IdleTimeout: duration(95 * time.Second), MaxStreamDuration: duration(120 * time.Second)}},
 	}
 	c.Servers = append(c.Servers, gatewayapi.Server{Hostname: "second.example.test", APIs: slices.Clone(c.Servers[0].APIs)})
 	before, _ := yaml.Marshal(c)
@@ -562,7 +562,8 @@ apis:
   - methods:
     - GET
     path:
-      exact: "/status"
+      expression: equals
+      value: "/status"
 kubernetes:
   name: auth-gateway
   namespace: image-overrides
@@ -1156,7 +1157,7 @@ func TestRequestMetricBindingChangesBootstrapOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.APIs[0].Metrics.Labels["tenant"] = "writer_id"
+	c.APIs[0].Metrics.Labels["tenant"] = gatewayapi.AttributeReference{From: gatewayapi.SourceReference{Attribute: new("writer_id")}}
 	after, err := GenerateKubernetes(c)
 	if err != nil {
 		t.Fatal(err)

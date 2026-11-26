@@ -119,7 +119,7 @@ cannot repeat a method and path matcher.
 
 `apis[].attributes` declares fixed values for every matching method route of
 an API, including public routes. They are available to managed upstream headers,
-metric labels, fault selectors, and external authorization checks. Generated
+metric labels and external authorization checks. Generated
 `404` and `405` fallbacks have no API attributes. Fixed attributes use the same
 names and values for every server binding of the API. They cannot reuse a name
 provided by an authenticator or external authorization service selected on one
@@ -128,8 +128,7 @@ of those bindings. Changes require an explicit gateway Deployment rollout.
 | Field                             | Type   | Default   | Constraint                                                                                     |
 | --------------------------------- | ------ | --------- | ---------------------------------------------------------------------------------------------- |
 | `apis[].attributes[].name`        | string | None      | Required unique attribute name using the attribute name format above.                          |
-| `apis[].attributes[].from_source` | string | None      | Must be `fixed`; dynamic sources belong to authenticators or external authorization services.  |
-| `apis[].attributes[].value`       | string | None      | Required nonempty string without control characters or surrounding whitespace. Used unchanged. |
+| `apis[].attributes[].from.fixed` | string | None | Required nonempty string without controls or surrounding whitespace. The only allowed API source; used unchanged. |
 
 ### Upstream
 
@@ -150,10 +149,9 @@ of those bindings. Changes require an explicit gateway Deployment rollout.
 | Field                                          | Type              | Default                    | Constraint                                                                                                                           |
 | ---------------------------------------------- | ----------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `apis[].routes[].methods`                      | list of strings   | None                       | Required; at least one unique supported method: `CONNECT`, `DELETE`, `GET`, `HEAD`, `OPTIONS`, `PATCH`, `POST`, `PUT`, or `TRACE`.   |
-| `apis[].routes[].path`                         | object            | None                       | Required; set exactly one of `exact`, `prefix`, or `regex`.                                                                          |
-| `apis[].routes[].path.exact`                   | string            | None                       | Clean absolute request path; no query, fragment, backslash, or newline.                                                              |
-| `apis[].routes[].path.prefix`                  | string            | None                       | Nonempty clean absolute path prefix; no query, fragment, backslash, or newline. A trailing slash is accepted.                        |
-| `apis[].routes[].path.regex`                   | string            | None                       | Must compile as a Go RE2 regular expression.                                                                                         |
+| `apis[].routes[].path` | condition | None | Required expression and literal string value; no name or value_from. |
+| `apis[].routes[].path.expression` | string | None | Required: `equals`, `prefix`, or `regex`. |
+| `apis[].routes[].path.value` | string | None | For `equals`, a clean absolute path. For `prefix`, a clean absolute prefix with optional trailing slash. Neither accepts query, fragment, backslash, or newline. For `regex`, a nonempty RE2 expression matching the complete path. |
 | `apis[].routes[].rewrite`                      | object            | None                       | Optional; set exactly one of `path`, `prefix`, or `regex`.                                                                           |
 | `apis[].routes[].rewrite.path`                 | string            | None                       | Clean absolute request path; no query, fragment, backslash, or newline.                                                              |
 | `apis[].routes[].rewrite.prefix`               | string            | None                       | Nonempty clean absolute path prefix; no query, fragment, backslash, or newline.                                                      |
@@ -223,7 +221,7 @@ still counts the `403` response.
 
 | Field                     | Type                                  | Default   | Constraint                                                                                                                                                                                                                                                                    |
 | ------------------------- | ------------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apis[].metrics.labels`   | map of label name to attribute name   | Empty     | Label names must be valid Prometheus names, must not start with `__`, and cannot be `api`, `http_status_code`, or `envoy_http_conn_manager_prefix`. Each value must reference this API's fixed attribute, an authenticator attribute, or an external authorization attribute. |
+| `apis[].metrics.labels`   | map of label name to `{from: {attribute: name}}`   | Empty     | Label names must be valid Prometheus names, must not start with `__`, and cannot be `api`, `http_status_code`, or `envoy_http_conn_manager_prefix`. Each value must reference this API's fixed attribute, an authenticator attribute, or an external authorization attribute. |
 
 #### Metric cardinality
 
@@ -257,21 +255,20 @@ its abort settings for the next test.
 | ---------------------------------------------------- | ------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `servers[].apis[].fault_injection.enabled`           | boolean                   | `false`   | Requires `abort` when enabled.                                                                                                                                                                                                                                                                             |
 | `servers[].apis[].fault_injection.match`             | object                    | None      | Optional; if supplied, must contain headers or attributes. Omit to select all requests that pass authentication, authorization, and required-header checks.                                                                                                                                                |
-| `servers[].apis[].fault_injection.match.headers`     | list of match expressions | Empty     | Each entry has `name`, `expression`, and a `value` for `equals` or `in`. Supports `equals`, `in`, and `present`. Names are case-insensitive, unique, and cannot contain underscores or use reserved identity, routing, connection, framing, or credential headers. Route processing cannot overwrite them. |
-| `servers[].apis[].fault_injection.match.attributes`  | list of match expressions | Empty     | Each entry has an attribute `name`, `expression`, and a `value` for `equals` or `in`. Supports `equals`, `in`, and `present`. Names must be unique. Values come from fixed API attributes or the selected access entry, including declared request headers. Missing values do not match.                   |
+| `servers[].apis[].fault_injection.match.headers` | list of conditions | Empty | Unique safe header names, ignoring case; literal `equals` only. Credential and reserved headers are forbidden, and route processing cannot overwrite them. |
+| `servers[].apis[].fault_injection.match.attributes` | list of conditions | Empty | Unique attribute names; literal `in` only. Requires verified scalar sources across all selected local authenticators and protected entries. |
 | `servers[].apis[].fault_injection.abort`             | object                    | None      | Required when enabled; HTTP errors only.                                                                                                                                                                                                                                                                   |
 | `servers[].apis[].fault_injection.abort.http_status` | uint32                    | None      | Required error status from `400` to `599`.                                                                                                                                                                                                                                                                 |
 | `servers[].apis[].fault_injection.abort.percentage`  | uint32                    | None      | Required whole-number percentage from `1` to `100`.                                                                                                                                                                                                                                                        |
 
-All header and attribute selectors must match. `in` takes a nonempty list of
-distinct strings; `present` omits `value`. Header presence accepts an empty
-header, while attribute presence requires a nonempty value. Missing attributes
-or headers do not match, and values are case-sensitive. Attribute conditions
-use the values produced by the selected access entry. A header-sourced
-attribute can be set by the client; authentication and authorization still run
-before fault injection. The configured
-percentage applies after selection. Clients cannot change the configured
-status or percentage through Envoy fault-control headers.
+All header and attribute selectors must match. Header `equals` takes one
+nonempty literal string; attribute `in` takes a nonempty list of distinct
+nonempty strings. Values cannot contain controls or surrounding whitespace.
+Attribute sources must be verified claims, API-key credentials, or certificate
+SANs declared by every selected local authenticator on every protected entry.
+Header and fixed sources are forbidden. Missing, empty, or incorrectly typed
+runtime values do not match. Values are case-sensitive. Clients cannot change
+the configured status or percentage through Envoy fault-control headers.
 
 Injected requests do not reach the upstream. With `apis[].metrics` configured,
 each injected reply increments the standard per-API counter once, using its
@@ -289,11 +286,11 @@ gateway configuration, then explicitly roll out the Deployment to toggle them.
 | --------------------------------------------------------------- | ----------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apis[].routes[].processing.request_headers`                    | list of objects   | None      | If `processing` is present, at least one mapping is required. Every protected entry must provide each referenced attribute; public bindings may use fixed API attributes. |
 | `apis[].routes[].processing.request_headers[].name`             | string            | None      | Required valid HTTP header name; cannot be a reserved identity, routing, connection, or framing header. Names must be unique ignoring case.                               |
-| `apis[].routes[].processing.request_headers[].from_attribute`   | string            | None      | Required valid attribute name.                                                                                                                                            |
+| `apis[].routes[].processing.request_headers[].from.attribute`   | string            | None      | Required valid attribute name.                                                                                                                                            |
 
 Headers and metric labels use attribute values directly from their declared
 sources. When an upstream needs a different value from the one used in a grant,
-supply an additional source attribute and reference it in `from_attribute` or
+supply an additional source attribute and reference it in `from.attribute` or
 `apis[].metrics.labels`. See the [JWT](auth/jwt.md), [API-key](auth/api-key.md),
 and [external authorization](auth/ext-authz.md) guides for examples.
 
@@ -312,8 +309,8 @@ custom CA ConfigMap must exist in the gateway namespace before deployment.
 | `ext_authz_services[].credential_headers`       | list of strings | Empty     | Case-insensitive unique subset of `request_headers`; removed before forwarding to the API upstream. Include any credential header the service uses.                                                                                                            |
 | `ext_authz_services[].attributes`               | list of objects | Empty     | Declared values sent in the Check request's `auth_gateway.ext_authz.attributes` metadata namespace. Names must be unique valid attribute names.                                                                                                                |
 | `ext_authz_services[].attributes[].name`        | string          | None      | Required attribute name.                                                                                                                                                                                                                                       |
-| `ext_authz_services[].attributes[].from_source` | string          | None      | `header` or `authenticator`.                                                                                                                                                                                                                                   |
-| `ext_authz_services[].attributes[].value`       | string          | None      | For `header`, a safe `request_headers` entry that is not a credential header. For `authenticator`, the same name as an attribute declared by every selected local authenticator.                                                                               |
+| `ext_authz_services[].attributes[].from.header` | string | None | A safe `request_headers` entry that is not a credential header. Select exactly one source. |
+| `ext_authz_services[].attributes[].from.attribute` | string | None | Must equal this input name and be declared by every selected local authenticator. With no local authenticator, no such value is sent. |
 
 The service receives selected headers and declared service attributes. Every
 fixed attribute on the matched API is sent automatically in the same
@@ -350,7 +347,7 @@ must be unique within a binding; a label does not itself match a request.
 | `name`                                 | string                    | None      | Shared label using the name format above.                                                                                                                                                                                                       |
 | `match.headers`                        | list of expressions       | Empty     | All configured headers must match. Names must be safe headers without underscores or duplicates ignoring case. Credential headers are allowed only with `present` and the matching authentication method; other reserved headers are forbidden. |
 | `match.headers[].name`                 | string                    | None      | Required request header name.                                                                                                                                                                                                                   |
-| `match.headers[].expression`           | string                    | None      | `equals` for one string, `in` for a list, or `present` for header existence. `equals-attribute` is not valid for headers.                                                                                                                       |
+| `match.headers[].expression`           | string                    | None      | `equals` for one string, `in` for a list, or `present` for header existence. Attribute references are not allowed.                                                                                                                       |
 | `match.headers[].value`                | string or list of strings | None      | Nonempty string for `equals`; nonempty list of distinct strings for `in`; omit for `present`. Values cannot contain commas, controls, or surrounding whitespace.                                                                                |
 | `authentication.jwt.providers`         | list of strings           | None      | Nonempty unique JWT authenticator names with distinct issuers within this entry; optional when `authorization.ext_authz` is selected.                                                                                                           |
 | `authentication.api_key.authenticator` | string                    | None      | Name of the API-key authenticator.                                                                                                                                                                                                              |
@@ -429,8 +426,12 @@ with JWT or API-key entries. See the [mTLS guide](auth/mtls.md).
 | `authenticators[].mtls.trusted_ca`                     | object                            | None               | Required explicit client CA bundle; see [trusted CA](#trusted-ca).                                                                                                                                                                            |
 | `authenticators[].attributes`                          | list of objects                   | Empty              | Each entry declares one named attribute. Names must be unique and use lowercase letters, numbers, `_`, or `-`; the first character must be a letter.                                                                                          |
 | `authenticators[].attributes[].name`                   | string                            | None               | Required attribute name used by metrics and request processing; credential sources may also be used by grants.                                                                                                                                |
-| `authenticators[].attributes[].from_source`            | string                            | None               | Required source: `fixed` for any authenticator, `claim` for JWT, `credential` for API keys, `certificate` for mTLS, or `header` for any authenticator.                                                                                        |
-| `authenticators[].attributes[].value`                  | string or list of strings         | None               | For `fixed`, a nonempty string without controls or surrounding whitespace; a nonempty list of literal object keys for `claim`; a credential attribute name, `uri_san` or `dns_san`, or a safe HTTP request header name for the other sources. |
+| `authenticators[].attributes[].from` | source object | None | Required; select exactly one of `fixed`, `claim`, `credential`, `certificate`, or `header`. |
+| `authenticators[].attributes[].from.fixed` | string | None | Any authenticator; nonempty literal without controls or surrounding whitespace. |
+| `authenticators[].attributes[].from.claim` | list of strings | None | JWT only; nonempty list of nonempty literal claim keys. |
+| `authenticators[].attributes[].from.credential` | string | None | API keys only; credential attribute name. |
+| `authenticators[].attributes[].from.certificate` | string | None | mTLS only; `uri_san` or `dns_san`. |
+| `authenticators[].attributes[].from.header` | string | None | Any authenticator; safe original request header name. |
 
 Each certificate may have at most one URI SAN and one DNS SAN; a SAN containing
 a comma is rejected. Header names follow HTTP field-name syntax and cannot use
@@ -440,40 +441,33 @@ named key in the API-key Secret and are used unchanged.
 Fixed authenticator attributes are set only after that authenticator verifies
 the request. They use the declared value unchanged in managed headers and metric
 labels. An external authorization service can receive one by declaring an
-attribute with `from_source: authenticator` and the same name.
+attribute with `from.attribute` and the same name.
 
 ### Authorization grants
 
 These fields live under `servers[].apis[].access[].authorization.grants[]`.
-A grant already belongs to one API on one server. Any matching grant allows
-access; every condition within that grant must succeed.
+Any applicable grant allows access; all conditions within it must succeed.
 
-| Field                     | Type                      | Default   | Constraint                                                                                                                                                                                                                                                                                              |
-| ------------------------- | ------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `authenticator`           | string                    | None      | Required authenticator enabled by this entry, or the server's dedicated mTLS authenticator.                                                                                                                                                                                                             |
-| `attributes`              | list of expressions       | None      | JWT and key grants require at least one credential-derived condition. mTLS may use `[]` or omit the list to trust the client CA alone.                                                                                                                                                                  |
-| `attributes[].name`       | string                    | None      | Required unique attribute name declared by this authenticator; its source must be a verified claim, key credential, or certificate SAN.                                                                                                                                                                 |
-| `attributes[].expression` | string                    | None      | `equals` compares a scalar attribute with a string, `in` checks a scalar against a configured list, `equals-attribute` compares two scalar attributes, `present` requires a nonempty scalar string, `has` checks a JWT claim list for one string, and `has-one-of` checks it for any configured string. |
-| `attributes[].value`      | string or list of strings | None      | Omit for `present`; use a nonempty string for `equals`, `equals-attribute`, and `has`, or a nonempty list of distinct strings for `in` and `has-one-of`. Values cannot contain controls or surrounding whitespace.                                                                                      |
+| Field | Type | Default | Constraint |
+|-------|------|---------|------------|
+| `authenticator` | string | None | Required authenticator selected by this entry, or the server's mTLS authenticator. |
+| `match.attributes` | list of conditions | Empty | JWT and API-key grants require at least one. mTLS may omit it or use `[]` to trust the client CA alone. |
+| `match.attributes[].name` | string | None | Unique attribute declared by this authenticator, from a verified claim, credential, or certificate SAN. |
+| `match.attributes[].expression` | string | None | `equals`, `in`, `nonempty`, `has`, or `has-one-of`. |
+| `match.attributes[].value` | string or list of strings | None | Nonempty string for `equals` or `has`; nonempty distinct string list for `in` or `has-one-of`. No controls or surrounding whitespace. |
+| `match.attributes[].value_from.attribute` | string | None | Alternative to `value` for `equals` only; an attribute from the same authenticator. Header sources must also participate in the entry's `match.headers`. Fixed sources are forbidden. |
 
-`equals` and `in` require a scalar string attribute. A list-valued JWT claim
-does not match those expressions. `has` and `has-one-of` require a list-valued
-JWT claim. A scalar, missing, null, or empty claim does not match. They match
-exact string elements; other element types are ignored. Values are
-case-sensitive and used unchanged. List claims are used directly for grants;
-they are not copied into string filter state for upstream headers, metric
-labels, or fault injection selectors.
+`equals` and `in` require scalar strings. `has` and `has-one-of` require verified
+JWT lists and match exact string elements; other element types are ignored.
+`nonempty` takes neither `value` nor `value_from` and requires a nonempty scalar
+string. Missing, empty, null, numeric, boolean, or list-valued attributes cannot
+satisfy it. Header and fixed sources cannot be grant targets.
 
-`present` requires a nonempty scalar string from a verified claim, API-key
-credential, or certificate SAN. Missing, empty, null, numeric, and list-valued
-attributes do not match. Request header attributes cannot be grant conditions.
-
-`equals-attribute` requires both original values to be nonempty scalar strings
+Attribute equality requires both original values to be nonempty scalar strings
 and exactly equal. Missing, empty, list-valued, and non-string operands fail.
-The right-hand source may be another verified attribute or a request header;
-a header must participate in this entry's `match.headers`. This binds a listed
-requested tenant to the particular verified tenant rather than checking two
-independent allowlists. Attribute values are never normalized or translated.
+The right-hand source may be another verified attribute or a selected request
+header. This binds the requested tenant to the verified tenant. Attribute values
+are used unchanged, without normalization or translation.
 
 ### External authorization
 

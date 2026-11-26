@@ -29,11 +29,28 @@ var (
 func duration(value time.Duration) *gatewayapi.Duration { return new(gatewayapi.Duration(value)) }
 
 func testClaimAttribute(name string, path ...string) gatewayapi.AttributeSource {
-	return gatewayapi.AttributeSource{Name: name, FromSource: "claim", Value: gatewayapi.AttributeValue{Path: path, IsPath: true}}
+	return gatewayapi.AttributeSource{Name: name, From: gatewayapi.SourceReference{Claim: path}}
 }
 
 func testTextAttribute(name, from, value string) gatewayapi.AttributeSource {
-	return gatewayapi.AttributeSource{Name: name, FromSource: from, Value: gatewayapi.AttributeValue{Text: value}}
+	return gatewayapi.AttributeSource{Name: name, From: testSourceReference(from, value)}
+}
+
+func testSourceReference(kind, value string) gatewayapi.SourceReference {
+	switch kind {
+	case "fixed":
+		return gatewayapi.SourceReference{Fixed: new(value)}
+	case "header":
+		return gatewayapi.SourceReference{Header: new(value)}
+	case "credential":
+		return gatewayapi.SourceReference{Credential: new(value)}
+	case "certificate":
+		return gatewayapi.SourceReference{Certificate: new(value)}
+	case "attribute":
+		return gatewayapi.SourceReference{Attribute: new(value)}
+	default:
+		panic("unknown test source: " + kind)
+	}
 }
 
 func setTestAttribute(authenticator *gatewayapi.Authenticator, source gatewayapi.AttributeSource) {
