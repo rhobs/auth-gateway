@@ -136,6 +136,34 @@ var _ = Describe("Header-to-credential tenant equality", Label("gateway", "authe
 			expectHeaderAttributeDenied(ctx, gateway, "non-scalar or empty tenant", headerJWTOnlyHost, token, "", http.Header{"X-JWT-Tenant": []string{"client-a"}, "X-Region": []string{"eu.west"}}, http.StatusForbidden)
 		}
 	}, NodeTimeout(90*time.Second))
+
+	It("injects faults for an authorized tenant from a header attribute", func(ctx SpecContext) {
+		for _, method := range []string{"jwt", "api-key"} {
+			host, source, token, key := headerJWTOnlyHost, "X-JWT-Tenant", gateway.token("client-a", "writer-a"), ""
+			if method == "api-key" {
+				host, source, token, key = headerKeyOnlyHost, "X-Key-Tenant", "", "header-key"
+			}
+			expectDeniedBeforeUpstream(ctx, gateway.adminAddr, "api-header-ingest", method+" header tenant fault", http.StatusServiceUnavailable, func() (int, []byte, error) {
+				return gateway.request(ctx, "fault."+host, false, http.MethodPost, "/header-ingest", headerAttributeBody, token, key,
+					http.Header{source: []string{"client-a"}, "X-Region": []string{"eu.west"}})
+			})
+		}
+	}, NodeTimeout(60*time.Second))
+
+	It("forwards an authorized header tenant outside the fault policy", func(ctx SpecContext) {
+		headers := http.Header{"X-JWT-Tenant": []string{"client-b"}, "X-Region": []string{"eu.west"}}
+		status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, "api-header-ingest", "unmatched header tenant", 1, func() (int, []byte, error) {
+			return gateway.request(ctx, "fault."+headerJWTOnlyHost, false, http.MethodPost, "/header-ingest", headerAttributeBody, gateway.token("client-b", "writer-a"), "", headers)
+		})
+		Expect(status).To(Equal(http.StatusOK), string(body))
+		expectHeaderAttributeEcho(body, "client-b", map[string]string{"X-JWT-Tenant": "client-b", "X-Region": "eu.west"})
+	}, NodeTimeout(60*time.Second))
+
+	It("preserves authentication and claim authorization denials for a matching fault header", func(ctx SpecContext) {
+		headers := http.Header{"X-JWT-Tenant": []string{"client-a"}, "X-Region": []string{"eu.west"}}
+		expectHeaderAttributeDenied(ctx, gateway, "missing JWT on fault binding", "fault."+headerJWTOnlyHost, "", "", headers, http.StatusUnauthorized)
+		expectHeaderAttributeDenied(ctx, gateway, "unequal JWT tenant on fault binding", "fault."+headerJWTOnlyHost, gateway.token("client-b", "writer-a"), "", headers, http.StatusForbidden)
+	}, NodeTimeout(60*time.Second))
 })
 
 func shapeHeaderAttributeGateway(c *gatewayapi.Config) {
@@ -169,6 +197,16 @@ func shapeHeaderAttributeGateway(c *gatewayapi.Config) {
 			}}},
 		}
 		c.Servers = append(c.Servers, gatewayapi.Server{Hostname: method.host, APIs: []gatewayapi.APIBinding{{Name: "header-ingest", Access: []gatewayapi.Access{access}}}})
+		c.Servers = append(c.Servers, gatewayapi.Server{Hostname: "fault." + method.host, APIs: []gatewayapi.APIBinding{{
+			Name: "header-ingest", Access: []gatewayapi.Access{access},
+			FaultInjection: &gatewayapi.FaultInjectionConfig{
+				Enabled: true,
+				Match: &gatewayapi.FaultMatchConfig{Attributes: []gatewayapi.MatchExpression{{
+					Name: "requested_tenant", Expression: "in", Value: &gatewayapi.MatchValue{IsList: true, Items: []string{"client-a"}},
+				}}},
+				Abort: &gatewayapi.FaultAbortConfig{HTTPStatus: http.StatusServiceUnavailable, Percentage: 100},
+			},
+		}}})
 	}
 }
 

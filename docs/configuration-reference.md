@@ -256,7 +256,7 @@ its abort settings for the next test.
 | `servers[].apis[].fault_injection.enabled`           | boolean                   | `false`   | Requires `abort` when enabled.                                                                                                                                                                                                                                                                             |
 | `servers[].apis[].fault_injection.match`             | object                    | None      | Optional; if supplied, must contain headers or attributes. Omit to select all requests that pass authentication, authorization, and required-header checks.                                                                                                                                                |
 | `servers[].apis[].fault_injection.match.headers` | list of conditions | Empty | Unique safe header names, ignoring case; literal `equals` only. Credential and reserved headers are forbidden, and route processing cannot overwrite them. |
-| `servers[].apis[].fault_injection.match.attributes` | list of conditions | Empty | Unique attribute names; literal `in` only. Requires verified scalar sources across all selected local authenticators and protected entries. |
+| `servers[].apis[].fault_injection.match.attributes` | list of conditions | Empty | Unique attribute names; literal `in` only. Reads fixed API attributes or attributes supplied by the selected access entry, including header and fixed sources. Missing values do not match. |
 | `servers[].apis[].fault_injection.abort`             | object                    | None      | Required when enabled; HTTP errors only.                                                                                                                                                                                                                                                                   |
 | `servers[].apis[].fault_injection.abort.http_status` | uint32                    | None      | Required error status from `400` to `599`.                                                                                                                                                                                                                                                                 |
 | `servers[].apis[].fault_injection.abort.percentage`  | uint32                    | None      | Required whole-number percentage from `1` to `100`.                                                                                                                                                                                                                                                        |
@@ -264,11 +264,12 @@ its abort settings for the next test.
 All header and attribute selectors must match. Header `equals` takes one
 nonempty literal string; attribute `in` takes a nonempty list of distinct
 nonempty strings. Values cannot contain controls or surrounding whitespace.
-Attribute sources must be verified claims, API-key credentials, or certificate
-SANs declared by every selected local authenticator on every protected entry.
-Header and fixed sources are forbidden. Missing, empty, or incorrectly typed
-runtime values do not match. Values are case-sensitive. Clients cannot change
-the configured status or percentage through Envoy fault-control headers.
+Attribute conditions read fixed API values or values from the selected access
+entry, including header and fixed authenticator sources. An attribute need not
+be declared by every authenticator or access entry. Missing, empty, or
+incorrectly typed runtime values do not match. Values are case-sensitive.
+Clients cannot change the configured status or percentage through Envoy
+fault-control headers.
 
 Injected requests do not reach the upstream. With `apis[].metrics` configured,
 each injected reply increments the standard per-API counter once, using its

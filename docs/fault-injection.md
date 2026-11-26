@@ -32,10 +32,17 @@ servers:
       # existing authentication and authorization settings
 ```
 
-Every selected local authenticator on every protected access entry must declare
-`tenant_id` from a verified JWT claim, API-key credential, or certificate SAN.
-Header and fixed sources cannot supply fault attributes. Missing, empty, or
+The selected access entry supplies `tenant_id` from its declared source, such
+as a JWT claim, API-key credential, certificate SAN, request header, or fixed
+authenticator value. Fixed API attributes are also available. The attribute
+does not need to exist on every access entry in the binding. If the selected
+entry does not produce it, the condition does not match. Missing, empty, or
 incorrectly typed values do not match at runtime.
+
+A header source can select faults for a tenant after JWT authentication and
+claim authorization. Declare a separate attribute with `from: {header: X-Tenant}`
+and use its name in `match.attributes`. Authentication and authorization still
+run before fault selection; the header value is used unchanged.
 
 Regenerate and apply the gateway resources, then explicitly roll out the
 Deployment. For example, a request authenticated as `test-tenant` with

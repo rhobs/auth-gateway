@@ -101,8 +101,9 @@ is available on every matching method route, including public routes and all
 server bindings of the API. Generated `404` and `405` fallback routes do not
 have API attributes.
 
-Fixed API attributes can supply upstream headers, metric labels, and external
-authorization inputs. They cannot supply local grant conditions or reuse names declared by a selected authenticator or external
+Fixed API attributes can supply upstream headers, metric labels, fault
+selectors, and external authorization inputs. They cannot supply local grant
+conditions or reuse names declared by a selected authenticator or external
 service. See [API attributes](configuration-reference.md#api-attributes).
 
 ## Request header selectors
@@ -147,8 +148,9 @@ configuration. Values are used unchanged. Header sources cannot read credential
 or reserved identity, routing, connection, or framing headers.
 
 Fixed authenticator attributes become available only after that authenticator
-verifies the request. They can supply upstream headers, metrics, and declared
-external service inputs. Local grant conditions cannot use fixed sources.
+verifies the request. They can supply upstream headers, metrics, fault
+selectors, and declared external service inputs. Local grant conditions cannot
+use fixed sources.
 
 See [authenticator fields](configuration-reference.md#authenticators) for name
 and source restrictions, and [authentication](auth/README.md#authentication)
@@ -236,12 +238,11 @@ Fault injection is configured under `servers[].apis[].fault_injection`:
 | `match.headers[]` | `name`, `expression: equals`, and a literal string `value`. |
 | `match.attributes[]` | `name`, `expression: in`, and a literal string list `value`. |
 
-All conditions must match; list values are alternatives. Attribute targets must
-be declared by every selected local authenticator on every protected access
-entry and come from verified claims, credentials, or certificate SANs. Public
-bindings and external-only authentication cannot use fault attribute selectors.
-Fixed and header sources cannot supply fault attributes. Missing, empty, or
-incorrectly typed runtime values do not match.
+All conditions must match; list values are alternatives. Attribute conditions
+read fixed API values or values produced by the selected access entry,
+including fixed authenticator and request header sources. An attribute need
+not be declared by every authenticator or access entry in the binding.
+Missing, empty, or incorrectly typed runtime values do not match.
 
 Fault header selectors cannot use credential or reserved headers, or headers
 overwritten by route processing. Omitting `match` selects all requests that

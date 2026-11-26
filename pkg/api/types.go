@@ -145,7 +145,7 @@ type FaultInjectionConfig struct {
 	Match   *FaultMatchConfig `yaml:"match,omitempty"`
 }
 
-// FaultMatchConfig limits faults to headers and verified attributes.
+// FaultMatchConfig limits faults to headers and runtime attributes.
 type FaultMatchConfig struct {
 	Headers    []MatchExpression `yaml:"headers,omitempty"`
 	Attributes []MatchExpression `yaml:"attributes,omitempty"`
