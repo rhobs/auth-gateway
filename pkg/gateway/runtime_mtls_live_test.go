@@ -82,18 +82,18 @@ authenticators:
       trusted_ca: {filename: /etc/auth-gateway/runtime-client-ca.crt}
     attributes:
       - name: tenant_id
-        from_source: certificate
-        value: uri_san
+        from:
+          certificate: uri_san
 apis:
   - name: ingest
     upstream: {address: httpbin, port: 8080}
     routes:
       - methods: [POST]
-        path: {exact: /ingest}
+        path: {expression: equals, value: /ingest}
         rewrite: {path: /anything}
         processing:
           request_headers:
-            - {name: X-Scope-OrgID, from_attribute: tenant_id}
+            - {name: X-Scope-OrgID, from: {attribute: tenant_id}}
 servers:
   - hostname: tls.runtime.test
     tls_config:
@@ -107,10 +107,11 @@ servers:
             authorization:
               grants:
                 - authenticator: client-cert
-                  attributes:
-                    - name: tenant_id
-                      expression: equals
-                      value: spiffe://clients.example.test/client-a
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value: spiffe://clients.example.test/client-a
 `
 	c, err := Load(strings.NewReader(input))
 	if err != nil {

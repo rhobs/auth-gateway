@@ -176,7 +176,7 @@ func addExtAuthzScenario(config *gatewayapi.Config, shape gatewayapi.Config, nam
 				continue
 			}
 			for _, attribute := range authenticator.Attributes {
-				if attribute.FromSource == "fixed" {
+				if attribute.From.Kind() == "fixed" {
 					config.Authenticators[index].Attributes = append(config.Authenticators[index].Attributes, attribute)
 				}
 			}

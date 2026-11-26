@@ -105,10 +105,26 @@ var _ = Describe("Tenant and resource isolation", Label("gateway", "identity-iso
 		Expect(headerValue(echo.Headers, "X-Verified-Tenant")).To(Equal("client-a"))
 	}, NodeTimeout(60*time.Second))
 
-	It("matches a declared header attribute after JWT authorization", func(ctx SpecContext) {
+	It("ignores spoofed fault attributes in request headers", func(ctx SpecContext) {
 		headers := http.Header{"X-Tenant": []string{"client-a"}, "X-Environment": []string{"production"}, "X-Inject-Fault": []string{"true"}, "X-Writer": []string{"key-writer"}}
-		expectDeniedBeforeUpstream(ctx, gateway.adminAddr, "api-journey-write", "JWT header attribute fault", http.StatusServiceUnavailable, func() (int, []byte, error) {
+		status, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, "api-journey-write", "spoofed writer header", 1, func() (int, []byte, error) {
 			return gateway.request(ctx, accessJourneyHost, false, http.MethodPost, "/write", apiKeyRequestBody, token("issuer-one", "client-a", "writer"), "", headers)
+		})
+		Expect(status).To(Equal(http.StatusOK), string(body))
+		echo, err := decodeHTTPBinEcho(body)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(echo.Method).To(Equal(http.MethodPost))
+		Expect(echo.URL).To(HaveSuffix("/anything"))
+		Expect(echo.Data).To(Equal("data:application/octet-stream;base64," + base64.StdEncoding.EncodeToString([]byte(apiKeyRequestBody))))
+		Expect(headerValue(echo.Headers, "X-Verified-Tenant")).To(Equal("client-a"))
+	}, NodeTimeout(60*time.Second))
+
+	It("matches a verified JWT fault attribute after authorization", func(ctx SpecContext) {
+		claims := map[string]any{"aud": "gateway-test", "exp": time.Now().Add(5 * time.Minute).Unix(), "organization": map[string]any{"id": "client-a"}, "role": "writer", "fault_writer": "key-writer"}
+		signed := (&jwtE2E{keys: gateway.keys}).token("issuer-one", claims, nil)
+		headers := http.Header{"X-Tenant": []string{"client-a"}, "X-Environment": []string{"production"}, "X-Inject-Fault": []string{"true"}}
+		expectDeniedBeforeUpstream(ctx, gateway.adminAddr, "api-journey-write", "verified JWT writer fault", http.StatusServiceUnavailable, func() (int, []byte, error) {
+			return gateway.request(ctx, accessJourneyHost, false, http.MethodPost, "/write", apiKeyRequestBody, signed, "", headers)
 		})
 	}, NodeTimeout(60*time.Second))
 

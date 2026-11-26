@@ -8,8 +8,8 @@ authenticators:
     header: X-API-Key
   attributes:
     - name: user_id
-      from_source: credential
-      value: user_id
+      from:
+        credential: user_id
 - name: playground-metrics-jwt
   jwt:
     issuer: https://auth.localhost:8443/metrics
@@ -21,8 +21,8 @@ authenticators:
         filename: "/etc/auth-gateway/mock-oauth2.crt"
   attributes:
     - name: user_id
-      from_source: claim
-      value: [sub]
+      from:
+        claim: [sub]
 - name: playground-logs-jwt
   jwt:
     issuer: https://auth.localhost:8443/logs
@@ -34,8 +34,8 @@ authenticators:
         filename: "/etc/auth-gateway/mock-oauth2.crt"
   attributes:
     - name: user_id
-      from_source: claim
-      value: [sub]
+      from:
+        claim: [sub]
 observability:
   metrics:
     custom_metric_name: gateway_http_requests_total
@@ -59,7 +59,8 @@ apis:
   - methods:
     - GET
     path:
-      exact: "/anything"
+      expression: equals
+      value: "/anything"
 - name: metrics-write
   upstream:
     address: httpbin.org
@@ -68,18 +69,19 @@ apis:
       server_name: httpbin.org
   metrics:
     labels:
-      user_id: user_id
+      user_id: {from: {attribute: user_id}}
   routes:
   - methods:
     - POST
     path:
-      exact: "/metrics/api/v1/receive"
+      expression: equals
+      value: "/metrics/api/v1/receive"
     rewrite:
       path: "/anything"
     processing:
       request_headers:
       - name: X-Authenticated-User
-        from_attribute: user_id
+        from: {attribute: user_id}
 - name: logs
   upstream:
     address: httpbin.org
@@ -88,18 +90,19 @@ apis:
       server_name: httpbin.org
   metrics:
     labels:
-      user_id: user_id
+      user_id: {from: {attribute: user_id}}
   routes:
   - methods:
     - POST
     path:
-      prefix: "/logs/otlp/"
+      expression: prefix
+      value: "/logs/otlp/"
     rewrite:
       prefix: "/anything/"
     processing:
       request_headers:
       - name: X-Authenticated-User
-        from_attribute: user_id
+        from: {attribute: user_id}
 servers:
 - hostname: unprotected.localhost
   apis:
@@ -116,10 +119,11 @@ servers:
       authorization:
         grants:
         - authenticator: playground-key
-          attributes:
-            - name: user_id
-              expression: equals
-              value: metrics-writer
+          match:
+            attributes:
+              - name: user_id
+                expression: equals
+                value: metrics-writer
   - name: logs
     access:
     - name: default
@@ -129,10 +133,11 @@ servers:
       authorization:
         grants:
         - authenticator: playground-key
-          attributes:
-            - name: user_id
-              expression: equals
-              value: logs-writer
+          match:
+            attributes:
+              - name: user_id
+                expression: equals
+                value: logs-writer
 - hostname: jwt.localhost
   apis:
   - name: metrics-write
@@ -145,10 +150,11 @@ servers:
       authorization:
         grants:
         - authenticator: playground-metrics-jwt
-          attributes:
-            - name: user_id
-              expression: equals
-              value: metrics-writer
+          match:
+            attributes:
+              - name: user_id
+                expression: equals
+                value: metrics-writer
   - name: logs
     access:
     - name: default
@@ -159,10 +165,11 @@ servers:
       authorization:
         grants:
         - authenticator: playground-logs-jwt
-          attributes:
-            - name: user_id
-              expression: equals
-              value: logs-writer
+          match:
+            attributes:
+              - name: user_id
+                expression: equals
+                value: logs-writer
 - hostname: tenants.localhost
   apis:
   - name: metrics-write
@@ -178,10 +185,11 @@ servers:
       authorization:
         grants:
         - authenticator: playground-key
-          attributes:
-            - name: user_id
-              expression: equals
-              value: metrics-writer
+          match:
+            attributes:
+              - name: user_id
+                expression: equals
+                value: metrics-writer
       tenant: partner
     - match:
         headers:
@@ -195,10 +203,11 @@ servers:
       authorization:
         grants:
         - authenticator: playground-metrics-jwt
-          attributes:
-            - name: user_id
-              expression: equals
-              value: metrics-writer
+          match:
+            attributes:
+              - name: user_id
+                expression: equals
+                value: metrics-writer
       tenant: internal
   - name: logs
     access:
@@ -213,10 +222,11 @@ servers:
       authorization:
         grants:
         - authenticator: playground-key
-          attributes:
-            - name: user_id
-              expression: equals
-              value: logs-writer
+          match:
+            attributes:
+              - name: user_id
+                expression: equals
+                value: logs-writer
       tenant: partner
     - match:
         headers:
@@ -230,8 +240,9 @@ servers:
       authorization:
         grants:
         - authenticator: playground-logs-jwt
-          attributes:
-            - name: user_id
-              expression: equals
-              value: logs-writer
+          match:
+            attributes:
+              - name: user_id
+                expression: equals
+                value: logs-writer
       tenant: internal

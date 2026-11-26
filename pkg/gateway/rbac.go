@@ -61,8 +61,8 @@ func providesAttributeAuthenticator(authenticator gatewayapi.Authenticator, name
 func credentialAttributeNamesAuthenticator(authenticator gatewayapi.Authenticator) []string {
 	var names []string
 	for _, source := range authenticator.Attributes {
-		if source.FromSource == "credential" && !slices.Contains(names, source.Value.Text) {
-			names = append(names, source.Value.Text)
+		if source.From.Kind() == "credential" && !slices.Contains(names, source.From.Scalar()) {
+			names = append(names, source.From.Scalar())
 		}
 	}
 	slices.Sort(names)
@@ -132,7 +132,7 @@ func mtlsValidatedPrincipal() (*rbac.Principal, error) {
 func requiredHeaderRBACRules(mappings []gatewayapi.RequestHeaderMapping) (*rbac.RBAC, error) {
 	attributes := make(map[string]struct{}, len(mappings))
 	for _, mapping := range mappings {
-		attributes[mapping.FromAttribute] = struct{}{}
+		attributes[mapping.From.Scalar()] = struct{}{}
 	}
 	principals := make([]*rbac.Principal, 0, len(attributes))
 	for _, attribute := range slices.Sorted(maps.Keys(attributes)) {
@@ -298,9 +298,9 @@ func grantPolicy(authenticator gatewayapi.Authenticator, grant gatewayapi.Author
 	principals := []*rbac.Principal{verified}
 	builder := &celExpressionBuilder{}
 	var equality *expr.Expr
-	for _, condition := range sortedMatchExpressions(grant.Attributes) {
+	for _, condition := range sortedMatchExpressions(grant.Match.Attributes) {
 		namespace, path := attributeMetadataPath(authenticator, condition.Name)
-		if condition.Expression == gatewayapi.ExpressionPresent {
+		if condition.Expression == gatewayapi.ExpressionNonempty {
 			principals = append(principals, dynamicMetadataPrincipal(namespace, path, nonemptyScalarValueMatcher()))
 			continue
 		}
@@ -308,12 +308,12 @@ func grantPolicy(authenticator gatewayapi.Authenticator, grant gatewayapi.Author
 			principals = append(principals, dynamicMetadataPrincipal(namespace, path, listContainsStringValueMatcher(matchValues(condition))))
 			continue
 		}
-		if condition.Expression != gatewayapi.ExpressionEqualsAttribute {
+		if condition.ValueFrom == nil {
 			value := allowedStringValueMatcher(matchValues(condition))
 			principals = append(principals, dynamicMetadataPrincipal(namespace, path, value))
 			continue
 		}
-		otherNamespace, otherPath := attributeMetadataPath(authenticator, condition.Value.Text)
+		otherNamespace, otherPath := attributeMetadataPath(authenticator, condition.ValueFrom.Scalar())
 		principals = append(principals,
 			dynamicMetadataPrincipal(namespace, path, nonemptyScalarValueMatcher()),
 			dynamicMetadataPrincipal(otherNamespace, otherPath, nonemptyScalarValueMatcher()))

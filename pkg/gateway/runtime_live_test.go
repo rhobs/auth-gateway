@@ -160,26 +160,26 @@ authenticators:
       header: %s
     attributes:
       - name: tenant_id
-        from_source: credential
-        value: tenant_id
+        from:
+          credential: tenant_id
       - name: upstream_tenant
-        from_source: credential
-        value: upstream_tenant
+        from:
+          credential: upstream_tenant
 apis:
   - name: ingest
     upstream: {address: httpbin, port: 8080}
     routes:
       - methods: [POST]
-        path: {exact: /ingest}
+        path: {expression: equals, value: /ingest}
         rewrite: {path: /anything}
         processing:
           request_headers:
-            - {name: X-Scope-OrgID, from_attribute: upstream_tenant}
+            - {name: X-Scope-OrgID, from: {attribute: upstream_tenant}}
   - name: tls-probe
     upstream: {address: httpbin, port: 8080}
     routes:
       - methods: [GET]
-        path: {exact: /tls}
+        path: {expression: equals, value: /tls}
         rewrite: {path: /anything}
 servers:
   - hostname: %s
@@ -192,10 +192,11 @@ servers:
             authorization:
               grants:
                 - authenticator: partner-key
-                  attributes:
-                    - name: tenant_id
-                      expression: equals
-                      value: client-a
+                  match:
+                    attributes:
+                      - name: tenant_id
+                        expression: equals
+                        value: client-a
   - hostname: %s
     tls_config:
       certificate: %s

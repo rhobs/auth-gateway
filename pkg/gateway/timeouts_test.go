@@ -47,7 +47,8 @@ apis:
   - methods:
     - GET
     path:
-      exact: "/metrics"
+      expression: equals
+      value: "/metrics"
 `
 	if _, err := Load(strings.NewReader(input)); err == nil ||
 		!strings.Contains(err.Error(), "apis[0].routes[0].timeouts.response_timeout (20s)") ||

@@ -75,7 +75,7 @@ func TestPinnedImagesValidateGoldenFiles(t *testing.T) {
 		} {
 			t.Run(test.name, func(t *testing.T) {
 				c := loadConfigCase(t, "access-control")
-				c.Servers[0].APIs[0].Access[0].Match.Headers[0].Value = gatewayapi.MatchValue{IsList: true, Items: test.values}
+				c.Servers[0].APIs[0].Access[0].Match.Headers[0].Value = &gatewayapi.MatchValue{IsList: true, Items: test.values}
 				files, err := Generate(c)
 				if err != nil {
 					t.Fatal(err)

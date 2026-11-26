@@ -139,13 +139,13 @@ var _ = Describe("Header-to-credential tenant equality", Label("gateway", "authe
 })
 
 func shapeHeaderAttributeGateway(c *gatewayapi.Config) {
-	setE2EAttribute(&c.Authenticators[0], gatewayapi.AttributeSource{Name: "requested_tenant", FromSource: "header", Value: gatewayapi.AttributeValue{Text: "X-JWT-Tenant"}})
-	setE2EAttribute(&c.Authenticators[1], gatewayapi.AttributeSource{Name: "requested_tenant", FromSource: "header", Value: gatewayapi.AttributeValue{Text: "X-Key-Tenant"}})
+	setE2EAttribute(&c.Authenticators[0], gatewayapi.AttributeSource{Name: "requested_tenant", From: gatewayapi.SourceReference{Header: new("X-JWT-Tenant")}})
+	setE2EAttribute(&c.Authenticators[1], gatewayapi.AttributeSource{Name: "requested_tenant", From: gatewayapi.SourceReference{Header: new("X-Key-Tenant")}})
 	c.APIs = append(c.APIs, gatewayapi.API{
 		Name:     "header-ingest",
-		Metrics:  &gatewayapi.APIMetrics{Labels: map[string]string{"tenant": "requested_tenant"}},
+		Metrics:  &gatewayapi.APIMetrics{Labels: map[string]gatewayapi.AttributeReference{"tenant": {From: gatewayapi.SourceReference{Attribute: new("requested_tenant")}}}},
 		Upstream: gatewayapi.Upstream{Address: "httpbin", Port: 8080},
-		Routes:   []gatewayapi.Route{{Methods: []string{http.MethodPost}, Path: gatewayapi.PathMatch{Exact: "/header-ingest"}, Rewrite: &gatewayapi.PathRewrite{Path: "/anything"}, Processing: &gatewayapi.RouteProcessing{RequestHeaders: []gatewayapi.RequestHeaderMapping{{Name: "X-Forwarded-Tenant", FromAttribute: "requested_tenant"}}}}},
+		Routes:   []gatewayapi.Route{{Methods: []string{http.MethodPost}, Path: gatewayapi.PathMatch{Expression: "equals", Value: &gatewayapi.MatchValue{Text: "/header-ingest"}}, Rewrite: &gatewayapi.PathRewrite{Path: "/anything"}, Processing: &gatewayapi.RouteProcessing{RequestHeaders: []gatewayapi.RequestHeaderMapping{{Name: "X-Forwarded-Tenant", From: gatewayapi.SourceReference{Attribute: new("requested_tenant")}}}}}},
 	})
 	for _, method := range []struct {
 		host, header, authenticator string
@@ -157,15 +157,15 @@ func shapeHeaderAttributeGateway(c *gatewayapi.Config) {
 		access := gatewayapi.Access{
 			Name: "writers",
 			Match: gatewayapi.AccessMatch{Headers: []gatewayapi.MatchExpression{
-				{Name: method.header, Expression: "in", Value: gatewayapi.MatchValue{IsList: true, Items: []string{"client-a", "client-b"}}},
-				{Name: "X-Region", Expression: "in", Value: gatewayapi.MatchValue{IsList: true, Items: []string{"eu.west", "us+east"}}},
+				{Name: method.header, Expression: "in", Value: &gatewayapi.MatchValue{IsList: true, Items: []string{"client-a", "client-b"}}},
+				{Name: "X-Region", Expression: "in", Value: &gatewayapi.MatchValue{IsList: true, Items: []string{"eu.west", "us+east"}}},
 			}},
 			Authentication: &method.authentication,
 			Authorization: gatewayapi.Authorization{Grants: []gatewayapi.AuthorizationGrant{{
 				Authenticator: method.authenticator,
-				Attributes: []gatewayapi.MatchExpression{{
-					Name: "tenant_id", Expression: "equals-attribute", Value: gatewayapi.MatchValue{Text: "requested_tenant"},
-				}},
+				Match: gatewayapi.GrantMatch{Attributes: []gatewayapi.MatchExpression{{
+					Name: "tenant_id", Expression: "equals", ValueFrom: &gatewayapi.SourceReference{Attribute: new("requested_tenant")},
+				}}},
 			}}},
 		}
 		c.Servers = append(c.Servers, gatewayapi.Server{Hostname: method.host, APIs: []gatewayapi.APIBinding{{Name: "header-ingest", Access: []gatewayapi.Access{access}}}})

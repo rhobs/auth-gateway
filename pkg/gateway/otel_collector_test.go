@@ -31,7 +31,7 @@ func TestObservabilityDefaultsDoNotMutateInput(t *testing.T) {
 	c := loadConfigCase(t, "jwt-auth-with-attributes")
 	c.Observability.Metrics.CustomMetricName = new("gateway_http_requests_total")
 	defaulted := withDefaultsConfig(c)
-	defaulted.APIs[0].Metrics.Labels["tenant"] = "writer_id"
+	defaulted.APIs[0].Metrics.Labels["tenant"] = gatewayapi.AttributeReference{From: gatewayapi.SourceReference{Attribute: new("writer_id")}}
 	*defaulted.Observability.Metrics.CustomMetricName = "changed_requests_total"
 	*defaulted.Observability.Metrics.ScrapeInterval = gatewayapi.Duration(time.Second)
 	defaulted.Kubernetes.Metrics.Resources.Requests["cpu"] = "10m"
@@ -41,7 +41,7 @@ func TestObservabilityDefaultsDoNotMutateInput(t *testing.T) {
 		ScrapeInterval   gatewayapi.Duration
 		CPURequest       string
 	}{
-		TenantLabel:      c.APIs[0].Metrics.Labels["tenant"],
+		TenantLabel:      *c.APIs[0].Metrics.Labels["tenant"].From.Attribute,
 		CustomMetricName: *c.Observability.Metrics.CustomMetricName,
 		ScrapeInterval:   *c.Observability.Metrics.ScrapeInterval,
 		CPURequest:       c.Kubernetes.Metrics.Resources.Requests["cpu"],

@@ -29,7 +29,7 @@ func ExampleNewDuration() {
 			},
 			Routes: []api.Route{{
 				Methods: []string{"POST"},
-				Path:    api.PathMatch{Exact: "/metrics/api/v1/receive"},
+				Path:    api.PathMatch{Expression: "equals", Value: &api.MatchValue{Text: "/metrics/api/v1/receive"}},
 			}},
 		}},
 	}

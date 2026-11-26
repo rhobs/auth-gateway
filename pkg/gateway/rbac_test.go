@@ -29,7 +29,7 @@ func TestGrantEqualityUsesOriginalScalarSources(t *testing.T) {
 		{"API key", "auth_gateway.api_key", 2, []string{"attribute.tenant_id"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			grant := gatewayapi.AuthorizationGrant{Authenticator: c.Authenticators[test.index].Name, Attributes: []gatewayapi.MatchExpression{{Name: "tenant_id", Expression: "equals-attribute", Value: gatewayapi.MatchValue{Text: "requested_tenant"}}}}
+			grant := gatewayapi.AuthorizationGrant{Authenticator: c.Authenticators[test.index].Name, Match: gatewayapi.GrantMatch{Attributes: []gatewayapi.MatchExpression{{Name: "tenant_id", Expression: "equals", ValueFrom: &gatewayapi.SourceReference{Attribute: new("requested_tenant")}}}}}
 			policy, err := grantPolicy(c.Authenticators[test.index], grant)
 			if err != nil {
 				t.Fatal(err)
@@ -71,7 +71,7 @@ func TestGrantLiteralExpressionsMatchScalarStrings(t *testing.T) {
 		{name: "in", expression: "in", value: gatewayapi.MatchValue{IsList: true, Items: []string{"reader", "writer"}}, want: []string{"reader", "writer"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			grant := gatewayapi.AuthorizationGrant{Authenticator: "issuer-one", Attributes: []gatewayapi.MatchExpression{{Name: "role", Expression: test.expression, Value: test.value}}}
+			grant := gatewayapi.AuthorizationGrant{Authenticator: "issuer-one", Match: gatewayapi.GrantMatch{Attributes: []gatewayapi.MatchExpression{{Name: "role", Expression: test.expression, Value: new(test.value)}}}}
 			policy, err := grantPolicy(c.Authenticators[0], grant)
 			if err != nil {
 				t.Fatal(err)
@@ -103,7 +103,7 @@ func TestGrantLiteralExpressionsMatchScalarStrings(t *testing.T) {
 	}
 }
 
-func TestGrantPresentRequiresNonemptyScalarSource(t *testing.T) {
+func TestGrantNonemptyRequiresScalarSource(t *testing.T) {
 	c := loadConfigCase(t, "access-control")
 	for _, test := range []struct {
 		name, namespace string
@@ -115,13 +115,13 @@ func TestGrantPresentRequiresNonemptyScalarSource(t *testing.T) {
 		{name: "mTLS", namespace: mtlsMetadataNamespace, index: 3, path: []string{mtlsURIMetadataKey}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			grant := gatewayapi.AuthorizationGrant{Authenticator: c.Authenticators[test.index].Name, Attributes: []gatewayapi.MatchExpression{{Name: "tenant_id", Expression: gatewayapi.ExpressionPresent}}}
+			grant := gatewayapi.AuthorizationGrant{Authenticator: c.Authenticators[test.index].Name, Match: gatewayapi.GrantMatch{Attributes: []gatewayapi.MatchExpression{{Name: "tenant_id", Expression: gatewayapi.ExpressionNonempty}}}}
 			policy, err := grantPolicy(c.Authenticators[test.index], grant)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if policy.Condition != nil {
-				t.Fatal("present grant must use a native metadata matcher")
+				t.Fatal("nonempty grant must use a native metadata matcher")
 			}
 			principals := policy.Principals[0].GetAndIds().GetIds()
 			if len(principals) != 2 {
@@ -129,11 +129,11 @@ func TestGrantPresentRequiresNonemptyScalarSource(t *testing.T) {
 			}
 			attribute := principals[1].GetSourcedMetadata().GetMetadataMatcher()
 			if attribute.GetFilter() != test.namespace || !slices.Equal(metadataMatcherPath(attribute.GetPath()), test.path) {
-				t.Fatalf("present source = %v, want %s %v", attribute, test.namespace, test.path)
+				t.Fatalf("nonempty source = %v, want %s %v", attribute, test.namespace, test.path)
 			}
 			value := attribute.GetValue()
 			if value.GetStringMatch().GetSafeRegex().GetRegex() != headerValuePattern || value.GetListMatch() != nil || value.GetPresentMatch() {
-				t.Fatalf("present must require a nonempty scalar string: %v", value)
+				t.Fatalf("nonempty must require a nonempty scalar string: %v", value)
 			}
 		})
 	}
@@ -152,7 +152,7 @@ func TestGrantListExpressionsMatchJWTElements(t *testing.T) {
 		{name: "has-one-of", expression: gatewayapi.ExpressionHasOneOf, value: gatewayapi.MatchValue{IsList: true, Items: []string{"reader", "writer"}}, want: []string{"reader", "writer"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			grant := gatewayapi.AuthorizationGrant{Authenticator: "issuer-one", Attributes: []gatewayapi.MatchExpression{{Name: "groups", Expression: test.expression, Value: test.value}}}
+			grant := gatewayapi.AuthorizationGrant{Authenticator: "issuer-one", Match: gatewayapi.GrantMatch{Attributes: []gatewayapi.MatchExpression{{Name: "groups", Expression: test.expression, Value: new(test.value)}}}}
 			policy, err := grantPolicy(c.Authenticators[0], grant)
 			if err != nil {
 				t.Fatal(err)

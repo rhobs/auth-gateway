@@ -40,10 +40,10 @@ var _ = Describe("API-key credential attributes", Label("gateway", "api-key", "a
 		gateway, err = setupAPIKeyGatewayWithShape(ctx, apiKeyAttributesNS, true, credentials, "attribute-key", func(c *gatewayapi.Config) {
 			for index := range 20 {
 				name := fmt.Sprintf("attribute%02d", index)
-				setE2EAttribute(&c.Authenticators[0], gatewayapi.AttributeSource{Name: name, FromSource: "credential", Value: gatewayapi.AttributeValue{Text: name}})
+				setE2EAttribute(&c.Authenticators[0], gatewayapi.AttributeSource{Name: name, From: gatewayapi.SourceReference{Credential: new(name)}})
 				processing := c.APIs[0].Routes[0].Processing
 				processing.RequestHeaders = append(processing.RequestHeaders, gatewayapi.RequestHeaderMapping{
-					Name: fmt.Sprintf("X-Attribute%02d", index), FromAttribute: name,
+					Name: fmt.Sprintf("X-Attribute%02d", index), From: gatewayapi.SourceReference{Attribute: new(name)},
 				})
 			}
 		})

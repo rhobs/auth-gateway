@@ -11,8 +11,8 @@ authenticators:
     - gateway-test
   attributes:
     - name: tenant_id
-      from_source: claim
-      value: [tenant]
+      from:
+        claim: [tenant]
 servers:
 - hostname: gateway.example.test
   apis:
@@ -26,10 +26,11 @@ servers:
       authorization:
         grants:
         - authenticator: internal-jwt
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: client-a
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: client-a
 apis:
 - name: metrics
   upstream:
@@ -39,4 +40,5 @@ apis:
   - methods:
     - POST
     path:
-      exact: "/write"
+      expression: equals
+      value: "/write"

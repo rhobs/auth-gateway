@@ -124,21 +124,18 @@ func validateExtAuthzAttributes(field string, service gatewayapi.ExternalAuthori
 			return fmt.Errorf("%s.name must be a unique valid attribute name", name)
 		}
 		seen[source.Name] = true
-		if source.Value.IsPath {
-			return fmt.Errorf("%s.value must be a single name", name)
-		}
-		switch source.FromSource {
+		switch source.From.Kind() {
 		case attributeSourceHeader:
-			header := strings.ToLower(source.Value.Text)
+			header := strings.ToLower(source.From.Scalar())
 			if !allowed[header] || credentials[header] || forbiddenIdentityHeader(header) {
-				return fmt.Errorf("%s.value must name a safe request_headers entry", name)
+				return fmt.Errorf("%s.from.header must name a safe request_headers entry", name)
 			}
-		case "authenticator":
-			if source.Name != source.Value.Text {
-				return fmt.Errorf("%s.value must match name for an authenticator attribute", name)
+		case "attribute":
+			if source.Name != source.From.Scalar() {
+				return fmt.Errorf("%s.from.attribute must match name for an authenticator attribute", name)
 			}
 		default:
-			return fmt.Errorf("%s.from_source must be header or authenticator", name)
+			return fmt.Errorf("%s.from must select exactly one of header or attribute", name)
 		}
 	}
 	return nil
@@ -164,10 +161,10 @@ func validateExtAuthzAccess(field string, access resolvedAccess, known map[strin
 	for _, source := range service.Attributes {
 		for _, authenticator := range access.authenticators {
 			_, ok := authenticatorAttribute(authenticator, source.Name)
-			if source.FromSource == attributeSourceHeader && ok {
+			if source.From.Kind() == attributeSourceHeader && ok {
 				return fmt.Errorf("%s.authorization.ext_authz.service attribute %q collides with authenticator %q", field, source.Name, authenticator.Name)
 			}
-			if source.FromSource == "authenticator" && !ok {
+			if source.From.Kind() == "attribute" && !ok {
 				return fmt.Errorf("%s.authorization.ext_authz.service attribute %q requires an attribute from authenticator %q", field, source.Name, authenticator.Name)
 			}
 		}
@@ -189,14 +186,14 @@ func extAuthzProvidesAttribute(access resolvedAccess, service gatewayapi.Externa
 	if !ok {
 		return false
 	}
-	if source.FromSource == attributeSourceHeader {
+	if source.From.Kind() == attributeSourceHeader {
 		return true
 	}
 	if len(access.authenticators) == 0 {
 		return false
 	}
 	for _, authenticator := range access.authenticators {
-		_, exists := authenticatorAttribute(authenticator, source.Value.Text)
+		_, exists := authenticatorAttribute(authenticator, source.From.Scalar())
 		if !exists {
 			return false
 		}

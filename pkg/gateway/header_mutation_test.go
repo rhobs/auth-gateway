@@ -1,7 +1,9 @@
 package gateway
 
 import (
+	gatewayapi "github.com/rhobs/auth-gateway/pkg/api"
 	"reflect"
+	"strings"
 	"testing"
 
 	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
@@ -160,5 +162,13 @@ func TestJWTRequiredHeadersAreRouteScopedAndManaged(t *testing.T) {
 	}
 	if !protected || !methodFallback || !notFound {
 		t.Fatalf("route cases protected/fallback/not-found = %t/%t/%t", protected, methodFallback, notFound)
+	}
+}
+
+func TestForwardingRequiresAttributeSource(t *testing.T) {
+	c := loadConfigCase(t, "jwt-auth-with-attributes")
+	c.APIs[0].Routes[0].Processing.RequestHeaders[0].From = gatewayapi.SourceReference{Header: new("X-Tenant")}
+	if err := Validate(c); err == nil || !strings.Contains(err.Error(), ".from.attribute") {
+		t.Fatalf("validation = %v, want attribute reference error", err)
 	}
 }

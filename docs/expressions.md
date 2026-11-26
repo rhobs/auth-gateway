@@ -20,17 +20,23 @@ unsupported expression names or keyword values are rejected.
 
 ## Expression availability
 
-`expression` is used in access header selectors, local grant conditions, and
-binding fault selectors. The supported operations depend on that location:
+Conditions use `expression` and exactly one operand: `value` for a literal or
+`value_from: {attribute: name}` for a declared attribute. `present` and
+`nonempty` take no operand. Named conditions also set `name`; route paths
+have an implicit target and omit it.
 
-| Expression | Header selectors (access and faults) | Authorization grants | Fault attribute selectors | Configured `value` |
-|------------|--------------------------------------|----------------------|---------------------------|--------------------|
-| `equals` | Exact header value. | Exact verified scalar value. | Exact scalar value. | One nonempty string. |
-| `in` | Header value matches any listed string. | Verified scalar matches any listed string. | Scalar matches any listed string. | Nonempty list of distinct strings. |
-| `present` | Header exists, including an empty value. | Verified attribute is a nonempty scalar string. | Attribute is a nonempty scalar string. | Omit `value`. |
-| `equals-attribute` | Unavailable. | Two declared scalar attributes have equal, nonempty values. | Unavailable. | The other attribute's name. |
-| `has` | Unavailable. | Verified JWT list claim contains one exact string. | Unavailable. | One nonempty string. |
-| `has-one-of` | Unavailable. | Verified JWT list claim contains any listed string. | Unavailable. | Nonempty list of distinct strings. |
+| Layer | Expressions | Operand |
+|-------|-------------|---------|
+| Route path | `equals`, `prefix`, `regex` | Literal string. |
+| Access header selectors | `equals`, `in`, `present` | String, distinct string list, or no operand, respectively. |
+| Local grant attributes | `equals`, `in`, `nonempty`, `has`, `has-one-of` | String or attribute reference for `equals`; list for `in` and `has-one-of`; string for `has`; none for `nonempty`. |
+| Fault header selectors | `equals` | Literal string. |
+| Fault attribute selectors | `in` | Nonempty list of distinct strings. |
+
+`equals` compares scalar strings. `in` checks scalar membership; `has` and
+`has-one-of` check exact elements of verified JWT lists. `present` checks
+header existence, including empty values. `nonempty` requires a nonempty
+verified scalar string. Missing and incorrectly typed values fail closed.
 
 Expression names and matched values are case-sensitive. Match strings must
 be nonempty and contain no control characters or surrounding whitespace.
@@ -60,11 +66,11 @@ Under `apis[].routes[]`, `methods` accepts `CONNECT`, `DELETE`, `GET`, `HEAD`,
 `OPTIONS`, `PATCH`, `POST`, `PUT`, and `TRACE`. Methods must be unique within
 a route.
 
-Set exactly one path matcher under `path`:
+Set `path.expression` and its literal `path.value`:
 
 | Keyword  | Meaning                                                      |
 |----------|--------------------------------------------------------------|
-| `exact`  | Match one complete path.                                     |
+| `equals` | Match one complete path.                                     |
 | `prefix` | Match the beginning of a path. `/api` also matches `/apiv2`. |
 | `regex`  | Match the complete path using an RE2 regular expression.     |
 
@@ -89,15 +95,14 @@ for regex syntax and capture references.
 
 Location: `apis[].attributes[]`.
 
-API attributes accept only `from_source: fixed`, with a nonempty string
-`value` containing no control characters or surrounding whitespace. The value
+API attributes accept only `from: {fixed: value}`, with a nonempty string
+value containing no control characters or surrounding whitespace. The value
 is available on every matching method route, including public routes and all
 server bindings of the API. Generated `404` and `405` fallback routes do not
 have API attributes.
 
-Fixed API attributes can supply upstream headers, metric labels, fault
-selectors, and external authorization inputs. They cannot supply local grant
-conditions or reuse names declared by a selected authenticator or external
+Fixed API attributes can supply upstream headers, metric labels, and external
+authorization inputs. They cannot supply local grant conditions or reuse names declared by a selected authenticator or external
 service. See [API attributes](configuration-reference.md#api-attributes).
 
 ## Request header selectors
@@ -128,7 +133,7 @@ Each `authenticators[]` entry selects exactly one of `jwt`, `api_key`, or
 
 Declare attributes under `authenticators[].attributes[]`:
 
-| `from_source` | Available on       | Required `value`                                                              |
+| Key under `from` | Available on | Operand                                                              |
 |---------------|--------------------|-------------------------------------------------------------------------------|
 | `claim`       | JWT.               | Nonempty list of literal claim keys, such as `[organization, id]` or `[sub]`. |
 | `credential`  | API keys.          | Attribute name from the API-key credential's `attributes` map.                |
@@ -142,9 +147,8 @@ configuration. Values are used unchanged. Header sources cannot read credential
 or reserved identity, routing, connection, or framing headers.
 
 Fixed authenticator attributes become available only after that authenticator
-verifies the request. They can supply upstream headers, metrics, fault
-selectors, and declared external service inputs. Local grant conditions cannot
-use fixed sources.
+verifies the request. They can supply upstream headers, metrics, and declared
+external service inputs. Local grant conditions cannot use fixed sources.
 
 See [authenticator fields](configuration-reference.md#authenticators) for name
 and source restrictions, and [authentication](auth/README.md#authentication)
@@ -155,16 +159,17 @@ for provider selection.
 Location: `servers[].apis[].access[].authorization.grants[]`.
 
 Each grant names its verifying `authenticator` and a list of attribute
-conditions. All six expressions in the [expression table](#expression-availability)
-are available, subject to their source types. Every condition within a grant
-must match; any applicable grant can allow the request. An attribute name
-can appear only once within a grant.
+conditions under `match.attributes`. The grant expressions in the
+[expression table](#expression-availability) are subject to their source types.
+Every condition within a grant must match; any applicable grant can allow the
+request. An attribute name can appear only once within a grant.
 
-- `equals`, `in`, and `present` use verified JWT claims, API-key attributes,
+- `equals`, `in`, and `nonempty` use verified JWT claims, API-key attributes,
   or certificate SANs. Their source must be a scalar string.
 - `has` and `has-one-of` require a verified JWT list claim. They compare exact
   string elements; non-string elements are ignored.
-- `equals-attribute` compares two attributes declared by the same authenticator.
+- `equals` with `value_from.attribute` compares two attributes declared by the
+  same authenticator.
   Its left side must come from a verified credential. The right side can come
   from another verified attribute or a request header. That header must also
   appear in the access entry's `match.headers`.
@@ -173,11 +178,11 @@ Fixed API and authenticator attributes cannot be used on either side of a
 local grant condition.
 
 Missing or incorrectly typed values do not match. In particular, `in` does not
-match a list-valued source, and attribute `present` does not match an empty
+match a list-valued source, and `nonempty` does not match an empty
 string, list, number, boolean, or null.
 
 JWT and API-key grants require at least one condition. An mTLS grant can omit
-`attributes` or use `[]` to allow any certificate trusted by that server's CA.
+`match.attributes` or use `[]` to allow any certificate trusted by that server's CA.
 See [authorization](auth/README.md#authorization) for access outcomes and the
 [JWT guide](auth/jwt.md) for condition examples.
 
@@ -188,13 +193,13 @@ Each protected entry selects exactly one of `authorization.grants` or
 through `service`. Local authentication may be omitted when the service
 handles authentication itself.
 
-External service attributes use a separate set of `from_source` choices under
+External service attributes use a context-specific set of `from` keys under
 `ext_authz_services[].attributes[]`:
 
-| `from_source`   | Required `value`                             | Restrictions                                                                                                                      |
+| Key under `from` | Operand                             | Restrictions                                                                                                                      |
 |-----------------|----------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
 | `header`        | Original request header name.                | Must be a safe `request_headers` entry and cannot be a credential header or collide with a selected authenticator attribute name. |
-| `authenticator` | Declared local authenticator attribute name. | Must equal this attribute's `name` and be declared by every selected local authenticator.                                         |
+| `attribute` | Declared local authenticator attribute name. | Must equal this attribute's `name` and be declared by every selected local authenticator.                                         |
 
 `request_headers` lists headers sent to the service. `credential_headers` is a
 subset removed before forwarding to the API backend. These attributes are
@@ -204,7 +209,7 @@ authentication sends no authenticator attributes.
 
 Every fixed attribute on the matched API is sent automatically in the same
 metadata namespace. Do not repeat it under `ext_authz_services[].attributes`.
-Fixed authenticator attributes use `from_source: authenticator` and are sent
+Fixed authenticator attributes use `from.attribute` and are sent
 only after their authenticator verifies the request.
 
 See [external authorization](auth/ext-authz.md) for the check contract.
@@ -215,8 +220,8 @@ Forwarding and metrics reference declared scalar attributes:
 
 | Location                                       | Syntax and meaning                                                                                                  |
 |------------------------------------------------|---------------------------------------------------------------------------------------------------------------------|
-| `apis[].routes[].processing.request_headers[]` | `name` sets the upstream header; `from_attribute` names its source attribute.                                       |
-| `apis[].metrics.labels`                        | Map each label name to a declared attribute name. `metrics: {}` enables API and status counts without extra labels. |
+| `apis[].routes[].processing.request_headers[]` | `name` sets the upstream header; `from.attribute` names its source attribute.                                       |
+| `apis[].metrics.labels`                        | Map each label to `{from: {attribute: name}}`. `metrics: {}` enables API and status counts without extra labels. |
 
 These fields do not accept `expression`. Fixed API attributes are available
 for both public and protected bindings. Other attributes required by header
@@ -228,14 +233,15 @@ Fault injection is configured under `servers[].apis[].fault_injection`:
 
 | Location | Supported conditions |
 |----------|----------------------|
-| `match.headers[]` | `name`, `expression: equals`, `in`, or `present`, and the corresponding `value` from the expression table. |
-| `match.attributes[]` | The same condition structure, using an attribute name. `present` requires a nonempty scalar string. |
+| `match.headers[]` | `name`, `expression: equals`, and a literal string `value`. |
+| `match.attributes[]` | `name`, `expression: in`, and a literal string list `value`. |
 
-All configured header and attribute conditions must match. Values in an `in`
-list are alternatives. Attribute conditions read fixed API values or values
-produced by the selected access entry, including fixed authenticator and
-request header sources. A value missing from that entry does not match;
-the attribute need not be declared by every entry in the binding.
+All conditions must match; list values are alternatives. Attribute targets must
+be declared by every selected local authenticator on every protected access
+entry and come from verified claims, credentials, or certificate SANs. Public
+bindings and external-only authentication cannot use fault attribute selectors.
+Fixed and header sources cannot supply fault attributes. Missing, empty, or
+incorrectly typed runtime values do not match.
 
 Fault header selectors cannot use credential or reserved headers, or headers
 overwritten by route processing. Omitting `match` selects all requests that

@@ -38,27 +38,27 @@ func TestExternalAuthorizationValidation(t *testing.T) {
 		{"unlisted credential header", "credential_headers must contain distinct request_headers", func(c *gatewayapi.Config) {
 			c.ExtAuthzServices[0].CredentialHeaders = []string{"x-other"}
 		}},
-		{"undeclared header", "attributes[0].value must name a safe request_headers entry", func(c *gatewayapi.Config) {
-			c.ExtAuthzServices[0].Attributes[0].Value.Text = "X-Other"
+		{"undeclared header", "attributes[0].from.header must name a safe request_headers entry", func(c *gatewayapi.Config) {
+			*c.ExtAuthzServices[0].Attributes[0].From.Header = "X-Other"
 		}},
-		{"credential as attribute", "attributes[0].value must name a safe request_headers entry", func(c *gatewayapi.Config) {
-			c.ExtAuthzServices[0].Attributes[0].Value.Text = "Authorization"
+		{"credential as attribute", "attributes[0].from.header must name a safe request_headers entry", func(c *gatewayapi.Config) {
+			*c.ExtAuthzServices[0].Attributes[0].From.Header = "Authorization"
 		}},
-		{"invalid source", "attributes[0].from_source must be header or authenticator", func(c *gatewayapi.Config) {
-			c.ExtAuthzServices[0].Attributes[0].FromSource = "response"
+		{"invalid source", "attributes[0].from must select exactly one of header or attribute", func(c *gatewayapi.Config) {
+			c.ExtAuthzServices[0].Attributes[0].From = gatewayapi.SourceReference{Claim: []string{"role"}}
 		}},
 		{"duplicate attribute", "attributes[1].name must be a unique valid attribute name", func(c *gatewayapi.Config) {
 			c.ExtAuthzServices[0].Attributes[1].Name = "requested_tenant"
 		}},
-		{"authenticator attribute alias", "attributes[1].value must match name", func(c *gatewayapi.Config) {
-			c.ExtAuthzServices[0].Attributes[1].Value.Text = "writer_id"
+		{"authenticator attribute alias", "attributes[1].from.attribute must match name", func(c *gatewayapi.Config) {
+			*c.ExtAuthzServices[0].Attributes[1].From.Attribute = "writer_id"
 		}},
 		{"missing authenticator attribute", "service attribute \"missing\" requires an attribute", func(c *gatewayapi.Config) {
 			c.ExtAuthzServices[0].Attributes[1].Name = "missing"
-			c.ExtAuthzServices[0].Attributes[1].Value.Text = "missing"
+			*c.ExtAuthzServices[0].Attributes[1].From.Attribute = "missing"
 		}},
 		{"header attribute collision", "service attribute \"requested_tenant\" collides", func(c *gatewayapi.Config) {
-			c.Authenticators[0].Attributes = append(c.Authenticators[0].Attributes, gatewayapi.AttributeSource{Name: "requested_tenant", FromSource: "header", Value: gatewayapi.AttributeValue{Text: "X-Tenant"}})
+			c.Authenticators[0].Attributes = append(c.Authenticators[0].Attributes, gatewayapi.AttributeSource{Name: "requested_tenant", From: gatewayapi.SourceReference{Header: new("X-Tenant")}})
 		}},
 		{"missing forwarded attribute", "does not provide processing attribute", func(c *gatewayapi.Config) {
 			c.ExtAuthzServices[0].Attributes = c.ExtAuthzServices[0].Attributes[1:]
@@ -162,8 +162,8 @@ func TestExternalAuthorizationAfterMTLS(t *testing.T) {
 	c := loadConfigCase(t, "mtls-auth")
 	service := loadConfigCase(t, "ext-authz").ExtAuthzServices[0]
 	service.Attributes = []gatewayapi.AttributeSource{
-		{Name: "tenant_id", FromSource: "authenticator", Value: gatewayapi.AttributeValue{Text: "tenant_id"}},
-		{Name: "requested_tenant", FromSource: "authenticator", Value: gatewayapi.AttributeValue{Text: "requested_tenant"}},
+		{Name: "tenant_id", From: gatewayapi.SourceReference{Attribute: new("tenant_id")}},
+		{Name: "requested_tenant", From: gatewayapi.SourceReference{Attribute: new("requested_tenant")}},
 	}
 	c.ExtAuthzServices = []gatewayapi.ExternalAuthorizationService{service}
 	c.Servers[0].APIs[0].Access[0].Authorization = gatewayapi.Authorization{ExtAuthz: &gatewayapi.ExternalAuthorization{Service: "policy"}}

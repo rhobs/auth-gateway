@@ -70,7 +70,7 @@ func TestGenerateBuildsNamedAPIClustersAndRoutes(t *testing.T) {
 		},
 		Routes: []gatewayapi.Route{{
 			Methods: []string{"POST"},
-			Path:    gatewayapi.PathMatch{Exact: "/logs/otlp/v1/logs"},
+			Path:    gatewayapi.PathMatch{Expression: "equals", Value: &gatewayapi.MatchValue{Text: "/logs/otlp/v1/logs"}},
 			Rewrite: &gatewayapi.PathRewrite{Path: "/otlp/v1/logs"},
 		}},
 	})
@@ -271,7 +271,7 @@ func TestGenerateScopesAPIExposureToServers(t *testing.T) {
 			Methods: []string{"GET"}, Path: config.APIs[0].Routes[0].Path,
 		}}},
 		gatewayapi.API{Name: "hidden", Upstream: config.APIs[0].Upstream, Routes: []gatewayapi.Route{{
-			Methods: []string{"GET"}, Path: gatewayapi.PathMatch{Exact: "/hidden"},
+			Methods: []string{"GET"}, Path: gatewayapi.PathMatch{Expression: "equals", Value: &gatewayapi.MatchValue{Text: "/hidden"}},
 		}}},
 	)
 	config.Servers = []gatewayapi.Server{
@@ -365,7 +365,7 @@ func TestGenerateUsesAPIBindingOrder(t *testing.T) {
 	}
 	config.APIs = append(config.APIs, gatewayapi.API{
 		Name: "broad", Upstream: config.APIs[0].Upstream,
-		Routes: []gatewayapi.Route{{Methods: []string{"POST"}, Path: gatewayapi.PathMatch{Prefix: "/metrics/"}}},
+		Routes: []gatewayapi.Route{{Methods: []string{"POST"}, Path: gatewayapi.PathMatch{Expression: "prefix", Value: &gatewayapi.MatchValue{Text: "/metrics/"}}}},
 	})
 	for _, order := range [][]string{{"broad", "metrics"}, {"metrics", "broad"}} {
 		config.Servers[0].APIs = nil
@@ -450,13 +450,13 @@ func TestResolvedReferencesDoNotAliasInput(t *testing.T) {
 		name string
 		edit func(*gatewayapi.Config)
 	}{
-		{name: "API route", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Path.Exact = "/changed" }},
+		{name: "API route", edit: func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Path.Value.Text = "/changed" }},
 		{name: "authenticator", edit: func(c *gatewayapi.Config) { c.Authenticators[0].JWT.Issuer = "https://changed.jwt.test" }},
 		{name: "attribute source", edit: func(c *gatewayapi.Config) {
 			setTestAttribute(&c.Authenticators[0], testClaimAttribute("tenant_id", "changed"))
 		}},
 		{name: "grant allowlist", edit: func(c *gatewayapi.Config) {
-			c.Servers[2].APIs[0].Access[0].Authorization.Grants[0].Attributes[0].Value.Text = "changed"
+			c.Servers[2].APIs[0].Access[0].Authorization.Grants[0].Match.Attributes[0].Value.Text = "changed"
 		}},
 		{name: "server", edit: func(c *gatewayapi.Config) { c.Servers[2].Hostname = "changed.gateway.test" }},
 		{name: "API binding", edit: func(c *gatewayapi.Config) { c.Servers[2].APIs[0].Name = "public" }},

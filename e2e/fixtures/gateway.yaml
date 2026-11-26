@@ -38,13 +38,15 @@ apis:
   - methods:
     - POST
     path:
-      exact: "/metrics/api/v1/receive"
+      expression: equals
+      value: "/metrics/api/v1/receive"
     rewrite:
       path: "/anything/api/v1/receive"
   - methods:
     - GET
     path:
-      regex: "^/metrics/api/v1/(query|query_range)$"
+      expression: regex
+      value: "^/metrics/api/v1/(query|query_range)$"
     rewrite:
       regex:
         pattern: "^/metrics/(.*)$"
@@ -52,32 +54,37 @@ apis:
   - methods:
     - GET
     path:
-      prefix: "/logs/otlp/"
+      expression: prefix
+      value: "/logs/otlp/"
     rewrite:
       prefix: "/anything/otlp/"
   - methods:
     - GET
     - POST
     path:
-      prefix: "/multi-method/"
+      expression: prefix
+      value: "/multi-method/"
     rewrite:
       prefix: "/anything/multi-method/"
   - methods:
     - GET
     path:
-      prefix: "/routes/order/"
+      expression: prefix
+      value: "/routes/order/"
     rewrite:
       prefix: "/anything/first/"
   - methods:
     - GET
     path:
-      exact: "/routes/order/specific"
+      expression: equals
+      value: "/routes/order/specific"
     rewrite:
       path: "/anything/second"
   - methods:
     - POST
     path:
-      exact: "/anything/no-rewrite"
+      expression: equals
+      value: "/anything/no-rewrite"
 - name: upstream-health
   upstream:
     address: httpbin
@@ -86,7 +93,8 @@ apis:
   - methods:
     - GET
     path:
-      exact: "/upstream-health"
+      expression: equals
+      value: "/upstream-health"
     rewrite:
       path: "/anything"
 kubernetes:

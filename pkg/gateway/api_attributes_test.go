@@ -20,7 +20,7 @@ func TestLoadAPIFixedAttributes(t *testing.T) {
 	if len(c.APIs[1].Attributes) != 0 {
 		t.Fatal("plain API gained fixed attributes")
 	}
-	if c.APIs[0].Metrics.Labels["operation"] != "role" {
+	if *c.APIs[0].Metrics.Labels["operation"].From.Attribute != "role" {
 		t.Fatal("metric label does not reference the fixed role")
 	}
 }
@@ -34,21 +34,25 @@ func TestAPIFixedAttributeValidation(t *testing.T) {
 		{"duplicate name", "apis[0].attributes[2].name", func(c *gatewayapi.Config) {
 			c.APIs[0].Attributes = append(c.APIs[0].Attributes, c.APIs[0].Attributes[0])
 		}},
-		{"dynamic claim", "apis[0].attributes[0].from_source", func(c *gatewayapi.Config) { c.APIs[0].Attributes[0].FromSource = "claim" }},
-		{"dynamic header", "apis[0].attributes[0].from_source", func(c *gatewayapi.Config) { c.APIs[0].Attributes[0].FromSource = "header" }},
-		{"empty value", "apis[0].attributes[0].value", func(c *gatewayapi.Config) { c.APIs[0].Attributes[0].Value.Text = "" }},
-		{"path value", "apis[0].attributes[0].value", func(c *gatewayapi.Config) {
-			c.APIs[0].Attributes[0].Value = gatewayapi.AttributeValue{Path: []string{"role"}, IsPath: true}
+		{"dynamic claim", "apis[0].attributes[0].from", func(c *gatewayapi.Config) {
+			c.APIs[0].Attributes[0].From = gatewayapi.SourceReference{Claim: []string{"role"}}
 		}},
-		{"control value", "apis[0].attributes[0].value", func(c *gatewayapi.Config) { c.APIs[0].Attributes[0].Value.Text = "bad\nvalue" }},
-		{"Unicode control value", "apis[0].attributes[0].value", func(c *gatewayapi.Config) { c.APIs[0].Attributes[0].Value.Text = "bad\u0085value" }},
-		{"surrounding whitespace", "apis[0].attributes[0].value", func(c *gatewayapi.Config) { c.APIs[0].Attributes[0].Value.Text = " metrics:read " }},
-		{"invalid UTF-8", "apis[0].attributes[0].value", func(c *gatewayapi.Config) { c.APIs[0].Attributes[0].Value.Text = string([]byte{0xff}) }},
+		{"dynamic header", "apis[0].attributes[0].from", func(c *gatewayapi.Config) {
+			c.APIs[0].Attributes[0].From = gatewayapi.SourceReference{Header: new("X-Role")}
+		}},
+		{"empty value", "apis[0].attributes[0].from", func(c *gatewayapi.Config) { *c.APIs[0].Attributes[0].From.Fixed = "" }},
+		{"path value", "apis[0].attributes[0].from", func(c *gatewayapi.Config) {
+			c.APIs[0].Attributes[0].From = gatewayapi.SourceReference{Fixed: new("metrics:read"), Claim: []string{"role"}}
+		}},
+		{"control value", "apis[0].attributes[0].from", func(c *gatewayapi.Config) { *c.APIs[0].Attributes[0].From.Fixed = "bad\nvalue" }},
+		{"Unicode control value", "apis[0].attributes[0].from", func(c *gatewayapi.Config) { *c.APIs[0].Attributes[0].From.Fixed = "bad\u0085value" }},
+		{"surrounding whitespace", "apis[0].attributes[0].from", func(c *gatewayapi.Config) { *c.APIs[0].Attributes[0].From.Fixed = " metrics:read " }},
+		{"invalid UTF-8", "apis[0].attributes[0].from", func(c *gatewayapi.Config) { *c.APIs[0].Attributes[0].From.Fixed = string([]byte{0xff}) }},
 		{"other API label", "apis[1].metrics.labels.operation", func(c *gatewayapi.Config) {
-			c.APIs[1].Metrics = &gatewayapi.APIMetrics{Labels: map[string]string{"operation": "role"}}
+			c.APIs[1].Metrics = &gatewayapi.APIMetrics{Labels: map[string]gatewayapi.AttributeReference{"operation": {From: gatewayapi.SourceReference{Attribute: new("role")}}}}
 		}},
 		{"public dynamic forwarding", "servers[0].apis[0].public", func(c *gatewayapi.Config) {
-			c.APIs[0].Routes[0].Processing.RequestHeaders[0].FromAttribute = "tenant_id"
+			c.APIs[0].Routes[0].Processing.RequestHeaders[0].From.Attribute = new("tenant_id")
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -82,8 +86,8 @@ func TestAPIFixedAttributesCloneInput(t *testing.T) {
 	c := loadConfigCase(t, "api-fixed-attributes")
 	defaulted := withDefaultsConfig(c)
 	defaulted.APIs[0].Attributes[0].Name = "changed"
-	defaulted.APIs[0].Attributes[0].Value.Text = "changed"
-	if c.APIs[0].Attributes[0].Name != "role" || c.APIs[0].Attributes[0].Value.Text != "metrics:read" {
+	*defaulted.APIs[0].Attributes[0].From.Fixed = "changed"
+	if c.APIs[0].Attributes[0].Name != "role" || *c.APIs[0].Attributes[0].From.Fixed != "metrics:read" {
 		t.Fatal("defaulting aliased fixed API attributes")
 	}
 }
@@ -131,9 +135,9 @@ func TestAPIFixedAttributesGenerateForProtectedRoutes(t *testing.T) {
 	c := loadConfigCase(t, "jwt-auth-with-attributes")
 	c.APIs[0].Routes[0].Methods = []string{"GET", "POST"}
 	c.APIs[0].Attributes = []gatewayapi.AttributeSource{testTextAttribute("role", "fixed", "metrics:write")}
-	c.APIs[0].Metrics.Labels["operation"] = "role"
+	c.APIs[0].Metrics.Labels["operation"] = gatewayapi.AttributeReference{From: gatewayapi.SourceReference{Attribute: new("role")}}
 	c.APIs[0].Routes[0].Processing.RequestHeaders = append(c.APIs[0].Routes[0].Processing.RequestHeaders,
-		gatewayapi.RequestHeaderMapping{Name: "X-Operation", FromAttribute: "role"})
+		gatewayapi.RequestHeaderMapping{Name: "X-Operation", From: gatewayapi.SourceReference{Attribute: new("role")}})
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)

@@ -28,8 +28,8 @@ authenticators:
           key: ca.crt
   attributes:
     - name: tenant_id
-      from_source: claim
-      value: [organization, id]
+      from:
+        claim: [organization, id]
 apis:
 - name: metrics
   upstream:
@@ -61,11 +61,13 @@ apis:
     - GET
     - POST
     path:
-      exact: "/api/v1/query"
+      expression: equals
+      value: "/api/v1/query"
   - methods:
     - POST
     path:
-      exact: "/api/v1/receive"
+      expression: equals
+      value: "/api/v1/receive"
     timeouts:
       response_timeout: 20s
       max_stream_duration: 30s
@@ -84,10 +86,11 @@ servers:
       authorization:
         grants:
         - authenticator: issuer
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: customer-a
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: customer-a
 observability:
   metrics:
     enabled: true

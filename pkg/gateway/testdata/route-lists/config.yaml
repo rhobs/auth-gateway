@@ -15,7 +15,8 @@ apis:
     - GET
     - POST
     path:
-      regex: "^/metrics/api/v1/(query|query_range)$"
+      expression: regex
+      value: "^/metrics/api/v1/(query|query_range)$"
     rewrite:
       regex:
         pattern: "^/metrics/(.*)$"
@@ -23,13 +24,15 @@ apis:
   - methods:
     - GET
     path:
-      prefix: "/metrics/api/v1/label/"
+      expression: prefix
+      value: "/metrics/api/v1/label/"
     rewrite:
       prefix: "/api/v1/label/"
   - methods:
     - GET
     path:
-      exact: "/metrics/api/v1/labels"
+      expression: equals
+      value: "/metrics/api/v1/labels"
     rewrite:
       path: "/api/v1/labels"
 kubernetes:

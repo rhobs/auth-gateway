@@ -98,7 +98,7 @@ func requestHeaderMutations(mappings []gatewayapi.RequestHeaderMapping) []*mutat
 	mutations := make([]*mutationrules.HeaderMutation, 0, len(mappings))
 	for _, mapping := range mappings {
 		mutations = append(mutations, &mutationrules.HeaderMutation{Action: &mutationrules.HeaderMutation_Append{Append: &core.HeaderValueOption{
-			Header:       &core.HeaderValue{Key: mapping.Name, Value: "%FILTER_STATE(" + filterStateKey(mapping.FromAttribute) + ":PLAIN)%"},
+			Header:       &core.HeaderValue{Key: mapping.Name, Value: "%FILTER_STATE(" + filterStateKey(mapping.From.Scalar()) + ":PLAIN)%"},
 			AppendAction: core.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 		}}})
 	}
@@ -167,8 +167,8 @@ func validateRouteProcessing(name string, processing *gatewayapi.RouteProcessing
 			return fmt.Errorf("%s.name %q is duplicated", mappingName, mapping.Name)
 		}
 		seen[lowerName] = struct{}{}
-		if !attributeNamePattern.MatchString(mapping.FromAttribute) {
-			return fmt.Errorf("%s.from_attribute must be a valid attribute name", mappingName)
+		if err := validateAttributeReference(mappingName+".from", mapping.From); err != nil {
+			return err
 		}
 	}
 	return nil

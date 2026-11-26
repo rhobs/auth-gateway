@@ -82,7 +82,7 @@ apis:
     upstream: {address: httpbin, port: 8080}
     routes:
       - methods: [GET]
-        path: {exact: /status}
+        path: {expression: equals, value: /status}
 kubernetes:
   name: auth-gateway
   namespace: observability

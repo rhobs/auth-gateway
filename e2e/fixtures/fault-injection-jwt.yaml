@@ -10,8 +10,8 @@ authenticators:
     - gateway-test
   attributes:
     - name: tenant_id
-      from_source: claim
-      value: [organization, id]
+      from:
+        claim: [organization, id]
 servers:
 - hostname: fault.jwt.auth-gateway.test
   apis:
@@ -35,10 +35,11 @@ servers:
       authorization:
         grants:
         - authenticator: issuer-one
-          attributes:
-            - name: tenant_id
-              expression: in
-              value: [customer-a, customer-b]
+          match:
+            attributes:
+              - name: tenant_id
+                expression: in
+                value: [customer-a, customer-b]
   - name: healthy
     access:
     - name: default
@@ -49,10 +50,11 @@ servers:
       authorization:
         grants:
         - authenticator: issuer-one
-          attributes:
-            - name: tenant_id
-              expression: in
-              value: [customer-a, customer-b]
+          match:
+            attributes:
+              - name: tenant_id
+                expression: in
+                value: [customer-a, customer-b]
 observability:
   metrics:
     custom_metric_name: gateway_http_requests_total
@@ -60,7 +62,7 @@ apis:
 - name: injected
   metrics:
     labels:
-      tenant: tenant_id
+      tenant: {from: {attribute: tenant_id}}
   upstream:
     address: httpbin
     port: 8080
@@ -68,13 +70,14 @@ apis:
   - methods:
     - GET
     path:
-      prefix: "/injected/"
+      expression: prefix
+      value: "/injected/"
     rewrite:
       prefix: "/anything/injected/"
     processing:
       request_headers:
       - name: X-Scope-OrgID
-        from_attribute: tenant_id
+        from: {attribute: tenant_id}
 - name: healthy
   upstream:
     address: httpbin
@@ -83,7 +86,8 @@ apis:
   - methods:
     - GET
     path:
-      exact: "/protected"
+      expression: equals
+      value: "/protected"
     rewrite:
       path: "/anything"
 kubernetes:

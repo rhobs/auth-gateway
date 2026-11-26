@@ -13,22 +13,22 @@ authenticators:
     - gateway-test
   attributes:
     - name: tenant_id
-      from_source: claim
-      value: [organization, id]
+      from:
+        claim: [organization, id]
     - name: writer_id
-      from_source: claim
-      value: [sub]
+      from:
+        claim: [sub]
 - name: partner-key
   api_key:
     secret: auth-gateway-api-keys
     header: X-Partner-Key
   attributes:
     - name: tenant_id
-      from_source: credential
-      value: tenant_id
+      from:
+        credential: tenant_id
     - name: writer_id
-      from_source: credential
-      value: writer_id
+      from:
+        credential: writer_id
 - name: issuer-two
   jwt:
     issuer: https://issuer-two.jwt.test
@@ -38,11 +38,11 @@ authenticators:
     - gateway-test
   attributes:
     - name: tenant_id
-      from_source: claim
-      value: [organization, id]
+      from:
+        claim: [organization, id]
     - name: writer_id
-      from_source: claim
-      value: [sub]
+      from:
+        claim: [sub]
 observability:
   metrics:
     custom_metric_name: gateway_http_requests_total
@@ -50,8 +50,8 @@ apis:
 - name: ingest
   metrics:
     labels:
-      tenant: tenant_id
-      writer: writer_id
+      tenant: {from: {attribute: tenant_id}}
+      writer: {from: {attribute: writer_id}}
   upstream:
     address: httpbin
     port: 8080
@@ -59,15 +59,16 @@ apis:
   - methods:
     - POST
     path:
-      exact: "/ingest"
+      expression: equals
+      value: "/ingest"
     rewrite:
       path: "/anything"
     processing:
       request_headers:
       - name: X-Scope-OrgID
-        from_attribute: tenant_id
+        from: {attribute: tenant_id}
       - name: X-Writer-ID
-        from_attribute: writer_id
+        from: {attribute: writer_id}
 - name: public
   upstream:
     address: httpbin
@@ -76,7 +77,8 @@ apis:
   - methods:
     - GET
     path:
-      exact: "/health"
+      expression: equals
+      value: "/health"
     rewrite:
       path: "/anything"
 servers:
@@ -95,13 +97,14 @@ servers:
       authorization:
         grants:
         - authenticator: partner-key
-          attributes:
-            - name: tenant_id
-              expression: in
-              value: [client-a, client-b]
-            - name: writer_id
-              expression: in
-              value: [writer-a, writer-b]
+          match:
+            attributes:
+              - name: tenant_id
+                expression: in
+                value: [client-a, client-b]
+              - name: writer_id
+                expression: in
+                value: [writer-a, writer-b]
 - hostname: shared.api-key.auth-gateway.test
   apis:
   - name: ingest
@@ -121,13 +124,14 @@ servers:
       authorization:
         grants:
         - authenticator: issuer-one
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: client-a
-            - name: writer_id
-              expression: in
-              value: [writer-a, writer-b]
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: client-a
+              - name: writer_id
+                expression: in
+                value: [writer-a, writer-b]
     - name: shared-key-writers
       match:
         headers:
@@ -142,13 +146,14 @@ servers:
       authorization:
         grants:
         - authenticator: partner-key
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: client-a
-            - name: writer_id
-              expression: in
-              value: [writer-a, writer-b]
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: client-a
+              - name: writer_id
+                expression: in
+                value: [writer-a, writer-b]
 - hostname: key-tls.api-key.auth-gateway.test
   apis:
   - name: ingest
@@ -160,13 +165,14 @@ servers:
       authorization:
         grants:
         - authenticator: partner-key
-          attributes:
-            - name: tenant_id
-              expression: in
-              value: [client-a, client-b]
-            - name: writer_id
-              expression: in
-              value: [writer-a, writer-b]
+          match:
+            attributes:
+              - name: tenant_id
+                expression: in
+                value: [client-a, client-b]
+              - name: writer_id
+                expression: in
+                value: [writer-a, writer-b]
   tls_config:
     secret: api-key-gateway-tls
 kubernetes:

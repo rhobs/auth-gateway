@@ -15,11 +15,11 @@ authenticators:
     - observability-ingestion
   attributes:
     - name: tenant_id
-      from_source: claim
-      value: [x, y, z, claim]
+      from:
+        claim: [x, y, z, claim]
     - name: writer_id
-      from_source: claim
-      value: [sub]
+      from:
+        claim: [sub]
 - name: external-jwt
   jwt:
     issuer: https://sso.external.example.com/realms/observability
@@ -29,11 +29,11 @@ authenticators:
     - observability-ingestion
   attributes:
     - name: tenant_id
-      from_source: claim
-      value: [organization, id]
+      from:
+        claim: [organization, id]
     - name: writer_id
-      from_source: claim
-      value: [sub]
+      from:
+        claim: [sub]
 observability:
   metrics:
     custom_metric_name: gateway_http_requests_total
@@ -41,7 +41,7 @@ apis:
 - name: metrics-write
   metrics:
     labels:
-      tenant: tenant_id
+      tenant: {from: {attribute: tenant_id}}
   upstream:
     address: thanos-receive
     port: 19291
@@ -49,15 +49,16 @@ apis:
   - methods:
     - POST
     path:
-      exact: "/metrics/api/v1/receive"
+      expression: equals
+      value: "/metrics/api/v1/receive"
     rewrite:
       path: "/api/v1/receive"
     processing:
       request_headers:
       - name: X-Scope-OrgID
-        from_attribute: tenant_id
+        from: {attribute: tenant_id}
       - name: X-Writer-ID
-        from_attribute: writer_id
+        from: {attribute: writer_id}
 - name: logs
   metrics: {}
   upstream:
@@ -67,13 +68,14 @@ apis:
   - methods:
     - POST
     path:
-      prefix: "/logs/otlp/"
+      expression: prefix
+      value: "/logs/otlp/"
     rewrite:
       prefix: "/otlp/"
     processing:
       request_headers:
       - name: X-Scope-OrgID
-        from_attribute: tenant_id
+        from: {attribute: tenant_id}
 servers:
 - hostname: write-internal.auth.example.com
   apis:
@@ -88,15 +90,17 @@ servers:
       authorization:
         grants:
         - authenticator: internal-jwt
-          attributes:
-            - name: tenant_id
-              expression: in
-              value: [client-123, client-456]
+          match:
+            attributes:
+              - name: tenant_id
+                expression: in
+                value: [client-123, client-456]
         - authenticator: external-jwt
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: customer-456
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: customer-456
   - name: logs
     access:
     - name: default
@@ -108,15 +112,17 @@ servers:
       authorization:
         grants:
         - authenticator: internal-jwt
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: client-123
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: client-123
         - authenticator: external-jwt
-          attributes:
-            - name: tenant_id
-              expression: in
-              value: [customer-456, customer-789]
+          match:
+            attributes:
+              - name: tenant_id
+                expression: in
+                value: [customer-456, customer-789]
 - hostname: write.auth.example.com
   tls_config:
     secret: write-gateway-tls
@@ -134,15 +140,17 @@ servers:
       authorization:
         grants:
         - authenticator: internal-jwt
-          attributes:
-            - name: tenant_id
-              expression: in
-              value: [client-123, client-456]
+          match:
+            attributes:
+              - name: tenant_id
+                expression: in
+                value: [client-123, client-456]
         - authenticator: external-jwt
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: customer-456
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: customer-456
   - name: logs
     access:
     - name: default
@@ -154,15 +162,17 @@ servers:
       authorization:
         grants:
         - authenticator: internal-jwt
-          attributes:
-            - name: tenant_id
-              expression: equals
-              value: client-123
+          match:
+            attributes:
+              - name: tenant_id
+                expression: equals
+                value: client-123
         - authenticator: external-jwt
-          attributes:
-            - name: tenant_id
-              expression: in
-              value: [customer-456, customer-789]
+          match:
+            attributes:
+              - name: tenant_id
+                expression: in
+                value: [customer-456, customer-789]
 kubernetes:
   name: auth-gateway
   namespace: observability

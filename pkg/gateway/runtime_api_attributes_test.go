@@ -19,9 +19,9 @@ func TestEnvoyForwardsFixedAuthenticatorAttributes(t *testing.T) {
 	c.APIs = c.APIs[:1]
 	c.Servers = c.Servers[:1]
 	c.Authenticators[0].Attributes = append(c.Authenticators[0].Attributes,
-		gatewayapi.AttributeSource{Name: "auth_origin", FromSource: "fixed", Value: gatewayapi.AttributeValue{Text: "partner (100%)"}})
+		gatewayapi.AttributeSource{Name: "auth_origin", From: gatewayapi.SourceReference{Fixed: new("partner (100%)")}})
 	c.APIs[0].Routes[0].Processing.RequestHeaders = append(c.APIs[0].Routes[0].Processing.RequestHeaders,
-		gatewayapi.RequestHeaderMapping{Name: "X-Auth-Origin", FromAttribute: "auth_origin"})
+		gatewayapi.RequestHeaderMapping{Name: "X-Auth-Origin", From: gatewayapi.SourceReference{Attribute: new("auth_origin")}})
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +63,7 @@ func TestEnvoyForwardsFixedAPIAttributes(t *testing.T) {
 
 	c := loadConfigCase(t, "api-fixed-attributes")
 	c.Kubernetes = nil
-	c.APIs[0].Attributes[0].Value.Text = "health:read (100%)"
+	*c.APIs[0].Attributes[0].From.Fixed = "health:read (100%)"
 	for index := range c.APIs {
 		c.APIs[index].Upstream.Address = "host.docker.internal"
 		c.APIs[index].Upstream.Port = uint32(listener.Addr().(*net.TCPAddr).Port)
