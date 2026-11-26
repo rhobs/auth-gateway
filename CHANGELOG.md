@@ -19,6 +19,9 @@ Notable changes to RHOBS Auth Gateway are recorded here.
 
 ### Fixed
 
+- Share the external authorization attribute bridge script across routes,
+  keeping each route's declared attribute list in filter context. Regenerate
+  the bootstrap and explicitly roll out gateway Deployments to apply it.
 - Share generated routes across list-valued header selectors, combining their
   per-route counters. Long patterns retain exact-match routes. Regenerate the
   bootstrap and explicitly roll out gateway Deployments to apply the change.

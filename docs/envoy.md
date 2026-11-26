@@ -133,11 +133,13 @@ Entries without local authentication still run the external filter.
 The gRPC Check request includes allowlisted request headers, the route's
 API and access labels, declared service and fixed API attributes in
 `auth_gateway.ext_authz.attributes`, and parsed JWT claims in
-`envoy.filters.http.jwt_authn` when JWT authentication ran. A route-specific
-Lua filter copies nonempty scalar attributes from filter state into Check
-metadata after local authentication and before the external check. Missing,
-empty, and non-string declared values stay unset; required route headers then
-fail closed. An explicit policy denial uses its supplied HTTP
+`envoy.filters.http.jwt_authn` when JWT authentication ran. One shared Lua
+script per HTTP connection manager copies nonempty scalar attributes from
+filter state into Check metadata after local authentication and before the
+external check. Each selected route supplies its declared attribute names
+through `LuaPerRoute.filter_context`; routes without that context do no work.
+Missing, empty, and non-string declared values stay unset; required route
+headers then fail closed. An explicit policy denial uses its supplied HTTP
 status. Transport errors and timeouts return `503`. Header mutations from the
 policy service are rejected, and the route cache is not cleared. Selected
 credential headers are removed before upstream forwarding.

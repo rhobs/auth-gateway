@@ -180,11 +180,9 @@ func TestAPIFixedAttributesReachExternalAuthorization(t *testing.T) {
 	if err := generated.TypedPerFilterConfig[extAuthzAttributeBridgeName].UnmarshalTo(&bridge); err != nil {
 		t.Fatal(err)
 	}
-	script := bridge.GetSourceCode().GetInlineString()
-	if !strings.Contains(script, `state:get("auth_gateway.attributes.role")`) ||
-		!strings.Contains(script, `metadata:set("auth_gateway.ext_authz.attributes", "role", value)`) {
-		t.Fatalf("external authorization bridge omits fixed role: %s", script)
-	}
+	assertConfigDiff(t, "fixed API attribute context", map[string]any{
+		"attributes": []any{"auth_origin", "requested_tenant", "role", "tenant_id"},
+	}, bridge.GetFilterContext().AsMap())
 }
 
 func assertFixedRouteAttributes(t *testing.T, generated *route.Route, want map[string]string) {
