@@ -7,8 +7,10 @@ import (
 	"testing"
 
 	xdsmatcher "github.com/cncf/xds/go/xds/type/matcher/v3"
+	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	composite "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/composite/v3"
 	fault "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/fault/v3"
+	setfilterstate "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/set_filter_state/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	networkinput "github.com/envoyproxy/go-control-plane/envoy/extensions/matching/common_inputs/network/v3"
 	envoytype "github.com/envoyproxy/go-control-plane/envoy/type/v3"
@@ -140,7 +142,46 @@ func TestFaultMatchReferences(t *testing.T) {
 	}
 }
 
-func TestFaultMatchRequiresVerifiedSourcesAcrossAccessEntries(t *testing.T) {
+func TestFaultMatchUsesAttributesFromSelectedAccess(t *testing.T) {
+	c := faultSelectorConfig(t)
+	c.APIs[0].Metrics = nil
+	removeTestAttribute(&c.Authenticators[0], "writer_id")
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := firstGeneratedHTTPManager(t, files.EnvoyBootstrap.Contents)
+	routes := manager.GetRouteConfig().GetVirtualHosts()[0].GetRoutes()
+	for _, test := range []struct {
+		name       string
+		wantWriter bool
+	}{
+		{"api-0-injected-route-0-access-0-match-0", false},
+		{"api-0-injected-route-0-access-1-match-0", true},
+	} {
+		generated := namedRoute(routes, test.name)
+		if generated == nil || generated.GetTypedPerFilterConfig()[faultCompositeFilterName] == nil {
+			t.Fatalf("route %q has no fault selector", test.name)
+		}
+		var wrapper route.FilterConfig
+		if err := generated.GetTypedPerFilterConfig()[attributeFilterName].UnmarshalTo(&wrapper); err != nil {
+			t.Fatal(err)
+		}
+		var attributes setfilterstate.Config
+		if err := wrapper.GetConfig().UnmarshalTo(&attributes); err != nil {
+			t.Fatal(err)
+		}
+		hasWriter := false
+		for _, value := range attributes.GetOnRequestHeaders() {
+			hasWriter = hasWriter || value.GetObjectKey() == filterStateKey("writer_id")
+		}
+		if hasWriter != test.wantWriter {
+			t.Fatalf("route %q sets writer_id = %t, want %t", test.name, hasWriter, test.wantWriter)
+		}
+	}
+}
+
+func TestFaultMatchAllowsRuntimeAttributeSources(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		edit func(*gatewayapi.Config)
@@ -152,14 +193,26 @@ func TestFaultMatchRequiresVerifiedSourcesAcrossAccessEntries(t *testing.T) {
 		{"fixed source", func(c *gatewayapi.Config) {
 			setTestAttribute(&c.Authenticators[0], testTextAttribute("writer_id", "fixed", "writer-a"))
 		}},
+		{"fixed API source", func(c *gatewayapi.Config) {
+			c.APIs[0].Attributes = []gatewayapi.AttributeSource{testTextAttribute("fault_group", "fixed", "writer-a")}
+			c.Servers[0].APIs[0].FaultInjection.Match.Attributes[1].Name = "fault_group"
+		}},
+		{"public binding with fixed API source", func(c *gatewayapi.Config) {
+			c.APIs[0].Attributes = []gatewayapi.AttributeSource{testTextAttribute("fault_group", "fixed", "writer-a")}
+			binding := &c.Servers[0].APIs[0]
+			binding.Public, binding.Access = true, nil
+			binding.FaultInjection.Match.Attributes = []gatewayapi.MatchExpression{{
+				Name: "fault_group", Expression: "in", Value: &gatewayapi.MatchValue{IsList: true, Items: []string{"writer-a"}},
+			}}
+		}},
 		{"unknown attribute", func(c *gatewayapi.Config) { c.Servers[0].APIs[0].FaultInjection.Match.Attributes[1].Name = "unknown" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			c := faultSelectorConfig(t)
 			c.APIs[0].Metrics = nil
 			test.edit(&c)
-			if err := Validate(c); err == nil || !strings.Contains(err.Error(), "verified scalar source") {
-				t.Fatalf("validation = %v, want verified scalar source", err)
+			if _, err := Generate(c); err != nil {
+				t.Fatalf("generation rejected a runtime fault match: %v", err)
 			}
 		})
 	}

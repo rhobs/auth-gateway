@@ -111,23 +111,6 @@ func validateFaultBindings(serverName string, server resolvedServer, apiKeyHeade
 		if binding.FaultInjection.Match == nil {
 			continue
 		}
-		for j, condition := range binding.FaultInjection.Match.Attributes {
-			conditionField := fmt.Sprintf("%s.match.attributes[%d]", field, j)
-			if binding.Public || len(binding.access) == 0 {
-				return fmt.Errorf("%s requires protected access with verified scalar attributes", conditionField)
-			}
-			for _, access := range binding.access {
-				if len(access.authenticators) == 0 {
-					return fmt.Errorf("%s requires a local authenticator on every access entry", conditionField)
-				}
-				for _, authenticator := range access.authenticators {
-					source, ok := authenticatorAttribute(authenticator, condition.Name)
-					if !ok || (source.From.Kind() != "claim" && source.From.Kind() != "credential" && source.From.Kind() != "certificate") {
-						return fmt.Errorf("%s requires a verified scalar source from authenticator %q", conditionField, authenticator.Name)
-					}
-				}
-			}
-		}
 		for j, condition := range binding.FaultInjection.Match.Headers {
 			header := condition.Name
 			conditionField := fmt.Sprintf("%s.match.headers[%d]", field, j)
