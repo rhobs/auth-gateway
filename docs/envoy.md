@@ -144,6 +144,37 @@ status. Transport errors and timeouts return `503`. Header mutations from the
 policy service are rejected, and the route cache is not cleared. Selected
 credential headers are removed before upstream forwarding.
 
+### External processing
+
+Each `ext_proc_services[]` entry generates a native `ext_proc` filter and HTTP/2
+cluster. Filters are disabled by default. A server access entry's
+`processing.ext_proc` enables one on the generated routes for that entry, with
+request-only processing modes. Its native access header matchers select those
+routes. Public registrations select processing beside `public: true`. API route
+definitions do not select processors. The filters run after
+authorization, credential cleanup, and managed header mappings, before faults,
+admission control, and routing. Generated denial and fallback routes have no
+processor selection. Route body buffer overrides use native
+`request_body_buffer_limit` and must be at least the listener buffer limit, since
+Envoy only raises that limit when it selects a route.
+
+A Lua bridge copies the selected route's nonempty scalar working attributes to
+`auth_gateway.ext_proc.attributes`. Forwarded dynamic metadata includes only that
+namespace and verified JWT payloads. Native request properties are configured
+independently through `request_attributes`. Receiving metadata namespaces and
+processor-driven mode overrides remain disabled.
+
+Native mutation rules allow only explicitly configured header names and reject
+other mutations with an error. Configuration validation protects credentials,
+managed output headers, and gateway controls. The filter uses
+`route_cache_action: RETAIN`, preserving the authorized route even if a processor
+mutates `:path` and requests cache clearing. Explicit immediate responses remain
+enabled, including on services configured to fail open for processing failures.
+
+See [request processing](request-processing.md) for configuration and observable
+behavior. These filters and their clusters are part of the static bootstrap and
+require an explicit Deployment rollout after changes.
+
 ## Files and reloads
 
 File-based deployments must place generated resources at the paths Envoy reads:

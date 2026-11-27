@@ -162,6 +162,24 @@ ext_authz_services:
         from:
           attribute: auth_origin
 
+# Optional gRPC request processor. Deploy and configure this service separately.
+# Changes require regenerating the bootstrap and rolling out the Deployment.
+# HTTP/2 is required. Omit tls_config for plaintext on a trusted network.
+ext_proc_services:
+  - name: request-transform
+    upstream:
+      address: request-processor.observability.svc.cluster.local
+      port: 9000
+      http_protocol: http2
+      tls_config:
+        server_name: request-processor.observability.svc.cluster.local
+        trusted_ca:
+          config_map: {name: processor-ca, key: ca.pem}
+    # message_timeout: 200ms
+    # failure_mode_allow: false
+    request_attributes: [request.method, request.path]
+    mutable_request_headers: [x-processed, content-length] # Empty by default.
+
 # Metrics collection is enabled by default. Per-API counters still need
 # apis[].metrics. Tracing is disabled by default.
 observability:
@@ -339,6 +357,16 @@ servers:
                       # - name: groups
                       #   expression: has-one-of
                       #   value: [metrics-writers, metrics-admins]
+
+            # Only requests matching this access entry use the processor.
+            # Runs after authorization, credential cleanup, and header mappings.
+            processing:
+              ext_proc:
+                service: request-transform
+                request_header_mode: send # Default.
+                request_body_mode: buffered # Default: none.
+                request_trailer_mode: skip # Default.
+                request_body_buffer_limit_bytes: 2097152 # Otherwise listener limit.
 
           # Presence selectors keep the shared tenant's access entries distinct.
           - name: partner-writers

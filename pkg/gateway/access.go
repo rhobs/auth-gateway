@@ -423,12 +423,14 @@ func validateUniqueReferences[V any](field string, names []string, known map[str
 
 func cloneAPIBinding(binding gatewayapi.APIBinding) gatewayapi.APIBinding {
 	binding.Access = cloneSlice(binding.Access, cloneAccess)
+	binding.Processing = cloneConfigPointer(binding.Processing, cloneServerProcessing)
 	binding.FaultInjection = cloneConfigPointer(binding.FaultInjection, cloneFaultInjectionConfig)
 	return binding
 }
 
 func cloneAccess(access gatewayapi.Access) gatewayapi.Access {
 	access.Match.Headers = cloneMatchExpressions(access.Match.Headers)
+	access.Processing = cloneConfigPointer(access.Processing, cloneServerProcessing)
 	access.Authentication = cloneConfigPointer(access.Authentication, cloneAuthentication)
 	access.Authorization.Grants = cloneSlice(access.Authorization.Grants, cloneAuthorizationGrant)
 	access.Authorization.ExtAuthz = clonePointer(access.Authorization.ExtAuthz)

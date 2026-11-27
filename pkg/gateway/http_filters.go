@@ -85,6 +85,20 @@ func httpFilters(c resolvedConfig, hosts []indexedVirtualHost, protected bool) (
 		}
 		filters = append(filters, headers)
 	}
+	if len(c.ExtProcServices) != 0 {
+		bridge, err := extProcAttributeBridgeFilter()
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, bridge)
+		for _, service := range c.ExtProcServices {
+			filter, err := extProcHTTPFilter(service)
+			if err != nil {
+				return nil, err
+			}
+			filters = append(filters, filter)
+		}
+	}
 	fault, err := faultHTTPFilter(c, hosts)
 	if err != nil {
 		return nil, err

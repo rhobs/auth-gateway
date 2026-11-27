@@ -286,7 +286,7 @@ func apiKeyAttributeExpression(attribute string) string {
 }
 
 func needsWorkingAttributes(c resolvedConfig) bool {
-	return len(c.ExtAuthzServices) != 0 || hasRequestHeaderProcessing(c.APIs) || hasRequestMetricLabels(c.APIs) || hasFaultMatchAttributes(c.Servers)
+	return len(c.ExtProcServices) != 0 || len(c.ExtAuthzServices) != 0 || hasRequestHeaderProcessing(c.APIs) || hasRequestMetricLabels(c.APIs) || hasFaultMatchAttributes(c.Servers)
 }
 
 func filterStateKey(attribute string) string {

@@ -65,6 +65,13 @@ func generateClusters(c resolvedConfig) ([]*cluster.Cluster, error) {
 		}
 		clusters = append(clusters, item)
 	}
+	for _, service := range c.ExtProcServices {
+		item, err := extProcCluster(service)
+		if err != nil {
+			return nil, fmt.Errorf("external processing service %q: %w", service.Name, err)
+		}
+		clusters = append(clusters, item)
+	}
 	if enabledObservabilityTracing(c.Observability.Tracing) {
 		tracingCluster, err := otelTraceCluster()
 		if err != nil {

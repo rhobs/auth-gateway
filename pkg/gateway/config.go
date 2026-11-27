@@ -232,6 +232,9 @@ func withDefaultsConfig(c gatewayapi.Config) gatewayapi.Config {
 	for i := range c.ExtAuthzServices {
 		c.ExtAuthzServices[i] = withDefaultsExtAuthzService(c.ExtAuthzServices[i])
 	}
+	for i := range c.ExtProcServices {
+		c.ExtProcServices[i] = withDefaultsExtProcService(c.ExtProcServices[i])
+	}
 	if c.Node.ID == "" {
 		c.Node.ID = defaultNodeID
 	}
@@ -245,6 +248,13 @@ func withDefaultsConfig(c gatewayapi.Config) gatewayapi.Config {
 	}
 	c.Observability = withDefaultsObservabilityConfig(c.Observability, c.Node.Cluster)
 	for i := range c.Servers {
+		for j := range c.Servers[i].APIs {
+			binding := &c.Servers[i].APIs[j]
+			defaultServerProcessing(binding.Processing)
+			for k := range binding.Access {
+				defaultServerProcessing(binding.Access[k].Processing)
+			}
+		}
 		if c.Servers[i].TLSConfig != nil {
 			tlsConfig := withDefaultsServerTLS(*c.Servers[i].TLSConfig)
 			c.Servers[i].TLSConfig = &tlsConfig
@@ -268,6 +278,7 @@ func cloneConfig(c gatewayapi.Config) gatewayapi.Config {
 	c.Overload = cloneConfigPointer(c.Overload, cloneOverloadConfig)
 	c.Authenticators = cloneSlice(c.Authenticators, cloneAuthenticator)
 	c.ExtAuthzServices = cloneSlice(c.ExtAuthzServices, cloneExtAuthzService)
+	c.ExtProcServices = cloneSlice(c.ExtProcServices, cloneExtProcService)
 	c.Servers = cloneSlice(c.Servers, cloneServer)
 	c.APIs = cloneSlice(c.APIs, cloneAPI)
 	c.Observability = cloneObservabilityConfig(c.Observability)
@@ -346,6 +357,9 @@ func validateConfig(c *resolvedConfig) error {
 	if err != nil {
 		return err
 	}
+	if err := validateExtProcServices(c.Config); err != nil {
+		return err
+	}
 	if err := resolveAuthentication(c); err != nil {
 		return err
 	}
@@ -420,6 +434,11 @@ func (c resolvedConfig) caMounts() []gatewayapi.CAConfigMap {
 		}
 	}
 	for _, service := range c.ExtAuthzServices {
+		if service.Upstream.TLSConfig != nil {
+			add(service.Upstream.TLSConfig.TrustedCA)
+		}
+	}
+	for _, service := range c.ExtProcServices {
 		if service.Upstream.TLSConfig != nil {
 			add(service.Upstream.TLSConfig.TrustedCA)
 		}

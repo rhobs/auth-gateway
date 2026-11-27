@@ -226,6 +226,11 @@ func runtimeTrustedCAFiles(c resolvedConfig) []string {
 			add(api.Upstream.TLSConfig.TrustedCA)
 		}
 	}
+	for _, service := range c.ExtProcServices {
+		if service.Upstream.TLSConfig != nil {
+			add(service.Upstream.TLSConfig.TrustedCA)
+		}
+	}
 	return filenames
 }
 
