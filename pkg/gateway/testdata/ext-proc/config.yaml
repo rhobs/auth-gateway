@@ -47,20 +47,28 @@ apis:
       request_headers:
       - name: X-Subject
         from: {attribute: subject}
-      ext_proc:
-        service: transform
-        request_body_mode: buffered
-        request_body_buffer_limit_bytes: 2097152
+- name: streamed
+  attributes:
+  - name: role
+    from: {fixed: "metrics:read (100%)"}
+  upstream: {address: httpbin, port: 8080}
+  routes:
   - methods: [POST]
     path: {expression: equals, value: /streamed}
-    processing:
-      ext_proc:
-        service: transform
-        request_body_mode: streamed
+- name: headers
+  attributes:
+  - name: role
+    from: {fixed: "metrics:read (100%)"}
+  upstream: {address: httpbin, port: 8080}
+  routes:
   - methods: [GET]
     path: {expression: equals, value: /headers}
-    processing:
-      ext_proc: {service: inspect}
+- name: unprocessed
+  attributes:
+  - name: role
+    from: {fixed: "metrics:read (100%)"}
+  upstream: {address: httpbin, port: 8080}
+  routes:
   - methods: [GET]
     path: {expression: equals, value: /unprocessed}
 - name: public
@@ -71,8 +79,6 @@ apis:
   routes:
   - methods: [GET]
     path: {expression: equals, value: /public}
-    processing:
-      ext_proc: {service: inspect}
 servers:
 - hostname: processor.example.test
   apis:
@@ -80,8 +86,91 @@ servers:
     access:
     - name: jwt
       match:
-        headers:
-        - {name: X-Auth, expression: equals, value: jwt}
+        headers: [{name: X-Auth, expression: equals, value: jwt}]
+      authentication:
+        jwt: {providers: [local-jwt]}
+      authorization:
+        grants:
+        - authenticator: local-jwt
+          match:
+            attributes: [{name: subject, expression: nonempty}]
+      processing:
+        ext_proc:
+          service: transform
+          request_body_mode: buffered
+          request_body_buffer_limit_bytes: 2097152
+    - name: key
+      match:
+        headers: [{name: X-Auth, expression: equals, value: key}]
+      authentication:
+        api_key: {authenticator: keys}
+      authorization:
+        grants:
+        - authenticator: keys
+          match:
+            attributes: [{name: subject, expression: nonempty}]
+      processing:
+        ext_proc:
+          service: transform
+          request_body_mode: buffered
+          request_body_buffer_limit_bytes: 2097152
+  - name: streamed
+    access:
+    - name: jwt
+      match:
+        headers: [{name: X-Auth, expression: equals, value: jwt}]
+      authentication:
+        jwt: {providers: [local-jwt]}
+      authorization:
+        grants:
+        - authenticator: local-jwt
+          match:
+            attributes: [{name: subject, expression: nonempty}]
+      processing:
+        ext_proc: {service: transform, request_body_mode: streamed}
+    - name: key
+      match:
+        headers: [{name: X-Auth, expression: equals, value: key}]
+      authentication:
+        api_key: {authenticator: keys}
+      authorization:
+        grants:
+        - authenticator: keys
+          match:
+            attributes: [{name: subject, expression: nonempty}]
+      processing:
+        ext_proc: {service: transform, request_body_mode: streamed}
+  - name: headers
+    access:
+    - name: jwt
+      match:
+        headers: [{name: X-Auth, expression: equals, value: jwt}]
+      authentication:
+        jwt: {providers: [local-jwt]}
+      authorization:
+        grants:
+        - authenticator: local-jwt
+          match:
+            attributes: [{name: subject, expression: nonempty}]
+      processing:
+        ext_proc: {service: inspect}
+    - name: key
+      match:
+        headers: [{name: X-Auth, expression: equals, value: key}]
+      authentication:
+        api_key: {authenticator: keys}
+      authorization:
+        grants:
+        - authenticator: keys
+          match:
+            attributes: [{name: subject, expression: nonempty}]
+      processing:
+        ext_proc: {service: inspect}
+  - name: unprocessed
+    access:
+    - name: jwt
+      match:
+        headers: [{name: X-Auth, expression: equals, value: jwt}]
       authentication:
         jwt: {providers: [local-jwt]}
       authorization:
@@ -91,8 +180,7 @@ servers:
             attributes: [{name: subject, expression: nonempty}]
     - name: key
       match:
-        headers:
-        - {name: X-Auth, expression: equals, value: key}
+        headers: [{name: X-Auth, expression: equals, value: key}]
       authentication:
         api_key: {authenticator: keys}
       authorization:
@@ -102,6 +190,8 @@ servers:
             attributes: [{name: subject, expression: nonempty}]
   - name: public
     public: true
+    processing:
+      ext_proc: {service: inspect}
 kubernetes:
   name: auth-gateway
   namespace: observability

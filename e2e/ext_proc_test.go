@@ -95,7 +95,7 @@ var _ = Describe("External request processing", Label("gateway", "ext-proc", "pr
 				action = "duplex"
 			}
 			code, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, extProcAPICluster, path, 1, func() (int, []byte, error) {
-				return gateway.request(ctx, extProcHost, false, "POST", path, payload, "", apiKeySharedSecretKey, http.Header{"X-Auth": {"key"}, "X-Processor-Action": {action}})
+				return gateway.request(ctx, extProcHost, false, "POST", path, payload, "", apiKeySharedSecretKey, http.Header{"X-Auth": {"key"}, "X-Process": {strings.TrimPrefix(path, "/")}, "X-Processor-Action": {action}})
 			})
 			Expect(code).To(Equal(http.StatusOK), string(body))
 			echo, err := decodeHTTPBinEcho(body)
@@ -132,6 +132,22 @@ var _ = Describe("External request processing", Label("gateway", "ext-proc", "pr
 		}
 	})
 
+	It("uses access header matchers to select processing for the same API route", func(ctx SpecContext) {
+		for _, test := range []struct{ mode, want string }{{"headers", "yes"}, {"bypass", ""}} {
+			code, body := expectUpstreamRequestDelta(ctx, gateway.adminAddr, extProcAPICluster, test.mode, 1, func() (int, []byte, error) {
+				return gateway.request(ctx, extProcHost, false, "GET", "/headers", "", "", apiKeySharedSecretKey, http.Header{"X-Auth": {"key"}, "X-Process": {test.mode}})
+			})
+			Expect(code).To(Equal(http.StatusOK), string(body))
+			echo, err := decodeHTTPBinEcho(body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(echo.Method).To(Equal("GET"))
+			Expect(echo.URL).To(HaveSuffix("/anything"))
+			Expect(echo.Data).To(BeEmpty())
+			Expect(headerValue(echo.Headers, "X-Processed")).To(Equal(test.want))
+			Expect(headerValue(echo.Headers, "X-Partner-Key")).To(BeEmpty())
+		}
+	})
+
 	It("preserves processor rejections and rejects protected header mutations before upstream", func(ctx SpecContext) {
 		for _, test := range []struct {
 			action, header string
@@ -143,7 +159,7 @@ var _ = Describe("External request processing", Label("gateway", "ext-proc", "pr
 			{"mutate", "x-envoy-retry-on", http.StatusInternalServerError},
 		} {
 			expectDeniedBeforeUpstream(ctx, gateway.adminAddr, extProcAPICluster, test.action+test.header, test.code, func() (int, []byte, error) {
-				return gateway.request(ctx, extProcHost, false, "GET", "/headers", "", "", apiKeySharedSecretKey, http.Header{"X-Auth": {"key"}, "X-Processor-Action": {test.action}, "X-Processor-Mutate": {test.header}})
+				return gateway.request(ctx, extProcHost, false, "GET", "/headers", "", "", apiKeySharedSecretKey, http.Header{"X-Auth": {"key"}, "X-Process": {"headers"}, "X-Processor-Action": {test.action}, "X-Processor-Mutate": {test.header}})
 			})
 		}
 	})
@@ -169,7 +185,7 @@ var _ = Describe("External request processing", Label("gateway", "ext-proc", "pr
 			before, err := upstreamRequestCount(ctx, gateway.adminAddr, "ext-proc-transform")
 			Expect(err).NotTo(HaveOccurred())
 			expectDeniedBeforeUpstream(ctx, gateway.adminAddr, extProcAPICluster, test.path, test.code, func() (int, []byte, error) {
-				return gateway.request(ctx, extProcHost, false, test.method, test.path, "", "", test.key, http.Header{"X-Auth": {"key"}})
+				return gateway.request(ctx, extProcHost, false, test.method, test.path, "", "", test.key, http.Header{"X-Auth": {"key"}, "X-Process": {"headers"}})
 			})
 			after, err := upstreamRequestCount(ctx, gateway.adminAddr, "ext-proc-transform")
 			Expect(err).NotTo(HaveOccurred())

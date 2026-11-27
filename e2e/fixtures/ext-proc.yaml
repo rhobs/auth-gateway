@@ -40,33 +40,9 @@ apis:
     processing:
       request_headers:
       - {name: X-Writer-ID, from: {attribute: writer_id}}
-      ext_proc: {service: transform}
   - methods: [POST]
-    path: {expression: equals, value: /buffered}
+    path: {expression: regex, value: '^/(buffered|partial|streamed|duplex)$'}
     rewrite: {path: /anything}
-    processing:
-      ext_proc:
-        service: transform
-        request_body_mode: buffered
-        request_body_buffer_limit_bytes: 2097152
-  - methods: [POST]
-    path: {expression: equals, value: /partial}
-    rewrite: {path: /anything}
-    processing:
-      ext_proc: {service: transform, request_body_mode: buffered_partial}
-  - methods: [POST]
-    path: {expression: equals, value: /streamed}
-    rewrite: {path: /anything}
-    processing:
-      ext_proc: {service: transform, request_body_mode: streamed}
-  - methods: [POST]
-    path: {expression: equals, value: /duplex}
-    rewrite: {path: /anything}
-    processing:
-      ext_proc:
-        service: transform
-        request_body_mode: full_duplex_streamed
-        request_trailer_mode: send
 - name: ext-proc-public
   attributes:
   - name: audience
@@ -76,8 +52,9 @@ apis:
   - methods: [GET]
     path: {expression: equals, value: /public}
     rewrite: {path: /anything}
-    processing:
-      ext_proc: {service: lenient}
+- name: ext-proc-unprocessed
+  upstream: {address: httpbin, port: 8080}
+  routes:
   - methods: [GET]
     path: {expression: equals, value: /unprocessed}
     rewrite: {path: /anything}
@@ -96,9 +73,95 @@ servers:
         - authenticator: issuer-one
           match:
             attributes: [{name: tenant_id, expression: nonempty}]
-    - name: key
+      processing:
+        ext_proc: {service: transform}
+    - name: key-headers
       match:
-        headers: [{name: X-Auth, expression: equals, value: key}]
+        headers:
+        - {name: X-Auth, expression: equals, value: key}
+        - {name: X-Process, expression: equals, value: headers}
+      authentication:
+        api_key: {authenticator: partner-key}
+      authorization:
+        grants:
+        - authenticator: partner-key
+          match:
+            attributes: [{name: tenant_id, expression: nonempty}]
+      processing:
+        ext_proc:
+          service: transform
+          request_body_mode: none
+    - name: key-buffered
+      match:
+        headers:
+        - {name: X-Auth, expression: equals, value: key}
+        - {name: X-Process, expression: equals, value: buffered}
+      authentication:
+        api_key: {authenticator: partner-key}
+      authorization:
+        grants:
+        - authenticator: partner-key
+          match:
+            attributes: [{name: tenant_id, expression: nonempty}]
+      processing:
+        ext_proc:
+          service: transform
+          request_body_mode: buffered
+          request_body_buffer_limit_bytes: 2097152
+    - name: key-partial
+      match:
+        headers:
+        - {name: X-Auth, expression: equals, value: key}
+        - {name: X-Process, expression: equals, value: partial}
+      authentication:
+        api_key: {authenticator: partner-key}
+      authorization:
+        grants:
+        - authenticator: partner-key
+          match:
+            attributes: [{name: tenant_id, expression: nonempty}]
+      processing:
+        ext_proc:
+          service: transform
+          request_body_mode: buffered_partial
+    - name: key-streamed
+      match:
+        headers:
+        - {name: X-Auth, expression: equals, value: key}
+        - {name: X-Process, expression: equals, value: streamed}
+      authentication:
+        api_key: {authenticator: partner-key}
+      authorization:
+        grants:
+        - authenticator: partner-key
+          match:
+            attributes: [{name: tenant_id, expression: nonempty}]
+      processing:
+        ext_proc:
+          service: transform
+          request_body_mode: streamed
+    - name: key-duplex
+      match:
+        headers:
+        - {name: X-Auth, expression: equals, value: key}
+        - {name: X-Process, expression: equals, value: duplex}
+      authentication:
+        api_key: {authenticator: partner-key}
+      authorization:
+        grants:
+        - authenticator: partner-key
+          match:
+            attributes: [{name: tenant_id, expression: nonempty}]
+      processing:
+        ext_proc:
+          service: transform
+          request_body_mode: full_duplex_streamed
+          request_trailer_mode: send
+    - name: key-bypass
+      match:
+        headers:
+        - {name: X-Auth, expression: equals, value: key}
+        - {name: X-Process, expression: equals, value: bypass}
       authentication:
         api_key: {authenticator: partner-key}
       authorization:
@@ -107,4 +170,8 @@ servers:
           match:
             attributes: [{name: tenant_id, expression: nonempty}]
   - name: ext-proc-public
+    public: true
+    processing:
+      ext_proc: {service: lenient}
+  - name: ext-proc-unprocessed
     public: true

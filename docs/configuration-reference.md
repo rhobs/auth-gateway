@@ -286,15 +286,9 @@ gateway configuration, then explicitly roll out the Deployment to toggle them.
 
 | Field                                                           | Type              | Default   | Constraint                                                                                                                                                                |
 | --------------------------------------------------------------- | ----------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apis[].routes[].processing.request_headers`                    | list of objects   | None      | If `processing` is present, configure at least one mapping or `ext_proc`. Every protected entry must provide each referenced attribute; public bindings may use fixed API attributes. |
+| `apis[].routes[].processing.request_headers`                    | list of objects   | None      | If `processing` is present, at least one mapping is required. Every protected entry must provide each referenced attribute; public bindings may use fixed API attributes. |
 | `apis[].routes[].processing.request_headers[].name`             | string            | None      | Required valid HTTP header name; cannot be a reserved identity, routing, connection, or framing header. Names must be unique ignoring case.                               |
 | `apis[].routes[].processing.request_headers[].from.attribute`   | string            | None      | Required valid attribute name.                                                                                                                                            |
-| `apis[].routes[].processing.ext_proc` | object | None | Optional request processor; may coexist with `request_headers`. |
-| `apis[].routes[].processing.ext_proc.service` | string | None | Required name from `ext_proc_services`. |
-| `apis[].routes[].processing.ext_proc.request_header_mode` | string | `send` | `send` or `skip`. |
-| `apis[].routes[].processing.ext_proc.request_body_mode` | string | `none` | `none`, `buffered`, `buffered_partial`, `streamed`, or `full_duplex_streamed`. |
-| `apis[].routes[].processing.ext_proc.request_trailer_mode` | string | `skip` | `send` or `skip`; must be `send` with `full_duplex_streamed`. |
-| `apis[].routes[].processing.ext_proc.request_body_buffer_limit_bytes` | uint64 | Listener limit | Must be at least `listener.per_connection_buffer_limit_bytes`; raises the request body buffer limit for this route. |
 
 Headers and metric labels use attribute values directly from their declared
 sources. When an upstream needs a different value from the one used in a grant,
@@ -318,8 +312,8 @@ attribute or application policy is required. See [request processing](request-pr
 | `ext_proc_services[].mutable_request_headers` | list of strings | Empty | Case-insensitive unique header names. Credentials, gateway controls, Envoy headers, routing headers other than `:path`, connection headers, and managed output headers are forbidden. Underscores are forbidden. `:path` and `content-length` may be explicitly allowed. |
 
 Processing runs after authorization, credential cleanup, and managed header
-mappings. Only attached routes invoke their selected processor, including public
-routes. Generated denial, `404`, and `405` routes do not invoke processors.
+mappings. Only requests through an attached access entry or public registration invoke
+the selected processor. Generated denial, `404`, and `405` routes do not invoke processors.
 Remaining upstream request headers are sent in full when header mode is `send`.
 
 Resolved scalar API and selected access attributes retain their declared names and values
@@ -335,7 +329,7 @@ the authorized route even if a processor requests route-cache clearing. Allowing
 it cannot select another route or upstream. Normal route rewrites still apply.
 
 Response processing, observation mode, processor-driven mode overrides, and
-received metadata writes are disabled. Service configuration, route attachments,
+received metadata writes are disabled. Service configuration, server attachments,
 and buffer limits are static bootstrap settings: regenerate, apply, and explicitly
 roll out the Deployment. TLS CA ConfigMaps must already exist in the namespace.
 
@@ -378,6 +372,7 @@ and failure behavior.
 | `servers[].apis`          | list of objects | Empty     | Ordered API bindings; names must exist and appear once per server.                                         |
 | `servers[].apis[].name`   | string          | None      | Required name of an existing API.                                                                          |
 | `servers[].apis[].public` | boolean         | `false`   | Explicit public access; cannot be combined with `access`, server mTLS, or authenticated header forwarding. |
+| `servers[].apis[].processing` | object | None | Optional public registration processor; requires `public: true`. See [external processing attachments](#external-processing-attachments). |
 | `servers[].apis[].access` | list of objects | None      | Required nonempty list unless `public: true`.                                                              |
 
 ### Access entries
@@ -398,6 +393,7 @@ must be unique within a binding; a label does not itself match a request.
 | `authentication.api_key.authenticator` | string                    | None      | Name of the API-key authenticator.                                                                                                                                                                                                              |
 | `authorization.grants`                 | list of objects           | None      | Nonempty grants when local authorization is selected. See [authorization grants](#authorization-grants).                                                                                                                                        |
 | `authorization.ext_authz`              | object                    | None      | Selects one named external service instead of local grants. See [external authorization](#external-authorization).                                                                                                                              |
+| `processing` | object | None | Optional `ext_proc` attachment for requests selected by this entry. See [external processing attachments](#external-processing-attachments). |
 
 Values in an `in` header selector are literal strings. Multiple list selectors
 require one allowed value from each list. Generated routes can share these
@@ -527,6 +523,31 @@ Local JWT or API-key authentication runs before the external check when
 configured. Dedicated mTLS server authentication is inherited. With no local
 authenticator, the service performs any required authentication itself.
 Header attributes can feed managed upstream headers and metric labels.
+
+### External processing attachments
+
+Configure these fields under `servers[].apis[].access[].processing.ext_proc`.
+The access entry's header matchers choose when processing runs, after its
+authentication and authorization. All API routes reached through that entry use
+its processor. Other entries and hostnames exposing the same API may select a
+different service or omit processing. There is no API-route ext_proc attachment.
+
+For public registrations, use `servers[].apis[].processing.ext_proc` beside
+`public: true`. Registration-level processing is forbidden on protected
+registrations; configure each access entry explicitly. A present `processing`
+block must contain `ext_proc`.
+
+| Field | Type | Default | Constraint |
+| ----- | ---- | ------- | ---------- |
+| `service` | string | None | Required name from `ext_proc_services`. |
+| `request_header_mode` | string | `send` | `send` or `skip`. |
+| `request_body_mode` | string | `none` | `none`, `buffered`, `buffered_partial`, `streamed`, or `full_duplex_streamed`. |
+| `request_trailer_mode` | string | `skip` | `send` or `skip`; must be `send` with `full_duplex_streamed`. |
+| `request_body_buffer_limit_bytes` | uint64 | Listener limit | Must be at least `listener.per_connection_buffer_limit_bytes`; raises the request body buffer limit for requests using this entry. |
+
+The [external processing service](#external-processing-services) owns transport,
+header mutation permissions, native property selection, timeout, and failure mode.
+API routes retain managed header mappings under `processing.request_headers`.
 
 ## Trusted CA
 

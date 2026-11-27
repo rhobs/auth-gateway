@@ -262,7 +262,6 @@ func cloneRegexRewrite(r gatewayapi.RegexRewrite) gatewayapi.RegexRewrite {
 }
 
 func cloneRouteProcessing(p gatewayapi.RouteProcessing) gatewayapi.RouteProcessing {
-	p.ExtProc = cloneConfigPointer(p.ExtProc, cloneExtProc)
 	p.RequestHeaders = cloneSlice(p.RequestHeaders, func(mapping gatewayapi.RequestHeaderMapping) gatewayapi.RequestHeaderMapping {
 		mapping.From = cloneSourceReference(mapping.From)
 		return mapping
@@ -311,9 +310,6 @@ func serverVirtualHost(c resolvedConfig, index int, server resolvedServer) (*rou
 	if err != nil {
 		return nil, err
 	}
-	if err := addExtProcAPIRouteConfigs(routes, server.apis); err != nil {
-		return nil, err
-	}
 	if err := addAPIFixedAttributeRouteConfigs(routes, server.apis); err != nil {
 		return nil, err
 	}
@@ -359,6 +355,9 @@ func serverVirtualHost(c resolvedConfig, index int, server resolvedServer) (*rou
 		binding := bindings[apiName]
 		if binding.Public {
 			base.TypedPerFilterConfig[authorizationFilterName] = disabled
+			if err := addExtProcRouteConfig(base, binding.Processing, binding.api.Attributes); err != nil {
+				return nil, err
+			}
 			if err := addFaultRouteConfig(base, binding, index); err != nil {
 				return nil, err
 			}

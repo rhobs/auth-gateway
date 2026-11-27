@@ -126,8 +126,12 @@ func TestEnvoyExternalProcessing(t *testing.T) {
 	c.Kubernetes = nil
 	c.Listener.PerConnectionBufferLimitBytes = new(uint32(1024))
 	c.Authenticators = c.Authenticators[1:]
-	c.Servers[0].APIs[0].Access = c.Servers[0].APIs[0].Access[1:]
-	c.APIs[0].Routes[0].Processing.ExtProc.RequestBodyBufferLimitBytes = new(uint64(8192))
+	for i := range c.Servers[0].APIs {
+		if len(c.Servers[0].APIs[i].Access) != 0 {
+			c.Servers[0].APIs[i].Access = c.Servers[0].APIs[i].Access[1:]
+		}
+	}
+	c.Servers[0].APIs[0].Access[0].Processing.ExtProc.RequestBodyBufferLimitBytes = new(uint64(8192))
 	for i := range c.APIs {
 		c.APIs[i].Upstream = gatewayapi.Upstream{Address: "host.docker.internal", Port: uint32(backendListener.Addr().(*net.TCPAddr).Port)}
 	}

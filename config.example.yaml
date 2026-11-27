@@ -252,13 +252,6 @@ apis:
         rewrite:
           path: /api/v1/receive
         processing:
-          # Runs after authorization, credential removal, and header mappings.
-          ext_proc:
-            service: request-transform
-            request_header_mode: send # Default.
-            request_body_mode: buffered # Default: none.
-            request_trailer_mode: skip # Default.
-            request_body_buffer_limit_bytes: 2097152 # Otherwise listener limit.
           request_headers:
             - name: X-Scope-OrgID
               from: {attribute: requested_tenant}
@@ -364,6 +357,16 @@ servers:
                       # - name: groups
                       #   expression: has-one-of
                       #   value: [metrics-writers, metrics-admins]
+
+            # Only requests matching this access entry use the processor.
+            # Runs after authorization, credential cleanup, and header mappings.
+            processing:
+              ext_proc:
+                service: request-transform
+                request_header_mode: send # Default.
+                request_body_mode: buffered # Default: none.
+                request_trailer_mode: skip # Default.
+                request_body_buffer_limit_bytes: 2097152 # Otherwise listener limit.
 
           # Presence selectors keep the shared tenant's access entries distinct.
           - name: partner-writers

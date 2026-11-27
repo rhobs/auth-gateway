@@ -41,6 +41,78 @@ static_resources:
                   max_retries: 0
           connect_timeout: 5s
           load_assignment:
+            cluster_name: api-streamed
+            endpoints:
+                - lb_endpoints:
+                    - endpoint:
+                        address:
+                            socket_address:
+                                address: httpbin
+                                port_value: 8080
+          name: api-streamed
+          per_connection_buffer_limit_bytes: 1048576
+          type: STRICT_DNS
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+                '@type': type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+                explicit_http_config:
+                    http_protocol_options: {}
+        - circuit_breakers:
+            thresholds:
+                - max_connections: 1024
+                  max_pending_requests: 1024
+                  max_requests: 1024
+                  max_retries: 0
+          connect_timeout: 5s
+          load_assignment:
+            cluster_name: api-headers
+            endpoints:
+                - lb_endpoints:
+                    - endpoint:
+                        address:
+                            socket_address:
+                                address: httpbin
+                                port_value: 8080
+          name: api-headers
+          per_connection_buffer_limit_bytes: 1048576
+          type: STRICT_DNS
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+                '@type': type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+                explicit_http_config:
+                    http_protocol_options: {}
+        - circuit_breakers:
+            thresholds:
+                - max_connections: 1024
+                  max_pending_requests: 1024
+                  max_requests: 1024
+                  max_retries: 0
+          connect_timeout: 5s
+          load_assignment:
+            cluster_name: api-unprocessed
+            endpoints:
+                - lb_endpoints:
+                    - endpoint:
+                        address:
+                            socket_address:
+                                address: httpbin
+                                port_value: 8080
+          name: api-unprocessed
+          per_connection_buffer_limit_bytes: 1048576
+          type: STRICT_DNS
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+                '@type': type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+                explicit_http_config:
+                    http_protocol_options: {}
+        - circuit_breakers:
+            thresholds:
+                - max_connections: 1024
+                  max_pending_requests: 1024
+                  max_requests: 1024
+                  max_retries: 0
+          connect_timeout: 5s
+          load_assignment:
             cluster_name: api-public
             endpoints:
                 - lb_endpoints:
@@ -284,6 +356,12 @@ static_resources:
                                     require_expiration: true
                             requirement_map:
                                 server-0-api-0-access-0:
+                                    provider_name: local-jwt
+                                server-0-api-1-access-0:
+                                    provider_name: local-jwt
+                                server-0-api-2-access-0:
+                                    provider_name: local-jwt
+                                server-0-api-3-access-0:
                                     provider_name: local-jwt
                             strip_failure_response: true
                         - config_discovery:
@@ -902,7 +980,6 @@ static_resources:
                                         envoy.filters.http.rbac:
                                             api: processed
                                   name: api-0-processed-route-0-access-denied
-                                  request_body_buffer_limit: "2097152"
                                   stat_prefix: api-0-processed-route-0-access-denied
                                   typed_per_filter_config:
                                     auth_gateway.api_attributes:
@@ -983,15 +1060,15 @@ static_resources:
                                         auth_gateway.api_attributes:
                                             role: metrics:read (100%)
                                         envoy.filters.http.rbac:
-                                            api: processed
-                                  name: api-0-processed-route-1-access-0-match-0
+                                            api: streamed
+                                  name: api-1-streamed-route-0-access-0-match-0
                                   route:
-                                    cluster: api-processed
+                                    cluster: api-streamed
                                     idle_timeout: 60s
                                     max_stream_duration:
                                         max_stream_duration: 30s
                                     timeout: 30s
-                                  stat_prefix: api-0-processed-route-1-access-0-match-0
+                                  stat_prefix: api-1-streamed-route-0-access-0-match-0
                                   typed_per_filter_config:
                                     auth_gateway.api_attributes:
                                         '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
@@ -1119,7 +1196,7 @@ static_resources:
                                                             - any: true
                                     envoy.filters.http.jwt_authn:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
-                                        requirement_name: server-0-api-0-access-0
+                                        requirement_name: server-0-api-1-access-0
                                     envoy.filters.http.rbac:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                         rbac:
@@ -1183,15 +1260,15 @@ static_resources:
                                         auth_gateway.api_attributes:
                                             role: metrics:read (100%)
                                         envoy.filters.http.rbac:
-                                            api: processed
-                                  name: api-0-processed-route-1-access-1-match-0
+                                            api: streamed
+                                  name: api-1-streamed-route-0-access-1-match-0
                                   route:
-                                    cluster: api-processed
+                                    cluster: api-streamed
                                     idle_timeout: 60s
                                     max_stream_duration:
                                         max_stream_duration: 30s
                                     timeout: 30s
-                                  stat_prefix: api-0-processed-route-1-access-1-match-0
+                                  stat_prefix: api-1-streamed-route-0-access-1-match-0
                                   typed_per_filter_config:
                                     auth_gateway.api_attributes:
                                         '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
@@ -1376,9 +1453,9 @@ static_resources:
                                         auth_gateway.api_attributes:
                                             role: metrics:read (100%)
                                         envoy.filters.http.rbac:
-                                            api: processed
-                                  name: api-0-processed-route-1-access-denied
-                                  stat_prefix: api-0-processed-route-1-access-denied
+                                            api: streamed
+                                  name: api-1-streamed-route-0-access-denied
+                                  stat_prefix: api-1-streamed-route-0-access-denied
                                   typed_per_filter_config:
                                     auth_gateway.api_attributes:
                                         '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
@@ -1458,15 +1535,15 @@ static_resources:
                                         auth_gateway.api_attributes:
                                             role: metrics:read (100%)
                                         envoy.filters.http.rbac:
-                                            api: processed
-                                  name: api-0-processed-route-2-access-0-match-0
+                                            api: headers
+                                  name: api-2-headers-route-0-access-0-match-0
                                   route:
-                                    cluster: api-processed
+                                    cluster: api-headers
                                     idle_timeout: 60s
                                     max_stream_duration:
                                         max_stream_duration: 30s
                                     timeout: 30s
-                                  stat_prefix: api-0-processed-route-2-access-0-match-0
+                                  stat_prefix: api-2-headers-route-0-access-0-match-0
                                   typed_per_filter_config:
                                     auth_gateway.api_attributes:
                                         '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
@@ -1593,7 +1670,7 @@ static_resources:
                                                             - any: true
                                     envoy.filters.http.jwt_authn:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
-                                        requirement_name: server-0-api-0-access-0
+                                        requirement_name: server-0-api-2-access-0
                                     envoy.filters.http.rbac:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                         rbac:
@@ -1657,15 +1734,15 @@ static_resources:
                                         auth_gateway.api_attributes:
                                             role: metrics:read (100%)
                                         envoy.filters.http.rbac:
-                                            api: processed
-                                  name: api-0-processed-route-2-access-1-match-0
+                                            api: headers
+                                  name: api-2-headers-route-0-access-1-match-0
                                   route:
-                                    cluster: api-processed
+                                    cluster: api-headers
                                     idle_timeout: 60s
                                     max_stream_duration:
                                         max_stream_duration: 30s
                                     timeout: 30s
-                                  stat_prefix: api-0-processed-route-2-access-1-match-0
+                                  stat_prefix: api-2-headers-route-0-access-1-match-0
                                   typed_per_filter_config:
                                     auth_gateway.api_attributes:
                                         '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
@@ -1849,9 +1926,9 @@ static_resources:
                                         auth_gateway.api_attributes:
                                             role: metrics:read (100%)
                                         envoy.filters.http.rbac:
-                                            api: processed
-                                  name: api-0-processed-route-2-access-denied
-                                  stat_prefix: api-0-processed-route-2-access-denied
+                                            api: headers
+                                  name: api-2-headers-route-0-access-denied
+                                  stat_prefix: api-2-headers-route-0-access-denied
                                   typed_per_filter_config:
                                     auth_gateway.api_attributes:
                                         '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
@@ -1931,15 +2008,15 @@ static_resources:
                                         auth_gateway.api_attributes:
                                             role: metrics:read (100%)
                                         envoy.filters.http.rbac:
-                                            api: processed
-                                  name: api-0-processed-route-3-access-0-match-0
+                                            api: unprocessed
+                                  name: api-3-unprocessed-route-0-access-0-match-0
                                   route:
-                                    cluster: api-processed
+                                    cluster: api-unprocessed
                                     idle_timeout: 60s
                                     max_stream_duration:
                                         max_stream_duration: 30s
                                     timeout: 30s
-                                  stat_prefix: api-0-processed-route-3-access-0-match-0
+                                  stat_prefix: api-3-unprocessed-route-0-access-0-match-0
                                   typed_per_filter_config:
                                     auth_gateway.api_attributes:
                                         '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
@@ -2051,7 +2128,7 @@ static_resources:
                                                             - any: true
                                     envoy.filters.http.jwt_authn:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.PerRouteConfig
-                                        requirement_name: server-0-api-0-access-0
+                                        requirement_name: server-0-api-3-access-0
                                     envoy.filters.http.rbac:
                                         '@type': type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute
                                         rbac:
@@ -2115,15 +2192,15 @@ static_resources:
                                         auth_gateway.api_attributes:
                                             role: metrics:read (100%)
                                         envoy.filters.http.rbac:
-                                            api: processed
-                                  name: api-0-processed-route-3-access-1-match-0
+                                            api: unprocessed
+                                  name: api-3-unprocessed-route-0-access-1-match-0
                                   route:
-                                    cluster: api-processed
+                                    cluster: api-unprocessed
                                     idle_timeout: 60s
                                     max_stream_duration:
                                         max_stream_duration: 30s
                                     timeout: 30s
-                                  stat_prefix: api-0-processed-route-3-access-1-match-0
+                                  stat_prefix: api-3-unprocessed-route-0-access-1-match-0
                                   typed_per_filter_config:
                                     auth_gateway.api_attributes:
                                         '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
@@ -2293,9 +2370,9 @@ static_resources:
                                         auth_gateway.api_attributes:
                                             role: metrics:read (100%)
                                         envoy.filters.http.rbac:
-                                            api: processed
-                                  name: api-0-processed-route-3-access-denied
-                                  stat_prefix: api-0-processed-route-3-access-denied
+                                            api: unprocessed
+                                  name: api-3-unprocessed-route-0-access-denied
+                                  stat_prefix: api-3-unprocessed-route-0-access-denied
                                   typed_per_filter_config:
                                     auth_gateway.api_attributes:
                                         '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig
@@ -2373,14 +2450,14 @@ static_resources:
                                             audience: public
                                         envoy.filters.http.rbac:
                                             api: public
-                                  name: api-1-public-route-0
+                                  name: api-4-public-route-0
                                   route:
                                     cluster: api-public
                                     idle_timeout: 60s
                                     max_stream_duration:
                                         max_stream_duration: 30s
                                     timeout: 30s
-                                  stat_prefix: api-1-public-route-0
+                                  stat_prefix: api-4-public-route-0
                                   typed_per_filter_config:
                                     auth_gateway.api_attributes:
                                         '@type': type.googleapis.com/envoy.config.route.v3.FilterConfig

@@ -18,12 +18,18 @@ func TestExternalProcessingValidation(t *testing.T) {
 		name, want string
 		edit       func(*gatewayapi.Config)
 	}{
-		{"unknown service", "processing.ext_proc.service references unknown", func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Processing.ExtProc.Service = "missing" }},
-		{"unbound unknown service", "processing.ext_proc.service references unknown", func(c *gatewayapi.Config) {
-			c.Servers[0].APIs = c.Servers[0].APIs[1:]
-			c.APIs[0].Routes[0].Processing.ExtProc.Service = "missing"
+		{"unknown service", "processing.ext_proc.service references unknown", func(c *gatewayapi.Config) { c.Servers[0].APIs[0].Access[0].Processing.ExtProc.Service = "missing" }},
+		{"second server unknown service", "servers[1].apis[0].access[0].processing.ext_proc.service references unknown", func(c *gatewayapi.Config) {
+			c.Servers = append(c.Servers, cloneServer(c.Servers[0]))
+			c.Servers[1].Hostname = "second.example.test"
+			c.Servers[1].APIs[0].Access[0].Processing.ExtProc.Service = "missing"
 		}},
-		{"empty service", "ext_proc.service is required", func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Processing.ExtProc.Service = "" }},
+		{"empty processing", "processing.ext_proc is required", func(c *gatewayapi.Config) { c.Servers[0].APIs[0].Access[0].Processing = &gatewayapi.ServerProcessing{} }},
+		{"protected registration processing", "processing is only allowed with public: true", func(c *gatewayapi.Config) {
+			c.Servers[0].APIs[0].Processing = &gatewayapi.ServerProcessing{ExtProc: &gatewayapi.ExternalProcessing{Service: "inspect"}}
+		}},
+		{"unknown public service", "servers[0].apis[4].processing.ext_proc.service references unknown", func(c *gatewayapi.Config) { c.Servers[0].APIs[4].Processing.ExtProc.Service = "missing" }},
+		{"empty service", "ext_proc.service is required", func(c *gatewayapi.Config) { c.Servers[0].APIs[0].Access[0].Processing.ExtProc.Service = "" }},
 		{"duplicate service", "name duplicates", func(c *gatewayapi.Config) { c.ExtProcServices = append(c.ExtProcServices, c.ExtProcServices[0]) }},
 		{"invalid name", "name must start", func(c *gatewayapi.Config) { c.ExtProcServices[0].Name = "Invalid" }},
 		{"HTTP1", "upstream.http_protocol must be http2", func(c *gatewayapi.Config) { c.ExtProcServices[0].Upstream.HTTPProtocol = "http1" }},
@@ -31,17 +37,21 @@ func TestExternalProcessingValidation(t *testing.T) {
 		{"invalid host", "upstream must have a valid address and port", func(c *gatewayapi.Config) { c.ExtProcServices[0].Upstream.Address = "https://processor" }},
 		{"invalid timeout", "message_timeout", func(c *gatewayapi.Config) { c.ExtProcServices[0].MessageTimeout = duration(-time.Second) }},
 		{"invalid TLS", "tls_config.server_name", func(c *gatewayapi.Config) { c.ExtProcServices[1].Upstream.TLSConfig.ServerName = "*" }},
-		{"invalid header mode", "request_header_mode", func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Processing.ExtProc.RequestHeaderMode = "all" }},
-		{"invalid body mode", "request_body_mode", func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Processing.ExtProc.RequestBodyMode = "all" }},
-		{"invalid trailer mode", "request_trailer_mode", func(c *gatewayapi.Config) { c.APIs[0].Routes[0].Processing.ExtProc.RequestTrailerMode = "all" }},
+		{"invalid header mode", "request_header_mode", func(c *gatewayapi.Config) {
+			c.Servers[0].APIs[0].Access[0].Processing.ExtProc.RequestHeaderMode = "all"
+		}},
+		{"invalid body mode", "request_body_mode", func(c *gatewayapi.Config) { c.Servers[0].APIs[0].Access[0].Processing.ExtProc.RequestBodyMode = "all" }},
+		{"invalid trailer mode", "request_trailer_mode", func(c *gatewayapi.Config) {
+			c.Servers[0].APIs[0].Access[0].Processing.ExtProc.RequestTrailerMode = "all"
+		}},
 		{"duplex without trailers", "request_trailer_mode must be send", func(c *gatewayapi.Config) {
-			c.APIs[0].Routes[0].Processing.ExtProc.RequestBodyMode = "full_duplex_streamed"
+			c.Servers[0].APIs[0].Access[0].Processing.ExtProc.RequestBodyMode = "full_duplex_streamed"
 		}},
 		{"zero buffer limit", "request_body_buffer_limit_bytes must be positive", func(c *gatewayapi.Config) {
-			c.APIs[0].Routes[0].Processing.ExtProc.RequestBodyBufferLimitBytes = new(uint64(0))
+			c.Servers[0].APIs[0].Access[0].Processing.ExtProc.RequestBodyBufferLimitBytes = new(uint64(0))
 		}},
 		{"buffer below listener", "request_body_buffer_limit_bytes must be at least listener.per_connection_buffer_limit_bytes", func(c *gatewayapi.Config) {
-			c.APIs[0].Routes[0].Processing.ExtProc.RequestBodyBufferLimitBytes = new(uint64(1024))
+			c.Servers[0].APIs[0].Access[0].Processing.ExtProc.RequestBodyBufferLimitBytes = new(uint64(1024))
 		}},
 		{"duplicate native properties", "request_attributes", func(c *gatewayapi.Config) {
 			c.ExtProcServices[0].RequestAttributes = []string{"request.path", "request.path"}
@@ -82,7 +92,7 @@ func TestExternalProcessingModes(t *testing.T) {
 		for _, header := range []string{"send", "skip"} {
 			t.Run(mode+"/"+header, func(t *testing.T) {
 				c := loadConfigCase(t, "ext-proc")
-				p := c.APIs[0].Routes[0].Processing.ExtProc
+				p := c.Servers[0].APIs[0].Access[0].Processing.ExtProc
 				p.RequestHeaderMode, p.RequestBodyMode, p.RequestTrailerMode = header, mode, "send"
 				files, err := Generate(c)
 				if err != nil {
@@ -216,19 +226,24 @@ func TestExternalProcessingGeneratedFiltersAndRoutes(t *testing.T) {
 func TestExternalProcessingCloningAndDefaults(t *testing.T) {
 	c := loadConfigCase(t, "ext-proc")
 	c.ExtProcServices[0].MessageTimeout = nil
-	c.APIs[0].Routes[0].Processing.ExtProc.RequestHeaderMode = ""
+	c.Servers[0].APIs[4].Processing.ExtProc.RequestBodyBufferLimitBytes = new(uint64(2097152))
+	c.Servers[0].APIs[0].Access[0].Processing.ExtProc.RequestHeaderMode = ""
 	cloned := withDefaultsConfig(c)
-	if c.ExtProcServices[0].MessageTimeout != nil || c.APIs[0].Routes[0].Processing.ExtProc.RequestHeaderMode != "" {
+	if c.ExtProcServices[0].MessageTimeout != nil || c.Servers[0].APIs[0].Access[0].Processing.ExtProc.RequestHeaderMode != "" {
 		t.Fatal("defaulting mutated input")
 	}
-	if *cloned.ExtProcServices[0].MessageTimeout != gatewayapi.Duration(200*time.Millisecond) || cloned.APIs[0].Routes[0].Processing.ExtProc.RequestHeaderMode != "send" {
+	if *cloned.ExtProcServices[0].MessageTimeout != gatewayapi.Duration(200*time.Millisecond) || cloned.Servers[0].APIs[0].Access[0].Processing.ExtProc.RequestHeaderMode != "send" {
 		t.Fatal("defaults missing")
 	}
 	cloned.ExtProcServices[0].MutableRequestHeaders[0] = "changed"
 	cloned.ExtProcServices[0].RequestAttributes[0] = "changed"
-	*cloned.APIs[0].Routes[0].Processing.ExtProc.RequestBodyBufferLimitBytes = 10
+	*cloned.Servers[0].APIs[0].Access[0].Processing.ExtProc.RequestBodyBufferLimitBytes = 10
 	cloned.ExtProcServices[1].Upstream.TLSConfig.TrustedCA.ConfigMap.Name = "changed"
-	if c.ExtProcServices[0].MutableRequestHeaders[0] != "x-processed" || c.ExtProcServices[0].RequestAttributes[0] != "request.method" || *c.APIs[0].Routes[0].Processing.ExtProc.RequestBodyBufferLimitBytes != 2097152 || c.ExtProcServices[1].Upstream.TLSConfig.TrustedCA.ConfigMap.Name != "processor-ca" {
+	*cloned.Servers[0].APIs[4].Processing.ExtProc.RequestBodyBufferLimitBytes = 10
+	if *c.Servers[0].APIs[4].Processing.ExtProc.RequestBodyBufferLimitBytes != 2097152 {
+		t.Fatal("cloned public processing aliases input")
+	}
+	if c.ExtProcServices[0].MutableRequestHeaders[0] != "x-processed" || c.ExtProcServices[0].RequestAttributes[0] != "request.method" || *c.Servers[0].APIs[0].Access[0].Processing.ExtProc.RequestBodyBufferLimitBytes != 2097152 || c.ExtProcServices[1].Upstream.TLSConfig.TrustedCA.ConfigMap.Name != "processor-ca" {
 		t.Fatal("cloned configuration aliases input")
 	}
 }
@@ -237,7 +252,9 @@ func TestExternalProcessingAfterExternalAuthorization(t *testing.T) {
 	c := loadConfigCase(t, "ext-authz")
 	c.APIs[0].Attributes = []gatewayapi.AttributeSource{testTextAttribute("operation", "fixed", "ingest")}
 	c.ExtProcServices = []gatewayapi.ExternalProcessingService{{Name: "process", Upstream: gatewayapi.Upstream{Address: "processor", Port: 9000, HTTPProtocol: "http2"}}}
-	c.APIs[0].Routes[0].Processing.ExtProc = &gatewayapi.ExternalProcessing{Service: "process"}
+	for i := range c.Servers[0].APIs[0].Access {
+		c.Servers[0].APIs[0].Access[i].Processing = &gatewayapi.ServerProcessing{ExtProc: &gatewayapi.ExternalProcessing{Service: "process"}}
+	}
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)
@@ -273,7 +290,7 @@ func TestExternalProcessingAfterExternalAuthorization(t *testing.T) {
 func TestExternalProcessingWithoutSelectedAttributes(t *testing.T) {
 	c := loadConfigCase(t, "public-routing")
 	c.ExtProcServices = []gatewayapi.ExternalProcessingService{{Name: "inspect", Upstream: gatewayapi.Upstream{Address: "processor", Port: 9000, HTTPProtocol: "http2"}}}
-	c.APIs[0].Routes[0].Processing = &gatewayapi.RouteProcessing{ExtProc: &gatewayapi.ExternalProcessing{Service: "inspect"}}
+	c.Servers[0].APIs[0].Processing = &gatewayapi.ServerProcessing{ExtProc: &gatewayapi.ExternalProcessing{Service: "inspect"}}
 	files, err := Generate(c)
 	if err != nil {
 		t.Fatal(err)
@@ -285,4 +302,90 @@ func TestExternalProcessingWithoutSelectedAttributes(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertConfigDiff(t, "empty processor context", map[string]any{"attributes": []any{}}, bridge.GetFilterContext().AsMap())
+}
+
+func TestExternalProcessingSelectionIsPerAccessAndServer(t *testing.T) {
+	c := loadConfigCase(t, "ext-proc")
+	c.Servers[0].APIs = c.Servers[0].APIs[:1]
+	c.Servers[0].APIs[0].Access[1].Processing = nil
+	second := cloneServer(c.Servers[0])
+	second.Hostname = "other.processor.example.test"
+	second.APIs[0].Access[0].Processing = &gatewayapi.ServerProcessing{ExtProc: &gatewayapi.ExternalProcessing{Service: "inspect"}}
+	second.APIs[0].Access[1].Processing = &gatewayapi.ServerProcessing{ExtProc: &gatewayapi.ExternalProcessing{Service: "transform", RequestBodyMode: "streamed"}}
+	c.Servers = append(c.Servers, second)
+	files, err := Generate(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hosts := firstHTTPManager(t, files.EnvoyBootstrap.Contents).GetRouteConfig().VirtualHosts
+	if len(hosts) != 2 {
+		t.Fatalf("hosts = %d, want 2", len(hosts))
+	}
+	for hi, host := range hosts {
+		for _, r := range host.Routes {
+			if r.GetRoute() == nil {
+				continue
+			}
+			service, mode, selector := "transform", extproc.ProcessingMode_BUFFERED, "jwt"
+			if strings.Contains(r.Name, "-access-1-") {
+				selector = "key"
+				if hi == 0 {
+					service = ""
+				} else {
+					mode = extproc.ProcessingMode_STREAMED
+				}
+			} else if hi == 1 {
+				service, mode = "inspect", extproc.ProcessingMode_NONE
+			}
+			foundSelector := false
+			for _, header := range r.Match.Headers {
+				if header.Name == "x-auth" && header.GetStringMatch().GetExact() == selector {
+					foundSelector = true
+				}
+			}
+			if !foundSelector {
+				t.Fatalf("route %s lost its access header matcher", r.Name)
+			}
+			for _, name := range []string{"transform", "inspect"} {
+				config := r.TypedPerFilterConfig[extProcFilterName(name)]
+				if name != service {
+					if config != nil {
+						t.Fatalf("host %s route %s selected unexpected processor %s", host.Name, r.Name, name)
+					}
+					continue
+				}
+				if config == nil {
+					t.Fatalf("host %s route %s did not select %s", host.Name, r.Name, service)
+				}
+				var perRoute extproc.ExtProcPerRoute
+				if err := config.UnmarshalTo(&perRoute); err != nil {
+					t.Fatal(err)
+				}
+				if perRoute.GetOverrides().GetProcessingMode().GetRequestBodyMode() != mode {
+					t.Fatalf("host %s route %s lost its access body mode", host.Name, r.Name)
+				}
+			}
+		}
+	}
+}
+
+func TestExternalProcessingRejectsAPIRouteAttachment(t *testing.T) {
+	_, err := Load(strings.NewReader(`version: 1
+servers:
+- hostname: gateway.example.test
+  apis:
+  - name: api
+    public: true
+apis:
+- name: api
+  upstream: {address: backend, port: 8080}
+  routes:
+  - methods: [POST]
+    path: {expression: equals, value: /ingest}
+    processing:
+      ext_proc: {service: transform}
+`))
+	if err == nil || !strings.Contains(err.Error(), "field ext_proc not found") {
+		t.Fatalf("Load() = %v, want rejection of API-route ext_proc", err)
+	}
 }

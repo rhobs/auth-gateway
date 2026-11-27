@@ -58,6 +58,17 @@ func cloneExtProc(p gatewayapi.ExternalProcessing) gatewayapi.ExternalProcessing
 	return p
 }
 
+func cloneServerProcessing(p gatewayapi.ServerProcessing) gatewayapi.ServerProcessing {
+	p.ExtProc = cloneConfigPointer(p.ExtProc, cloneExtProc)
+	return p
+}
+
+func defaultServerProcessing(p *gatewayapi.ServerProcessing) {
+	if p != nil && p.ExtProc != nil {
+		*p.ExtProc = withDefaultsExtProc(*p.ExtProc)
+	}
+}
+
 func withDefaultsExtProcService(s gatewayapi.ExternalProcessingService) gatewayapi.ExternalProcessingService {
 	s.Upstream = withDefaultsUpstream(s.Upstream)
 	s.MessageTimeout = withDefaultDuration(s.MessageTimeout, 200*time.Millisecond)
@@ -144,19 +155,42 @@ func validateExtProcServices(c gatewayapi.Config) error {
 			seen[name] = true
 		}
 	}
-	for ai, api := range c.APIs {
-		for ri, r := range api.Routes {
-			if r.Processing == nil || r.Processing.ExtProc == nil {
-				continue
+	for si, server := range c.Servers {
+		for bi, binding := range server.APIs {
+			field := fmt.Sprintf("servers[%d].apis[%d]", si, bi)
+			if binding.Processing != nil && !binding.Public {
+				return fmt.Errorf("%s.processing is only allowed with public: true; configure processing on access entries", field)
 			}
-			p := r.Processing.ExtProc
-			if !known[p.Service] {
-				return fmt.Errorf("apis[%d].routes[%d].processing.ext_proc.service references unknown service %q", ai, ri, p.Service)
+			if err := validateServerProcessing(field+".processing", binding.Processing, c.Listener, known); err != nil {
+				return err
 			}
-			if p.RequestBodyBufferLimitBytes != nil && *p.RequestBodyBufferLimitBytes < uint64(*c.Listener.PerConnectionBufferLimitBytes) {
-				return fmt.Errorf("apis[%d].routes[%d].processing.ext_proc.request_body_buffer_limit_bytes must be at least listener.per_connection_buffer_limit_bytes (%d)", ai, ri, *c.Listener.PerConnectionBufferLimitBytes)
+			for ai, access := range binding.Access {
+				if err := validateServerProcessing(fmt.Sprintf("%s.access[%d].processing", field, ai), access.Processing, c.Listener, known); err != nil {
+					return err
+				}
 			}
 		}
+	}
+	return nil
+}
+
+func validateServerProcessing(field string, processing *gatewayapi.ServerProcessing, listener gatewayapi.Listener, known map[string]bool) error {
+	if processing == nil {
+		return nil
+	}
+	if processing.ExtProc == nil {
+		return fmt.Errorf("%s.ext_proc is required", field)
+	}
+	field += ".ext_proc"
+	p := processing.ExtProc
+	if err := validateExtProc(field, *p); err != nil {
+		return err
+	}
+	if !known[p.Service] {
+		return fmt.Errorf("%s.service references unknown service %q", field, p.Service)
+	}
+	if p.RequestBodyBufferLimitBytes != nil && *p.RequestBodyBufferLimitBytes < uint64(*listener.PerConnectionBufferLimitBytes) {
+		return fmt.Errorf("%s.request_body_buffer_limit_bytes must be at least listener.per_connection_buffer_limit_bytes (%d)", field, *listener.PerConnectionBufferLimitBytes)
 	}
 	return nil
 }
@@ -243,41 +277,32 @@ func extProcAttributeBridgeFilter() (*hcm.HttpFilter, error) {
 	return &hcm.HttpFilter{Name: extProcAttributeBridgeName, ConfigType: &hcm.HttpFilter_TypedConfig{TypedConfig: config}}, nil
 }
 
-func addExtProcAPIRouteConfigs(routes []*route.Route, apis []gatewayapi.API) error {
-	byName := make(map[string]*route.Route, len(routes))
-	for _, r := range routes {
-		byName[r.Name] = r
+func addExtProcRouteConfig(generated *route.Route, processing *gatewayapi.ServerProcessing, attributes []gatewayapi.AttributeSource) error {
+	if processing == nil {
+		return nil
 	}
-	for ai, api := range apis {
-		for ri, r := range api.Routes {
-			if r.Processing == nil || r.Processing.ExtProc == nil {
-				continue
-			}
-			p := r.Processing.ExtProc
-			generated := byName[apiRouteName(ai, api.Name, ri)]
-			config, err := packEnvoy(&extproc.ExtProcPerRoute{Override: &extproc.ExtProcPerRoute_Overrides{Overrides: &extproc.ExtProcOverrides{ProcessingMode: extProcProcessingMode(*p)}}})
-			if err != nil {
-				return err
-			}
-			if generated.TypedPerFilterConfig == nil {
-				generated.TypedPerFilterConfig = make(map[string]*anypb.Any)
-			}
-			generated.TypedPerFilterConfig[extProcFilterName(p.Service)] = config
-			if p.RequestBodyBufferLimitBytes != nil {
-				generated.RequestBodyBufferLimit = wrapperspb.UInt64(*p.RequestBodyBufferLimitBytes)
-			}
-			bridge, err := extProcAttributeBridgePerRouteConfig(api.Attributes)
-			if err != nil {
-				return err
-			}
-			generated.TypedPerFilterConfig[extProcAttributeBridgeName] = bridge
-		}
+	p := processing.ExtProc
+	config, err := packEnvoy(&extproc.ExtProcPerRoute{Override: &extproc.ExtProcPerRoute_Overrides{Overrides: &extproc.ExtProcOverrides{ProcessingMode: extProcProcessingMode(*p)}}})
+	if err != nil {
+		return err
 	}
+	if generated.TypedPerFilterConfig == nil {
+		generated.TypedPerFilterConfig = make(map[string]*anypb.Any)
+	}
+	generated.TypedPerFilterConfig[extProcFilterName(p.Service)] = config
+	if p.RequestBodyBufferLimitBytes != nil {
+		generated.RequestBodyBufferLimit = wrapperspb.UInt64(*p.RequestBodyBufferLimitBytes)
+	}
+	bridge, err := extProcAttributeBridgePerRouteConfig(attributes)
+	if err != nil {
+		return err
+	}
+	generated.TypedPerFilterConfig[extProcAttributeBridgeName] = bridge
 	return nil
 }
 
 func addExtProcAccessRouteConfig(c resolvedConfig, generated *route.Route, api gatewayapi.API, access resolvedAccess) error {
-	if generated.TypedPerFilterConfig[extProcAttributeBridgeName] == nil {
+	if access.Processing == nil {
 		return nil
 	}
 	attributes := slices.Clone(api.Attributes)
@@ -287,12 +312,7 @@ func addExtProcAccessRouteConfig(c resolvedConfig, generated *route.Route, api g
 	if external := access.Authorization.ExtAuthz; external != nil {
 		attributes = append(attributes, c.extAuthzIndex[external.Service].Attributes...)
 	}
-	bridge, err := extProcAttributeBridgePerRouteConfig(attributes)
-	if err != nil {
-		return err
-	}
-	generated.TypedPerFilterConfig[extProcAttributeBridgeName] = bridge
-	return nil
+	return addExtProcRouteConfig(generated, access.Processing, attributes)
 }
 
 func extProcAttributeBridgePerRouteConfig(attributes []gatewayapi.AttributeSource) (*anypb.Any, error) {

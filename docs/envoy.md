@@ -147,8 +147,11 @@ credential headers are removed before upstream forwarding.
 ### External processing
 
 Each `ext_proc_services[]` entry generates a native `ext_proc` filter and HTTP/2
-cluster. Filters are disabled by default; `processing.ext_proc` enables one on
-the selected API route with request-only processing modes. The filters run after
+cluster. Filters are disabled by default. A server access entry's
+`processing.ext_proc` enables one on the generated routes for that entry, with
+request-only processing modes. Its native access header matchers select those
+routes. Public registrations select processing beside `public: true`. API route
+definitions do not select processors. The filters run after
 authorization, credential cleanup, and managed header mappings, before faults,
 admission control, and routing. Generated denial and fallback routes have no
 processor selection. Route body buffer overrides use native

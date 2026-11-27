@@ -106,7 +106,7 @@ type ExternalProcessingService struct {
 	MutableRequestHeaders []string  `yaml:"mutable_request_headers,omitempty"`
 }
 
-// ExternalProcessing selects request stages for one processor.
+// ExternalProcessing selects request stages for one access path.
 type ExternalProcessing struct {
 	Service                     string  `yaml:"service"`
 	RequestHeaderMode           string  `yaml:"request_header_mode,omitempty"`
@@ -115,21 +115,28 @@ type ExternalProcessing struct {
 	RequestBodyBufferLimitBytes *uint64 `yaml:"request_body_buffer_limit_bytes,omitempty"`
 }
 
+// ServerProcessing configures request processing for a registered API or access entry.
+type ServerProcessing struct {
+	ExtProc *ExternalProcessing `yaml:"ext_proc"`
+}
+
 // APIBinding exposes one API with explicit public access or protected entries.
 type APIBinding struct {
 	Name           string                `yaml:"name"`
 	Public         bool                  `yaml:"public,omitempty"`
+	Processing     *ServerProcessing     `yaml:"processing,omitempty"`
 	Access         []Access              `yaml:"access,omitempty"`
 	FaultInjection *FaultInjectionConfig `yaml:"fault_injection,omitempty"`
 }
 
 // Access binds request selectors to one authentication and authorization path.
 type Access struct {
-	Tenant         string          `yaml:"tenant,omitempty"`
-	Name           string          `yaml:"name,omitempty"`
-	Match          AccessMatch     `yaml:"match,omitempty"`
-	Authentication *Authentication `yaml:"authentication,omitempty"`
-	Authorization  Authorization   `yaml:"authorization"`
+	Tenant         string            `yaml:"tenant,omitempty"`
+	Name           string            `yaml:"name,omitempty"`
+	Match          AccessMatch       `yaml:"match,omitempty"`
+	Authentication *Authentication   `yaml:"authentication,omitempty"`
+	Authorization  Authorization     `yaml:"authorization"`
+	Processing     *ServerProcessing `yaml:"processing,omitempty"`
 }
 
 // AccessMatch requires every configured request header to match.
@@ -320,7 +327,6 @@ type RegexRewrite struct {
 
 // RouteProcessing describes optional per-route request processing.
 type RouteProcessing struct {
-	ExtProc        *ExternalProcessing    `yaml:"ext_proc,omitempty"`
 	RequestHeaders []RequestHeaderMapping `yaml:"request_headers,omitempty"`
 }
 

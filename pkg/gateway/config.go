@@ -235,13 +235,6 @@ func withDefaultsConfig(c gatewayapi.Config) gatewayapi.Config {
 	for i := range c.ExtProcServices {
 		c.ExtProcServices[i] = withDefaultsExtProcService(c.ExtProcServices[i])
 	}
-	for i := range c.APIs {
-		for j := range c.APIs[i].Routes {
-			if p := c.APIs[i].Routes[j].Processing; p != nil && p.ExtProc != nil {
-				*p.ExtProc = withDefaultsExtProc(*p.ExtProc)
-			}
-		}
-	}
 	if c.Node.ID == "" {
 		c.Node.ID = defaultNodeID
 	}
@@ -255,6 +248,13 @@ func withDefaultsConfig(c gatewayapi.Config) gatewayapi.Config {
 	}
 	c.Observability = withDefaultsObservabilityConfig(c.Observability, c.Node.Cluster)
 	for i := range c.Servers {
+		for j := range c.Servers[i].APIs {
+			binding := &c.Servers[i].APIs[j]
+			defaultServerProcessing(binding.Processing)
+			for k := range binding.Access {
+				defaultServerProcessing(binding.Access[k].Processing)
+			}
+		}
 		if c.Servers[i].TLSConfig != nil {
 			tlsConfig := withDefaultsServerTLS(*c.Servers[i].TLSConfig)
 			c.Servers[i].TLSConfig = &tlsConfig
